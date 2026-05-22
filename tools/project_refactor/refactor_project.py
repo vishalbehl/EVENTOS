@@ -89,6 +89,7 @@ FILE_TO_MODULE_MAP = {
     "schemas/import_job.py": "registration",
     "schemas/ticket_type.py": "registration",
     "schemas/registration_form_config.py": "registration",
+    "schemas/participant.py": "registration",
     
     "schemas/speaker.py": "speakers",
     "schemas/session.py": "speakers",
@@ -368,7 +369,7 @@ def relocate_scattered_files(dry):
     if backend_dir.exists():
         for pattern, dest in SCATTERED_RULES.items():
             for file in backend_dir.glob(pattern):
-                if file.is_file():
+                if file.is_file() and file.name != "requirements.txt":
                     target = ROOT / dest / file.name
                     print(f"[MOVE SCATTERED] {file.relative_to(ROOT)} -> {target.relative_to(ROOT)}")
                     if not dry:
@@ -377,7 +378,7 @@ def relocate_scattered_files(dry):
     # Process root scattered files
     for pattern, dest in SCATTERED_RULES.items():
         for file in ROOT.glob(pattern):
-            if file.is_file() and file.name != "dir.py" and not ignored(file):
+            if file.is_file() and file.name not in ("dir.py", "requirements.txt") and not ignored(file):
                 target = ROOT / dest / file.name
                 print(f"[MOVE SCATTERED] {file.relative_to(ROOT)} -> {target.relative_to(ROOT)}")
                 if not dry:
@@ -700,12 +701,44 @@ from app.modules.notifications.tasks.email_tasks import process_email_campaign
 from app.modules.presentations.tasks.file_tasks import validate_presentation
 """
 
+    services_init_content = """# =============================================================
+# Conference Platform — Services Package (Re-exporters)
+# =============================================================
+
+from app.modules.auth.services import auth_service
+from app.modules.rbac.services import permission_service, rbac_service
+from app.modules.presentations.services import upload_service, validation_service
+from app.modules.venue.services import websocket_service
+from app.modules.analytics.services import analytics_service
+from app.modules.notifications.services import (
+    email_service, email_renderer, notification_service, whatsapp_service
+)
+from app.modules.registration.services import qr_service, excel_import_service
+
+__all__ = [
+    "auth_service",
+    "permission_service",
+    "rbac_service",
+    "upload_service",
+    "validation_service",
+    "websocket_service",
+    "analytics_service",
+    "email_service",
+    "email_renderer",
+    "notification_service",
+    "whatsapp_service",
+    "qr_service",
+    "excel_import_service",
+]
+"""
+
     if not dry:
         (app_dir / "models/__init__.py").write_text(models_init_content, encoding="utf-8")
         (app_dir / "schemas/__init__.py").write_text(schemas_init_content, encoding="utf-8")
         (app_dir / "routers/__init__.py").write_text(routers_init_content, encoding="utf-8")
         (app_dir / "tasks/__init__.py").write_text(tasks_init_content, encoding="utf-8")
-        print("Generated re-exporters for models, schemas, routers, and tasks.")
+        (app_dir / "services/__init__.py").write_text(services_init_content, encoding="utf-8")
+        print("Generated re-exporters for models, schemas, routers, tasks, and services.")
 
 # ==========================
 # PYTHON IMPORTS REWRITING
