@@ -861,6 +861,12 @@ The refactoring is complete! Check git status and run verification tests.
 
 def cleanup_old_refactor_dirs(dry):
     print("\n--- CLEANING UP OLD UNTRACKED REFACTOR DIRECTORIES ---")
+    # Safety check: if backend folder does not exist in root, we have already refactored.
+    # Do NOT delete apps, services, or storage.
+    if not (ROOT / "backend").exists():
+        print("[CLEANUP] 'backend' folder not found in root. Post-refactor state detected. Skipping cleanup.")
+        return
+        
     dirs_to_clean = ["apps", "services", "storage"]
     for d in dirs_to_clean:
         p = ROOT / d
