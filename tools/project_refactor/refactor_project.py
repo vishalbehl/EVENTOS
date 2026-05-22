@@ -867,7 +867,9 @@ def cleanup_old_refactor_dirs(dry):
         print("[CLEANUP] 'backend' folder not found in root. Post-refactor state detected. Skipping cleanup.")
         return
         
-    dirs_to_clean = ["apps", "services", "storage"]
+    dirs_to_clean = ["apps", "services"]
+    if (ROOT / "backend/data/storage").exists():
+        dirs_to_clean.append("storage")
     for d in dirs_to_clean:
         p = ROOT / d
         if p.exists():
