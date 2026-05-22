@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  backend:
+    restart: unless-stopped
+
+  workers:
+    restart: unless-stopped
+
+  venue-server:
+    restart: unless-stopped

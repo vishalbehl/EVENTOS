@@ -1,0 +1,10 @@
+{
+  "name": "@conf-platform/kiosk-app",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build:pwa": "echo \"Build PWA\"",
+    "build:electron": "echo \"Build Electron\"",
+    "build:all": "npm run build:pwa && npm run build:electron"
+  }
+}

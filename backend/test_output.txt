@@ -1,0 +1,18 @@
+ImportError while loading conftest 'D:\DEV\conf-platform\backend\tests\conftest.py'.
+tests\conftest.py:42: in <module>
+    from app.models import (  # ensures all models are registered with Base
+app\models\__init__.py:48: in <module>
+    from app.models.badge_models import Printer, Badge, BadgeHistory, BadgePrintJob, BadgeScan
+app\models\badge_models.py:82: in <module>
+    class BadgeHistory(Base):
+.venv\Lib\site-packages\sqlalchemy\orm\decl_api.py:836: in __init_subclass__
+    _as_declarative(cls._sa_registry, cls, cls.__dict__)
+.venv\Lib\site-packages\sqlalchemy\orm\decl_base.py:244: in _as_declarative
+    return _MapperConfig.setup_mapping(registry, cls, dict_, None, {})
+.venv\Lib\site-packages\sqlalchemy\orm\decl_base.py:325: in setup_mapping
+    return _ClassScanMapperConfig(
+.venv\Lib\site-packages\sqlalchemy\orm\decl_base.py:572: in __init__
+    self._extract_mappable_attributes()
+.venv\Lib\site-packages\sqlalchemy\orm\decl_base.py:1533: in _extract_mappable_attributes
+    raise exc.InvalidRequestError(
+E   sqlalchemy.exc.InvalidRequestError: Attribute name 'metadata' is reserved when using the Declarative API.

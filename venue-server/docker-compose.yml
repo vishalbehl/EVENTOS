@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  venue-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: venue_password
+      POSTGRES_DB: venue_db
+    ports:
+      - "5433:5432" # Expose to host on 5433 to avoid conflict if cloud DB is running locally
+    volumes:
+      - venue-db-data:/var/lib/postgresql/data
+    restart: always
+
+  venue-redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    restart: always
+
+  venue-minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - venue-minio-data:/data
+    restart: always
+
+  venue-api:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:venue_password@venue-db:5432/venue_db
+      - REDIS_URL=redis://venue-redis:6379/0
+      - MINIO_ENDPOINT=venue-minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_SECURE=False
+      - LOCAL_BUCKET_NAME=venue-presentations
+      - CLOUD_API_URL=http://host.docker.internal:8000 # Assuming cloud is local
+      - VENUE_AUTH_KEY=venue_secret_key
+    depends_on:
+      - venue-db
+      - venue-redis
+      - venue-minio
+    restart: always
+
+volumes:
+  venue-db-data:
+  venue-minio-data:

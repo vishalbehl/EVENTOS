@@ -1,0 +1,19 @@
+{
+  "name": "conf-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "cloud/*",
+    "venue/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:organizer": "npm --workspace cloud/organizer-portal run dev",
+    "dev:speaker": "npm --workspace cloud/speaker-portal run dev",
+    "dev:registration": "npm --workspace cloud/registration-portal run dev -- --port 3003",
+    "build": "echo \"Define monorepo build orchestration\""
+  },
+  "dependencies": {
+    "resend": "^6.12.3"
+  }
+}

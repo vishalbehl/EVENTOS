@@ -1,0 +1,16 @@
+node_modules/
+.next/
+dist/
+build/
+out/
+coverage/
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
+.env
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+Starting test...
+D:\DEV\conf-platform\backend\.venv\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+Imports successful, connecting to DB...
+Testing waitlist promotion for event: 212a7755-2f6f-4329-bef2-adae518107b7 (GLOBE 2025)
+Using user: manager@eventos.com (1fae23d7-b065-4f52-97bf-eb4f826ca07f)
+Waitlist count before promotion: 0
+Successfully ran promotion. Promoted: 0 participants.
+Test finished.

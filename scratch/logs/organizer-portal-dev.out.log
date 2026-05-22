@@ -1,0 +1,58 @@
+
+> organizer-portal@1.0.0 dev
+> next dev --port 3000
+
+▲ Next.js 16.2.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.56.1:3000
+- Environments: .env.local
+✓ Ready in 728ms
+Creating turbopack project {
+  dir: 'D:\\DEV\\conf-platform\\cloud\\organizer-portal',
+  testMode: true
+}
+
+ GET /login 200 in 1156ms (next.js: 411ms, application-code: 745ms)
+✓ Compiled in 292ms
+ GET /login 200 in 367ms (next.js: 75ms, application-code: 292ms)
+ GET / 200 in 424ms (next.js: 117ms, application-code: 307ms)
+ GET /login 200 in 70ms (next.js: 12ms, application-code: 58ms)
+ GET /login 200 in 139ms (next.js: 13ms, application-code: 125ms)
+ GET /login 200 in 208ms (next.js: 21ms, application-code: 187ms)
+ GET / 200 in 95ms (next.js: 13ms, application-code: 81ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 1164ms (next.js: 1107ms, application-code: 57ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/settings 404 in 104ms (next.js: 47ms, application-code: 56ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/settings 404 in 165ms (next.js: 17ms, application-code: 147ms)
+ GET / 200 in 43ms (next.js: 6ms, application-code: 37ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 155ms (next.js: 45ms, application-code: 110ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/sessions 200 in 1199ms (next.js: 1103ms, application-code: 96ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/import 200 in 1600ms (next.js: 1484ms, application-code: 116ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/speakers 200 in 2.1s (next.js: 1861ms, application-code: 192ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/sessions 200 in 194ms (next.js: 44ms, application-code: 150ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 134ms (next.js: 40ms, application-code: 94ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/rooms 200 in 1628ms (next.js: 1528ms, application-code: 100ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/emails 200 in 1568ms (next.js: 1457ms, application-code: 111ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/import 200 in 135ms (next.js: 40ms, application-code: 95ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 174ms (next.js: 31ms, application-code: 144ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/configuration 404 in 32ms (next.js: 5ms, application-code: 26ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/configuration 404 in 109ms (next.js: 12ms, application-code: 97ms)
+ GET / 200 in 36ms (next.js: 5ms, application-code: 31ms)
+ GET /analytics 404 in 164ms (next.js: 37ms, application-code: 127ms)
+ GET /analytics 404 in 207ms (next.js: 26ms, application-code: 181ms)
+ GET / 200 in 32ms (next.js: 4ms, application-code: 28ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 38ms (next.js: 11ms, application-code: 27ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/configuration 404 in 53ms (next.js: 12ms, application-code: 41ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3/configuration 404 in 125ms (next.js: 15ms, application-code: 110ms)
+ GET / 200 in 33ms (next.js: 4ms, application-code: 29ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 266ms (next.js: 39ms, application-code: 227ms)
+✓ Compiled in 4.1s
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 12.2s (next.js: 4.5s, application-code: 7.7s)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 422ms (next.js: 143ms, application-code: 278ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 2.9s (next.js: 457ms, application-code: 2.5s)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 2.1s (next.js: 1040ms, application-code: 1020ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 2.1s (next.js: 1199ms, application-code: 888ms)
+ GET /events/a4d9cf28-cc55-413e-ace2-04d0f016aae3 200 in 3.5s (next.js: 17ms, application-code: 3.4s)
+ GET /login 200 in 148ms (next.js: 41ms, application-code: 107ms)
+ GET /events/demo/import 200 in 1350ms (next.js: 212ms, application-code: 1138ms)
+ GET /events/demo/configuration 200 in 3.3s (next.js: 3.2s, application-code: 97ms)
+[?25h

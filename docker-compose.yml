@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.Dockerfile
+
+  workers:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/workers.Dockerfile
+
+  venue-server:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/venue-server.Dockerfile
