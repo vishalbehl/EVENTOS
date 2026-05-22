@@ -1,21 +1,8 @@
 import type { Metadata } from "next";
-import { DM_Mono, DM_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { GlobalModal } from "@/components/modals/GlobalModal";
 import { FloatingToolbar } from "@/components/FloatingToolbar";
-
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["300", "400", "500"],
-  variable: "--font-dm-sans",
-});
-
-const dmMono = DM_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-dm-mono",
-});
 
 export const metadata: Metadata = {
   title: "EventOS | Ecosystem Control",
@@ -50,7 +37,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${dmSans.variable} ${dmMono.variable} min-h-screen`}>
+      <body className="min-h-screen">
         <Providers>
           {children}
           <GlobalModal />
