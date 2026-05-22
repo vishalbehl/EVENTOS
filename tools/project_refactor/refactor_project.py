@@ -787,8 +787,8 @@ def update_python_imports(dry):
                 
                 # Replace imports
                 for old_imp, new_imp in sorted_map:
-                    # Replace e.g., 'from app.models.user import' -> 'from app.modules.auth.models.user import'
-                    # Replace 'import app.models.user' -> 'import app.modules.auth.models.user'
+                    # Replace e.g., 'from app.modules.auth.models.user import' -> 'from app.modules.auth.models.user import'
+                    # Replace 'import app.modules.auth.models.user' -> 'import app.modules.auth.models.user'
                     content = content.replace(old_imp, new_imp)
                     
                 if content != original:
@@ -856,7 +856,7 @@ FastAPI backend packages were moved under `app/modules/<domain>/` with subdirect
 * **rbac**: user assignments and settings
 
 ## Import & Config Re-wiring
-* Python imports were automatically updated from `app.models.user` to `app.modules.auth.models.user`, etc.
+* Python imports were automatically updated from `app.modules.auth.models.user` to `app.modules.auth.models.user`, etc.
 * Root `package.json` workspaces were updated to reflect the new structure.
 * Alembic environment and migrations remain intact and compatible.
 
