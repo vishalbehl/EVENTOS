@@ -328,9 +328,19 @@ def restructure_monorepo(dry):
         svc_src = ROOT / svc
         svc_dst = services_dir / svc
         if svc_src.exists():
-            print(f"[MOVE] {svc_src} -> {svc_dst}")
+            print(f"[MOVE] {svc_src} -> {svc_dst} (excluding .venv)")
             if not dry:
-                shutil.move(str(svc_src), str(svc_dst))
+                svc_dst.mkdir(parents=True, exist_ok=True)
+                for item in svc_src.iterdir():
+                    if item.name == ".venv":
+                        continue
+                    shutil.move(str(item), str(svc_dst / item.name))
+                # Clean up src directory if empty
+                try:
+                    if not any(svc_src.iterdir()):
+                        svc_src.rmdir()
+                except Exception:
+                    pass
 
     # 4. Docs organization
     docs_dir = ROOT / "docs"
@@ -861,10 +871,10 @@ The refactoring is complete! Check git status and run verification tests.
 
 def cleanup_old_refactor_dirs(dry):
     print("\n--- CLEANING UP OLD UNTRACKED REFACTOR DIRECTORIES ---")
-    # Safety check: if backend folder does not exist in root, we have already refactored.
+    # Safety check: if backend/app folder does not exist in root, we have already refactored.
     # Do NOT delete apps, services, or storage.
-    if not (ROOT / "backend").exists():
-        print("[CLEANUP] 'backend' folder not found in root. Post-refactor state detected. Skipping cleanup.")
+    if not (ROOT / "backend/app").exists():
+        print("[CLEANUP] 'backend/app' folder not found in root. Post-refactor state detected. Skipping cleanup.")
         return
         
     dirs_to_clean = ["apps", "services"]
