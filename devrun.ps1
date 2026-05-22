@@ -5,10 +5,10 @@ taskkill /F /IM "node.exe" /T 2>$null
 Write-Host "🚀 Starting Conference Platform Services..." -ForegroundColor Cyan
 
 # 1. Start Backend (Uvicorn)
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd backend; .\.venv\Scripts\activate; python -m uvicorn app.main:app --reload --port 8000" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd services/backend; .\.venv\Scripts\activate; python -m uvicorn app.main:app --reload --port 8000" -WindowStyle Normal
 
 # 2. Start Celery Worker
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd backend; .\.venv\Scripts\activate; python -m celery -A app.worker worker --loglevel=info -P solo" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd services/backend; .\.venv\Scripts\activate; python -m celery -A app.worker worker --loglevel=info -P solo" -WindowStyle Normal
 
 # 3. Start Organizer Frontend (Port 3000)
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "npm run dev:organizer" -WindowStyle Normal
