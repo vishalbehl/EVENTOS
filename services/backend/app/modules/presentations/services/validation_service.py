@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.presentations.models.file_validation import FileValidation
 from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.services import upload_service
+from app.modules.presentations.services import upload_service
 from app.config import settings
 
 

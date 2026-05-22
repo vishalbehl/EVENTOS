@@ -20,7 +20,8 @@ async def test_process_outbox_success(mocker):
         action="create",
         payload={"participant_id": str(uuid.uuid4()), "session_id": str(uuid.uuid4()), "checkin_time": "2026-05-22T10:00:00Z"},
         status="pending",
-        attempts=0
+        attempts=0,
+        created_at=datetime.now(timezone.utc)
     )
     
     # Mock db.execute to return our record
