@@ -373,7 +373,10 @@ def relocate_scattered_files(dry):
                     target = ROOT / dest / file.name
                     print(f"[MOVE SCATTERED] {file.relative_to(ROOT)} -> {target.relative_to(ROOT)}")
                     if not dry:
-                        shutil.move(str(file), str(target))
+                        try:
+                            shutil.move(str(file), str(target))
+                        except Exception as e:
+                            print(f"[WARN] Failed to move {file}: {e}")
                         
     # Process root scattered files
     for pattern, dest in SCATTERED_RULES.items():
@@ -382,7 +385,10 @@ def relocate_scattered_files(dry):
                 target = ROOT / dest / file.name
                 print(f"[MOVE SCATTERED] {file.relative_to(ROOT)} -> {target.relative_to(ROOT)}")
                 if not dry:
-                    shutil.move(str(file), str(target))
+                    try:
+                        shutil.move(str(file), str(target))
+                    except Exception as e:
+                        print(f"[WARN] Failed to move {file}: {e}")
                     
     # Specifically dir.py in root
     dir_py = ROOT / "dir.py"
@@ -390,7 +396,10 @@ def relocate_scattered_files(dry):
         target = ROOT / "tools/debugging/dir.py"
         print(f"[MOVE] {dir_py} -> {target}")
         if not dry:
-            shutil.move(str(dir_py), str(target))
+            try:
+                shutil.move(str(dir_py), str(target))
+            except Exception as e:
+                print(f"[WARN] Failed to move {dir_py}: {e}")
 
 # ==========================
 # DOMAIN REFACTORING (BACKEND)
@@ -847,6 +856,35 @@ The refactoring is complete! Check git status and run verification tests.
     print(f"\nSaved refactoring report: {report_file.relative_to(ROOT)}")
 
 # ==========================
+# CLEANUP UNTRACKED FOLDERS
+# ==========================
+
+def cleanup_old_refactor_dirs(dry):
+    print("\n--- CLEANING UP OLD UNTRACKED REFACTOR DIRECTORIES ---")
+    dirs_to_clean = ["apps", "services", "storage"]
+    for d in dirs_to_clean:
+        p = ROOT / d
+        if p.exists():
+            print(f"[CLEANUP] Removing old directory: {p}")
+            if not dry:
+                try:
+                    shutil.rmtree(str(p))
+                except Exception as e:
+                    print(f"[WARN] Failed to remove {p}: {e}")
+                    
+    # Clean up tools subdirs except tools/project_refactor/
+    tools_dir = ROOT / "tools"
+    if tools_dir.exists():
+        for item in tools_dir.iterdir():
+            if item.is_dir() and item.name != "project_refactor":
+                print(f"[CLEANUP] Removing old tools subdir: {item}")
+                if not dry:
+                    try:
+                        shutil.rmtree(str(item))
+                    except Exception as e:
+                        print(f"[WARN] Failed to remove {item}: {e}")
+
+# ==========================
 # MAIN EXECUTION FLOW
 # ==========================
 
@@ -867,6 +905,9 @@ def main():
         backup()
         # Step 1: Git Branch & Checkpoint
         git_checkpoint()
+        
+    # Step 1.5: Clean up old untracked directories left from previous failed run
+    cleanup_old_refactor_dirs(dry)
         
     # Step 2: Restructure Monorepo folders
     restructure_monorepo(dry)
