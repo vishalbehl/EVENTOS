@@ -29,13 +29,17 @@ class EventCreate(BaseModel):
     speaker_window_required: bool = True
     currency: str = "INR"
     participants_list_allowed: bool = True
+    speaker_mode_enabled: bool = True
+    registration_mode_enabled: bool = True
     speaker_settings: dict = Field(default_factory=dict)
     registration_settings: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_dates(self) -> "EventCreate":
+    def validate_dates_and_modes(self) -> "EventCreate":
         if self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+        if not self.speaker_mode_enabled and not self.registration_mode_enabled:
+            raise ValueError("At least one mode (Speaker or Registration) must be enabled.")
         return self
 
 
@@ -66,8 +70,16 @@ class EventUpdate(BaseModel):
     speaker_window_required: Optional[bool] = None
     currency: Optional[str] = None
     participants_list_allowed: Optional[bool] = None
+    speaker_mode_enabled: Optional[bool] = None
+    registration_mode_enabled: Optional[bool] = None
     speaker_settings: Optional[dict] = None
     registration_settings: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def validate_modes(self) -> "EventUpdate":
+        if self.speaker_mode_enabled is False and self.registration_mode_enabled is False:
+            raise ValueError("At least one mode (Speaker or Registration) must be enabled.")
+        return self
 
 
 class EventResponse(BaseModel):
@@ -93,6 +105,8 @@ class EventResponse(BaseModel):
     speaker_window_required: bool
     currency: str
     participants_list_allowed: bool
+    speaker_mode_enabled: bool
+    registration_mode_enabled: bool
     speaker_settings: dict = Field(default_factory=dict)
     registration_settings: dict = Field(default_factory=dict)
     created_by: Optional[uuid.UUID] = None
@@ -115,4 +129,6 @@ class EventSummary(BaseModel):
     banner_url: Optional[str] = None
     registration_allowed: bool = True
     speaker_window_required: bool = True
+    speaker_mode_enabled: bool = True
+    registration_mode_enabled: bool = True
 

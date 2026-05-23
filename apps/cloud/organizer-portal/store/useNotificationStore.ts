@@ -40,7 +40,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     if (get().socket) return;
     
     // In production, you would pass an auth token here
-    const socket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000', {
+    const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8000', {
       path: '/socket.io',
       transports: ['websocket'],
     });

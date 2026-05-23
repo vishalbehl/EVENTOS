@@ -187,7 +187,7 @@ class RateLimitMiddleware:
     Acts as the first line of defence for DoS/brute-force attacks.
     Excludes /ws and other system paths.
     """
-    _EXCLUDED_PREFIXES = ("/health", "/ws", "/docs", "/redoc", "/openapi.json")
+    _EXCLUDED_PREFIXES = ("/health", "/ws", "/socket.io", "/docs", "/redoc", "/openapi.json")
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

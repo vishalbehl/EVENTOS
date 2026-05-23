@@ -67,6 +67,7 @@ class DashboardStats(BaseModel):
     approval_rate_pct: float
     sessions_ready: int         # sessions where all speakers have approved files
     sessions_total: int
+    talks_pending_upload: int = 0
     
     # New fields for charts
     daily_uploads: List[ChartDataPoint] = []

@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams, usePathname } from "next/navigation";
 import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useSocket } from "@/hooks/use-socket";
+import { useEvent } from "@/hooks/useEvents";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { cn } from "@/lib/utils";
+import { Lock } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function DashboardLayout({
   children,
@@ -15,6 +18,11 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const params = useParams();
+  const pathname = usePathname();
+  const eventId = params?.eventId as string;
+  const { data: event, isLoading: isEventLoading } = useEvent(eventId);
+
   const { isAuthenticated, accessToken, user, setAuth, logout, hasHydrated } = useAuthStore();
   const isSidebarCollapsed = useUIStore((state) => state.isSidebarCollapsed);
   const [hydrated, setHydrated] = useState(false);
@@ -124,8 +132,47 @@ export default function DashboardLayout({
     }
   }, [hydrated, hasHydrated, isAuthenticated, accessToken, logout, router]);
 
-  if (!hydrated || !hasHydrated || (!isAuthenticated && !accessToken)) {
-    return null; // Prevent flash of content or premature redirect
+  const isSpeakerPath = pathname?.includes(`/events/${eventId}/speaker`);
+  const isRegPath = pathname?.includes(`/events/${eventId}/registration`);
+
+  const speakerModeEnabled = event?.speaker_mode_enabled ?? true;
+  const regModeEnabled = event?.registration_mode_enabled ?? true;
+
+  const isBlocked = (isSpeakerPath && !speakerModeEnabled) || (isRegPath && !regModeEnabled);
+
+  let content = children;
+
+  if (eventId && !isEventLoading && isBlocked) {
+    content = (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-6 max-w-lg mx-auto my-auto animate-in fade-in zoom-in duration-500">
+        <div className="h-20 w-20 rounded-[2rem] bg-[var(--dan)]/10 flex items-center justify-center border border-[var(--dan)]/30 shadow-lg shadow-[var(--dan)]/5">
+          <Lock className="h-8 w-8 text-[var(--dan)]" />
+        </div>
+        <div className="space-y-3">
+          <h3 className="text-2xl font-black text-[var(--text)] tracking-tighter">Module Access Restricted</h3>
+          <p className="text-muted text-[11px] font-bold uppercase tracking-[0.2em] leading-relaxed">
+            The {isSpeakerPath ? "Speaker Presentation Desk" : "On-Site Registration"} module is not enabled for this event. 
+          </p>
+          <p className="text-muted text-[10px] font-medium leading-relaxed">
+            Please enable it in the Event Configuration settings or contact your administrator.
+          </p>
+        </div>
+        <Button 
+          onClick={() => {
+            if (isSpeakerPath && regModeEnabled) {
+              router.push(`/events/${eventId}/registration`);
+            } else if (isRegPath && speakerModeEnabled) {
+              router.push(`/events/${eventId}/speaker/dashboard`);
+            } else {
+              router.push("/events");
+            }
+          }}
+          className="rounded-xl px-8 font-black uppercase text-[10px] tracking-widest bg-[var(--pri)] hover:bg-[var(--sec)] border-0 text-[var(--text)]"
+        >
+          {isSpeakerPath && regModeEnabled ? "Switch to Registration Workspace" : (isRegPath && speakerModeEnabled ? "Switch to Speaker Workspace" : "Go Back to Events")}
+        </Button>
+      </div>
+    );
   }
 
   return (
@@ -149,7 +196,7 @@ export default function DashboardLayout({
         <Header />
         <div className="flex-1 min-h-0 px-4 py-5 md:px-6 flex flex-col">
           <div className="flex-1 rounded-[14px] border border-default bg-[color-mix(in_srgb,var(--base)_80%,transparent)] p-5 shadow-[0_24px_80px_color-mix(in_srgb,var(--base)_28%,transparent)] backdrop-blur-md md:p-6 flex flex-col min-h-0 overflow-y-auto custom-scrollbar">
-            {children}
+            {content}
           </div>
         </div>
       </main>

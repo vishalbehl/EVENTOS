@@ -119,6 +119,9 @@ class Event(Base):
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="INR")
     participants_list_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     
+    speaker_mode_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    registration_mode_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    
     speaker_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {})
     registration_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {})
 

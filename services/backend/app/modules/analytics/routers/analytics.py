@@ -82,6 +82,7 @@ async def dashboard(
         approval_rate_pct=funnel.get("approval_rate_pct", 0.0),
         sessions_ready=overview.get("sessions_ready", 0),
         sessions_total=overview.get("total_sessions", 0),
+        talks_pending_upload=overview.get("talks_pending_upload", 0),
         daily_uploads=snapshot.get("daily_uploads", []),
         room_readiness=[
             RoomBreakdownRow(

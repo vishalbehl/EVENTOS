@@ -38,12 +38,20 @@ from app.config import settings
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=[
+    cors_allowed_origins="*" if settings.environment == "development" else [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://0.0.0.0:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:3003",
+        "http://127.0.0.1:3003",
+        "http://localhost:3004",
+        "http://127.0.0.1:3004",
+        "http://localhost:3005",
+        "http://127.0.0.1:3005",
     ],
     logger=False,
     engineio_logger=False,

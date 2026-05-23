@@ -15,10 +15,12 @@ import { useEvents, useDeleteEvent, useUpdateEvent } from "@/hooks/useEvents";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { EventSummary } from "@/types/backend";
 import { CreateEventDialog } from "@/components/CreateEventDialog";
 
 export default function EventsPage() {
+  const router = useRouter();
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -51,6 +53,21 @@ export default function EventsPage() {
   const closeDialog = () => {
     setIsCreateDialogOpen(false);
     setEventToEdit(null);
+  };
+
+  const handleSelectEvent = (event: EventSummary) => {
+    const hasSpeaker = (event as any).speaker_mode_enabled ?? true;
+    const hasReg = (event as any).registration_mode_enabled ?? true;
+
+    if (hasSpeaker && hasReg) {
+      setSelectedEventForRedirect(event);
+    } else if (hasSpeaker) {
+      router.push(`/events/${event.id}/speaker/dashboard`);
+    } else if (hasReg) {
+      router.push(`/events/${event.id}/registration`);
+    } else {
+      router.push(`/events/${event.id}/speaker/dashboard`);
+    }
   };
 
   return (
@@ -182,7 +199,7 @@ export default function EventsPage() {
                   event={event} 
                   onEdit={(e) => handleEdit(e, event)}
                   onDelete={(e) => handleDelete(e, event.id, event.name)}
-                  onSelect={() => setSelectedEventForRedirect(event)}
+                  onSelect={() => handleSelectEvent(event)}
                 />
               ))}
             </motion.div>
@@ -213,7 +230,7 @@ export default function EventsPage() {
                             event={event} 
                             onEdit={(e) => handleEdit(e, event)}
                             onDelete={(e) => handleDelete(e, event.id, event.name)}
-                            onSelect={() => setSelectedEventForRedirect(event)}
+                            onSelect={() => handleSelectEvent(event)}
                           />
                         ))}
                       </tbody>

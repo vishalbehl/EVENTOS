@@ -218,6 +218,7 @@ async def _get_overview(db: AsyncSession, event_id: uuid.UUID, coverage_data: Op
         "files_pending": files_pending,
         "files_rejected": files_rejected,
         "sessions_ready": coverage.get("complete", 0),
+        "talks_pending_upload": coverage.get("talks_pending_upload", 0),
     }
 
 
@@ -315,7 +316,6 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
 
     # Re-aggregate per session
     # (simplified: count sessions with at least one file vs none)
-    with_file_sessions = set()
     all_sessions = set()
 
     ss_q = await db.execute(
@@ -339,6 +339,19 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
             missing += 1
 
     total = len(all_sessions)
+    total_talks = sum(len(slots) for slots in session_slots.values())
+    talks_with_file = sum(1 for slots in session_slots.values() for s in slots if s in has_file)
+    
+    # Query pending eposters and add to the pending count
+    posters_count_q = await db.execute(
+        select(func.count(Poster.id))
+        .where(
+            Poster.event_id == event_id,
+            Poster.status == "pending"
+        )
+    )
+    pending_eposters = posters_count_q.scalar() or 0
+    talks_pending_upload = (total_talks - talks_with_file) + pending_eposters
 
     # Fetch session details for the breakdown list
     from app.modules.venue.models.room import Room
@@ -382,6 +395,7 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "partial": partial,
         "missing": missing,
         "coverage_pct": round(complete / total * 100, 1) if total > 0 else 0.0,
+        "talks_pending_upload": talks_pending_upload,
         "sessions": session_rows,
     }
 

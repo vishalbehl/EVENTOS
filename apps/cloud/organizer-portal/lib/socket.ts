@@ -20,7 +20,7 @@ class SocketService {
     this.socket = io(SOCKET_URL, {
       auth: { token },
       reconnectionAttempts: 5,
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       timeout: 20000,
     });
 

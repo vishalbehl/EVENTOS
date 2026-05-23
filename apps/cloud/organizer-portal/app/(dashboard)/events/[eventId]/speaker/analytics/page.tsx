@@ -8,7 +8,7 @@ import {
   Zap, Clock, Download, Share2, Layers, Activity,
   ArrowUpRight, CheckCircle2, Mail, Server, Fingerprint,
   Map, Presentation, FileText, Table2, PieChart, Timer,
-  Loader2, FileSpreadsheet, FileImage,
+  Loader2, FileSpreadsheet, FileImage, PlayCircle, MapPin, Calendar, ArrowRight
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,8 @@ import {
   useFileFormats,
   useRoomBreakdown,
   useExportDownload,
+  useMainDashboardStats,
+  useEvent,
 } from "@/hooks/useEvents";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/Tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +30,10 @@ import {
   ResponsiveContainer, PieChart as RechartPie, Pie, Cell, Legend,
 } from "recharts";
 import { toast } from "sonner";
+
+import { DailyUploadsChart } from "@/components/dashboard/DailyUploadsChart";
+import { RoomReadinessChart } from "@/components/dashboard/RoomReadinessChart";
+import { ReadinessHeatmap } from "@/components/dashboard/ReadinessHeatmap";
 
 // ── Colour palette for charts ──────────────────────────────────
 const CHART_COLORS = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#ec4899"];
@@ -75,6 +81,8 @@ export default function AnalyticsPage() {
   const [exportLoading, setExportLoading] = useState<string | null>(null);
 
   const { data, isLoading } = useDashboardStats(eventIdStr);
+  const { data: event, isLoading: eventLoading } = useEvent(eventIdStr);
+  const { data: mainStats, isLoading: mainLoading } = useMainDashboardStats(eventIdStr);
   const { data: approvalTimes, isLoading: atLoading } = useApprovalTimes(eventIdStr);
   const { data: formats, isLoading: fmtLoading } = useFileFormats(eventIdStr);
   const { data: roomBreakdown, isLoading: rbLoading } = useRoomBreakdown(eventIdStr);
@@ -92,7 +100,7 @@ export default function AnalyticsPage() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading || eventLoading) {
     return (
       <div className="h-[80vh] flex flex-col items-center justify-center gap-4">
         <div className="relative h-20 w-20">
@@ -118,13 +126,23 @@ export default function AnalyticsPage() {
         {/* ── Header ── */}
         <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 px-2">
           <div className="space-y-1">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <div className="h-10 w-10 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center border border-[var(--pri)]/20">
                 <Activity className="h-5 w-5 text-[var(--pri)]" />
               </div>
               <h1 className="text-4xl font-black tracking-tighter text-[var(--text)] text-glow-indigo">
-                Strategic <span className="text-[var(--sec)]">Intelligence</span>
+                {event?.name} <span className="text-[var(--sec)]">Intelligence</span>
               </h1>
+              {event && (
+                <Badge className="bg-[var(--pri)]/10 text-[var(--pri)] border-0 font-black text-[10px] px-3 py-1 rounded-full flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5" />
+                  <span>
+                    {new Date(event.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}
+                    {" - "}
+                    {new Date(event.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
+                  </span>
+                </Badge>
+              )}
             </div>
             <p className="text-[12px] font-bold text-muted uppercase tracking-[0.4em] ml-1">
               Real-time analytics dashboard
@@ -202,6 +220,150 @@ export default function AnalyticsPage() {
               ))}
             </div>
           </Card>
+        </section>
+
+        {/* ── Operational Readiness & Venue Analytics ── */}
+        <section className="space-y-8 px-2">
+          <SectionHeader title="Operational Readiness & Venue Analytics" sub="Live ingestion, room completion, and scheduling telemetry" icon={Globe} />
+          
+          {/* Daily Uploads Ingestion Velocity & Session Timeline */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <Card className="glass-3d border-default rounded-[3rem] p-10 lg:col-span-2">
+              <SectionHeader title="Asset Upload Velocity" sub="Daily ingestion trends" icon={TrendingUp} />
+              <DailyUploadsChart data={data.daily_uploads || []} />
+            </Card>
+
+            {/* Upcoming Session Timeline */}
+            <Card className="glass-3d border-default rounded-[3rem] p-8 flex flex-col justify-between">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-[12px] font-black uppercase tracking-[0.3em] text-muted mb-1">Upcoming Session Timeline</h3>
+                  <p className="text-[10px] text-muted uppercase font-bold tracking-widest">Next 5 scheduled rooms</p>
+                </div>
+                <PlayCircle className="h-4 w-4 text-[var(--pri)]" />
+              </div>
+              
+              <div className="space-y-4 overflow-y-auto max-h-[300px] pr-1 no-scrollbar flex-1">
+                {mainLoading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-12 w-full bg-muted/10 rounded-xl" />
+                    <Skeleton className="h-12 w-full bg-muted/10 rounded-xl" />
+                  </div>
+                ) : mainStats?.upcoming_sessions?.length > 0 ? (
+                  mainStats.upcoming_sessions.map((sess: any) => (
+                    <div key={sess.id} className="p-3.5 rounded-xl bg-muted/5 border border-default/50 hover:border-default transition-all flex justify-between gap-4">
+                      <div className="min-w-0">
+                        <h4 className="text-[12px] font-bold text-[var(--text)] truncate mb-0.5">{sess.name}</h4>
+                        {sess.speaker_names?.length > 0 && (
+                          <p className="text-[9px] text-muted font-black uppercase tracking-wider truncate">
+                            {sess.speaker_names.join(", ")}
+                          </p>
+                        )}
+                        <Badge className="bg-purple-500/10 text-purple-400 border-0 font-black text-[8px] uppercase tracking-wider px-2 py-0.5 rounded mt-1">
+                          Room: {sess.room_name || "Unassigned"}
+                        </Badge>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-[12px] font-black text-[var(--pri)] tracking-tight">
+                          {new Date(sess.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+                        </p>
+                        <p className="text-[8px] font-black text-muted uppercase tracking-widest mt-0.5">
+                          {new Date(sess.start_time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted">
+                    <PlayCircle className="h-8 w-8 opacity-20 mb-2" />
+                    <p className="text-[10px] font-black uppercase tracking-widest">No scheduled sessions</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* Room completion charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Room Completion Bar Chart */}
+            <Card className="glass-3d border-default rounded-[3rem] p-10 lg:col-span-2">
+              <SectionHeader title="Room-Wise Completion" sub="Ready sessions per venue" icon={Layers} />
+              <RoomReadinessChart data={data.room_readiness || []} />
+            </Card>
+
+            {/* Room Readiness Heatmap */}
+            <Card className="glass-3d border-default rounded-[3rem] p-10 flex flex-col justify-between">
+              <div>
+                <SectionHeader title="Readiness Scan Map" sub="Venue readiness percentages" icon={Map} />
+                <div className="overflow-y-auto max-h-[300px] pr-1 no-scrollbar mt-6">
+                  <ReadinessHeatmap data={data.room_heatmap || []} />
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          {/* Session Clusters & Room Occupancy (2 columns) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Session Clusters */}
+            <Card className="glass-3d border-default rounded-[3rem] p-10">
+              <div className="flex items-center justify-between mb-8">
+                <SectionHeader title="Session Clusters" sub="Scheduled sessions per room" icon={Presentation} />
+              </div>
+              <div className="h-[220px]">
+                {mainLoading ? (
+                  <div className="h-full flex items-center justify-center"><Loader2 className="h-8 w-8 text-[var(--pri)] animate-spin" /></div>
+                ) : mainStats?.session_distribution?.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={mainStats.session_distribution} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <XAxis dataKey="label" stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
+                      <YAxis stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
+                      <RechartTooltip contentStyle={{ background: "var(--base)", border: "1px solid color-mix(in srgb,var(--text) 10%,transparent)", borderRadius: "1rem", fontSize: 12 }} />
+                      <Bar dataKey="value" name="Sessions" fill="var(--pri)" radius={[4, 4, 0, 0]}>
+                        {mainStats.session_distribution.map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill="var(--pri)" opacity={0.6 + (index % 3) * 0.2} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted text-[10px] font-black uppercase tracking-widest border border-dashed border-default rounded-3xl">
+                    No scheduled sessions mapped
+                  </div>
+                )}
+              </div>
+            </Card>
+
+            {/* Room Occupancy */}
+            <Card className="glass-3d border-default rounded-[3rem] p-10">
+              <div className="flex items-center justify-between mb-8">
+                <SectionHeader title="Room Occupancy" sub="Total scheduled hours per room" icon={MapPin} />
+              </div>
+              <div className="h-[220px]">
+                {mainLoading ? (
+                  <div className="h-full flex items-center justify-center"><Loader2 className="h-8 w-8 text-[var(--sec)] animate-spin" /></div>
+                ) : mainStats?.room_occupancy?.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={mainStats.room_occupancy} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <XAxis dataKey="label" stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
+                      <YAxis stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
+                      <RechartTooltip contentStyle={{ background: "var(--base)", border: "1px solid color-mix(in srgb,var(--text) 10%,transparent)", borderRadius: "1rem", fontSize: 12 }} />
+                      <Bar dataKey="value" name="Hours" fill="var(--sec)" radius={[4, 4, 0, 0]}>
+                        {mainStats.room_occupancy.map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill="var(--sec)" opacity={0.6 + (index % 3) * 0.2} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted text-[10px] font-black uppercase tracking-widest border border-dashed border-default rounded-3xl">
+                    No occupancy telemetry compiled
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
         </section>
 
         {/* ── Format Distribution + Approval Times side by side ── */}

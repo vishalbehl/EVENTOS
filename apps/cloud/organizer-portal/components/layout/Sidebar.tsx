@@ -17,6 +17,7 @@ import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useEvent } from "@/hooks/useEvents";
 import { PERMISSIONS } from "@/lib/permissions";
 
 export function Sidebar() {
@@ -35,15 +36,12 @@ export function Sidebar() {
   ];
 
   const { checkPermission } = usePermissions(eventId as string);
+  const { data: event } = useEvent(eventId as string);
+  const speakerEnabled = event?.speaker_mode_enabled ?? true;
+  const regEnabled = event?.registration_mode_enabled ?? true;
 
   const eventRoutes = [
-    { label: "Overview", icon: LayoutDashboard, href: `/events/${eventId}/dashboard` },
-    { 
-      label: "Speaker Config", 
-      icon: SlidersHorizontal, 
-      href: `/events/${eventId}/speaker/configuration`,
-      permission: PERMISSIONS.SETTINGS_EDIT
-    },
+    { label: "Overview", icon: LayoutDashboard, href: `/events/${eventId}/speaker/dashboard` },
     { label: "Rooms", icon: MapPin, href: `/events/${eventId}/speaker/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
     { label: "Sessions", icon: Calendar, href: `/events/${eventId}/speaker/sessions`, permission: PERMISSIONS.SESSIONS_VIEW },
     { label: "Speakers", icon: Users, href: `/events/${eventId}/speaker/speakers`, permission: PERMISSIONS.SPEAKERS_VIEW },
@@ -63,7 +61,7 @@ export function Sidebar() {
     { label: "Notifications", icon: Bell, href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
   ].filter(r => !r.permission || checkPermission(r.permission));
 
-  const isRegistrationWorkspace = !!(eventId && pathname?.includes(`/events/${eventId}/registration`));
+  const isRegistrationWorkspace = !!(eventId && (pathname?.includes(`/events/${eventId}/registration`) || !speakerEnabled));
 
   const registrationRoutes = [
     { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/registration/dashboard` },
@@ -87,8 +85,8 @@ export function Sidebar() {
   ];
 
   const currentRoutes = isRegistrationWorkspace 
-    ? registrationRoutes 
-    : (isEventWorkspace ? eventRoutes : filteredPlatformRoutes);
+    ? (regEnabled ? registrationRoutes : []) 
+    : (isEventWorkspace ? (speakerEnabled ? eventRoutes : []) : filteredPlatformRoutes);
 
   return (
     <motion.aside

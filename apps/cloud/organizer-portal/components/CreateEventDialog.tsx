@@ -6,6 +6,7 @@ import { X, Calendar, MapPin, Tag, Plus, Sparkles, Loader2, Hash } from "lucide-
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Switch } from "./ui/switch";
 import { useCreateEvent, useUpdateEvent } from "@/hooks/useEvents";
 import { cn } from "@/lib/utils";
 import { EventSummary } from "@/types/backend";
@@ -27,7 +28,9 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
     location: "",
     start_date: "",
     end_date: "",
-    status: "draft" as const
+    status: "draft" as const,
+    speaker_mode_enabled: true,
+    registration_mode_enabled: true
   });
 
   useEffect(() => {
@@ -49,7 +52,9 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         location: eventToEdit.location || "",
         start_date: eventToEdit.start_date ? new Date(eventToEdit.start_date).toISOString().split('T')[0] : "",
         end_date: eventToEdit.end_date ? new Date(eventToEdit.end_date).toISOString().split('T')[0] : "",
-        status: eventToEdit.status as any
+        status: eventToEdit.status as any,
+        speaker_mode_enabled: (eventToEdit as any).speaker_mode_enabled ?? true,
+        registration_mode_enabled: (eventToEdit as any).registration_mode_enabled ?? true
       });
     } else if (isOpen) {
       setFormData({
@@ -58,7 +63,9 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         location: "",
         start_date: "",
         end_date: "",
-        status: "draft"
+        status: "draft",
+        speaker_mode_enabled: true,
+        registration_mode_enabled: true
       });
     }
   }, [eventToEdit, isOpen]);
@@ -193,6 +200,46 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         value={formData.end_date}
                         onChange={e => setFormData({ ...formData, end_date: e.target.value })}
                         className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)] [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Event Features / Modes Switches */}
+                <div className="glass-3d p-6 rounded-[2rem] border-default space-y-6">
+                  <div>
+                    <h4 className="text-[12px] font-black text-[var(--text)] uppercase tracking-wider">Event Features & Modes</h4>
+                    <p className="text-muted text-[10px] font-bold uppercase tracking-widest mt-0.5">Enable the modules required for this conference. At least one must be active.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="flex items-center justify-between p-5 rounded-2xl bg-white/5 border border-default/50 hover:border-[var(--pri)]/20 transition-all gap-4">
+                      <div className="space-y-1">
+                        <Label className="text-[12px] font-black text-[var(--text)] leading-none cursor-pointer" htmlFor="switch-speaker">Speaker Presentation Desk</Label>
+                        <p className="text-muted text-[9px] font-bold uppercase tracking-wider leading-normal">Manage schedule, speakers, files & eposters</p>
+                      </div>
+                      <Switch
+                        id="switch-speaker"
+                        checked={formData.speaker_mode_enabled}
+                        onCheckedChange={(checked) => {
+                          if (!checked && !formData.registration_mode_enabled) return;
+                          setFormData({ ...formData, speaker_mode_enabled: checked });
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between p-5 rounded-2xl bg-white/5 border border-default/50 hover:border-[var(--sec)]/20 transition-all gap-4">
+                      <div className="space-y-1">
+                        <Label className="text-[12px] font-black text-[var(--text)] leading-none cursor-pointer" htmlFor="switch-registration">On-Site Registration & Badges</Label>
+                        <p className="text-muted text-[9px] font-bold uppercase tracking-wider leading-normal">Manage registrations, checkins & dynamic badge printing</p>
+                      </div>
+                      <Switch
+                        id="switch-registration"
+                        checked={formData.registration_mode_enabled}
+                        onCheckedChange={(checked) => {
+                          if (!checked && !formData.speaker_mode_enabled) return;
+                          setFormData({ ...formData, registration_mode_enabled: checked });
+                        }}
                       />
                     </div>
                   </div>
