@@ -598,3 +598,141 @@ async def list_participant_checkins(
     ).order_by(CheckIn.check_in_time.desc())
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+@router.get("/analytics-dashboard")
+async def get_registration_analytics(
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import Date, cast, extract
+    
+    # 1. Base counts
+    total_q = select(func.count(Participant.id)).where(Participant.event_id == event.id)
+    checked_in_q = select(func.count(func.distinct(CheckIn.participant_id))).where(CheckIn.event_id == event.id)
+    pending_pay_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.paid_status.in_(["Unpaid", "Pending"]))
+    confirmed_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.paid_status == "Paid")
+    vip_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.role == "VIP")
+    student_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.role == "Student")
+    
+    local_country = "India"
+    if event.location:
+        parts = event.location.split(",")
+        if parts:
+            local_country = parts[-1].strip()
+            
+    intl_q = select(func.count(Participant.id)).where(
+        Participant.event_id == event.id,
+        Participant.country.is_not(None),
+        Participant.country != "",
+        Participant.country.ilike(f"%{local_country}%") == False
+    )
+    
+    cancellations_q = select(func.count(Participant.id)).where(
+        Participant.event_id == event.id,
+        Participant.paid_status.in_(["Cancelled", "Canceled"])
+    )
+    
+    refund_q = select(func.count(Participant.id)).where(
+        Participant.event_id == event.id,
+        Participant.paid_status.in_(["Refunded", "Refund Requested", "Pending Refund"])
+    )
+    
+    # Pricing matrix mapping for dynamic revenue summation
+    pricing_matrix = {}
+    from app.modules.registration.models.ticket_type import TicketType
+    p_matrix_q = select(TicketType).where(TicketType.event_id == event.id)
+    p_matrix_res = await db.execute(p_matrix_q)
+    for t in p_matrix_res.scalars().all():
+        pricing_matrix[t.role_name.lower()] = t.price
+        
+    paid_participants_q = select(Participant.role).where(Participant.event_id == event.id, Participant.paid_status == "Paid")
+    paid_res = await db.execute(paid_participants_q)
+    total_revenue = 0.0
+    for role_name in paid_res.scalars().all():
+        total_revenue += pricing_matrix.get(role_name.lower(), 150.0)
+        
+    total_count = (await db.execute(total_q)).scalar_one() or 0
+    checked_in_count = (await db.execute(checked_in_q)).scalar_one() or 0
+    pending_pay_count = (await db.execute(pending_pay_q)).scalar_one() or 0
+    confirmed_count = (await db.execute(confirmed_q)).scalar_one() or 0
+    vip_count = (await db.execute(vip_q)).scalar_one() or 0
+    student_count = (await db.execute(student_q)).scalar_one() or 0
+    intl_count = (await db.execute(intl_q)).scalar_one() or 0
+    cancellations_count = (await db.execute(cancellations_q)).scalar_one() or 0
+    refund_count = (await db.execute(refund_q)).scalar_one() or 0
+    
+    # 2. Growth Trends (Daily registration count)
+    growth_q = select(
+        cast(Participant.registered_at, Date),
+        func.count(Participant.id)
+    ).where(Participant.event_id == event.id).group_by(cast(Participant.registered_at, Date)).order_by(cast(Participant.registered_at, Date))
+    growth_res = (await db.execute(growth_q)).all()
+    growth_trends = [{"date": str(r[0]), "count": r[1]} for r in growth_res]
+    
+    # 3. Participant Type Distribution
+    roles_q = select(Participant.role, func.count(Participant.id)).where(
+        Participant.event_id == event.id
+    ).group_by(Participant.role)
+    roles_res = (await db.execute(roles_q)).all()
+    role_dist = [{"role": r[0] or "Unknown", "count": r[1]} for r in roles_res]
+    
+    # 4. Registration Source Tracking
+    sources_q = select(Participant.source, func.count(Participant.id)).where(
+        Participant.event_id == event.id
+    ).group_by(Participant.source)
+    sources_res = (await db.execute(sources_q)).all()
+    source_tracking = [{"source": r[0] or "Unknown", "count": r[1]} for r in sources_res]
+    
+    # 5. Payment Status Analytics
+    payments_q = select(Participant.paid_status, func.count(Participant.id)).where(
+        Participant.event_id == event.id
+    ).group_by(Participant.paid_status)
+    payments_res = (await db.execute(payments_q)).all()
+    payment_analytics = [{"status": r[0] or "Unpaid", "count": r[1]} for r in payments_res]
+    
+    # 6. Country-based registrations
+    countries_q = select(Participant.country, func.count(Participant.id)).where(
+        Participant.event_id == event.id,
+        Participant.country.is_not(None),
+        Participant.country != ""
+    ).group_by(Participant.country)
+    countries_res = (await db.execute(countries_q)).all()
+    country_registrations = [{"country": r[0], "count": r[1]} for r in countries_res]
+    
+    # 7. Daily/Hourly Heatmap
+    heatmap_q = select(
+        extract("dow", Participant.registered_at),
+        extract("hour", Participant.registered_at),
+        func.count(Participant.id)
+    ).where(Participant.event_id == event.id).group_by(
+        extract("dow", Participant.registered_at),
+        extract("hour", Participant.registered_at)
+    )
+    heatmap_res = (await db.execute(heatmap_q)).all()
+    heatmap_data = [
+        {"day": int(r[0]), "hour": int(r[1]), "count": r[2]}
+        for r in heatmap_res
+    ]
+    
+    return {
+        "kpis": {
+            "total_registrations": total_count,
+            "checked_in_attendees": checked_in_count,
+            "pending_payments": pending_pay_count,
+            "confirmed_attendees": confirmed_count,
+            "vip_attendees": vip_count,
+            "student_registrations": student_count,
+            "international_attendees": intl_count,
+            "cancellations": cancellations_count,
+            "total_revenue": total_revenue,
+            "refund_requests": refund_count
+        },
+        "growth_trends": growth_trends,
+        "participant_type_distribution": role_dist,
+        "registration_source_tracking": source_tracking,
+        "payment_status_analytics": payment_analytics,
+        "country_registrations": country_registrations,
+        "daily_heatmap": heatmap_data
+    }
+

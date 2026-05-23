@@ -11,6 +11,7 @@
     "dev:organizer": "npm --workspace apps/cloud/organizer-portal run dev",
     "dev:speaker": "npm --workspace apps/cloud/speaker-portal run dev",
     "dev:registration": "npm --workspace apps/cloud/registration-portal run dev -- --port 3003",
+    "dev:venue-registration": "npm --workspace apps/venue/registration run dev",
     "build": "echo \"Define monorepo build orchestration\""
   },
   "dependencies": {

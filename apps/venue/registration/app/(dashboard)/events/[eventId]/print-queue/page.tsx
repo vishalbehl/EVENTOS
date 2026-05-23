@@ -5,8 +5,7 @@ import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Printer, RefreshCw, PlusCircle, CheckCircle, XCircle, Clock, 
-  AlertTriangle, Play, AlertCircle, FileText, Settings, User, 
-  MapPin, Eye, RotateCw
+  AlertTriangle, FileText, Settings, User, MapPin, RotateCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +20,6 @@ interface PrintJob {
   status: "queued" | "printing" | "completed" | "failed";
   queued_at: string;
   printed_at?: string;
-  // Resolved in FE:
   participant_name?: string;
   badge_code?: string;
   printer_name?: string;
@@ -35,17 +33,6 @@ interface PrinterDevice {
   status: "online" | "offline" | "idle" | "printing";
 }
 
-interface Participant {
-  id: string;
-  name: string;
-}
-
-interface Badge {
-  id: string;
-  participant_id: string;
-  badge_code: string;
-}
-
 export default function PrintQueuePage() {
   const { eventId } = useParams();
 
@@ -54,20 +41,17 @@ export default function PrintQueuePage() {
   const [loading, setLoading] = useState(true);
   const [registerModalOpen, setRegisterModalOpen] = useState(false);
 
-  // New Printer form fields
   const [printerName, setPrinterName] = useState("");
   const [ipAddress, setIpAddress] = useState("");
   const [location, setLocation] = useState("");
 
-  // Resolvers maps
-  const [participants, setParticipants] = useState<Record<string, string>>({}); // id -> name
-  const [badges, setBadges] = useState<Record<string, { code: string; name: string }>>({}); // badge_id -> { code, name }
+  const [participants, setParticipants] = useState<Record<string, string>>({});
+  const [badges, setBadges] = useState<Record<string, { code: string; name: string }>>({});
 
   const fetchData = async () => {
     try {
       setLoading(true);
       
-      // 1. Fetch printers & print jobs
       const [printersRes, jobsRes] = await Promise.all([
         apiGet<PrinterDevice[]>(`/events/${eventId}/printers`),
         apiGet<PrintJob[]>(`/events/${eventId}/badges/print-jobs`)
@@ -75,7 +59,6 @@ export default function PrintQueuePage() {
 
       setPrinters(printersRes || []);
       
-      // 2. Fetch participants & badges to resolve names in FE
       const [participantsRes, badgesRes] = await Promise.all([
         apiGet<any[]>(`/events/${eventId}/participants`),
         apiGet<any[]>(`/events/${eventId}/badges`).catch(() => [])
@@ -96,7 +79,6 @@ export default function PrintQueuePage() {
       });
       setBadges(badgeMap);
 
-      // Resolve Job labels
       const resolvedJobs = (jobsRes || []).map(job => {
         const badgeInfo = badgeMap[job.badge_id];
         const printer = printersRes?.find(p => p.id === job.printer_id);
@@ -174,7 +156,6 @@ export default function PrintQueuePage() {
     }
   };
 
-  // Compute metrics
   const metrics = useMemo(() => {
     return {
       queued: jobs.filter(j => j.status === "queued").length,

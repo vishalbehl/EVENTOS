@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.notifications.models.email_campaign import EmailCampaign

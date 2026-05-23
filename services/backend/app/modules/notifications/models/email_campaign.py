@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,6 +30,16 @@ class EmailCampaign(Base):
     status lifecycle: draft → scheduled → sending → sent | failed
     """
     __tablename__ = "email_campaigns"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'scheduled', 'sending', 'sent', 'failed')",
+            name="ck_ec_status"
+        ),
+        CheckConstraint(
+            "recipient_filter IN ('all', 'pending_upload', 'uploaded', 'approved', 'rejected', 'posters', 'specific_session', 'specific_room', 'specific_speakers', 'custom', 'paid', 'unpaid', 'pending', 'specific_participants', 'custom_list')",
+            name="ck_ec_filter"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

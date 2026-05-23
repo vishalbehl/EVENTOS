@@ -72,7 +72,6 @@ export function Sidebar() {
     { label: "Review Queue", icon: ClipboardList, href: `/events/${eventId}/registration/review` },
     { label: "Form Builder", icon: ClipboardList, href: `/events/${eventId}/registration/form-builder` },
     { label: "Print Designer", icon: Layout, href: `/events/${eventId}/registration/designer` },
-    { label: "Print Queue", icon: FileText, href: `/events/${eventId}/registration/print-queue` },
     { label: "Certificate Printer", icon: FileText, href: `/events/${eventId}/registration/certificates` },
     { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
     { label: "Capacity", icon: Box, href: `/events/${eventId}/registration/capacity` },
