@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { Portal } from "@/components/ui/portal";
+import { CountryStateEntry, fetchCountryStates, getAllowedCountries, getStatesForCountry } from "@/lib/country-states";
 
 interface FormField {
   id: string;
@@ -33,15 +34,30 @@ export default function RegistrationFormBuilder() {
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewCountry, setPreviewCountry] = useState<Record<string, string>>({});
+  const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
+  const [countryPicker, setCountryPicker] = useState<Record<string, string>>({});
   
   const [fields, setFields] = useState<FormField[]>([]);
   const [isLive, setIsLive] = useState(false);
+
+  const getEffectiveFieldType = (field: FormField) => {
+    if (field.id === "email") return "email";
+    if (field.id === "phone") return "phone";
+    if (field.id === "country") return "country";
+    if (field.id === "role") return "select";
+    return field.type;
+  };
+
+  const normalizeSystemField = (field: FormField): FormField => ({
+    ...field,
+    type: getEffectiveFieldType(field),
+  });
 
   const fetchConfig = async () => {
     setLoading(true);
     try {
       const res = await apiGet<any>(`/events/${eventId}/registration/form-config?t=${Date.now()}`);
-      setFields(res.fields || []);
+      setFields((res.fields || []).map(normalizeSystemField));
       setIsLive(res.is_live || false);
     } catch (err: any) {
       toast.error(err.message || "Failed to load form configuration.");
@@ -55,6 +71,10 @@ export default function RegistrationFormBuilder() {
       fetchConfig();
     }
   }, [eventId]);
+
+  useEffect(() => {
+    fetchCountryStates().then(setCountryStates);
+  }, []);
 
   const handleUpdateField = (id: string, updates: Partial<FormField>) => {
     setFields(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
@@ -116,6 +136,27 @@ export default function RegistrationFormBuilder() {
       return f;
     }));
   };
+
+  const handleAddAllowedCountry = (fieldId: string) => {
+    const country = countryPicker[fieldId];
+    if (!country) return;
+
+    setFields(prev => prev.map(f => {
+      if (f.id !== fieldId) return f;
+      const currentOptions = f.options || [];
+      if (currentOptions.includes(country)) return f;
+      return { ...f, options: [...currentOptions, country] };
+    }));
+    setCountryPicker(prev => ({ ...prev, [fieldId]: "" }));
+  };
+
+  const handleRemoveAllowedCountry = (fieldId: string, country: string) => {
+    setFields(prev => prev.map(f => (
+      f.id === fieldId ? { ...f, options: (f.options || []).filter(c => c !== country) } : f
+    )));
+  };
+
+  const getCountryChoices = (field: FormField) => getAllowedCountries(field.options, countryStates);
 
   const handleSaveConfig = async () => {
     // Basic validation
@@ -203,6 +244,7 @@ export default function RegistrationFormBuilder() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {defaultFieldsList.map(field => {
                 const isCore = field.id === "name" || field.id === "email";
+                const fieldType = getEffectiveFieldType(field);
                 return (
                   <Card 
                     key={field.id} 
@@ -211,7 +253,7 @@ export default function RegistrationFormBuilder() {
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
                         <span className="text-[9px] font-black uppercase tracking-widest text-[var(--pri)] bg-[var(--pri)]/10 px-2 py-0.5 rounded-md">
-                          {field.type === "select" ? "Category (Select)" : field.type === "email" ? "Email Input" : field.type === "phone" ? "Phone Input" : field.type === "country" ? "Country Select" : "Text Input"}
+                          {fieldType === "select" ? "Category (Select)" : fieldType === "email" ? "Email Input" : fieldType === "phone" ? "Phone Input" : fieldType === "country" ? "Country Select" : "Text Input"}
                         </span>
                         <h4 className="text-sm font-black uppercase tracking-wider text-[var(--text)] mt-1.5">{field.label}</h4>
                         <p className="text-[9px] text-muted font-semibold">Database Column: {field.name}</p>
@@ -267,6 +309,53 @@ export default function RegistrationFormBuilder() {
                         className="h-10 bg-white/5 border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)]"
                       />
                     </div>
+
+                    {fieldType === "country" && (
+                      <div className="mt-4 space-y-3 bg-white/5 border border-default/50 p-4 rounded-2xl">
+                        <div>
+                          <p className="text-[9px] font-black text-muted uppercase tracking-widest">Allowed Countries</p>
+                          <p className="text-[9px] text-muted/70 font-semibold mt-1">
+                            Leave empty to allow every country. Add one country to lock the public form to it.
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            value={countryPicker[field.id] || ""}
+                            onChange={(e) => setCountryPicker(prev => ({ ...prev, [field.id]: e.target.value }))}
+                            className="h-10 min-w-0 flex-1 bg-white/5 border border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all cursor-pointer"
+                          >
+                            <option value="" className="bg-[var(--surf)]">Select country...</option>
+                            {countryStates
+                              .filter(entry => !(field.options || []).includes(entry.country))
+                              .map(entry => (
+                                <option key={entry.country} value={entry.country} className="bg-[var(--surf)]">{entry.country}</option>
+                              ))}
+                          </select>
+                          <Button
+                            type="button"
+                            onClick={() => handleAddAllowedCountry(field.id)}
+                            className="h-10 px-4 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[8px] rounded-xl"
+                          >
+                            Add
+                          </Button>
+                        </div>
+                        {(field.options || []).length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {(field.options || []).map(country => (
+                              <button
+                                key={country}
+                                type="button"
+                                onClick={() => handleRemoveAllowedCountry(field.id, country)}
+                                className="inline-flex items-center gap-1 rounded-full border border-[var(--pri)]/20 bg-[var(--pri)]/10 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-[var(--pri)] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20"
+                              >
+                                {country}
+                                <X className="h-3 w-3" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </Card>
                 );
               })}
@@ -303,10 +392,14 @@ export default function RegistrationFormBuilder() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 {customFieldsList.map((field, index) => (
-                  <Card 
-                    key={field.id}
-                    className="p-6 glass-3d border-default rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_5%,transparent)] hover:border-[var(--pri)]/60 transition-all duration-300 relative space-y-4"
-                  >
+                  (() => {
+                    const fieldType = getEffectiveFieldType(field);
+
+                    return (
+                    <Card
+                      key={field.id}
+                      className="p-6 glass-3d border-default rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_5%,transparent)] hover:border-[var(--pri)]/60 transition-all duration-300 relative space-y-4"
+                    >
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-default/30 pb-4">
                       
                       <div className="flex items-center gap-3">
@@ -321,7 +414,7 @@ export default function RegistrationFormBuilder() {
                             className="h-10 max-w-xs bg-transparent border-0 border-b border-dashed border-default focus:border-[var(--pri)] focus:ring-0 rounded-none px-0 font-black text-sm text-[var(--text)] py-0"
                             placeholder="Enter Question / Label"
                           />
-                          <p className="text-[9px] text-muted font-bold mt-1 uppercase tracking-widest">Type: {field.type}</p>
+                          <p className="text-[9px] text-muted font-bold mt-1 uppercase tracking-widest">Type: {fieldType}</p>
                         </div>
                       </div>
 
@@ -360,8 +453,8 @@ export default function RegistrationFormBuilder() {
                       <div className="space-y-1.5">
                         <label className="text-[9px] font-black text-muted uppercase tracking-widest">Question Input Type</label>
                         <select
-                          value={field.type}
-                          onChange={(e) => handleUpdateField(field.id, { type: e.target.value, options: e.target.value === "select" || e.target.value === "checkbox" ? [] : undefined })}
+                          value={fieldType}
+                          onChange={(e) => handleUpdateField(field.id, { type: e.target.value, options: e.target.value === "select" || e.target.value === "checkbox" || e.target.value === "country" ? [] : undefined })}
                           className="h-10 w-full bg-white/5 border border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all cursor-pointer"
                         >
                           <option value="text" className="bg-[var(--surf)]">Short Answer (Text)</option>
@@ -377,7 +470,7 @@ export default function RegistrationFormBuilder() {
                       </div>
 
                       {/* Field Placeholder */}
-                      {field.type !== "image" && field.type !== "file" && field.type !== "date" && (
+                      {fieldType !== "image" && fieldType !== "file" && fieldType !== "date" && (
                         <div className="space-y-1.5">
                           <label className="text-[9px] font-black text-muted uppercase tracking-widest">Input Placeholder</label>
                           <Input
@@ -391,8 +484,55 @@ export default function RegistrationFormBuilder() {
                       )}
                     </div>
 
+                    {fieldType === "country" && (
+                      <div className="space-y-3 bg-white/5 border border-default/50 p-5 rounded-2xl">
+                        <div>
+                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Allowed Countries</span>
+                          <p className="text-[9px] text-muted/70 font-semibold mt-1">
+                            Empty means all countries. Add one country for event-specific registrations like India-only.
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            value={countryPicker[field.id] || ""}
+                            onChange={(e) => setCountryPicker(prev => ({ ...prev, [field.id]: e.target.value }))}
+                            className="h-10 min-w-0 flex-1 bg-white/5 border border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all cursor-pointer"
+                          >
+                            <option value="" className="bg-[var(--surf)]">Select country...</option>
+                            {countryStates
+                              .filter(entry => !(field.options || []).includes(entry.country))
+                              .map(entry => (
+                                <option key={entry.country} value={entry.country} className="bg-[var(--surf)]">{entry.country}</option>
+                              ))}
+                          </select>
+                          <Button
+                            type="button"
+                            onClick={() => handleAddAllowedCountry(field.id)}
+                            className="h-10 px-4 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[8px] rounded-xl"
+                          >
+                            Add
+                          </Button>
+                        </div>
+                        {(field.options || []).length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {(field.options || []).map(country => (
+                              <button
+                                key={country}
+                                type="button"
+                                onClick={() => handleRemoveAllowedCountry(field.id, country)}
+                                className="inline-flex items-center gap-1 rounded-full border border-[var(--pri)]/20 bg-[var(--pri)]/10 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-[var(--pri)] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20"
+                              >
+                                {country}
+                                <X className="h-3 w-3" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Dropdown Options List */}
-                    {(field.type === "select" || field.type === "checkbox") && (
+                    {(fieldType === "select" || fieldType === "checkbox") && (
                       <div className="space-y-3 bg-white/5 border border-default/50 p-5 rounded-2xl">
                         <div className="flex items-center justify-between border-b border-default/30 pb-2.5">
                           <span className="text-[9px] font-black text-muted uppercase tracking-widest">Options / Choices</span>
@@ -432,7 +572,9 @@ export default function RegistrationFormBuilder() {
                         )}
                       </div>
                     )}
-                  </Card>
+                    </Card>
+                    );
+                  })()
                 ))}
               </div>
             )}
@@ -471,6 +613,8 @@ export default function RegistrationFormBuilder() {
                   {fields
                     .filter(f => f.is_active)
                     .map(f => {
+                      const fieldType = getEffectiveFieldType(f);
+
                       return (
                         <div key={f.id} className="space-y-1.5 text-left">
                           <label className="text-[10px] font-black uppercase tracking-wider text-muted flex items-center gap-1">
@@ -478,7 +622,7 @@ export default function RegistrationFormBuilder() {
                             {f.is_required && <span className="text-rose-500 font-bold">*</span>}
                           </label>
 
-                          {f.type === "select" ? (
+                          {fieldType === "select" ? (
                             <select className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer">
                               <option value="" className="bg-[var(--base)] text-[var(--text)]">Select option...</option>
                               {f.id === "role" ? (
@@ -494,7 +638,7 @@ export default function RegistrationFormBuilder() {
                                 ))
                               )}
                             </select>
-                          ) : f.type === "checkbox" ? (
+                          ) : fieldType === "checkbox" ? (
                             <div className="space-y-2 p-4 rounded-xl bg-white/[0.02] border border-white/5">
                               {(f.options || []).map((o, idx) => (
                                 <label key={idx} className="flex items-center gap-2.5 text-xs text-muted font-semibold cursor-pointer hover:text-[var(--text)] transition-colors">
@@ -503,92 +647,76 @@ export default function RegistrationFormBuilder() {
                                 </label>
                               ))}
                             </div>
-                          ) : f.type === "date" ? (
+                          ) : fieldType === "date" ? (
                             <input type="date" className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all" />
-                          ) : f.type === "file" || f.type === "image" ? (
+                          ) : fieldType === "file" || fieldType === "image" ? (
                             <div className="border border-dashed border-white/10 hover:border-[var(--pri)]/40 bg-white/[0.01] hover:bg-white/[0.02] rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all">
                               <UploadCloud className="h-5 w-5 text-muted mb-1" />
                               <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Choose file or drag here</span>
                             </div>
-                          ) : f.type === "country" ? (
-                            <div className="space-y-3">
-                              <select
-                                value={previewCountry[f.id] || ""}
-                                onChange={(e) => setPreviewCountry(prev => ({ ...prev, [f.id]: e.target.value }))}
-                                className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer"
-                              >
-                                <option value="" className="bg-[var(--base)] text-[var(--text)]">Select Country...</option>
-                                <option value="India" className="bg-[var(--base)] text-[var(--text)]">India</option>
-                                <option value="United States" className="bg-[var(--base)] text-[var(--text)]">United States</option>
-                                <option value="United Kingdom" className="bg-[var(--base)] text-[var(--text)]">United Kingdom</option>
-                                <option value="Canada" className="bg-[var(--base)] text-[var(--text)]">Canada</option>
-                                <option value="Australia" className="bg-[var(--base)] text-[var(--text)]">Australia</option>
-                                <option value="Germany" className="bg-[var(--base)] text-[var(--text)]">Germany</option>
-                              </select>
+                          ) : fieldType === "country" ? (
+                            (() => {
+                              const countries = getCountryChoices(f);
+                              const selectedCountry = previewCountry[f.id] || (countries.length === 1 ? countries[0] : "");
+                              const states = getStatesForCountry(countryStates, selectedCountry);
 
-                              {previewCountry[f.id] && (
-                                <div className="space-y-1.5 animate-in fade-in duration-200">
-                                  <label className="text-[10px] font-black uppercase tracking-wider text-muted flex items-center gap-1">
-                                    State / Province
-                                    {f.is_required && <span className="text-rose-500 font-bold">*</span>}
-                                  </label>
-                                  <select
-                                    className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer"
-                                  >
-                                    <option value="" className="bg-[var(--base)] text-[var(--text)]">Select State...</option>
-                                    {previewCountry[f.id] === "India" && (
-                                      <>
-                                        {["Andhra Pradesh", "Delhi", "Gujarat", "Karnataka", "Kerala", "Maharashtra", "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal"].map((s) => (
-                                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
-                                        ))}
-                                      </>
-                                    )}
-                                    {previewCountry[f.id] === "United States" && (
-                                      <>
-                                        {["California", "Florida", "Georgia", "Illinois", "New York", "North Carolina", "Ohio", "Pennsylvania", "Texas", "Washington"].map((s) => (
-                                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
-                                        ))}
-                                      </>
-                                    )}
-                                    {previewCountry[f.id] === "United Kingdom" && (
-                                      <>
-                                        {["England", "Northern Ireland", "Scotland", "Wales"].map((s) => (
-                                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
-                                        ))}
-                                      </>
-                                    )}
-                                    {previewCountry[f.id] === "Canada" && (
-                                      <>
-                                        {["Alberta", "British Columbia", "Manitoba", "Nova Scotia", "Ontario", "Quebec", "Saskatchewan"].map((s) => (
-                                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
-                                        ))}
-                                      </>
-                                    )}
-                                    {previewCountry[f.id] === "Australia" && (
-                                      <>
-                                        {["New South Wales", "Queensland", "South Australia", "Tasmania", "Victoria", "Western Australia"].map((s) => (
-                                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
-                                        ))}
-                                      </>
-                                    )}
-                                    {previewCountry[f.id] === "Germany" && (
-                                      <>
-                                        {["Bavaria", "Berlin", "Hamburg", "Hesse", "North Rhine-Westphalia", "Saxony"].map((s) => (
-                                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
-                                        ))}
-                                      </>
-                                    )}
-                                  </select>
+                              return (
+                                <div className="space-y-3">
+                                  {countries.length === 1 ? (
+                                    <select
+                                      disabled
+                                      value={countries[0]}
+                                      className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] opacity-100 focus:border-[var(--pri)] focus:outline-none transition-all cursor-not-allowed"
+                                    >
+                                      <option value={countries[0]} className="bg-[var(--base)] text-[var(--text)]">{countries[0]}</option>
+                                    </select>
+                                  ) : (
+                                    <select
+                                      value={selectedCountry}
+                                      onChange={(e) => setPreviewCountry(prev => ({ ...prev, [f.id]: e.target.value }))}
+                                      className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer"
+                                    >
+                                      <option value="" className="bg-[var(--base)] text-[var(--text)]">Select Country...</option>
+                                      {countries.map(country => (
+                                        <option key={country} value={country} className="bg-[var(--base)] text-[var(--text)]">{country}</option>
+                                      ))}
+                                    </select>
+                                  )}
+
+                                  {selectedCountry && (
+                                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                                      <label className="text-[10px] font-black uppercase tracking-wider text-muted flex items-center gap-1">
+                                        State / Province
+                                        {f.is_required && <span className="text-rose-500 font-bold">*</span>}
+                                      </label>
+                                      {states.length ? (
+                                        <select
+                                          className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer"
+                                        >
+                                          <option value="" className="bg-[var(--base)] text-[var(--text)]">Select State / Province...</option>
+                                          {states.map(state => (
+                                            <option key={state} value={state} className="bg-[var(--base)] text-[var(--text)]">{state}</option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <Input
+                                          type="text"
+                                          placeholder="Enter state / province"
+                                          className="h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] transition-all"
+                                        />
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          ) : f.type === "email" ? (
+                              );
+                            })()
+                          ) : fieldType === "email" ? (
                             <Input
                               type="email"
                               placeholder={f.placeholder || `Enter ${f.label.toLowerCase()}`}
                               className="h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] transition-all"
                             />
-                          ) : f.type === "phone" ? (
+                          ) : fieldType === "phone" ? (
                             <Input
                               type="tel"
                               placeholder={f.placeholder || `Enter ${f.label.toLowerCase()}`}

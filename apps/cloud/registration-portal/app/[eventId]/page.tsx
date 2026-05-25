@@ -9,6 +9,7 @@ import {
   MapPin, Loader2, Sparkles, Building, User, Mail, Phone, Map, Users
 } from "lucide-react";
 import { toast } from "sonner";
+import { CountryStateEntry, fetchCountryStates, getAllowedCountries, getStatesForCountry } from "@/lib/country-states";
 
 interface FormField {
   id: string;
@@ -42,6 +43,7 @@ export default function PublicRegistrationPortal() {
   // Form submission state
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [uploadingField, setUploadingField] = useState<string | null>(null);
+  const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
   
   // Registration success state
   const [successData, setSuccessData] = useState<{
@@ -55,11 +57,23 @@ export default function PublicRegistrationPortal() {
 
   const [copied, setCopied] = useState(false);
 
+  const getEffectiveFieldType = (field: FormField) => {
+    if (field.id === "email") return "email";
+    if (field.id === "phone") return "phone";
+    if (field.id === "country") return "country";
+    if (field.id === "role") return "select";
+    return field.type;
+  };
+
   useEffect(() => {
     if (eventId) {
       fetchFormConfig();
     }
   }, [eventId]);
+
+  useEffect(() => {
+    fetchCountryStates().then(setCountryStates);
+  }, []);
 
   const fetchFormConfig = async () => {
     setLoading(true);
@@ -77,10 +91,14 @@ export default function PublicRegistrationPortal() {
       const initialForm: Record<string, any> = {};
       data.fields.forEach(f => {
         if (f.is_active) {
-          if (f.type === "checkbox") {
+          const fieldType = getEffectiveFieldType(f);
+          if (fieldType === "checkbox") {
             initialForm[f.id] = [];
-          } else if (f.type === "select") {
+          } else if (fieldType === "select") {
             initialForm[f.id] = f.options && f.options.length > 0 ? f.options[0] : "";
+          } else if (fieldType === "country") {
+            initialForm[f.id] = f.options && f.options.length === 1 ? f.options[0] : "";
+            initialForm[`${f.id}_state`] = "";
           } else {
             initialForm[f.id] = "";
           }
@@ -152,15 +170,16 @@ export default function PublicRegistrationPortal() {
     const missingFields: string[] = [];
     config.fields.forEach(field => {
       if (field.is_active && field.is_required) {
+        const fieldType = getEffectiveFieldType(field);
         const val = formData[field.id];
         if (val === undefined || val === null || (typeof val === "string" && !val.trim()) || (Array.isArray(val) && val.length === 0)) {
           missingFields.push(field.label);
         }
         // Validate state for country type
-        if (field.type === "country" || field.id === "country") {
+        if (fieldType === "country" && typeof val === "string" && val.trim()) {
           const stateVal = formData[`${field.id}_state`];
           if (!stateVal || (typeof stateVal === "string" && !stateVal.trim())) {
-            missingFields.push(`${field.label} State/Province`);
+            missingFields.push("State/Province");
           }
         }
       }
@@ -175,15 +194,16 @@ export default function PublicRegistrationPortal() {
     let validationError = "";
     config.fields.forEach(field => {
       if (field.is_active) {
+        const fieldType = getEffectiveFieldType(field);
         const val = formData[field.id];
         if (val && typeof val === "string" && val.trim()) {
           const stripped = val.trim();
-          if (field.type === "email" || field.id === "email") {
+          if (fieldType === "email") {
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             if (!emailRegex.test(stripped)) {
               validationError = `Please enter a valid email address for '${field.label}'.`;
             }
-          } else if (field.type === "phone" || field.id === "phone") {
+          } else if (fieldType === "phone") {
             const phoneRegex = /^\+?[0-9\s\-()]{7,20}$/;
             if (!phoneRegex.test(stripped)) {
               validationError = `Please enter a valid phone number for '${field.label}'.`;
@@ -248,6 +268,8 @@ export default function PublicRegistrationPortal() {
       default: return null;
     }
   };
+
+  const getCountryChoices = (field: FormField) => getAllowedCountries(field.options, countryStates);
 
   // Render Skeleton Loaders
   if (loading) {
@@ -489,7 +511,10 @@ export default function PublicRegistrationPortal() {
         <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
         
         <div className="space-y-6">
-          {config.fields.filter(f => f.is_active).map(field => (
+          {config.fields.filter(f => f.is_active).map(field => {
+            const fieldType = getEffectiveFieldType(field);
+
+            return (
             <div key={field.id} className="space-y-2">
               <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
                 {field.label}
@@ -497,7 +522,7 @@ export default function PublicRegistrationPortal() {
               </label>
 
               {/* Text Input Types */}
-              {field.type === "text" && (
+              {fieldType === "text" && (
                 <div className="relative">
                   {getFieldIcon(field.id) && (
                     <div className="absolute left-4 top-1/2 -translate-y-1/2">
@@ -518,7 +543,7 @@ export default function PublicRegistrationPortal() {
               )}
 
               {/* Email Input Types */}
-              {field.type === "email" && (
+              {fieldType === "email" && (
                 <div className="relative">
                   {getFieldIcon(field.id) && (
                     <div className="absolute left-4 top-1/2 -translate-y-1/2">
@@ -539,7 +564,7 @@ export default function PublicRegistrationPortal() {
               )}
 
               {/* Phone Input Types */}
-              {field.type === "phone" && (
+              {fieldType === "phone" && (
                 <div className="relative">
                   {getFieldIcon(field.id) && (
                     <div className="absolute left-4 top-1/2 -translate-y-1/2">
@@ -560,100 +585,90 @@ export default function PublicRegistrationPortal() {
               )}
 
               {/* Country Input Types */}
-              {field.type === "country" && (
-                <div className="space-y-4">
-                  <div className="relative">
-                    {getFieldIcon(field.id) && (
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                        {getFieldIcon(field.id)}
-                      </div>
-                    )}
-                    <select
-                      required={field.is_required}
-                      value={formData[field.id] || ""}
-                      onChange={(e) => {
-                        handleInputChange(field.id, e.target.value);
-                        handleInputChange(`${field.id}_state`, "");
-                      }}
-                      className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
-                        getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                      }`}
-                    >
-                      <option value="" className="bg-[#080912]">Select Country...</option>
-                      {["India", "United States", "United Kingdom", "Canada", "Australia", "Germany"].map((c) => (
-                        <option key={c} value={c} className="bg-[#080912]">{c}</option>
-                      ))}
-                    </select>
-                  </div>
+              {fieldType === "country" && (
+                (() => {
+                  const countries = getCountryChoices(field);
+                  const selectedCountry = formData[field.id] || (countries.length === 1 ? countries[0] : "");
+                  const states = getStatesForCountry(countryStates, selectedCountry);
 
-                  {formData[field.id] && (
-                    <div className="space-y-2 animate-in fade-in duration-200">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
-                        State / Province
-                        {field.is_required && <span className="text-indigo-400 font-bold">*</span>}
-                      </label>
+                  return (
+                    <div className="space-y-4">
                       <div className="relative">
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                          <MapPin className="h-4 w-4 text-indigo-400" />
-                        </div>
-                        <select
-                          required={field.is_required}
-                          value={formData[`${field.id}_state`] || ""}
-                          onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
-                          className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
-                        >
-                          <option value="" className="bg-[#080912]">Select State...</option>
-                          {formData[field.id] === "India" && (
-                            <>
-                              {["Andhra Pradesh", "Delhi", "Gujarat", "Karnataka", "Kerala", "Maharashtra", "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal"].map((s) => (
-                                <option key={s} value={s} className="bg-[#080912]">{s}</option>
-                              ))}
-                            </>
-                          )}
-                          {formData[field.id] === "United States" && (
-                            <>
-                              {["California", "Florida", "Georgia", "Illinois", "New York", "North Carolina", "Ohio", "Pennsylvania", "Texas", "Washington"].map((s) => (
-                                <option key={s} value={s} className="bg-[#080912]">{s}</option>
-                              ))}
-                            </>
-                          )}
-                          {formData[field.id] === "United Kingdom" && (
-                            <>
-                              {["England", "Northern Ireland", "Scotland", "Wales"].map((s) => (
-                                <option key={s} value={s} className="bg-[#080912]">{s}</option>
-                              ))}
-                            </>
-                          )}
-                          {formData[field.id] === "Canada" && (
-                            <>
-                              {["Alberta", "British Columbia", "Manitoba", "Nova Scotia", "Ontario", "Quebec", "Saskatchewan"].map((s) => (
-                                <option key={s} value={s} className="bg-[#080912]">{s}</option>
-                              ))}
-                            </>
-                          )}
-                          {formData[field.id] === "Australia" && (
-                            <>
-                              {["New South Wales", "Queensland", "South Australia", "Tasmania", "Victoria", "Western Australia"].map((s) => (
-                                <option key={s} value={s} className="bg-[#080912]">{s}</option>
-                              ))}
-                            </>
-                          )}
-                          {formData[field.id] === "Germany" && (
-                            <>
-                              {["Bavaria", "Berlin", "Hamburg", "Hesse", "North Rhine-Westphalia", "Saxony"].map((s) => (
-                                <option key={s} value={s} className="bg-[#080912]">{s}</option>
-                              ))}
-                            </>
-                          )}
-                        </select>
+                        {getFieldIcon(field.id) && (
+                          <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                            {getFieldIcon(field.id)}
+                          </div>
+                        )}
+                        {countries.length === 1 ? (
+                          <select
+                            disabled
+                            value={countries[0]}
+                            className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] opacity-100 focus:border-indigo-500 focus:ring-0 transition-all cursor-not-allowed"
+                          >
+                            <option value={countries[0]} className="bg-[#080912]">{countries[0]}</option>
+                          </select>
+                        ) : (
+                          <select
+                            required={field.is_required}
+                            value={selectedCountry}
+                            onChange={(e) => {
+                              handleInputChange(field.id, e.target.value);
+                              handleInputChange(`${field.id}_state`, "");
+                            }}
+                            className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
+                              getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                            }`}
+                          >
+                            <option value="" className="bg-[#080912]">Select Country...</option>
+                            {countries.map((country) => (
+                              <option key={country} value={country} className="bg-[#080912]">{country}</option>
+                            ))}
+                          </select>
+                        )}
                       </div>
+
+                      {selectedCountry && (
+                        <div className="space-y-2 animate-in fade-in duration-200">
+                          <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
+                            State / Province
+                            {field.is_required && <span className="text-indigo-400 font-bold">*</span>}
+                          </label>
+                          <div className="relative">
+                            <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                              <MapPin className="h-4 w-4 text-indigo-400" />
+                            </div>
+                            {states.length ? (
+                              <select
+                                required={field.is_required}
+                                value={formData[`${field.id}_state`] || ""}
+                                onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
+                                className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                              >
+                                <option value="" className="bg-[#080912]">Select State / Province...</option>
+                                {states.map((state) => (
+                                  <option key={state} value={state} className="bg-[#080912]">{state}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                required={field.is_required}
+                                value={formData[`${field.id}_state`] || ""}
+                                onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
+                                placeholder="Enter state / province..."
+                                className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })()
               )}
 
               {/* Date Selector */}
-              {field.type === "date" && (
+              {fieldType === "date" && (
                 <input
                   type="date"
                   required={field.is_required}
@@ -664,7 +679,7 @@ export default function PublicRegistrationPortal() {
               )}
 
               {/* Dropdown Select option menu */}
-              {field.type === "select" && (
+              {fieldType === "select" && (
                 <div className="relative">
                   {getFieldIcon(field.id) && (
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
@@ -688,7 +703,7 @@ export default function PublicRegistrationPortal() {
               )}
 
               {/* Checkboxes Choice list */}
-              {field.type === "checkbox" && (
+              {fieldType === "checkbox" && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/5 border border-white/5 p-4 rounded-2xl">
                   {(field.options || []).map((opt) => {
                     const isChecked = (formData[field.id] || []).includes(opt);
@@ -708,7 +723,7 @@ export default function PublicRegistrationPortal() {
               )}
 
               {/* File or Image Upload widget */}
-              {(field.type === "image" || field.type === "file") && (
+              {(fieldType === "image" || fieldType === "file") && (
                 <div className="space-y-3">
                   {formData[field.id] ? (
                     <div className="flex items-center justify-between p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-2xl">
@@ -740,7 +755,7 @@ export default function PublicRegistrationPortal() {
                     <label className="flex flex-col items-center justify-center border border-dashed border-white/10 hover:border-indigo-500/40 rounded-2xl p-6 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative group">
                       <input
                         type="file"
-                        accept={field.type === "image" ? "image/*" : ".pdf,.docx,.xlsx,.doc"}
+                        accept={fieldType === "image" ? "image/*" : ".pdf,.docx,.xlsx,.doc"}
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) handleFileUpload(field.id, file);
@@ -759,7 +774,7 @@ export default function PublicRegistrationPortal() {
                           <Upload className="h-5 w-5 text-indigo-400 group-hover:scale-110 transition-transform" />
                           <div>
                             <span className="text-[10px] font-black text-muted uppercase tracking-widest block">
-                              Select {field.type === "image" ? "Image" : "Document"}
+                              Select {fieldType === "image" ? "Image" : "Document"}
                             </span>
                             <span className="text-[8px] font-bold text-muted/60 uppercase tracking-wider mt-1 block">
                               Max 10MB
@@ -772,7 +787,8 @@ export default function PublicRegistrationPortal() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Submit Action */}

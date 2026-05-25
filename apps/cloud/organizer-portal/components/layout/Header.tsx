@@ -22,7 +22,7 @@ import { AnimatePresence } from "framer-motion";
 export function Header() {
   const pathname = usePathname();
   const { eventId } = useParams();
-  const [time, setTime] = useState(new Date());
+  const [time, setTime] = useState<Date | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const { theme, setTheme, themes } = useTheme();
@@ -35,6 +35,7 @@ export function Header() {
   const { isConnected } = useWebSocket(eventId as string);
 
   useEffect(() => {
+    setTime(new Date());
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -92,7 +93,7 @@ export function Header() {
         {/* System Clock */}
         <div className="hidden xl:flex flex-col items-end pr-6 border-r border-default">
           <p className="text-[14px] font-black text-[var(--text)] tracking-tighter tabular-nums leading-none mb-1">
-            {time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+            {time ? time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : "--:--:-- --"}
           </p>
           <p className="text-[9px] font-black text-[var(--pri)] uppercase tracking-[0.2em]">Indian Standard Time (IST)</p>
         </div>

@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Box, ShieldAlert, Sparkles, RefreshCw, PlusCircle, Pencil, 
-  Trash2, UserCheck, CheckCircle2, AlertCircle, ToggleLeft, ToggleRight,
-  TrendingUp, Users, ArrowUpRight
+  Box, RefreshCw, PlusCircle, Pencil, 
+  CheckCircle2, AlertCircle, ToggleLeft, ToggleRight,
+  Users, ArrowUpRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +35,7 @@ interface Session {
   name: string;
 }
 
-export default function CapacityDashboard() {
+export default function CapacityTab() {
   const { eventId } = useParams();
 
   const [statuses, setStatuses] = useState<CapacityStatus[]>([]);
@@ -103,6 +103,11 @@ export default function CapacityDashboard() {
 
   const submitRule = async () => {
     try {
+      if (!selectedStatus && level !== "event" && !targetId) {
+        toast.error(`Please select a ${level} before saving the capacity rule.`);
+        return;
+      }
+
       if (selectedStatus) {
         // Edit existing rule
         await apiPatch(`/events/${eventId}/capacity/${selectedStatus.id}`, {

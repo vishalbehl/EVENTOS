@@ -377,37 +377,25 @@ async def public_register_participant(
             
             # Country and dynamic state validation
             elif field_type == "country" or field_id == "country":
-                allowed_countries = ["India", "United States", "United Kingdom", "Canada", "Australia", "Germany"]
-                if stripped_val not in allowed_countries:
+                allowed_countries = [
+                    str(country).strip()
+                    for country in (field.get("options") or [])
+                    if str(country).strip()
+                ]
+                if allowed_countries and stripped_val not in allowed_countries:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Selected country '{stripped_val}' for '{field_label}' is not supported."
+                        detail=f"Selected country '{stripped_val}' for '{field_label}' is not allowed for this event."
                     )
                 
                 # Check for country's state input
                 state_key = f"{field_id}_state"
-                state_val = payload.get(state_key, "").strip()
+                state_val = str(payload.get(state_key) or "").strip()
                 if not state_val and is_required:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"State/Province is required for country '{stripped_val}'."
                     )
-                
-                if state_val:
-                    country_states = {
-                        "India": ["Andhra Pradesh", "Delhi", "Gujarat", "Karnataka", "Kerala", "Maharashtra", "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal"],
-                        "United States": ["California", "Florida", "Georgia", "Illinois", "New York", "North Carolina", "Ohio", "Pennsylvania", "Texas", "Washington"],
-                        "United Kingdom": ["England", "Northern Ireland", "Scotland", "Wales"],
-                        "Canada": ["Alberta", "British Columbia", "Manitoba", "Nova Scotia", "Ontario", "Quebec", "Saskatchewan"],
-                        "Australia": ["New South Wales", "Queensland", "South Australia", "Tasmania", "Victoria", "Western Australia"],
-                        "Germany": ["Bavaria", "Berlin", "Hamburg", "Hesse", "North Rhine-Westphalia", "Saxony"]
-                    }
-                    allowed_states = country_states.get(stripped_val, [])
-                    if state_val not in allowed_states:
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"State '{state_val}' is not valid for country '{stripped_val}'."
-                        )
 
     # Gather custom fields and state keys
     for field in form_fields:

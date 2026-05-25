@@ -72,7 +72,6 @@ export function Sidebar() {
     { label: "Print Designer", icon: Layout, href: `/events/${eventId}/registration/designer` },
     { label: "Certificate Printer", icon: FileText, href: `/events/${eventId}/registration/certificates` },
     { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
-    { label: "Capacity", icon: Box, href: `/events/${eventId}/registration/capacity` },
     { label: "Reports", icon: BarChart3, href: `/events/${eventId}/registration/reports` },
     { label: "Reg Config", icon: Settings, href: `/events/${eventId}/registration/settings` },
   ];

@@ -4,7 +4,6 @@ from pydantic import BaseModel, ConfigDict
 
 
 class CapacityRuleCreate(BaseModel):
-    event_id: uuid.UUID
     session_id: Optional[uuid.UUID] = None
     room_id: Optional[uuid.UUID] = None
     capacity: int
