@@ -10,6 +10,8 @@ export interface EventSummary {
   end_date: string;
   status: EventStatus;
   banner_url?: string;
+  speaker_mode_enabled?: boolean;
+  registration_mode_enabled?: boolean;
 }
 
 export interface EventResponse extends EventSummary {

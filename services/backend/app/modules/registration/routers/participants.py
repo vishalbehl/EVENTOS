@@ -507,6 +507,16 @@ async def update_participant(
 
     update_data = payload.model_dump(exclude_unset=True)
     
+    # Rebuild name if name fields are updated (except when name is directly set and pre-split by schema validator)
+    if "name" in update_data:
+        pass
+    elif "first_name" in update_data or "last_name" in update_data:
+        new_fn = update_data.get("first_name", p.first_name) or ""
+        new_ln = update_data.get("last_name", p.last_name) or ""
+        update_data["first_name"] = new_fn
+        update_data["last_name"] = new_ln
+        update_data["name"] = f"{new_fn} {new_ln}".strip()
+
     # Check if the role is changing and if it resolves to a different prefix
     role_changed = False
     if "role" in update_data:

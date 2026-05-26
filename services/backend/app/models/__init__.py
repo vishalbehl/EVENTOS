@@ -47,6 +47,9 @@ from app.modules.registration.models.participant_registration import Participant
 from app.modules.venue.models.capacity_rule import CapacityRule
 from app.modules.registration.models.badge_models import Printer, Badge, BadgeHistory, BadgePrintJob, BadgeScan
 from app.modules.venue.models.attendance_log import AttendanceLog
+from app.modules.registration.models.promo_code import PromoCode
+from app.modules.registration.models.payment_transaction import PaymentTransaction
+from app.modules.registration.models.portal_otp_token import PortalOtpToken
 
 __all__ = [
     "Organization", "User", "Event", "Room", "Session",
@@ -62,5 +65,6 @@ __all__ = [
     "Role", "Permission", "RolePermission", "UserRoleAssignment", "UserAccessNode", "ScopedPermission", "PermissionAuditLog", "RoleInheritanceMap",
     "Participant", "CheckIn", "PrintTemplate", "TicketType", "RegistrationFormConfig",
     "ParticipantRole", "ParticipantRegistration", "CapacityRule",
-    "Printer", "Badge", "BadgeHistory", "BadgePrintJob", "BadgeScan", "AttendanceLog"
+    "Printer", "Badge", "BadgeHistory", "BadgePrintJob", "BadgeScan", "AttendanceLog",
+    "PromoCode", "PaymentTransaction", "PortalOtpToken"
 ]

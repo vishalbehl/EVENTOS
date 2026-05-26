@@ -63,16 +63,12 @@ class ParticipantUpdate(BaseModel):
         ln = self.last_name
         nm = self.name
 
-        if fn is not None or ln is not None:
-            # first/last being updated → recompose name
-            fn = (fn or "").strip()
-            ln = (ln or "").strip()
-            self.first_name = fn
-            self.last_name = ln
-            self.name = f"{fn} {ln}".strip()
+        if fn is not None and ln is not None:
+            self.first_name = fn.strip()
+            self.last_name = ln.strip()
+            self.name = f"{self.first_name} {self.last_name}".strip()
             self.model_fields_set.update({"first_name", "last_name", "name"})
         elif nm is not None:
-            # only name updated → split
             nm = nm.strip()
             parts = nm.split(" ", 1)
             self.first_name = parts[0]

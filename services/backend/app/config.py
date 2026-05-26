@@ -97,6 +97,19 @@ class Settings(BaseSettings):
     UPLOAD_TOKEN_EXPIRE_DAYS: int = 30
     CLOUD_API_KEY: str = "dev_internal_secret_do_not_use_in_prod"
 
+    # ── Payment Gateway Encryption ────────────────────────
+    # AES-256 (Fernet) master key used to encrypt payment gateway
+    # secrets stored in events.registration_settings JSONB.
+    # Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    PAYMENT_SECRET_KEY: str = ""
+
+    # ── Portal JWT (attendee self-service) ────────────────
+    # Signs portal session JWTs — completely separate from JWT_SECRET_KEY.
+    # Generate with:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    PORTAL_JWT_SECRET: str = ""
+
     # ── WebSocket ─────────────────────────────────────────
     WS_HEARTBEAT_INTERVAL: int = 25                 # seconds
 

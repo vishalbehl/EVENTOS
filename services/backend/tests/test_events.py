@@ -125,6 +125,37 @@ class TestEventModel:
         # updated_at should be >= original (onupdate triggers)
         assert event.updated_at >= original_updated
 
+    @pytest.mark.asyncio
+    async def test_event_mode_defaults(self, db: AsyncSession, event: Event):
+        assert event.speaker_mode_enabled is True
+        assert event.registration_mode_enabled is True
+
+    @pytest.mark.asyncio
+    async def test_event_validation_both_modes_disabled(self, db: AsyncSession, organization: Organization, organizer: User):
+        from pydantic import ValidationError
+        from app.modules.rbac.schemas.event import EventCreate, EventUpdate
+
+        # Test schema validator for create
+        with pytest.raises(ValidationError) as exc_info:
+            EventCreate(
+                name="Test Event Modes",
+                short_code="TMODES",
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 3),
+                timezone="UTC",
+                speaker_mode_enabled=False,
+                registration_mode_enabled=False,
+            )
+        assert "At least one mode (Speaker or Registration) must be enabled." in str(exc_info.value)
+
+        # Test schema validator for update
+        with pytest.raises(ValidationError) as exc_info:
+            EventUpdate(
+                speaker_mode_enabled=False,
+                registration_mode_enabled=False,
+            )
+        assert "At least one mode (Speaker or Registration) must be enabled." in str(exc_info.value)
+
 
 # ── Org scoping tests ─────────────────────────────────────────
 
@@ -181,7 +212,7 @@ class TestEventCascades:
         assert session_obj.status == "scheduled"
 
     @pytest.mark.asyncio
-    async def test_multiple_rooms_per_event(self, db: AsyncSession, event: Event):
+    async def test_multiple_rooms_per_event(self, db: AsyncSession, event: Event, room: Room):
         room_b = Room(
             event_id=event.id,
             name="Hall B",
@@ -218,6 +249,7 @@ class TestSpeakerModel:
 
     @pytest.mark.asyncio
     async def test_speaker_current_file_none_by_default(self, db: AsyncSession, speaker: Speaker):
+        await db.refresh(speaker, ["presentation_files"])
         assert speaker.current_file is None
 
     @pytest.mark.asyncio
@@ -244,6 +276,7 @@ class TestSpeakerModel:
             last_name="Jones",
             email=f"bob-{uuid.uuid4().hex[:6]}@example.com",
             upload_token=hash2,
+            speaker_code=hash2[:8].upper(),
             upload_status="pending",
         )
         db.add(sp2)

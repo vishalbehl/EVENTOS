@@ -128,16 +128,18 @@ async def helper_approve_registration(
     if not full_name:
         full_name = f"{first_name} {last_name}".strip()
 
-    role = reg_data.get("role", "Delegate").strip()
-    email = reg_data.get("email", "").strip() or None
-    phone = reg_data.get("phone", "").strip() or None
-    company = reg_data.get("company", "").strip() or None
-    designation = reg_data.get("designation", "").strip() or None
-    country = reg_data.get("country", "").strip() or None
-    paid_status = reg_data.get("paid_status", "Unpaid").strip()
+    role = (reg_data.get("role") or "Delegate").strip()
+    email = (reg_data.get("email") or "").strip() or None
+    phone = (reg_data.get("phone") or "").strip() or None
+    company = (reg_data.get("company") or "").strip() or None
+    designation = (reg_data.get("designation") or "").strip() or None
+    country = (reg_data.get("country") or "").strip() or None
+    paid_status = (reg_data.get("paid_status") or "Unpaid").strip()
 
-    # Create participant regno
-    regno = await generate_next_regno(db, reg.event_id, role)
+    # Create participant regno only if paid
+    regno = None
+    if paid_status == "Paid":
+        regno = await generate_next_regno(db, reg.event_id, role)
 
     participant = Participant(
         event_id=reg.event_id,

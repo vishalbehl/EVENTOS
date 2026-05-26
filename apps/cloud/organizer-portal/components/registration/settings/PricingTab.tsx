@@ -29,12 +29,16 @@ export default function PricingTab({ eventId }: { eventId: string }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [newTier, setNewTier] = useState('')
+  const [tierCutoffs, setTierCutoffs] = useState<Record<string, string>>({})
 
   const currencySymbol = CURRENCIES.find(c => c.code === currency)?.symbol || '₹'
   const activeRoles = roles.filter(r => r.is_active)
 
   useEffect(() => {
-    if (event) setCurrency((event as any).currency || 'INR')
+    if (event) {
+      setCurrency((event as any).currency || 'INR')
+      setTierCutoffs((event as any).registration_settings?.tier_cutoffs || {})
+    }
   }, [event])
 
   useEffect(() => { loadAll() }, [eventId])
@@ -84,8 +88,12 @@ export default function PricingTab({ eventId }: { eventId: string }) {
     try {
       // Save tiers list
       await apiClient.post(`/events/${eventId}/pricing/tiers`, { tiers })
-      // Save currency
-      await updateEvent.mutateAsync({ currency })
+      // Save currency & cutoffs
+      const updatedSettings = {
+        ...(event as any).registration_settings,
+        tier_cutoffs: tierCutoffs
+      }
+      await updateEvent.mutateAsync({ currency, registration_settings: updatedSettings })
       // Save pricing matrix
       const pricingPayload: Record<string, number | null> = {}
       activeRoles.forEach(role => {
@@ -174,6 +182,33 @@ export default function PricingTab({ eventId }: { eventId: string }) {
             >
               + {p}
             </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Smart Early Bird Cutoffs */}
+      <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-muted">Smart Early Bird Cutoffs</p>
+        <p className="text-[10px] font-bold text-muted/60 leading-relaxed">
+          Define when each tier automatically expires. The registration portal automatically selects the active tier based on the current datetime. If a tier has no cutoff configured, it acts as a fallback.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {tiers.map(tier => (
+            <div key={tier} className="flex flex-col gap-1.5 p-3.5 bg-white/5 border border-white/5 rounded-xl">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text)]">{tier} Cutoff Date & Time</span>
+              <input
+                type="datetime-local"
+                value={tierCutoffs[tier] ? tierCutoffs[tier].substring(0, 16) : ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setTierCutoffs(prev => ({
+                    ...prev,
+                    [tier]: val ? new Date(val).toISOString() : ''
+                  }))
+                }}
+                className="h-9 px-3 bg-white/5 border border-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none w-full transition-all cursor-pointer"
+              />
+            </div>
           ))}
         </div>
       </div>

@@ -3,18 +3,22 @@
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Globe, Tag, BadgePercent, ShieldCheck, Palette, Box } from 'lucide-react'
+import { Globe, Tag, BadgePercent, ShieldCheck, Palette, Box, CreditCard, Ticket } from 'lucide-react'
 import PortalTab from '@/components/registration/settings/PortalTab'
 import RolesTab from '@/components/registration/settings/RolesTab'
 import PricingTab from '@/components/registration/settings/PricingTab'
 import CapacityTab from '@/components/registration/settings/CapacityTab'
 // Access control tab component
 import AccessTab from '@/components/registration/settings/AccessTab'
+import PaymentsTab from '@/components/registration/settings/PaymentsTab'
+import PromosTab from '@/components/registration/settings/PromosTab'
 
 const TABS = [
   { id: 'portal',  label: 'Portal',         icon: Globe },
   { id: 'roles',   label: 'Delegate Roles',  icon: Tag },
   { id: 'pricing', label: 'Pricing Matrix',  icon: BadgePercent },
+  { id: 'payments', label: 'Payments',        icon: CreditCard },
+  { id: 'promos',   label: 'Promo Codes',     icon: Ticket },
   { id: 'capacity', label: 'Capacity',        icon: Box },
   { id: 'access',  label: 'Access Control',  icon: ShieldCheck },
 ]
@@ -82,6 +86,8 @@ export default function RegistrationSettings() {
           {activeTab === 'portal'  && <PortalTab  eventId={eid} />}
           {activeTab === 'roles'   && <RolesTab   eventId={eid} />}
           {activeTab === 'pricing' && <PricingTab  eventId={eid} />}
+          {activeTab === 'payments' && <PaymentsTab eventId={eid} />}
+          {activeTab === 'promos'   && <PromosTab   eventId={eid} />}
           {activeTab === 'capacity' && <CapacityTab />}
           {activeTab === 'access'  && <AccessTab   eventId={eid} />}
         </motion.div>

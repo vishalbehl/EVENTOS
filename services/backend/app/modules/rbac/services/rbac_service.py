@@ -53,7 +53,11 @@ class RBACService:
         # Add parent roles to effective roles
         parent_role_ids = {inh.parent_role_id for inh in inheritances}
         if parent_role_ids:
-            parents = (await db.execute(select(Role).where(Role.id.in_(list(parent_role_ids))))).scalars().all()
+            parents = (await db.execute(
+                select(Role)
+                .options(selectinload(Role.permissions).selectinload(RolePermission.permission))
+                .where(Role.id.in_(list(parent_role_ids)))
+            )).scalars().all()
             effective_roles.update(parents)
 
         # 3. Collect permissions from all effective roles

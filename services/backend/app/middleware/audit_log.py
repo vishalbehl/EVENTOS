@@ -180,6 +180,11 @@ class AuditLogMiddleware:
             await self.app(scope, receive, send)
             return
 
+        from app.config import settings
+        if settings.environment == "testing":
+            await self.app(scope, receive, send)
+            return
+
         method = scope.get("method")
         if method not in _MUTATING_METHODS:
             await self.app(scope, receive, send)

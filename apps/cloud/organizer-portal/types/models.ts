@@ -59,6 +59,8 @@ export interface Event {
   allowed_formats: string[];
   status: EventStatus;
   banner_url: string | null;
+  speaker_mode_enabled?: boolean;
+  registration_mode_enabled?: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -73,6 +75,8 @@ export interface EventSummary {
   end_date: string;
   status: EventStatus;
   banner_url: string | null;
+  speaker_mode_enabled?: boolean;
+  registration_mode_enabled?: boolean;
 }
 
 // ── Room ──────────────────────────────────────────────────

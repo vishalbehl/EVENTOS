@@ -3,7 +3,9 @@ import asyncio
 from contextlib import asynccontextmanager 
 
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    from app.config import settings
+    if settings.environment != "testing":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI
 
@@ -23,9 +25,46 @@ from app.services.init_service import ensure_admin_user
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    await ensure_admin_user()
+    from app.config import settings
+    if settings.environment != "testing":
+        await ensure_admin_user()
+
+    # ── OTP cleanup scheduler ────────────────────────────────
+    # Purge portal OTP tokens that are used or expired and older than 24h.
+    # Runs every 6 hours. APScheduler is already a project dependency.
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    async def _cleanup_otp_tokens() -> None:
+        try:
+            from app.database import AsyncSessionLocal
+            from sqlalchemy import text
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    text(
+                        "DELETE FROM portal_otp_tokens "
+                        "WHERE (used = true OR expires_at < now()) "
+                        "AND created_at < now() - interval '24 hours'"
+                    )
+                )
+                await session.commit()
+        except Exception:
+            pass  # Non-critical housekeeping — swallow errors
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        _cleanup_otp_tokens,
+        trigger=IntervalTrigger(hours=6),
+        id="otp_token_cleanup",
+        replace_existing=True,
+    )
+    if settings.environment != "testing":
+        scheduler.start()
+
     yield
-    # Shutdown logic (none needed yet)
+    # Shutdown
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 app = FastAPI(
     title="Conference Platform API",
@@ -46,9 +85,10 @@ from loguru import logger
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     logger.error(f"Request validation failed: {exc.errors()}")
+    from fastapi.encoders import jsonable_encoder
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": jsonable_encoder(exc.errors())},
     )
 
 @app.exception_handler(ResponseValidationError)

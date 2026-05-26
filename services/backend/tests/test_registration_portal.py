@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from app.modules.rbac.models.event import Event
 from app.modules.auth.models.user import User
@@ -23,13 +23,14 @@ async def test_get_form_config_default(
     event: Event
 ):
     # Retrieve configuration (should initialize defaults if none exist)
-    config = await get_registration_form_config(event=event, db=db)
+    config = await get_registration_form_config(event=event, response=Response(), db=db)
     
-    assert config.event_id == event.id
-    assert config.is_live is False
-    assert len(config.fields) > 0
+    # Endpoints now return a dict with merged terms_and_conditions
+    assert config["event_id"] == event.id
+    assert config["is_live"] is False
+    assert len(config["fields"]) > 0
     # Check Name is a default field
-    name_field = next(f for f in config.fields if f["id"] == "name")
+    name_field = next(f for f in config["fields"] if f["id"] == "name")
     assert name_field["is_default"] is True
     assert name_field["is_required"] is True
 
@@ -78,10 +79,11 @@ async def test_update_form_config(
     
     config = await update_registration_form_config(payload=payload, event=event, db=db)
     
-    assert config.is_live is True
-    assert len(config.fields) == 3
-    assert config.fields[0]["label"] == "Custom Full Name Label"
-    assert config.fields[2]["id"] == "custom_diet"
+    # Endpoints now return a dict with merged terms_and_conditions
+    assert config["is_live"] is True
+    assert len(config["fields"]) == 3
+    assert config["fields"][0]["label"] == "Custom Full Name Label"
+    assert config["fields"][2]["id"] == "custom_diet"
 
 
 @pytest.mark.asyncio
@@ -90,7 +92,7 @@ async def test_get_public_form_closed(
     event: Event
 ):
     # By default, form config is closed
-    form_data = await get_public_registration_form(event_id=event.id, db=db)
+    form_data = await get_public_registration_form(event_id=event.id, response=Response(), db=db)
     
     assert form_data["event_name"] == event.name
     assert form_data["is_live"] is False
@@ -169,11 +171,24 @@ async def test_public_registration_flow(
         db=db
     )
     
-    assert res["status"] == "success"
+    assert res["status"] == "submitted"
     assert res["name"] == "Jane Miller"
     assert "regno" in res
-    assert res["regno"].startswith("DEL-")
+    assert res["regno"] == ""
     
+    # Approve the registration to generate Participant record
+    from sqlalchemy import select
+    from app.modules.registration.models.participant_registration import ParticipantRegistration
+    from app.modules.registration.routers.registrations import helper_approve_registration
+
+    stmt = select(ParticipantRegistration).where(
+        ParticipantRegistration.event_id == event.id
+    )
+    reg_obj = (await db.execute(stmt)).scalars().first()
+    assert reg_obj is not None
+
+    await helper_approve_registration(db=db, reg=reg_obj, reviewer_id=event.created_by or uuid.uuid4())
+
     # 3. Try to register with same email again - should fail (400)
     with pytest.raises(HTTPException) as exc_info:
         await public_register_participant(

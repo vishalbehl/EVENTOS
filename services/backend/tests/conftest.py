@@ -20,7 +20,11 @@
 
 from __future__ import annotations
 
+import sys
 import asyncio
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import hashlib
 import uuid
 from datetime import datetime, timezone
@@ -38,6 +42,14 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+settings.environment = "testing"
+
+# ── Inject a test Fernet key so CredentialCipher works in tests ──
+# This is a fixed throwaway key — safe to hardcode here.
+from cryptography.fernet import Fernet as _Fernet
+_TEST_FERNET_KEY = _Fernet.generate_key().decode()
+settings.PAYMENT_SECRET_KEY = _TEST_FERNET_KEY
+
 from app.database import Base
 from app.models import (  # ensures all models are registered with Base
     AuditLog, EmailCampaign, EmailLog, EmailTemplate, Event,
@@ -77,15 +89,7 @@ _TestSessionLocal = async_sessionmaker(
 )
 
 
-# ── pytest-asyncio event loop ─────────────────────────────────
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Use a single event loop for the entire test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
+# ── pytest-asyncio event loop managed via pytest.ini ──────────
 
 # ── Database schema setup (once per session) ──────────────────
 
@@ -98,10 +102,12 @@ async def setup_test_database():
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+    await _test_engine.dispose()
     yield
     # Teardown: drop everything after the session
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await _test_engine.dispose()
 
 
 # ── Per-test transaction rollback ─────────────────────────────
@@ -134,21 +140,28 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     Overrides the `get_db` dependency to use the test session so
     route handlers operate within the per-test transaction.
     """
-    from app.main import app
+    from app.main import app as fastapi_app
     from app.dependencies import get_db
+    from app.routers import api_router
+
+    # Include api_router without prefix to support tests using legacy paths
+    fastapi_app.include_router(api_router)
+
+    from app.database import async_engine
+    await async_engine.dispose()
 
     async def _override_get_db():
         yield db
 
-    app.dependency_overrides[get_db] = _override_get_db
+    fastapi_app.dependency_overrides[get_db] = _override_get_db
 
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=fastapi_app),
         base_url="http://testserver",
     ) as ac:
         yield ac
 
-    app.dependency_overrides.clear()
+    fastapi_app.dependency_overrides.clear()
 
 
 # ── Domain fixture factories ──────────────────────────────────
@@ -175,7 +188,7 @@ async def organizer(db: AsyncSession, organization: Organization) -> User:
         password_hash=hash_password("testpassword123"),
         first_name="Test",
         last_name="Organizer",
-        role="event_organizer",
+        role="organiser",
         is_active=True,
     )
     db.add(user)
@@ -220,6 +233,17 @@ async def event(db: AsyncSession, organization: Organization, organizer: User) -
     )
     db.add(ev)
     await db.flush()
+
+    # Assign organiser to the event to satisfy the assignment check
+    from app.modules.rbac.models.rbac import UserAccessNode
+    assignment = UserAccessNode(
+        user_id=organizer.id,
+        node_id=ev.id,
+        node_type="EVENT",
+    )
+    db.add(assignment)
+    await db.flush()
+
     return ev
 
 

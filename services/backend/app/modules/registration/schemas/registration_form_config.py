@@ -19,7 +19,9 @@ class RegistrationFormConfigResponse(BaseModel):
     event_id: uuid.UUID
     is_live: bool
     fields: List[FormFieldConfig]
+    terms_and_conditions: Optional[str] = ""
 
 class RegistrationFormConfigUpdate(BaseModel):
     is_live: Optional[bool] = None
     fields: Optional[List[FormFieldConfig]] = None
+    terms_and_conditions: Optional[str] = None

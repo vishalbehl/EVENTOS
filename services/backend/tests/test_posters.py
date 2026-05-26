@@ -48,7 +48,7 @@ class TestPosterCRUD:
         assert resp.status_code == 201
         data = resp.json()
         assert data["title"] == "Genomics in 2026"
-        assert data["status"] == "submitted"
+        assert data["status"] == "pending"  # Organizer-created posters start as "pending" (awaiting PDF)
 
     async def test_create_poster_short_title_rejected(
         self, client: AsyncClient, event: Event, organizer: User

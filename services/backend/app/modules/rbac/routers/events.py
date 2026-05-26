@@ -181,6 +181,13 @@ async def update_event(
 
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(event, field, value)
+
+    if not event.speaker_mode_enabled and not event.registration_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least one mode (Speaker or Registration) must be enabled.",
+        )
+
     await db.commit()
     await db.refresh(event)
     return EventResponse.model_validate(event)

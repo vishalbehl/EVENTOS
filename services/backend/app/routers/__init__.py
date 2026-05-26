@@ -12,7 +12,8 @@ from app.modules.presentations.routers import bundles, files, queue, posters, st
 from app.modules.venue.routers import rooms, rooms_devices, attendance, capacity, srr, sync
 from app.modules.registration.routers import (
     badges, printers, import_jobs, print_templates, ticket_types,
-    registrations, registration_portal, participant_roles, participants
+    registrations, registration_portal, participant_roles, participants,
+    payments, portal_auth, portal_dashboard
 )
 from app.modules.analytics.routers import analytics
 from app.modules.notifications.routers import notifications, webhooks
@@ -52,3 +53,6 @@ api_router.include_router(badges.router)
 api_router.include_router(printers.router)
 api_router.include_router(attendance.router)
 api_router.include_router(sync.router)
+api_router.include_router(payments.router)
+api_router.include_router(portal_auth.router)
+api_router.include_router(portal_dashboard.router)

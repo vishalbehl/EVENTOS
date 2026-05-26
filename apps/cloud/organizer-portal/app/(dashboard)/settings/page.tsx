@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -27,7 +27,7 @@ const DEFAULT_AVATARS = [
    "https://api.dicebear.com/7.x/lorelei/svg?seed=Luna",
 ];
 
-export default function SettingsPage() {
+function SettingsPageContent() {
    const { eventId } = useParams();
    const searchParams = useSearchParams();
    const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "profile");
@@ -650,5 +650,18 @@ export default function SettingsPage() {
             </Card>
          </div>
       </div>
+   );
+}
+
+export default function SettingsPage() {
+   return (
+      <Suspense fallback={
+         <div className="h-[70vh] flex flex-col items-center justify-center space-y-6">
+            <div className="h-16 w-16 border-4 border-[var(--pri)] border-t-transparent rounded-full animate-spin shadow-[0_0_20px_var(--pri)]" />
+            <p className="text-[10px] font-black text-muted uppercase tracking-[0.4em] animate-pulse">Syncing Account...</p>
+         </div>
+      }>
+         <SettingsPageContent />
+      </Suspense>
    );
 }
