@@ -97,6 +97,7 @@ def generate_speaker_badge_qr(
     event_name: str,
     speaker_code: str,
     *,
+    reg_no: Optional[str] = None,
     include_label: bool = True,
 ) -> bytes:
     """
@@ -106,11 +107,17 @@ def generate_speaker_badge_qr(
       - Event Name on top as header
       - Speaker Name above the QR code
       - The QR code itself
-      - Access Code below the QR code
+      - Access Code or Registration No below the QR code
 
     Returns raw PNG bytes.
     """
-    qr_text = f"Speaker: {speaker_name}\nAccess Code: {speaker_code.upper()}"
+    if reg_no:
+        qr_text = reg_no
+        code_text = f"Registration No: {reg_no}"
+    else:
+        qr_text = f"Speaker: {speaker_name}\nAccess Code: {speaker_code.upper()}"
+        code_text = f"Access Code: {speaker_code.upper()}"
+
     qr_bytes = generate_qr_code(qr_text, box_size=12, border=3)
 
     if not include_label:
@@ -162,8 +169,7 @@ def generate_speaker_badge_qr(
         anchor="mt",
     )
 
-    # 3. Access Code Below QR (smaller)
-    code_text = f"Access Code: {speaker_code.upper()}"
+    # 3. Access Code / Reg No Below QR
     draw.text(
         (canvas_w // 2, header_h + name_h + qr_h + 10),
         code_text,

@@ -55,6 +55,9 @@ class EventInfoResponse(BaseModel):
     announcements: Any
     program_url: str = ""
     terms_and_conditions: str = ""
+    faqs: Optional[list] = None
+    include_default_faqs: Optional[bool] = True
+
 
 
 class RegistrationInfoResponse(BaseModel):
@@ -168,6 +171,8 @@ async def get_portal_dashboard(
             announcements=data.event.announcements,
             program_url=data.event.program_url,
             terms_and_conditions=data.event.terms_and_conditions,
+            faqs=data.event.faqs,
+            include_default_faqs=data.event.include_default_faqs,
         ),
         registration=RegistrationInfoResponse(
             status=data.registration.status,

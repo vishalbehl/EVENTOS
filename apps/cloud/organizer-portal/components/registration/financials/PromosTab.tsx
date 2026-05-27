@@ -115,10 +115,10 @@ export default function PromosTab({ eventId }: { eventId: string }) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full min-h-0 overflow-hidden">
       {/* ── Add Promo Form ── */}
-      <div className="lg:col-span-1 space-y-6">
-        <form onSubmit={handleCreatePromo} className="glass-card rounded-[2rem] p-6 border border-white/5 space-y-5">
+      <div className="lg:col-span-1 flex flex-col min-h-0 h-full overflow-hidden">
+        <form onSubmit={handleCreatePromo} className="glass-card rounded-[2rem] p-6 border border-white/5 space-y-5 h-full overflow-y-auto custom-scrollbar bg-[var(--surf)]/20">
           <div className="flex items-center gap-3">
             <Ticket className="h-5 w-5 text-[var(--pri)]" />
             <div>
@@ -136,7 +136,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
               placeholder="e.g. WELCOME20"
               value={code}
               onChange={e => setCode(e.target.value)}
-              className="w-full h-10 px-4 bg-white/5 border border-white/5 rounded-xl text-xs font-black uppercase text-[var(--text)] placeholder:normal-case placeholder:text-muted/40 focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+              className="w-full h-10 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-black uppercase text-[var(--text)] placeholder:normal-case placeholder:text-muted/40 focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
             />
           </div>
 
@@ -147,7 +147,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
               <select
                 value={discountType}
                 onChange={e => setDiscountType(e.target.value)}
-                className="w-full h-10 px-3 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:ring-0 focus:outline-none cursor-pointer"
+                className="w-full h-10 px-3 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:ring-0 focus:outline-none cursor-pointer"
               >
                 <option value="percentage" className="bg-[var(--base)]">Percentage (%)</option>
                 <option value="fixed" className="bg-[var(--base)]">Fixed Flat</option>
@@ -167,7 +167,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
                   placeholder={discountType === 'percentage' ? '15' : '500'}
                   value={discountValue}
                   onChange={e => setDiscountValue(e.target.value)}
-                  className="w-full h-10 pl-8 pr-3 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+                  className="w-full h-10 pl-8 pr-3 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
                 />
               </div>
             </div>
@@ -187,7 +187,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
                   placeholder="Unlimited"
                   value={maxUses}
                   onChange={e => setMaxUses(e.target.value)}
-                  className="w-full h-10 pl-8 pr-3 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+                  className="w-full h-10 pl-8 pr-3 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
                 />
               </div>
             </div>
@@ -201,7 +201,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
                   type="date"
                   value={expiryDate}
                   onChange={e => setExpiryDate(e.target.value)}
-                  className="w-full h-10 pl-8 pr-3 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none cursor-pointer"
+                  className="w-full h-10 pl-8 pr-3 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none cursor-pointer"
                 />
               </div>
             </div>
@@ -210,7 +210,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
           <button
             type="submit"
             disabled={saving}
-            className="flex items-center justify-center gap-2 w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/20"
+            className="flex items-center justify-center gap-2 w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/20 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             {saving ? 'Creating...' : 'Create Promo'}
@@ -219,8 +219,8 @@ export default function PromosTab({ eventId }: { eventId: string }) {
       </div>
 
       {/* ── Active Promos List ── */}
-      <div className="lg:col-span-2 space-y-4">
-        <div className="flex items-center gap-2">
+      <div className="lg:col-span-2 flex flex-col min-h-0 h-full overflow-hidden space-y-4">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text)]">Active Coupons</span>
           <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-white/5 border border-white/5 text-muted">
             {promos.length} codes
@@ -228,90 +228,92 @@ export default function PromosTab({ eventId }: { eventId: string }) {
         </div>
 
         {promos.length === 0 ? (
-          <div className="glass-card rounded-[2rem] p-12 border border-white/5 text-center space-y-2">
+          <div className="glass-card rounded-[2rem] p-12 border border-white/5 text-center space-y-2 flex-1 flex flex-col justify-center items-center">
             <Ticket className="h-8 w-8 text-muted/30 mx-auto" />
             <p className="text-xs font-black text-muted">No promo codes configured</p>
             <p className="text-[9px] font-bold text-muted/60">Generate coupon codes on the left panel to offer discounts.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {promos.map(promo => {
-              const hasExpired = promo.expiry_date && new Date(promo.expiry_date) < new Date()
-              const hasReachedLimit = promo.max_uses && promo.used_count >= promo.max_uses
-              const isInvalid = hasExpired || hasReachedLimit
-              
-              return (
-                <div 
-                  key={promo.id} 
-                  className={`glass-card rounded-2xl p-5 border relative overflow-hidden flex flex-col justify-between h-48 transition-all ${
-                    promo.is_active && !isInvalid 
-                      ? 'border-white/5 hover:border-[var(--pri)]/30 hover:bg-white/[0.03]' 
-                      : 'border-white/5 opacity-50 bg-white/[0.01]'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="text-[9px] font-black uppercase tracking-[0.15em] text-muted">Coupon Code</span>
-                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-wider uppercase mt-0.5">{promo.code}</h3>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => handleToggleActive(promo)}
-                        className="text-muted hover:text-[var(--text)] transition-colors"
-                      >
-                        {promo.is_active ? (
-                          <ToggleRight className="h-6 w-6 text-[var(--pri)]" />
-                        ) : (
-                          <ToggleLeft className="h-6 w-6" />
-                        )}
-                      </button>
-                      <button 
-                        onClick={() => handleDeletePromo(promo.id)}
-                        className="text-muted hover:text-rose-400 p-1 bg-white/5 rounded-lg border border-white/5 hover:bg-white/10 active:scale-95 transition-all"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Value / Amount */}
-                  <div className="my-2">
-                    <span className="text-2xl font-black text-[var(--pri)]">
-                      {promo.discount_type === 'percentage' ? `${promo.discount_value}%` : `Flat ${promo.discount_value}`} Off
-                    </span>
-                  </div>
-
-                  {/* Coupon status / details */}
-                  <div className="pt-3 border-t border-white/[0.04] flex justify-between items-center text-[9px] font-black uppercase tracking-wider text-muted">
-                    <div className="flex items-center gap-1">
-                      <Users className="h-3.5 w-3.5 shrink-0 text-muted" />
-                      <span>{promo.used_count} / {promo.max_uses || '∞'} Uses</span>
+          <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 pb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {promos.map(promo => {
+                const hasExpired = promo.expiry_date && new Date(promo.expiry_date) < new Date()
+                const hasReachedLimit = promo.max_uses && promo.used_count >= promo.max_uses
+                const isInvalid = hasExpired || hasReachedLimit
+                
+                return (
+                  <div 
+                    key={promo.id} 
+                    className={`glass-card rounded-2xl p-5 border relative overflow-hidden flex flex-col justify-between h-48 transition-all bg-[var(--surf)]/20 ${
+                      promo.is_active && !isInvalid 
+                        ? 'border-white/5 hover:border-[var(--pri)]/30 hover:bg-white/[0.03]' 
+                        : 'border-white/5 opacity-50 bg-white/[0.01]'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-[9px] font-black uppercase tracking-[0.15em] text-muted">Coupon Code</span>
+                        <h3 className="text-lg font-black text-[#E8EAFF] tracking-wider uppercase mt-0.5">{promo.code}</h3>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => handleToggleActive(promo)}
+                          className="text-muted hover:text-[var(--text)] transition-colors cursor-pointer"
+                        >
+                          {promo.is_active ? (
+                            <ToggleRight className="h-6 w-6 text-[var(--pri)]" />
+                          ) : (
+                            <ToggleLeft className="h-6 w-6" />
+                          )}
+                        </button>
+                        <button 
+                          onClick={() => handleDeletePromo(promo.id)}
+                          className="text-muted hover:text-rose-400 p-1 bg-white/5 rounded-lg border border-white/5 hover:bg-white/10 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
-                      <Calendar className="h-3.5 w-3.5 shrink-0 text-muted" />
-                      <span>
-                        {hasExpired ? (
-                          <span className="text-rose-400">Expired</span>
-                        ) : promo.expiry_date ? (
-                          new Date(promo.expiry_date).toLocaleDateString()
-                        ) : (
-                          'No Expiry'
-                        )}
+                    {/* Value / Amount */}
+                    <div className="my-2">
+                      <span className="text-2xl font-black text-[var(--pri)]">
+                        {promo.discount_type === 'percentage' ? `${promo.discount_value}%` : `Flat ${promo.discount_value}`} Off
                       </span>
                     </div>
-                  </div>
 
-                  {/* Status label overlay */}
-                  {isInvalid && (
-                    <div className="absolute top-2 right-14 text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                      {hasExpired ? 'Expired' : 'Limit Reached'}
+                    {/* Coupon status / details */}
+                    <div className="pt-3 border-t border-white/[0.04] flex justify-between items-center text-[9px] font-black uppercase tracking-wider text-muted">
+                      <div className="flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5 shrink-0 text-muted" />
+                        <span>{promo.used_count} / {promo.max_uses || '∞'} Uses</span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted" />
+                        <span>
+                          {hasExpired ? (
+                            <span className="text-rose-400">Expired</span>
+                          ) : promo.expiry_date ? (
+                            new Date(promo.expiry_date).toLocaleDateString()
+                          ) : (
+                            'No Expiry'
+                          )}
+                        </span>
+                      </div>
                     </div>
-                  )}
-                </div>
-              )
-            })}
+
+                    {/* Status label overlay */}
+                    {isInvalid && (
+                      <div className="absolute top-2 right-14 text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                        {hasExpired ? 'Expired' : 'Limit Reached'}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>

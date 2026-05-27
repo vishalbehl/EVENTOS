@@ -22,6 +22,14 @@ export default function ThankYouPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {portal?.theme_color && (
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --pri: ${portal.theme_color};
+            --sec: color-mix(in srgb, ${portal.theme_color} 80%, white);
+          }
+        `}} />
+      )}
       <PortalHeader speakerName={speakerName} token={token} />
       
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">

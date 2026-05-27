@@ -125,11 +125,11 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
       {/* ── Settings Panel ── */}
-      <div className="lg:col-span-1 space-y-6">
-        <div className="glass-card rounded-[2rem] p-6 border border-white/5 space-y-6">
-          <div className="flex items-center gap-3">
+      <div className="lg:col-span-1 flex flex-col space-y-4 h-full overflow-y-auto custom-scrollbar pr-1">
+        <div className="glass-card rounded-[2rem] p-6 border border-white/5 bg-[var(--surf)]/20 space-y-6 flex flex-col">
+          <div className="flex items-center gap-3 shrink-0 mb-2">
             <CreditCard className="h-5 w-5 text-[var(--pri)]" />
             <div>
               <h2 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text)]">Gateway Settings</h2>
@@ -144,6 +144,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
               <p className="text-[9px] font-bold text-muted">Collect fees at checkout</p>
             </div>
             <button
+              type="button"
               onClick={() => setPaymentEnabled(!paymentEnabled)}
               className={`h-6 w-11 rounded-full p-1 transition-colors duration-300 focus:outline-none ${
                 paymentEnabled ? 'bg-[var(--pri)]' : 'bg-white/10'
@@ -165,7 +166,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                 <select
                   value={activeGateway}
                   onChange={e => setActiveGateway(e.target.value)}
-                  className="w-full h-11 px-4 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none cursor-pointer"
+                  className="w-full h-11 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none cursor-pointer"
                 >
                   <option value="simulated" className="bg-[var(--base)] text-[var(--text)]">Simulation Sandbox (Mock)</option>
                   <option value="stripe" className="bg-[var(--base)] text-[var(--text)]">Stripe Checkout</option>
@@ -180,6 +181,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                   <p className="text-[9px] font-bold text-muted">Verify & approve instantly</p>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setAutoApprovePaid(!autoApprovePaid)}
                   className={`h-6 w-11 rounded-full p-1 transition-colors duration-300 focus:outline-none ${
                     autoApprovePaid ? 'bg-[var(--pri)]' : 'bg-white/10'
@@ -204,7 +206,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                       placeholder="pk_test_..."
                       value={stripePubKey}
                       onChange={e => setStripePubKey(e.target.value)}
-                      className="w-full h-10 px-4 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+                      className="w-full h-10 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
                     />
                   </div>
                   <div className="space-y-1">
@@ -215,9 +217,10 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                         placeholder="sk_test_..."
                         value={stripeSecKey}
                         onChange={e => setStripeSecKey(e.target.value)}
-                        className="w-full h-10 pl-4 pr-10 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+                        className="w-full h-10 pl-4 pr-10 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
                       />
                       <button
+                        type="button"
                         onClick={() => setShowStripeSecret(!showStripeSecret)}
                         className="absolute right-3 text-muted hover:text-[var(--text)] transition-colors"
                       >
@@ -239,7 +242,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                       placeholder="rzp_test_..."
                       value={razorpayKeyId}
                       onChange={e => setRazorpayKeyId(e.target.value)}
-                      className="w-full h-10 px-4 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+                      className="w-full h-10 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
                     />
                   </div>
                   <div className="space-y-1">
@@ -250,9 +253,10 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                         placeholder="Secret Key"
                         value={razorpayKeySecret}
                         onChange={e => setRazorpayKeySecret(e.target.value)}
-                        className="w-full h-10 pl-4 pr-10 bg-white/5 border border-white/5 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
+                        className="w-full h-10 pl-4 pr-10 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
                       />
                       <button
+                        type="button"
                         onClick={() => setShowRazorpaySecret(!showRazorpaySecret)}
                         className="absolute right-3 text-muted hover:text-[var(--text)] transition-colors"
                       >
@@ -265,20 +269,22 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
             </>
           )}
 
-          <button
-            onClick={handleSaveConfig}
-            disabled={saving}
-            className="flex items-center justify-center gap-2.5 w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/20"
-          >
-            <Save className="h-4 w-4" />
-            {saving ? 'Saving...' : 'Save Settings'}
-          </button>
+          <div className="pt-4 border-t border-white/5 shrink-0 mt-4">
+            <button
+              onClick={handleSaveConfig}
+              disabled={saving}
+              className="flex items-center justify-center gap-2.5 w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/20 cursor-pointer"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ── Transactions Panel ── */}
-      <div className="lg:col-span-2 space-y-4">
-        <div className="flex items-center justify-between gap-4">
+      <div className="lg:col-span-2 flex flex-col min-h-0 h-full overflow-hidden space-y-4">
+        <div className="flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text)]">Transaction History</span>
             <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-white/5 border border-white/5 text-muted">
@@ -288,7 +294,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
           
           <button
             onClick={loadTransactions}
-            className="p-2 bg-white/5 border border-white/5 text-muted hover:text-[var(--text)] rounded-lg hover:bg-white/10 active:scale-95 transition-all"
+            className="p-2 bg-white/5 border border-white/5 text-muted hover:text-[var(--text)] rounded-lg hover:bg-white/10 active:scale-95 transition-all cursor-pointer"
             title="Refresh Transactions"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loadingTx ? 'animate-spin' : ''}`} />
@@ -296,7 +302,7 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
         </div>
 
         {/* Search bar */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
           <input
             type="text"
@@ -308,29 +314,29 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
         </div>
 
         {/* Transactions Table Card */}
-        <div className="glass-card rounded-[2rem] border border-white/5 overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="glass-card rounded-[2rem] border border-white/5 overflow-hidden flex-1 min-h-0 flex flex-col bg-[var(--surf)]/20">
+          <div className="flex-1 overflow-auto custom-scrollbar">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-white/5 border-b border-white/5">
-                  <th className="px-5 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted">Attendee / Email</th>
-                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted">Amount</th>
-                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted">Method</th>
-                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted">Gateway ID</th>
-                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted">Status</th>
-                  <th className="px-5 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted">Date</th>
+                <tr className="bg-white/5 border-b border-white/5 sticky top-0 z-20">
+                  <th className="px-5 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted bg-[#141318] sticky top-0 z-20">Attendee / Email</th>
+                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted bg-[#141318] sticky top-0 z-20">Amount</th>
+                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted bg-[#141318] sticky top-0 z-20">Method</th>
+                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted bg-[#141318] sticky top-0 z-20">Gateway ID</th>
+                  <th className="px-4 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted bg-[#141318] sticky top-0 z-20">Status</th>
+                  <th className="px-5 py-4 text-[9px] font-black uppercase tracking-[0.25em] text-muted bg-[#141318] sticky top-0 z-20">Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.04]">
                 {loadingTx ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-20 text-xs font-black uppercase tracking-widest text-muted/50 animate-pulse">
+                    <td colSpan={6} className="text-center py-20 text-xs font-black uppercase tracking-widest text-muted/50 animate-pulse bg-transparent">
                       Fetching Transactions...
                     </td>
                   </tr>
                 ) : filteredTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-20 text-xs font-bold text-muted/55">
+                    <td colSpan={6} className="text-center py-20 text-xs font-bold text-muted/55 bg-transparent">
                       No transactions recorded.
                     </td>
                   </tr>

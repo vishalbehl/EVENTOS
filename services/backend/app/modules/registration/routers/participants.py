@@ -656,11 +656,33 @@ async def get_registration_analytics(
     for t in p_matrix_res.scalars().all():
         pricing_matrix[t.role_name.lower()] = t.price
         
-    paid_participants_q = select(Participant.role).where(Participant.event_id == event.id, Participant.paid_status == "Paid")
-    paid_res = await db.execute(paid_participants_q)
+    # Calculate actual revenue after discounts
+    # Sum the actual amount from completed transactions if available, otherwise fallback to the role price
+    from app.modules.registration.models.payment_transaction import PaymentTransaction
+    from app.modules.registration.models.participant_registration import ParticipantRegistration
+    
+    rev_q = select(
+        Participant.role,
+        PaymentTransaction.amount
+    ).select_from(Participant).outerjoin(
+        ParticipantRegistration, ParticipantRegistration.participant_id == Participant.id
+    ).outerjoin(
+        PaymentTransaction, and_(
+            PaymentTransaction.registration_id == ParticipantRegistration.id,
+            PaymentTransaction.status == "completed"
+        )
+    ).where(
+        Participant.event_id == event.id,
+        Participant.paid_status == "Paid"
+    )
+    
+    rev_res = await db.execute(rev_q)
     total_revenue = 0.0
-    for role_name in paid_res.scalars().all():
-        total_revenue += pricing_matrix.get(role_name.lower(), 150.0)
+    for role_name, tx_amount in rev_res.all():
+        if tx_amount is not None:
+            total_revenue += tx_amount
+        else:
+            total_revenue += pricing_matrix.get(role_name.lower(), 150.0)
         
     total_count = (await db.execute(total_q)).scalar_one() or 0
     checked_in_count = (await db.execute(checked_in_q)).scalar_one() or 0

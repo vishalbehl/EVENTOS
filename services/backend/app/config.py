@@ -79,6 +79,7 @@ class Settings(BaseSettings):
 
     # ── QR Codes ──────────────────────────────────────────
     QR_CODE_BASE_URL: str = "https://conf-platform.com"  # base for speaker QR links
+    SPEAKER_PORTAL_BASE_URL: str = "http://localhost:3001"
     QR_CODE_BOX_SIZE: int = 10
     QR_CODE_BORDER: int = 4
 

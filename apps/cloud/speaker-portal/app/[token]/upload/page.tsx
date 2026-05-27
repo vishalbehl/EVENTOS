@@ -218,6 +218,14 @@ export default function UploadPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {portal?.theme_color && (
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --pri: ${portal.theme_color};
+            --sec: color-mix(in srgb, ${portal.theme_color} 80%, white);
+          }
+        `}} />
+      )}
       {/* Sticky deadline banner */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
 

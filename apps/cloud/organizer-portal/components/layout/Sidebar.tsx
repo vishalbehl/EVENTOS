@@ -10,7 +10,7 @@ import {
   Users, Calendar, MapPin, FileVideo, Mail,
   MonitorPlay, BarChart3, SlidersHorizontal,
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
-  Bell, FileText, Info, Layout, ClipboardList
+  Bell, FileText, Info, Layout, ClipboardList, Banknote
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
@@ -65,23 +65,26 @@ export function Sidebar() {
 
   const registrationRoutes = [
     { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/registration/dashboard` },
-    { label: "Register", icon: User, href: `/events/${eventId}/registration/register` },
-    { label: "Participants", icon: Users, href: `/events/${eventId}/registration/participants` },
+    { label: "Form Builder", icon: SlidersHorizontal, href: `/events/${eventId}/registration/form-builder` },
     { label: "Review Queue", icon: ClipboardList, href: `/events/${eventId}/registration/review` },
-    { label: "Form Builder", icon: ClipboardList, href: `/events/${eventId}/registration/form-builder` },
-    { label: "Print Designer", icon: Layout, href: `/events/${eventId}/registration/designer` },
-    { label: "Certificate Printer", icon: FileText, href: `/events/${eventId}/registration/certificates` },
+    { label: "Participants", icon: Users, href: `/events/${eventId}/registration/participants` },
+    { label: "Financials", icon: Banknote, href: `/events/${eventId}/registration/financials` },
     { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
-    { label: "Reports", icon: BarChart3, href: `/events/${eventId}/registration/reports` },
-    { label: "Reg Config", icon: Settings, href: `/events/${eventId}/registration/settings` },
+    { label: "Template Designer", icon: Layout, href: `/events/${eventId}/registration/template-designer` },
+    { label: "Certificate Printer", icon: FileText, href: `/events/${eventId}/registration/certificates` },
   ];
 
   const filteredPlatformRoutes = platformRoutes.filter(r => !r.permission || checkPermission(r.permission));
 
-  const bottomRoutes = isRegistrationWorkspace ? [] : [
-    { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
-    { label: "Documentation", icon: FileText, href: "/docs" },
-  ];
+  const bottomRoutes = isRegistrationWorkspace
+    ? [
+        { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
+        { label: "Documentation", icon: FileText, href: "/docs" },
+      ]
+    : [
+        { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
+        { label: "Documentation", icon: FileText, href: "/docs" },
+      ];
 
   const currentRoutes = isRegistrationWorkspace 
     ? (regEnabled ? registrationRoutes : []) 

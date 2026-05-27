@@ -2,7 +2,7 @@ import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -107,6 +107,12 @@ DEFAULT_FIELDS = [
     }
 ]
 
+DEFAULT_FAQS = [
+    { "q": "What should I bring to the event?", "a": "Please bring a copy of your entry pass QR code (on your phone or printed) along with a valid photo ID for quick check-in.", "is_default": True },
+    { "q": "Is there parking available?", "a": "Yes, there is complimentary attendee parking available on-site at the main venue deck. Follow event signage.", "is_default": True },
+    { "q": "Can I transfer my ticket?", "a": "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", "is_default": True }
+]
+
 # ── Organizer Endpoints ───────────────────────────────────────────
 
 @router.get("/events/{event_id}/registration/form-config", response_model=RegistrationFormConfigResponse)
@@ -138,12 +144,16 @@ async def get_registration_form_config(
         await db.refresh(config)
 
     terms = event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else ""
+    faqs = event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS
+    include_default = event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True
     return {
         "id": config.id,
         "event_id": config.event_id,
         "is_live": config.is_live,
         "fields": config.fields,
-        "terms_and_conditions": terms
+        "terms_and_conditions": terms,
+        "faqs": faqs,
+        "include_default_faqs": include_default
     }
 
 
@@ -173,17 +183,29 @@ async def update_registration_form_config(
         reg_settings = dict(event.registration_settings or {})
         reg_settings["terms_and_conditions"] = payload.terms_and_conditions
         event.registration_settings = reg_settings
+    if payload.faqs is not None:
+        reg_settings = dict(event.registration_settings or {})
+        reg_settings["faqs"] = [faq.model_dump() for faq in payload.faqs]
+        event.registration_settings = reg_settings
+    if payload.include_default_faqs is not None:
+        reg_settings = dict(event.registration_settings or {})
+        reg_settings["include_default_faqs"] = payload.include_default_faqs
+        event.registration_settings = reg_settings
 
     await db.commit()
     await db.refresh(config)
     
     terms = event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else ""
+    faqs = event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS
+    include_default = event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True
     return {
         "id": config.id,
         "event_id": config.event_id,
         "is_live": config.is_live,
         "fields": config.fields,
-        "terms_and_conditions": terms
+        "terms_and_conditions": terms,
+        "faqs": faqs,
+        "include_default_faqs": include_default
     }
 
 
@@ -537,7 +559,11 @@ async def public_register_participant(
 @router.post("/portal/registration/{event_id}/upload")
 async def public_registration_upload(
     event_id: uuid.UUID,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    field_name: Optional[str] = Form(None),
+    regno: Optional[str] = Form(None),
+    username: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Public upload endpoint for files/images in custom fields.
@@ -552,10 +578,40 @@ async def public_registration_upload(
             detail=f"Could not read upload file: {str(e)}"
         )
 
-    # 2. Construct safe storage filename
+    # 2. Query event to get event name
+    import re
+    event = None
+    try:
+        event_result = await db.execute(select(Event).where(Event.id == event_id))
+        event = event_result.scalar_one_or_none()
+    except Exception as e:
+        pass
+
+    def sanitize_path_part(text: str, is_file: bool = False) -> str:
+        if not text:
+            return "default"
+        pattern = r'[^A-Za-z0-9\-\.]+' if is_file else r'[^A-Za-z0-9\-]+'
+        cleaned = re.sub(pattern, '_', text.strip())
+        return cleaned.strip('_')
+
+    event_name_clean = sanitize_path_part(event.name) if event else str(event_id)
+    field_folder = sanitize_path_part(field_name).lower() if field_name else "general"
+
+    r_part = sanitize_path_part(regno).upper() if regno else ""
+    u_part = sanitize_path_part(username).upper() if username else ""
+
+    if r_part and u_part:
+        base_filename = f"{r_part}_{u_part}"
+    elif r_part:
+        base_filename = r_part
+    elif u_part:
+        base_filename = u_part
+    else:
+        base_filename = str(uuid.uuid4())
+
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
-    stored_filename = f"{uuid.uuid4()}.{ext}"
-    storage_path = f"{event_id}/{stored_filename}"
+    stored_filename = f"{base_filename}.{ext}"
+    storage_path = f"{event_name_clean}/registration_upload/{field_folder}/{stored_filename}"
 
     # 3. Upload bytes to S3 or local bucket 'registration_uploads'
     bucket = "registration_uploads"

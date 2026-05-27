@@ -216,7 +216,7 @@ export default function ReviewPage() {
   ];
 
   return (
-    <div className="space-y-8 p-6 max-w-7xl mx-auto">
+    <div className="flex-1 flex flex-col space-y-6 min-h-0 text-[var(--text)]">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -315,7 +315,7 @@ export default function ReviewPage() {
       </div>
 
       {/* Main Table / Queue view */}
-      <Card className="glass-3d overflow-hidden border-default bg-[var(--surf)]/20">
+      <Card className="flex-1 glass-3d overflow-hidden border-default bg-[var(--surf)]/20 rounded-[2rem] flex flex-col min-h-0">
         {loading ? (
           <div className="py-20 flex flex-col items-center justify-center text-muted">
             <RefreshCw className="h-8 w-8 animate-spin text-[var(--pri)] mb-4" />
@@ -328,7 +328,7 @@ export default function ReviewPage() {
             <p className="text-sm mt-1">No registrations match the selected filters.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="flex-1 overflow-auto custom-scrollbar">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-default bg-[var(--surf)]/50 text-xs font-bold uppercase tracking-wider text-muted">

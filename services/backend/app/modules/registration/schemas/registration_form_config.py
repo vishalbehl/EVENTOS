@@ -13,6 +13,11 @@ class FormFieldConfig(BaseModel):
     options: Optional[List[str]] = None
     placeholder: Optional[str] = None
 
+class FAQConfig(BaseModel):
+    q: str
+    a: str
+    is_default: Optional[bool] = False
+
 class RegistrationFormConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -20,8 +25,13 @@ class RegistrationFormConfigResponse(BaseModel):
     is_live: bool
     fields: List[FormFieldConfig]
     terms_and_conditions: Optional[str] = ""
+    faqs: Optional[List[FAQConfig]] = None
+    include_default_faqs: Optional[bool] = True
 
 class RegistrationFormConfigUpdate(BaseModel):
     is_live: Optional[bool] = None
     fields: Optional[List[FormFieldConfig]] = None
     terms_and_conditions: Optional[str] = None
+    faqs: Optional[List[FAQConfig]] = None
+    include_default_faqs: Optional[bool] = None
+

@@ -40,6 +40,14 @@ export default function SpeakerLandingPage() {
   }
 
   if (error || !portal) {
+    let errorMessage = "The security token or access code you provided is invalid or has expired.";
+    if (error) {
+      const axiosError = error as any;
+      if (axiosError.response?.data?.detail) {
+        errorMessage = axiosError.response.data.detail;
+      }
+    }
+
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-6">
         <motion.div 
@@ -52,7 +60,7 @@ export default function SpeakerLandingPage() {
           </div>
           <h1 className="text-2xl font-black mb-4 text-red-400 uppercase tracking-tighter">Access Denied</h1>
           <p className="text-muted font-bold text-sm mb-8 leading-relaxed">
-            The security token or access code you provided is invalid or has expired.
+            {errorMessage}
           </p>
           <button 
             onClick={() => router.push('/')}
@@ -83,6 +91,14 @@ export default function SpeakerLandingPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {portal.theme_color && (
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --pri: ${portal.theme_color};
+            --sec: color-mix(in srgb, ${portal.theme_color} 80%, white);
+          }
+        `}} />
+      )}
       {/* Sticky deadline banner — mounts above header */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
 

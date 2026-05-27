@@ -29,6 +29,7 @@ export interface EventResponse extends EventSummary {
   participants_list_allowed: boolean;
   speaker_settings: Record<string, any>;
   registration_settings: Record<string, any>;
+  theme_color?: string | null;
   created_by?: string;
   created_at: string;
   updated_at: string;

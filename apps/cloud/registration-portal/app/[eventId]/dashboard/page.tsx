@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle2, Clock, AlertCircle, XCircle, HelpCircle,
   User, Ticket, Calendar, MapPin, Mail, Phone, Building,
   Briefcase, Globe, Edit3, Save, X, ExternalLink,
-  ChevronRight, Loader2, LogOut, Megaphone, ArrowLeft, ArrowRight
+  ChevronRight, Loader2, LogOut, Megaphone, ArrowLeft, ArrowRight,
+  Check, FileText, Share2, Download, Award, Linkedin, Send, Sparkles, Map, Users, Crop
 } from "lucide-react";
 import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { fetchCountryStates, getAllowedCountries, getStatesForCountry, CountryStateEntry } from "@/lib/country-states";
+
 
 export const countryCodes = [
   { code: "+91", iso: "IN", name: "India" },
@@ -70,7 +75,7 @@ export const countryCodes = [
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-interface EventInfo { name: string; start_date: string | null; end_date: string | null; venue: string; support_email: string; announcements: string; program_url: string; theme_color?: string; }
+interface EventInfo { name: string; start_date: string | null; end_date: string | null; venue: string; support_email: string; announcements: string; program_url: string; theme_color?: string; faqs?: any[]; }
 interface RegistrationInfo { status: string; registration_id: string | null; submitted_at: string | null; waitlist_position: number | null; rejection_reason: string | null; }
 interface ParticipantInfo { regno: string; name: string; email: string; phone: string; company: string; designation: string; country: string; role: string; paid_status: string; custom_fields: Record<string, unknown>; registered_at: string | null; }
 interface PaymentInfo { status: string; amount: number; currency: string; payment_method: string; transaction_id: string; created_at: string; gateway_payment_id: string | null; discount_applied: number; }
@@ -142,6 +147,317 @@ export default function PortalDashboardPage() {
   const [editForm, setEditForm] = useState<Partial<ParticipantInfo>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [tcModalOpen, setTcModalOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string }>>([
+    { sender: "bot", text: "Hello! Welcome to EventOS support. How can I help you today?" }
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [connectedStates, setConnectedStates] = useState<Record<number, boolean>>({});
+  const [faqOpenIndex, setFaqOpenIndex] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+  const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
+
+  useEffect(() => {
+    fetchCountryStates().then(setCountryStates);
+  }, []);
+
+  // Image Editor States
+  const [imageEditorOpen, setImageEditorOpen] = useState(false);
+  const [imageToEdit, setImageToEdit] = useState<string | null>(null);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [originalFileName, setOriginalFileName] = useState<string>("");
+  const [cropPercent, setCropPercent] = useState({ x: 0, y: 0, w: 1, h: 1 });
+  const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
+  const [cropAspect, setCropAspect] = useState<"1:1" | "4:3" | "16:9" | "free">("1:1");
+  const [cropShape, setCropShape] = useState<"rect" | "circle">("rect");
+  const [filterBrightness, setFilterBrightness] = useState(100);
+  const [filterContrast, setFilterContrast] = useState(100);
+  const cropperDragRef = useRef<any>(null);
+
+  const applyAspectToCrop = (ratioStr: "1:1" | "4:3" | "16:9" | "free", currentImgWidth = imgSize.width, currentImgHeight = imgSize.height) => {
+    if (ratioStr === "free") {
+      setCropPercent({ x: 0, y: 0, w: 1, h: 1 });
+      return;
+    }
+    const R = ratioStr === "1:1" ? 1.0 : ratioStr === "4:3" ? 4 / 3 : 16 / 9;
+    const imgWidth = currentImgWidth || 300;
+    const imgHeight = currentImgHeight || 300;
+    const imgRatio = imgWidth / imgHeight;
+
+    let w = 1.0;
+    let h = 1.0;
+
+    if (imgRatio > R) {
+      h = 1.0;
+      w = R / imgRatio;
+    } else {
+      w = 1.0;
+      h = imgRatio / R;
+    }
+
+    const x = (1.0 - w) / 2;
+    const y = (1.0 - h) / 2;
+    setCropPercent({ x, y, w, h });
+  };
+
+  const handleSelectAspect = (ratio: "1:1" | "4:3" | "16:9" | "free") => {
+    setCropAspect(ratio);
+    if (ratio !== "1:1") setCropShape("rect");
+    applyAspectToCrop(ratio);
+  };
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    const measuredWidth = img.clientWidth;
+    const measuredHeight = img.clientHeight;
+    setImgSize({ width: measuredWidth, height: measuredHeight });
+    applyAspectToCrop(cropAspect, measuredWidth, measuredHeight);
+  };
+
+  const handleMouseDownMove = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    cropperDragRef.current = {
+      type: "move",
+      startX: e.clientX,
+      startY: e.clientY,
+      startCropX: cropPercent.x,
+      startCropY: cropPercent.y,
+      startCropW: cropPercent.w,
+      startCropH: cropPercent.h
+    };
+  };
+
+  const handleMouseDownResize = (e: React.MouseEvent, handle: "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r") => {
+    e.stopPropagation();
+    cropperDragRef.current = {
+      type: "resize",
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      startCropX: cropPercent.x,
+      startCropY: cropPercent.y,
+      startCropW: cropPercent.w,
+      startCropH: cropPercent.h
+    };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!cropperDragRef.current || imgSize.width === 0 || imgSize.height === 0) return;
+
+    const drag = cropperDragRef.current;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const ndx = dx / imgSize.width;
+    const ndy = dy / imgSize.height;
+
+    if (drag.type === "move") {
+      let newX = drag.startCropX + ndx;
+      let newY = drag.startCropY + ndy;
+      newX = Math.max(0, Math.min(1 - drag.startCropW, newX));
+      newY = Math.max(0, Math.min(1 - drag.startCropH, newY));
+      setCropPercent(prev => ({ ...prev, x: newX, y: newY }));
+    } else if (drag.type === "resize") {
+      const handle = drag.handle;
+      const sX = drag.startCropX;
+      const sY = drag.startCropY;
+      const sW = drag.startCropW;
+      const sH = drag.startCropH;
+
+      const getAspectNum = (ratio: "1:1" | "4:3" | "16:9" | "free") => {
+        if (ratio === "1:1") return 1.0;
+        if (ratio === "4:3") return 4 / 3;
+        if (ratio === "16:9") return 16 / 9;
+        return null;
+      };
+
+      const R = getAspectNum(cropAspect);
+
+      if (R !== null) {
+        if (handle === "br") {
+          let newW = sW + ndx;
+          newW = Math.min(1 - sX, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + newH > 1.0) {
+            newH = 1.0 - sY;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          setCropPercent({ x: sX, y: sY, w: newW, h: newH });
+        } else if (handle === "tr") {
+          let newW = sW + ndx;
+          newW = Math.min(1 - sX, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + sH - newH < 0) {
+            newH = sY + sH;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          const newY = sY + sH - newH;
+          setCropPercent({ x: sX, y: newY, w: newW, h: newH });
+        } else if (handle === "bl") {
+          let newW = sW - ndx;
+          newW = Math.min(sX + sW, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + newH > 1.0) {
+            newH = 1.0 - sY;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          const newX = sX + sW - newW;
+          setCropPercent({ x: newX, y: sY, w: newW, h: newH });
+        } else if (handle === "tl") {
+          let newW = sW - ndx;
+          newW = Math.min(sX + sW, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + sH - newH < 0) {
+            newH = sY + sH;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          const newX = sX + sW - newW;
+          const newY = sY + sH - newH;
+          setCropPercent({ x: newX, y: newY, w: newW, h: newH });
+        }
+      } else {
+        let newX = sX;
+        let newY = sY;
+        let newW = sW;
+        let newH = sH;
+
+        if (handle === "tl") {
+          newX = Math.max(0, Math.min(sX + sW - 0.05, sX + ndx));
+          newW = sX + sW - newX;
+          newY = Math.max(0, Math.min(sY + sH - 0.05, sY + ndy));
+          newH = sY + sH - newY;
+        } else if (handle === "tr") {
+          newW = Math.max(0.05, Math.min(1 - sX, sW + ndx));
+          newY = Math.max(0, Math.min(sY + sH - 0.05, sY + ndy));
+          newH = sY + sH - newY;
+        } else if (handle === "bl") {
+          newX = Math.max(0, Math.min(sX + sW - 0.05, sX + ndx));
+          newW = sX + sW - newX;
+          newH = Math.max(0.05, Math.min(1 - sY, sH + ndy));
+        } else if (handle === "br") {
+          newW = Math.max(0.05, Math.min(1 - sX, sW + ndx));
+          newH = Math.max(0.05, Math.min(1 - sY, sH + ndy));
+        } else if (handle === "t") {
+          newY = Math.max(0, Math.min(sY + sH - 0.05, sY + ndy));
+          newH = sY + sH - newY;
+        } else if (handle === "b") {
+          newH = Math.max(0.05, Math.min(1 - sY, sH + ndy));
+        } else if (handle === "l") {
+          newX = Math.max(0, Math.min(sX + sW - 0.05, sX + ndx));
+          newW = sX + sW - newX;
+        } else if (handle === "r") {
+          newW = Math.max(0.05, Math.min(1 - sX, sW + ndx));
+        }
+        setCropPercent({ x: newX, y: newY, w: newW, h: newH });
+      }
+    }
+  };
+
+  const handleMouseUp = () => {
+    cropperDragRef.current = null;
+  };
+
+  const dataURLtoFile = (dataurl: string, filename: string): File => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  };
+
+  const executeFileUpload = async (fieldId: string, file: File) => {
+    const field = formConfig?.fields?.find((f: any) => f.id === fieldId) || { label: fieldId, name: fieldId };
+    const fieldName = field.name || fieldId;
+    const toastId = toast.loading(`Uploading ${field.label.toLowerCase()}...`);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("field_name", field.label);
+      if (data?.participant?.regno) {
+        fd.append("regno", data.participant.regno);
+      }
+      if (data?.participant?.name) {
+        fd.append("username", data.participant.name);
+      }
+      const res = await fetch(`${API_BASE}/api/v1/portal/registration/${eventId}/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || "Upload failed");
+      
+      setEditForm((prev: any) => ({
+        ...prev,
+        custom_fields: {
+          ...(prev.custom_fields || {}),
+          [fieldName]: d.url
+        }
+      }));
+      toast.success(`${field.label} uploaded!`, { id: toastId });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload file.", { id: toastId });
+    }
+  };
+
+  const handleCropSubmit = () => {
+    if (!imageToEdit) return;
+    const img = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const sx = cropPercent.x * img.width;
+      const sy = cropPercent.y * img.height;
+      const sw = cropPercent.w * img.width;
+      const sh = cropPercent.h * img.height;
+
+      canvas.width = sw;
+      canvas.height = sh;
+
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      ctx.fillRect(0, 0, sw, sh);
+
+      if (cropShape === "circle" && cropAspect === "1:1") {
+        ctx.beginPath();
+        ctx.arc(sw / 2, sh / 2, sw / 2, 0, Math.PI * 2);
+        ctx.clip();
+      }
+
+      ctx.filter = `brightness(${filterBrightness}%) contrast(${filterContrast}%)`;
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      const croppedUrl = canvas.toDataURL("image/png");
+      const croppedFile = dataURLtoFile(croppedUrl, originalFileName || "profile.png");
+
+      setImageEditorOpen(false);
+      setImageToEdit(null);
+      
+      if (editingFieldId) {
+        await executeFileUpload(editingFieldId, croppedFile);
+      }
+    };
+    img.src = imageToEdit;
+  };
+
+
+  const handleSendChatMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    const msg = chatInput.trim();
+    setChatMessages(prev => [...prev, { sender: "user", text: msg }]);
+    setChatInput("");
+    setTimeout(() => {
+      setChatMessages(prev => [...prev, {
+        sender: "bot",
+        text: "Thank you for contacting organizer support. We have received your query and will reply shortly!"
+      }]);
+    }, 1000);
+  };
 
   const token = typeof window !== "undefined" ? localStorage.getItem(`portal_token_${eventId}`) : null;
 
@@ -158,6 +474,27 @@ export default function PortalDashboardPage() {
   }, [token, eventId, router]);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+
+  useEffect(() => {
+    if (!data?.event?.start_date) return;
+    const start = new Date(data.event.start_date).getTime();
+    const update = () => {
+      const now = new Date().getTime();
+      const diff = start - now;
+      if (diff <= 0) {
+        setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        return;
+      }
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      setCountdown({ days, hours, minutes, seconds });
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [data?.event?.start_date]);
 
   const [verifyingEmailChange, setVerifyingEmailChange] = useState(false);
   const [otpInput, setOtpInput] = useState("");
@@ -407,7 +744,8 @@ export default function PortalDashboardPage() {
       phone: data.participant.phone, 
       company: data.participant.company, 
       designation: data.participant.designation, 
-      country: data.participant.country 
+      country: data.participant.country,
+      custom_fields: data.participant.custom_fields || {}
     });
     setSaveError(null); setEditing(true);
   };
@@ -415,6 +753,24 @@ export default function PortalDashboardPage() {
   const saveEdit = async () => {
     if (!token || !data?.participant) return;
     setSaving(true); setSaveError(null);
+
+    // Country & State validation
+    const countryField = formConfig?.fields?.find((field: any) => field.name === "country" || field.id === "country");
+    if (countryField?.is_required) {
+      if (!editForm.country || !editForm.country.trim()) {
+        setSaveError("Country is required.");
+        setSaving(false);
+        return;
+      }
+      const selectedCountry = editForm.country || "";
+      const states = getStatesForCountry(countryStates, selectedCountry);
+      const stateVal = (editForm.custom_fields as any)?.["country_state"] || "";
+      if (states.length > 0 && (!stateVal || !stateVal.trim())) {
+        setSaveError("State/Province is required.");
+        setSaving(false);
+        return;
+      }
+    }
 
     if (editForm.phone) {
       let foundCc = "";
@@ -478,6 +834,7 @@ export default function PortalDashboardPage() {
         company: editForm.company,
         designation: editForm.designation,
         country: editForm.country,
+        custom_fields: editForm.custom_fields || {},
         ...extraParams
       };
       const res = await fetch(`${API_BASE}/api/v1/portal/attendee/details`, {
@@ -499,7 +856,7 @@ export default function PortalDashboardPage() {
       
       const resData = await res.json();
       if (resData.new_token) {
-        localStorage.setItem(`portal_token_${eventId}`, resData.new_token);
+         localStorage.setItem(`portal_token_${eventId}`, resData.new_token);
       }
       
       setVerifyingEmailChange(false);
@@ -842,37 +1199,203 @@ export default function PortalDashboardPage() {
   const logout = () => { localStorage.removeItem(`portal_token_${eventId}`); router.push(`/${eventId}/login`); };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center bg-[#080912]">
       <div className="space-y-4 w-full max-w-2xl px-6">
-        {[1,2,3].map(i => <div key={i} className="h-32 bg-white/5 animate-pulse rounded-[2rem]" />)}
+        <div className="h-8 bg-white/5 animate-pulse rounded-lg w-1/4" />
+        {[1, 2, 3].map(i => (
+          <div key={i} className="h-32 bg-white/5 animate-pulse rounded-[2rem]" />
+        ))}
       </div>
     </div>
   );
 
   if (!data) return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="glass-3d p-10 text-center rounded-[2.5rem]">
+    <div className="min-h-screen flex items-center justify-center bg-[#080912] p-6">
+      <div className="glass-3d p-10 text-center rounded-[2.5rem] border border-rose-500/20 max-w-md w-full">
         <AlertCircle className="h-12 w-12 text-rose-400 mx-auto mb-4 animate-pulse" />
-        <p className="text-[var(--muted)] font-bold text-sm">Could not load your dashboard. Please refresh.</p>
+        <h3 className="text-[#E8EAFF] font-black text-sm uppercase tracking-wider mb-2">Sync Error</h3>
+        <p className="text-[var(--muted)] font-bold text-xs">Could not load your attendee dashboard. Please try refreshing or login again.</p>
+        <button onClick={fetchDashboard} className="mt-6 px-6 h-10 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all">
+          Refresh Connection
+        </button>
       </div>
     </div>
   );
 
   const { event, registration, participant, payment, edits_locked, is_speaker, speaker_portal_url } = data;
   const isApproved = registration.status === "approved";
-
   const isRegistered = ["submitted", "pending_review", "approved", "waitlisted", "rejected"].includes(registration.status);
 
+  // Compute days left
+  const daysLeft = (() => {
+    if (!event.start_date) return null;
+    const start = new Date(event.start_date);
+    const now = new Date();
+    start.setHours(0,0,0,0);
+    now.setHours(0,0,0,0);
+    const diffTime = start.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  })();
+
+  // Calculate missing profile items & percent based ONLY on active required form fields
+  const profileCompletion = (() => {
+    if (!participant) return { percent: 0, missing: [] };
+    
+    const missing: string[] = [];
+    let requiredCount = 0;
+    let filledCount = 0;
+    
+    // If formConfig fields are loaded, check them. Otherwise check standard registration fields.
+    if (formConfig?.fields && formConfig.fields.length > 0) {
+      formConfig.fields.forEach((field: any) => {
+        if (field.is_active && field.is_required) {
+          requiredCount++;
+          let val: any = null;
+          if (field.is_default) {
+            val = (participant as any)[field.name];
+          } else {
+            val = (participant.custom_fields as any)?.[field.name];
+          }
+          if (val && String(val).trim() !== "") {
+            filledCount++;
+          } else {
+            missing.push(field.label);
+          }
+        }
+      });
+    } else {
+      // Fallback check standard required fields
+      const standardFields = [
+        { name: "name", label: "Full Name" },
+        { name: "email", label: "Email Address" },
+        { name: "phone", label: "Phone Number" }
+      ];
+      standardFields.forEach(f => {
+        requiredCount++;
+        const val = (participant as any)[f.name];
+        if (val && String(val).trim() !== "") {
+          filledCount++;
+        } else {
+          missing.push(f.label);
+        }
+      });
+    }
+    
+    const percent = requiredCount > 0 ? Math.round((filledCount / requiredCount) * 100) : 100;
+    return { percent, missing };
+  })();
+  const profileCompletionPercent = profileCompletion.percent;
+  const missingProfileItems = profileCompletion.missing;
+
+  // Announcements List formatting and sorting
+  const announcementsList = (() => {
+    let list: any[] = [];
+    if (event.announcements) {
+      if (Array.isArray(event.announcements)) {
+        list = [...event.announcements];
+      } else if (typeof event.announcements === "string") {
+        try {
+          const parsed = JSON.parse(event.announcements);
+          if (Array.isArray(parsed)) {
+            list = parsed;
+          } else {
+            list = [{ message: event.announcements, type: "info" }];
+          }
+        } catch {
+          list = [{ message: event.announcements, type: "info" }];
+        }
+      }
+    }
+
+    // Dynamic warning announcement for missing required fields (Auto-announcement feature)
+    if (missingProfileItems.length > 0) {
+      list.unshift({
+        id: "missing-fields-alert",
+        message: `Action Required: New details are needed to complete your registration. Please fill in the following pending field(s): ${missingProfileItems.join(", ")}.`,
+        type: "warning",
+        created_at: new Date().toISOString()
+      });
+    }
+
+    // Sort announcements by created_at descending (newest on top)
+    list.sort((a, b) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (timeA && timeB) return timeB - timeA;
+      const idA = typeof a.id === "number" ? a.id : 0;
+      const idB = typeof b.id === "number" ? b.id : 0;
+      if (idA && idB) return idB - idA;
+      return 0;
+    });
+
+    return list;
+  })();
+
+
+  // Pending Actions
+  const pendingActions: string[] = [];
+  if (registration.status === "not_registered") {
+    pendingActions.push("Submit Registration Form");
+  }
+  if (registration.status === "approved" && participant?.paid_status !== "Paid" && getTicketBasePrice() > 0) {
+    pendingActions.push("Complete Ticket Payment");
+  }
+  if (missingProfileItems.length > 0 && isRegistered) {
+    pendingActions.push("Complete Profile Checklist");
+  }
+
+  // Steps for the journey progress timeline
+  const steps = [
+    { 
+      label: "Registration Completed", 
+      isCompleted: isRegistered, 
+      isActive: isRegistered 
+    },
+    { 
+      label: "Payment Completed", 
+      isCompleted: participant?.paid_status === "Paid" || getTicketBasePrice() === 0, 
+      isActive: isRegistered 
+    },
+    { 
+      label: "Profile Completion", 
+      isCompleted: missingProfileItems.length === 0, 
+      isActive: isRegistered 
+    },
+    { 
+      label: "Badge Generated", 
+      isCompleted: isApproved && (participant?.paid_status === "Paid" || getTicketBasePrice() === 0), 
+      isActive: isApproved 
+    },
+    { 
+      label: "Check-in Status", 
+      isCompleted: !!(participant?.custom_fields?.checked_in || participant?.custom_fields?.check_in), 
+      isActive: isApproved && (participant?.paid_status === "Paid" || getTicketBasePrice() === 0)
+    }
+  ];
+
+  const labelMap: Record<string, string> = {
+    name: "Full Name",
+    email: "Email Address",
+    phone: "Phone Number",
+    company: "Company / Organization",
+    designation: "Designation / Job Title",
+    country: "Country"
+  };
+
   return (
-    <div className="min-h-screen pb-12">
+    <div className="min-h-screen pb-12 bg-[#080912] text-[#E8EAFF] font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
       {/* Sticky header */}
       <div className="sticky top-0 z-20 border-b border-white/5 backdrop-blur-xl bg-[#080912]/80">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block">
-              Registration Portal
-            </span>
-            <h1 className="text-base font-black text-[#E8EAFF] tracking-tighter leading-tight">{event.name}</h1>
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center font-black text-xs text-white">OS</div>
+            <div>
+              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block">
+                Registration Portal
+              </span>
+              <h1 className="text-sm font-black text-[#E8EAFF] tracking-tight leading-tight max-w-[200px] sm:max-w-xs truncate">{event.name}</h1>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/5 px-3 py-1.5 rounded-full">
@@ -888,7 +1411,6 @@ export default function PortalDashboardPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 pt-6 space-y-6">
-
         {showPaymentSuccess ? (
           <div className="max-w-md mx-auto">
             <motion.div
@@ -1016,21 +1538,42 @@ export default function PortalDashboardPage() {
 
               {/* Terms and Conditions block */}
               <div className="space-y-4 pt-4 border-t border-white/5">
-                <h3 className="text-[10px] font-black text-[var(--muted)] uppercase tracking-widest text-left">Terms & Conditions</h3>
-                <div className="p-4 rounded-xl bg-black/40 border border-white/5 max-h-36 overflow-y-auto text-xs text-[var(--muted)] leading-relaxed font-medium whitespace-pre-wrap text-left">
-                  {formConfig?.terms_and_conditions || (
-                    "1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule without prior notice."
-                  )}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[10px] font-black text-[var(--muted)] uppercase tracking-widest text-left">Terms &amp; Conditions</h3>
+                  <button
+                    type="button"
+                    onClick={() => setTcModalOpen(true)}
+                    className="text-[9px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest flex items-center gap-1 transition-colors"
+                  >
+                    <FileText className="h-3 w-3" />
+                    View Full T&amp;C
+                  </button>
                 </div>
-                <label className="flex items-start gap-3 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={agreedToTerms}
-                    onChange={(e) => setAgreedToTerms(e.target.checked)}
-                    className="h-4 w-4 bg-white/5 border border-white/10 rounded text-indigo-500 focus:ring-0 mt-0.5 cursor-pointer"
-                  />
-                  <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider leading-relaxed text-left">
-                    I have read and agree to the terms and conditions. <span className="text-indigo-400 font-bold">*</span>
+                <div className="p-4 rounded-xl bg-black/40 border border-white/5 max-h-36 overflow-y-auto text-left prose prose-invert prose-xs max-w-none
+                  prose-headings:text-[#E8EAFF] prose-headings:font-black prose-headings:text-xs
+                  prose-p:text-[var(--muted)] prose-p:text-[11px] prose-p:leading-relaxed prose-p:my-1
+                  prose-li:text-[var(--muted)] prose-li:text-[11px] prose-li:my-0
+                  prose-strong:text-[#E8EAFF] prose-em:text-indigo-300
+                  prose-a:text-indigo-400 prose-hr:border-white/10 prose-ul:my-1 prose-ol:my-1">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {formConfig?.terms_and_conditions || "## Terms & Conditions\n\n1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule without prior notice."}
+                  </ReactMarkdown>
+                </div>
+                <label className="flex items-start gap-3 cursor-pointer select-none group">
+                  <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${
+                    agreedToTerms ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={agreedToTerms}
+                      onChange={(e) => setAgreedToTerms(e.target.checked)}
+                      className="sr-only"
+                    />
+                    {agreedToTerms && <Check className="h-2.5 w-2.5 text-white" />}
+                  </div>
+                  <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider leading-relaxed text-left group-hover:text-[#E8EAFF] transition-colors">
+                    I have read and agree to the terms and conditions above. <span className="text-indigo-400 font-bold">*</span>
+                    <span className="block text-indigo-400/60 mt-0.5 normal-case font-medium tracking-normal font-bold">Click &ldquo;View Full T&amp;C&rdquo; above to read the complete document.</span>
                   </span>
                 </label>
               </div>
@@ -1061,560 +1604,1218 @@ export default function PortalDashboardPage() {
           </div>
         ) : (
           <>
-            {/* Personalized Welcome Header */}
-            <div className="mb-2">
-              <h2 className="text-xl font-black text-[#E8EAFF] tracking-tight">
-                Welcome, {participant?.name || "Attendee"}!
-              </h2>
-              <p className="text-[9px] text-[var(--muted)] font-black uppercase tracking-widest mt-0.5">
-                Attendee Control Center
-              </p>
+            {/* Top Welcome Banner Section */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent p-6 rounded-[2rem] border border-white/5 shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-10 left-10 w-48 h-48 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="relative z-10">
+                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.25em] block mb-1">
+                  Attendee Control Center
+                </span>
+                <h2 className="text-2xl md:text-3xl font-black text-[#E8EAFF] tracking-tight flex items-center gap-2">
+                  Welcome back, {participant?.name || "Attendee"} 👋
+                </h2>
+                <p className="text-xs font-bold text-[var(--muted)] mt-2">
+                  {event.name} {daysLeft !== null ? (
+                    daysLeft > 0 ? (
+                      <>begins in <span className="text-indigo-400 font-extrabold">{daysLeft} days</span>.</>
+                    ) : daysLeft === 0 ? (
+                      <span className="text-emerald-400 font-extrabold font-bold">begins today!</span>
+                    ) : (
+                      <>started <span className="text-[var(--muted)] font-extrabold">{Math.abs(daysLeft)} days ago</span>.</>
+                    )
+                  ) : ""} You have <span className="text-purple-400 font-extrabold font-bold">{pendingActions.length} pending actions</span>.
+                </p>
+              </div>
+              {pendingActions.length > 0 && (
+                <div className="flex flex-wrap gap-2 relative z-10 shrink-0">
+                  {pendingActions.map((action, i) => (
+                    <span key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 text-purple-300 border border-purple-500/20 text-[10px] font-bold">
+                      <AlertCircle className="h-3 w-3 text-purple-400" />
+                      {action}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Speaker Banner */}
-            <AnimatePresence>
-              {is_speaker && !bannerDismissed && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                  className="rounded-[1.5rem] bg-indigo-500/10 border border-indigo-500/20 px-5 py-3.5 flex items-center justify-between">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <Megaphone className="h-4 w-4 text-indigo-400 shrink-0" />
-                    <span className="text-xs font-bold text-[#E8EAFF]">You are also a speaker for this event.</span>
-                    <a href={speaker_portal_url}
-                      className="inline-flex items-center gap-1 text-xs font-black text-indigo-400 hover:text-indigo-300 underline underline-offset-2 transition-colors">
-                      Go to Speaker Portal <ExternalLink className="h-3 w-3" />
-                    </a>
+            {/* Speaker Portal Integration Section */}
+            {is_speaker && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="glass-card p-6 md:p-8 rounded-[2rem] border border-indigo-500/20 bg-indigo-500/[0.02] text-left space-y-4 relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                    <Users className="h-5 w-5" />
                   </div>
-                  <button onClick={() => setBannerDismissed(true)} className="ml-4 p-1.5 rounded-lg hover:bg-white/10 transition-colors" aria-label="Dismiss">
-                    <X className="h-4 w-4 text-[var(--muted)]" />
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  <div>
+                    <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Presenter & Speaker Hub</h3>
+                    <p className="text-xs text-[var(--muted)] font-bold mt-1">You are a speaker for this event.</p>
+                  </div>
+                </div>
+                
+                <p className="text-xs font-bold text-[var(--muted)] leading-relaxed">
+                  Please access the Speaker Portal to upload your presentation talks, manage digital poster submissions, review slot details, and download your Speaker Ready Room QR Access pass.
+                </p>
 
-            {/* 2-Column Grid Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-          
-          {/* Left Column (My Registration, Ticket / Checkout, Payment Details) */}
-          <div className="md:col-span-7 space-y-6">
-            
-            {/* Section A — Registration Status */}
-            <Section title="My Registration" icon={<CheckCircle2 className="h-4 w-4" />}>
-              {registration.status === "not_registered" && (
-                <div className="text-center py-4 space-y-4">
-                  <p className="text-[var(--muted)] font-bold text-sm">You haven't registered for this event yet.</p>
-                  <a href={`/${eventId}/register`}
-                    className="btn-primary inline-flex items-center gap-2 px-6 h-11 rounded-full">
-                    Register Now <ChevronRight className="h-4 w-4" />
+                <div className="pt-2">
+                  <a
+                    href={speaker_portal_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-primary inline-flex items-center justify-center gap-2 px-6 h-11 text-xs uppercase tracking-wider font-black rounded-full"
+                  >
+                    Access Speaker Portal <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 </div>
-              )}
+              </motion.div>
+            )}
 
-              {registration.status === "closed" && (
-                <p className="text-[var(--muted)] text-sm font-bold text-center py-2">Registration for this event is currently closed.</p>
-              )}
-
-              {["submitted", "pending_review"].includes(registration.status) && (
-                <div className="space-y-3">
-                  <StatusBadge status={registration.status} />
-                  <p className="text-xs font-bold text-[var(--muted)] leading-relaxed">
-                    Your registration is under review. We'll notify you via email once processed.
-                  </p>
-                  {registration.submitted_at && (
-                    <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest">
-                      Submitted {fmtDate(registration.submitted_at)}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {registration.status === "waitlisted" && (
-                <div className="space-y-3">
-                  <StatusBadge status="waitlisted" />
-                  {registration.waitlist_position && (
-                    <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 px-4 py-2 rounded-xl">
-                      <span className="text-xs font-black text-purple-400 uppercase tracking-widest">
-                        Queue #{registration.waitlist_position}
-                      </span>
-                    </div>
-                  )}
-                  <p className="text-xs font-bold text-[var(--muted)] leading-relaxed">
-                    You're on the waitlist. We'll email you if a spot opens up.
-                  </p>
-                </div>
-              )}
-
-              {registration.status === "rejected" && (
-                <div className="space-y-3">
-                  <StatusBadge status="rejected" />
-                  {registration.rejection_reason && (
-                    <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">
-                      <p className="text-xs font-bold text-rose-400 leading-relaxed">
-                        <span className="font-black uppercase tracking-wider">Reason: </span>
-                        {registration.rejection_reason}
-                      </p>
-                    </div>
-                  )}
-                  {event.support_email && (
-                    <p className="text-xs font-bold text-[var(--muted)]">
-                      Questions?{" "}
-                      <a href={`mailto:${event.support_email}`} className="text-indigo-400 hover:underline font-black">Contact support</a>
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {isApproved && (
-                <div className="space-y-4">
-                  <StatusBadge status="approved" />
-                  <div className="grid grid-cols-2 gap-4 p-4 bg-white/5 border border-white/5 rounded-2xl">
-                    <Field label="Registration No." value={participant?.regno || ((participant?.paid_status === "Paid" || getTicketBasePrice() === 0) ? "—" : "Pending Payment")} />
-                    <Field label="Submitted" value={fmtDate(registration.submitted_at)} />
-                  </div>
-                </div>
-              )}
-            </Section>
-
-            {/* Section B — Ticket (Only if Approved AND Paid/Free) */}
-            {isApproved && participant && (participant.paid_status === "Paid" || getTicketBasePrice() === 0) && (
-              <Section title="My Ticket" icon={<Ticket className="h-4 w-4" />}>
-                <div className="flex flex-col lg:flex-row items-center gap-8">
-                  {/* Visual Entry Pass Card in UI (Identical to Downloaded PDF & JPG formats) */}
-                  <div className="w-full max-w-[320px] bg-white border-[6px] border-[#6366f1] rounded-[24px] p-6 text-center relative overflow-hidden shadow-2xl shrink-0 flex flex-col items-center mx-auto lg:mx-0">
-                    <span className="text-[10px] font-extrabold text-[#6366f1] uppercase tracking-[0.25em] block mb-1">
-                      ENTRY PASS
-                    </span>
-                    <h4 className="text-sm font-extrabold text-[#1e1b4b] uppercase tracking-wider mb-4 max-w-full truncate">
-                      {event.name}
-                    </h4>
-
-                    <div className="p-2.5 bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl mb-5">
-                      <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(participant.regno)}`}
-                        alt={`QR code for ${participant.regno}`}
-                        className="w-36 h-36 rounded-xl block"
+            {/* Event Journey Progress Tracker */}
+            {isRegistered && (
+              <div className="glass-card p-6 rounded-[2rem] border border-white/5 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/[0.02] to-transparent pointer-events-none" />
+                <h3 className="text-[10px] font-black text-[var(--muted)] uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
+                  <Award className="h-4 w-4 text-indigo-400" /> Event Journey Progress
+                </h3>
+                
+                <div className="relative">
+                  {/* Background Line */}
+                  <div className="absolute top-4 md:top-5 left-[10%] right-[10%] h-0.5 bg-white/5" />
+                  
+                  {/* Glowing progress line */}
+                  {(() => {
+                    const completedCount = steps.filter(s => s.isCompleted).length;
+                    const progressPercent = ((completedCount - 1) / (steps.length - 1)) * 80;
+                    return (
+                      <div 
+                        className="absolute top-4 md:top-5 left-[10%] h-0.5 bg-gradient-to-r from-indigo-500 to-emerald-500 shadow-[0_0_8px_rgba(99,102,241,0.5)] transition-all duration-500" 
+                        style={{ width: `${progressPercent}%` }} 
                       />
-                    </div>
+                    );
+                  })()}
 
-                    <h3 className="text-base font-extrabold text-[#111827] uppercase tracking-wider mb-1 max-w-full truncate">
-                      {participant.name}
-                    </h3>
-                    <span className="text-xs font-mono font-bold text-[#6366f1] tracking-widest block mb-3">
-                      REG: {participant.regno || "—"}
-                    </span>
-
-                    <span className="inline-block px-4 py-1.5 bg-[#f3f4f6] border border-[#e5e7eb] text-[10px] font-extrabold text-[#4b5563] uppercase tracking-widest rounded-full">
-                      {participant.role}
-                    </span>
-                  </div>
-
-                  {/* Right side download triggers & details */}
-                  <div className="space-y-4 flex-1 w-full text-left">
-                    <div>
-                      <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest mb-1">Pass Verification Status</p>
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                        {getTicketBasePrice() === 0 ? "✓ Free Category" : "✓ Paid"}
-                      </span>
-                    </div>
-
-                    {payment && (
-                      <div>
-                        <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest mb-1">Transaction Ref</p>
-                        <p className="text-xs font-semibold text-[#E8EAFF] font-mono">{payment.transaction_id.slice(0, 12).toUpperCase()}</p>
-                      </div>
-                    )}
-
-                    <div className="pt-2 flex flex-wrap gap-2">
-                      <button
-                        onClick={() => downloadTicketJPG(participant.regno, participant.name, participant.role, event.name)}
-                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[9px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider"
-                      >
-                        Download JPG
-                      </button>
-                      <button
-                        onClick={() => downloadTicketPDF(participant.regno, participant.name, participant.role, event.name)}
-                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[9px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider"
-                      >
-                        Download PDF
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </Section>
-            )}
-
-            {/* "Payment Required" Checkout Card (If Approved BUT Unpaid and priced > 0) */}
-            {isApproved && participant && participant.paid_status !== "Paid" && getTicketBasePrice() > 0 && (
-              <Section title="Payment Required" icon={<AlertCircle className="h-4 w-4 text-amber-400" />}>
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
-                    <p className="text-xs font-bold text-amber-400 leading-relaxed">
-                      Your registration has been approved! Please complete the payment to activate your ticket, assign your registration number, and view your entry pass.
-                    </p>
-                  </div>
-                  
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center py-2 border-b border-white/5">
-                      <span className="text-xs font-bold text-[var(--muted)]">Ticket Category</span>
-                      <span className="text-xs font-black text-indigo-400 uppercase tracking-wider">{participant.role}</span>
-                    </div>
-                    
-                    <div className="flex justify-between items-center py-2 border-b border-white/5">
-                      <span className="text-xs font-bold text-[var(--muted)]">Base Price</span>
-                      <span className="text-xs font-black text-[#E8EAFF]">
-                        {formConfig?.currency || "INR"} {getTicketBasePrice().toLocaleString()}
-                      </span>
-                    </div>
-                    
-                    {appliedPromo && (
-                      <div className="flex justify-between items-center py-2 border-b border-white/5 text-emerald-400">
-                        <span className="text-xs font-bold">Promo Discount ({appliedPromo.code})</span>
-                        <span className="text-xs font-black">
-                          -{formConfig?.currency || "INR"} {appliedPromo.discount_amount.toLocaleString()}
-                        </span>
-                      </div>
-                    )}
-                    
-                    <div className="flex justify-between items-center py-2 text-base">
-                      <span className="text-sm font-black text-[#E8EAFF]">Total Amount</span>
-                      <span className="text-base font-black text-indigo-400">
-                        {formConfig?.currency || "INR"} {getTicketPrice().toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {/* Promo Code Input */}
-                  {formConfig?.payment_enabled && (
-                    <div className="space-y-2 pt-2">
-                      <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block">Promo Code</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="ENTER PROMO CODE"
-                          value={promoCode}
-                          onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                          disabled={appliedPromo !== null || validatingPromo}
-                          className="input flex-1 uppercase tracking-wider"
-                        />
-                        {appliedPromo ? (
-                          <button
-                            onClick={() => {
-                              setPromoCode("");
-                              setAppliedPromo(null);
-                            }}
-                            className="px-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-                          >
-                            Remove
-                          </button>
-                        ) : (
-                          <button
-                            onClick={handlePromoApply}
-                            disabled={!promoCode.trim() || validatingPromo}
-                            className="px-5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-                          >
-                            {validatingPromo ? <Loader2 className="h-3 w-3 animate-spin" /> : "Apply"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  
-                  <button
-                    onClick={() => setCheckoutStep("confirm")}
-                    className="w-full btn-primary h-12 rounded-xl flex items-center justify-center gap-2 mt-4 font-black uppercase tracking-wider text-xs"
-                  >
-                    Proceed to Checkout
-                  </button>
-                </div>
-              </Section>
-            )}
-
-            {/* Section E — Payment Details */}
-            {payment && (
-              <Section title="Payment Details" icon={<Briefcase className="h-4 w-4" />}>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-white/5 border border-white/5 rounded-2xl">
-                    <Field label="Transaction Ref" value={payment.transaction_id.slice(0, 8).toUpperCase()} />
-                    <Field label="Amount Paid" value={`${payment.currency} ${payment.amount.toLocaleString()}`} />
-                    <Field label="Payment Method" value={payment.payment_method.toUpperCase()} />
-                    <Field label="Payment Date" value={fmtDate(payment.created_at)} />
-                  </div>
-                  <button
-                    onClick={() => downloadReceipt(payment, event, participant)}
-                    className="btn-primary inline-flex items-center gap-2 px-5 h-10 rounded-xl text-xs"
-                  >
-                    Download Receipt <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </Section>
-            )}
-          </div>
-          
-          {/* Right Column (My Details, Event Information, Announcements) */}
-          <div className="md:col-span-5 space-y-6">
-            
-            {/* Section C — My Details */}
-            {isRegistered && participant && (
-              <Section title="My Details" icon={<User className="h-4 w-4" />}>
-                <AnimatePresence mode="wait">
-                  {!editing ? (
-                    <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
-                        <Field label="Full Name" value={participant.name} />
-                        <Field label="Email" value={participant.email} />
-                        <Field label="Phone" value={participant.phone} />
-                        <Field label="Company" value={participant.company} />
-                        <Field label="Designation" value={participant.designation} />
-                        <Field label="Country" value={participant.country} />
-                      </div>
-                      <button onClick={edits_locked ? undefined : startEdit} disabled={edits_locked}
-                        title={edits_locked ? "Edits locked — too close to the event date or registration closed" : undefined}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20
-                                   text-indigo-400 font-black text-xs uppercase tracking-wider hover:bg-indigo-500/20
-                                   disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-                        <Edit3 className="h-3.5 w-3.5" />
-                        Edit Details
-                        {edits_locked && (
-                          <span className="ml-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">
-                            Locked
+                  <div className="grid grid-cols-5 gap-2 sm:gap-6 relative z-10">
+                    {steps.map((step, idx) => {
+                      const isCompleted = step.isCompleted;
+                      const isActive = step.isActive;
+                      return (
+                        <div key={idx} className="flex flex-col items-center text-center group">
+                          {/* Step Node */}
+                          <div className={`h-8 w-8 md:h-10 md:w-10 rounded-full flex items-center justify-center border transition-all duration-300 ${
+                            isCompleted 
+                              ? "bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.2)]" 
+                              : isActive
+                                ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.2)]"
+                                : "bg-[#0d0e1b] border-white/10 text-[var(--muted)]"
+                          }`}>
+                            {isCompleted ? (
+                              <Check className="h-4 w-4 md:h-5 md:w-5" />
+                            ) : (
+                              <span className="text-[10px] md:text-xs font-black">{idx + 1}</span>
+                            )}
+                          </div>
+                          {/* Step Label */}
+                          <span className={`text-[7px] sm:text-[8px] md:text-[10px] font-black uppercase tracking-wider mt-2.5 md:mt-3 transition-colors ${
+                            isCompleted 
+                              ? "text-emerald-400" 
+                              : isActive 
+                                ? "text-[#E8EAFF]" 
+                                : "text-[var(--muted)]"
+                          }`}>
+                            {step.label}
                           </span>
-                        )}
-                      </button>
-                    </motion.div>
-                  ) : (
-                    <motion.div key="edit" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-4">
-                      {(["name", "email", "phone", "company", "designation", "country"] as const).map(f => {
-                        const isEmail = f === "email";
-                        const isEmailChangeLocked = isEmail && ["submitted", "pending_review", "approved", "waitlisted", "rejected"].includes(data?.registration?.status || "");
-                        
-                        if (f === "phone") {
-                          const rawValue = editForm.phone || "";
-                          
-                          // Parse country code and number
-                          let selectedCc = "+91"; // default
-                          let numVal = rawValue;
-                          
-                          for (const cc of countryCodes) {
-                            if (rawValue.startsWith(cc.code)) {
-                              selectedCc = cc.code;
-                              numVal = rawValue.slice(cc.code.length);
-                              break;
-                            }
-                          }
-                          
-                          // Real-time validation
-                          const isInvalid = numVal.length > 0 && (numVal.length < 7 || numVal.length > 15 || !/^\d+$/.test(numVal));
-                          
-                          const handlePhoneChange = (newCc: string, newNum: string) => {
-                            const filteredNum = newNum.replace(/\D/g, "");
-                            const combined = newCc + filteredNum;
-                            setEditForm(prev => ({ ...prev, phone: combined }));
-                          };
-                          
-                          return (
-                            <div key={f} className="space-y-1.5">
-                              <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">Phone Number</label>
-                              <div className="flex gap-2">
-                                <div className="w-[110px] shrink-0 relative">
-                                  <select
-                                    value={selectedCc}
-                                    onChange={(e) => handlePhoneChange(e.target.value, numVal)}
-                                    className="h-11 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
-                                  >
-                                    {countryCodes.map(cc => (
-                                      <option key={cc.code} value={cc.code} className="bg-[#080912]">
-                                        {cc.code} ({cc.iso})
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                                <input 
-                                  type="text"
-                                  placeholder="Enter phone number..."
-                                  value={numVal}
-                                  onChange={(e) => handlePhoneChange(selectedCc, e.target.value)}
-                                  className={`input flex-1 ${
-                                    isInvalid 
-                                      ? "border-rose-500/50 focus:border-rose-500" 
-                                      : "border-white/10 focus:border-indigo-500"
-                                  }`}
-                                />
-                              </div>
-                              {isInvalid && (
-                                <motion.p 
-                                  initial={{ opacity: 0, y: -4 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  className="text-[9px] text-rose-400 font-bold text-left pl-2"
-                                >
-                                  Phone number must contain numbers only and be between 7 and 15 digits.
-                                </motion.p>
+                          <span className="text-[6px] sm:text-[8px] md:text-[9px] font-bold text-[var(--muted)] mt-0.5 block opacity-80">
+                            {isCompleted ? "Completed" : isActive ? "Active" : "Locked"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 12-Column Responsive Layout Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+              
+              {/* Left Column - Wider Content Column */}
+              <div className="md:col-span-8 space-y-6">
+
+                {/* Announcements Center (Now at the top) */}
+                {isRegistered && announcementsList.length > 0 && (
+                  <Section title="Event Notifications & Announcements" icon={<Megaphone className="h-4 w-4" />}>
+                    <div className="space-y-4 text-left max-h-[350px] overflow-y-auto pr-2">
+                      {announcementsList.map((ann: any, idx: number) => {
+                        const type = ann.type || "info";
+                        const styles = {
+                          info: { border: "border-indigo-500/20 bg-indigo-500/5", badge: "text-indigo-400 border-indigo-500/25", label: "Notice" },
+                          warning: { border: "border-amber-500/20 bg-amber-500/5", badge: "text-amber-400 border-amber-500/25", label: "Warning" },
+                          success: { border: "border-emerald-500/20 bg-emerald-500/5", badge: "text-emerald-400 border-emerald-500/25", label: "Update" },
+                          error: { border: "border-rose-500/20 bg-rose-500/5", badge: "text-rose-400 border-rose-500/25", label: "Alert" }
+                        }[type as "info" | "warning" | "success" | "error"] || { border: "border-indigo-500/20 bg-indigo-500/5", badge: "text-indigo-400 border-indigo-500/25", label: "Notice" };
+
+                        return (
+                          <div key={ann.id || idx} className={`border rounded-2xl px-5 py-4 ${styles.border}`}>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className={`inline-flex px-1.5 py-0.5 rounded border text-[8px] font-black uppercase tracking-wider ${styles.badge}`}>
+                                {styles.label}
+                              </span>
+                              {ann.created_at && (
+                                <span className="text-[8px] font-bold text-[var(--muted)] uppercase tracking-wider">
+                                  {new Date(ann.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                                </span>
                               )}
                             </div>
-                          );
-                        }
-                        
-                        return (
-                          <div key={f}>
-                            <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1.5 capitalize">{f}</label>
-                            <input type={isEmail ? "email" : "text"}
-                              disabled={isEmailChangeLocked}
-                              value={(editForm as Record<string, string>)[f] || ""}
-                              onChange={e => setEditForm(prev => ({ ...prev, [f]: e.target.value }))}
-                              className={`input ${isEmailChangeLocked ? "opacity-50 cursor-not-allowed bg-white/5" : ""}`}
-                            />
-                            {isEmailChangeLocked && (
-                              <p className="text-[9px] text-indigo-400 mt-1 font-bold">Email address cannot be changed after registration.</p>
-                            )}
+                            <p className="text-xs font-bold text-[var(--muted)] whitespace-pre-line leading-relaxed">
+                              {ann.message}
+                            </p>
                           </div>
                         );
                       })}
+                    </div>
+                  </Section>
+                )}
+                
+                {/* Registration prompts / non-approved notices */}
+                {!isRegistered && (
+                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-indigo-500/20 bg-indigo-500/[0.02] text-center space-y-5">
+                    <div className="h-12 w-12 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto text-indigo-400">
+                      <User className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Complete Your Registration</h3>
+                      <p className="text-xs text-[var(--muted)] font-bold mt-1">You are currently logged in but haven't submitted the registration form yet.</p>
+                    </div>
+                    <a href={`/${eventId}/register`} className="btn-primary inline-flex items-center gap-2 px-8 h-12 rounded-full font-black uppercase text-xs tracking-wider">
+                      Open Registration Form <ChevronRight className="h-4 w-4" />
+                    </a>
+                  </div>
+                )}
 
-                      {saveError && (
-                        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
-                          <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                          <p className="text-xs font-bold text-rose-400">{saveError}</p>
-                        </div>
-                      )}
-
-                      <div className="flex gap-3 pt-1">
-                        <button onClick={saveEdit} disabled={saving}
-                          className="btn-primary flex items-center gap-2 px-6 h-11 rounded-full">
-                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          Save
-                        </button>
-                        <button onClick={() => setEditing(false)}
-                          className="flex items-center gap-2 px-6 h-11 rounded-xl bg-white/5 border border-white/10
-                                     text-[var(--muted)] font-black text-xs uppercase tracking-wider hover:bg-white/10 transition-all">
-                          <X className="h-4 w-4" />Cancel
-                        </button>
+                {isRegistered && registration.status === "waitlisted" && (
+                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-purple-500/20 bg-purple-500/[0.02] text-center space-y-4">
+                    <div className="h-12 w-12 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mx-auto text-purple-400">
+                      <Clock className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Waitlisted</h3>
+                      <p className="text-xs text-[var(--muted)] font-bold mt-1">We are currently at capacity, but we have placed you on the waitlist.</p>
+                    </div>
+                    {registration.waitlist_position && (
+                      <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 px-4 py-2 rounded-xl">
+                        <span className="text-xs font-black text-purple-400 uppercase tracking-widest">
+                          Queue Position: #{registration.waitlist_position}
+                        </span>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </Section>
-            )}
+                    )}
+                    <p className="text-xs font-bold text-[var(--muted)] max-w-md mx-auto leading-relaxed">
+                      We will contact you immediately via email at <span className="text-[#E8EAFF]">{participant?.email}</span> if a spot opens up. Thank you for your patience!
+                    </p>
+                  </div>
+                )}
 
-            {/* Section D — Event Information & Announcements (Only if Registered) */}
-            {isRegistered && (
-              <Section title="Event Information" icon={<Calendar className="h-4 w-4" />}>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="flex items-start gap-3">
-                      <Calendar className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Dates</p>
-                        <p className="text-sm font-semibold text-[#E8EAFF]">
-                          {fmtDate(event.start_date)}
-                          {event.end_date && event.end_date !== event.start_date && <> — {fmtDate(event.end_date)}</>}
+                {isRegistered && registration.status === "rejected" && (
+                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-rose-500/20 bg-rose-500/[0.02] text-center space-y-4">
+                    <div className="h-12 w-12 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto text-rose-400">
+                      <XCircle className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Registration Status: Not Approved</h3>
+                      <p className="text-xs text-[var(--muted)] font-bold mt-1">Unfortunately, your registration request for this event could not be approved.</p>
+                    </div>
+                    {registration.rejection_reason && (
+                      <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3 max-w-md mx-auto">
+                        <p className="text-xs font-bold text-rose-400 leading-relaxed text-left">
+                          <span className="font-black uppercase tracking-wider block mb-1">Feedback from Organizers:</span>
+                          {registration.rejection_reason}
+                        </p>
+                      </div>
+                    )}
+                    {event.support_email && (
+                      <p className="text-xs font-bold text-[var(--muted)]">
+                        If you believe this is a misunderstanding, please reach out to us at{" "}
+                        <a href={`mailto:${event.support_email}`} className="text-indigo-400 hover:underline font-black">{event.support_email}</a>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {isRegistered && ["submitted", "pending_review"].includes(registration.status) && (
+                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-amber-500/20 bg-amber-500/[0.02] text-center space-y-4">
+                    <div className="h-12 w-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400">
+                      <Clock className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Registration Under Review</h3>
+                      <p className="text-xs text-[var(--muted)] font-bold mt-1">Thank you for submitting your registration. Our team is currently reviewing your details.</p>
+                    </div>
+                    <p className="text-xs font-bold text-[var(--muted)] max-w-md mx-auto leading-relaxed">
+                      We will process your registration shortly and send a confirmation email once a decision has been reached. Please check back later.
+                    </p>
+                    {registration.submitted_at && (
+                      <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest">
+                        Submitted on {fmtDate(registration.submitted_at)}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Digital Ticket Pass (Approved and Paid/Free) */}
+                {isApproved && participant && (participant.paid_status === "Paid" || getTicketBasePrice() === 0) && (
+                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-white/5 relative overflow-hidden bg-[#0d0e1b]/40 text-center">
+                    {/* Glowing Accent */}
+                    <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
+                    <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+
+                    <div className="flex flex-col lg:flex-row items-center gap-8 relative z-10">
+                      {/* Ticket Card Pass */}
+                      <div className="w-full max-w-[320px] bg-white border-[6px] border-[#6366f1] rounded-[24px] p-6 text-center relative overflow-hidden shadow-2xl shrink-0 flex flex-col items-center mx-auto lg:mx-0 hover-lift-3d">
+                        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 to-purple-500" />
+                        <span className="text-[10px] font-extrabold text-[#6366f1] uppercase tracking-[0.25em] block mb-1">
+                          ENTRY PASS
+                        </span>
+                        <h4 className="text-sm font-extrabold text-[#1e1b4b] uppercase tracking-wider mb-2 max-w-full truncate">
+                          {event.name}
+                        </h4>
+
+                        {/* Perforated separator line */}
+                        <div className="w-full flex items-center justify-between my-2">
+                          <div className="h-4 w-4 bg-[#0d0e1b] rounded-full -ml-8 border-r border-[#6366f1]/20" />
+                          <div className="flex-1 border-t border-dashed border-gray-300 mx-2" />
+                          <div className="h-4 w-4 bg-[#0d0e1b] rounded-full -mr-8 border-l border-[#6366f1]/20" />
+                        </div>
+
+                        <div className="p-2.5 bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl my-3">
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(participant.regno)}`}
+                            alt={`QR code for ${participant.regno}`}
+                            className="w-36 h-36 rounded-xl block"
+                          />
+                        </div>
+
+                        <h3 className="text-base font-extrabold text-[#111827] uppercase tracking-wider mb-1 max-w-full truncate">
+                          {participant.name}
+                        </h3>
+                        <span className="text-xs font-mono font-bold text-[#6366f1] tracking-widest block mb-3">
+                          REG: {participant.regno || "—"}
+                        </span>
+
+                        <span className="inline-block px-4 py-1.5 bg-[#f3f4f6] border border-[#e5e7eb] text-[10px] font-extrabold text-[#4b5563] uppercase tracking-widest rounded-full">
+                          {participant.role}
+                        </span>
+                      </div>
+
+                      {/* Right details / Actions */}
+                      <div className="flex-1 w-full text-left space-y-5">
+                        <div className="space-y-1">
+                          <h4 className="text-lg font-black text-[#E8EAFF] tracking-tight">Your Digital Pass is Ready!</h4>
+                          <p className="text-xs text-[var(--muted)] font-bold leading-relaxed">Present this pass at the registration desk for check-in and instantaneous badge generation.</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 py-2 border-y border-white/5">
+                          <div>
+                            <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-0.5">Attendee Category</span>
+                            <span className="text-xs font-extrabold text-indigo-400 uppercase tracking-wider">{participant.role}</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-0.5">Verification Status</span>
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-emerald-400">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Verified
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons (Simplified) */}
+                        <div className="pt-4 flex flex-wrap gap-2.5">
+                          <button
+                            onClick={() => downloadTicketJPG(participant.regno, participant.name, participant.role, event.name)}
+                            className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider font-bold"
+                          >
+                            <Download className="h-4 w-4 text-indigo-400" /> Download JPG
+                          </button>
+                          <button
+                            onClick={() => downloadTicketPDF(participant.regno, participant.name, participant.role, event.name)}
+                            className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider font-bold"
+                          >
+                            <FileText className="h-4 w-4 text-indigo-400" /> Download PDF
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Payment Details Section */}
+                {isRegistered && payment && (
+                  <Section title="Payment Details" icon={<Ticket className="h-4 w-4" />}>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-left">
+                      <Field label="Transaction ID" value={payment.transaction_id.toUpperCase()} />
+                      <Field label="Amount Paid" value={`${payment.currency} ${payment.amount.toLocaleString()}`} />
+                      <Field label="Payment Date" value={new Date(payment.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })} />
+                      <Field label="Payment Method" value={payment.payment_method ? payment.payment_method.toUpperCase() : "—"} />
+                      {payment.discount_applied > 0 ? (
+                        <Field label="Discount Applied" value={`${payment.currency} ${payment.discount_applied.toLocaleString()}`} />
+                      ) : (
+                        <Field label="Discount Applied" value="None" />
+                      )}
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
+                      <button
+                        onClick={() => downloadReceipt(payment, event, participant)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 text-xs font-black text-indigo-400 transition-all uppercase tracking-wider font-bold"
+                      >
+                        <FileText className="h-4 w-4" /> Download Receipt
+                      </button>
+                    </div>
+                  </Section>
+                )}
+
+                {/* Checkout Payment required section */}
+                {isApproved && participant && participant.paid_status !== "Paid" && getTicketBasePrice() > 0 && (
+                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-amber-500/20 bg-amber-500/[0.02] relative overflow-hidden space-y-6">
+                    <div className="flex items-start gap-4">
+                      <div className="h-10 w-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0 text-amber-400">
+                        <AlertCircle className="h-5 w-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="text-base font-black text-[#E8EAFF]">Payment Verification Pending</h3>
+                        <p className="text-xs text-[var(--muted)] font-bold leading-relaxed">
+                          Your event registration is fully approved! Complete checkout to activate your entry ticket and unlock agenda selection.
                         </p>
                       </div>
                     </div>
-                    {event.venue && (
-                      <div className="flex items-start gap-3">
-                        <MapPin className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Venue</p>
-                          <p className="text-sm font-semibold text-[#E8EAFF]">{event.venue}</p>
-                        </div>
+
+                    <div className="p-5 rounded-2xl bg-white/5 border border-white/5 space-y-3 text-left">
+                      <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-[var(--muted)] font-bold">
+                        <span>Ticket Category</span>
+                        <span className="text-[#E8EAFF] uppercase tracking-wider">{participant.role}</span>
                       </div>
-                    )}
-                  </div>
-
-                  {event.support_email && (
-                    <div className="flex items-center gap-3">
-                      <Mail className="h-4 w-4 text-indigo-400 shrink-0" />
-                      <a href={`mailto:${event.support_email}`} className="text-sm font-black text-indigo-400 hover:underline">
-                        {event.support_email}
-                      </a>
-                    </div>
-                  )}
-
-                  {event.announcements && (
-                    <div className="space-y-4">
-                      <p className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em]">Announcements</p>
-                      {Array.isArray(event.announcements) ? (
-                        event.announcements.map((ann: any, idx: number) => {
-                          const type = ann.type || "info";
-                          const styles = {
-                            info: { border: "border-indigo-500/20 bg-indigo-500/5", badge: "text-indigo-400 border-indigo-500/25", label: "Notice" },
-                            warning: { border: "border-amber-500/20 bg-amber-500/5", badge: "text-amber-400 border-amber-500/25", label: "Warning" },
-                            success: { border: "border-emerald-500/20 bg-emerald-500/5", badge: "text-emerald-400 border-emerald-500/25", label: "Update" },
-                            error: { border: "border-rose-500/20 bg-rose-500/5", badge: "text-rose-400 border-rose-500/25", label: "Alert" }
-                          }[type as "info" | "warning" | "success" | "error"] || { border: "border-indigo-500/20 bg-indigo-500/5", badge: "text-indigo-400 border-indigo-500/25", label: "Notice" };
-
-                          return (
-                            <div key={ann.id || idx} className={`border rounded-2xl px-5 py-4 ${styles.border}`}>
-                              <div className="flex items-center gap-2 mb-1.5">
-                                <span className={`inline-flex px-1.5 py-0.5 rounded border text-[8px] font-black uppercase tracking-wider ${styles.badge}`}>
-                                  {styles.label}
-                                </span>
-                              </div>
-                              <p className="text-xs font-bold text-[var(--muted)] whitespace-pre-line leading-relaxed">
-                                {ann.message}
-                              </p>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl px-5 py-4">
-                          <p className="text-xs font-bold text-[var(--muted)] whitespace-pre-line leading-relaxed">
-                            {event.announcements}
-                          </p>
+                      
+                      <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-[var(--muted)] font-bold">
+                        <span>Base Cost</span>
+                        <span className="text-[#E8EAFF]">{formConfig?.currency || "INR"} {getTicketBasePrice().toLocaleString()}</span>
+                      </div>
+                      
+                      {appliedPromo && (
+                        <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-emerald-400 font-bold">
+                          <span>Discount Applied ({appliedPromo.code})</span>
+                          <span>-{formConfig?.currency || "INR"} {appliedPromo.discount_amount.toLocaleString()}</span>
                         </div>
                       )}
+                      
+                      <div className="flex justify-between items-center pt-2 text-sm font-bold">
+                        <span className="text-[#E8EAFF]">Total Payable</span>
+                        <span className="text-indigo-400 font-black">{formConfig?.currency || "INR"} {getTicketPrice().toLocaleString()}</span>
+                      </div>
                     </div>
-                  )}
 
-                  <div className="pt-2 border-t border-white/5">
-                    <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest mb-1.5">Event Program</p>
-                    {event.program_url ? (
-                      <a
-                        href={event.program_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn-primary inline-flex items-center gap-2 px-5 h-10 rounded-xl text-xs"
-                      >
-                        Download Program <ChevronRight className="h-3.5 w-3.5" />
-                      </a>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <button
-                          disabled
-                          className="inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-white/5 border border-white/5 text-[var(--muted)] text-xs font-black cursor-not-allowed opacity-50"
-                        >
-                          Download Program
-                        </button>
-                        <p className="text-[9px] font-bold text-rose-400">Program not made now</p>
+                    {/* Promo validation */}
+                    {formConfig?.payment_enabled && (
+                      <div className="space-y-2 text-left">
+                        <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block">Apply Promo Coupon</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="PROMO CODE"
+                            value={promoCode}
+                            onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                            disabled={appliedPromo !== null || validatingPromo}
+                            className="input flex-1 uppercase tracking-wider text-xs h-11 py-2"
+                          />
+                          {appliedPromo ? (
+                            <button
+                              onClick={() => {
+                                setPromoCode("");
+                                setAppliedPromo(null);
+                              }}
+                              className="px-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                            >
+                              Remove
+                            </button>
+                          ) : (
+                            <button
+                              onClick={handlePromoApply}
+                              disabled={!promoCode.trim() || validatingPromo}
+                              className="px-5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                            >
+                              {validatingPromo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
-                  </div>
-                </div>
-              </Section>
-            )}
 
-            {/* Special Notice for non-registered users when registration is closed */}
-            {!isRegistered && registration.status === "closed" && (
-              <Section title="Announcements" icon={<Megaphone className="h-4 w-4 text-rose-400" />}>
-                <div className="border border-rose-500/20 bg-rose-500/5 rounded-2xl px-5 py-4">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="inline-flex px-1.5 py-0.5 rounded border border-rose-500/25 text-[8px] font-black uppercase tracking-wider text-rose-400">
-                      Alert
-                    </span>
+                    <button
+                      onClick={() => setCheckoutStep("confirm")}
+                      className="w-full btn-primary h-12 rounded-full flex items-center justify-center gap-2 mt-4 font-black uppercase tracking-widest text-xs"
+                    >
+                      Proceed to Checkout
+                    </button>
                   </div>
-                  <p className="text-xs font-bold text-[var(--muted)] whitespace-pre-line leading-relaxed">
-                    Registration is now closed.
-                  </p>
+                )}
+              </div>
+
+              {/* Right Column - Sidebar */}
+              <div className="md:col-span-4 space-y-6">
+                
+                {/* Combined Event Countdown & Info Card */}
+                {isRegistered && (
+                  <div className="glass-card p-6 rounded-[2rem] border border-white/5 bg-gradient-to-br from-indigo-500/10 via-[#0d0e1b]/40 to-transparent relative overflow-hidden shadow-xl space-y-5">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                    
+                    <div>
+                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.25em] block mb-4 text-center">
+                        Event Begins In
+                      </span>
+                      
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { label: "Days", val: countdown.days },
+                          { label: "Hours", val: countdown.hours },
+                          { label: "Mins", val: countdown.minutes },
+                          { label: "Secs", val: countdown.seconds }
+                        ].map((c, i) => (
+                          <div key={i} className="p-2 bg-[#0d0e1b]/80 border border-white/5 rounded-2xl relative overflow-hidden text-center">
+                            <span className="text-xl font-black text-[#E8EAFF] tracking-tight block">
+                              {String(c.val).padStart(2, "0")}
+                            </span>
+                            <span className="text-[7px] font-black text-[var(--muted)] uppercase tracking-wider block mt-0.5">
+                              {c.label}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="border-t border-white/5 pt-4 space-y-3.5 text-left">
+                      <h4 className="text-[9px] font-black text-[var(--muted)] uppercase tracking-[0.2em]">Event Details</h4>
+                      
+                      <div className="space-y-3 text-xs">
+                        <div className="flex items-start gap-3">
+                          <Calendar className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest">Dates</p>
+                            <p className="font-semibold text-[#E8EAFF] mt-0.5">
+                              {fmtDate(event.start_date)}
+                              {event.end_date && event.end_date !== event.start_date && <> — {fmtDate(event.end_date)}</>}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {event.venue && (
+                          <div className="flex items-start gap-3">
+                            <MapPin className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest">Venue</p>
+                              <p className="font-semibold text-[#E8EAFF] mt-0.5">{event.venue}</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Program PDF link */}
+                      <div className="pt-2 border-t border-white/5">
+                        {event.program_url ? (
+                          <a
+                            href={event.program_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full btn-primary h-10 rounded-xl flex items-center justify-center gap-2 text-xs font-bold"
+                          >
+                            <FileText className="h-4 w-4" /> Download Program PDF
+                          </a>
+                        ) : (
+                          <div className="space-y-1 text-center">
+                            <button
+                              disabled
+                              className="w-full h-10 rounded-xl bg-white/5 border border-white/5 text-[var(--muted)] text-xs font-black cursor-not-allowed opacity-50 flex items-center justify-center gap-2 font-bold"
+                            >
+                              <FileText className="h-4 w-4" /> Program PDF Pending
+                            </button>
+                            <p className="text-[9px] font-bold text-rose-400 mt-1">Program schedule pending upload.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Profile Strength & Contact Details */}
+                {isRegistered && participant && (
+                  <div className="glass-card p-6 rounded-[2rem] border border-white/5 relative overflow-hidden space-y-5">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-[10px] font-black text-[var(--muted)] uppercase tracking-[0.2em]">Profile Strength</h3>
+                        <p className="text-sm font-black text-[#E8EAFF] mt-1">{profileCompletionPercent}% Complete</p>
+                      </div>
+                      
+                      {/* Circular Progress */}
+                      <div className="relative h-12 w-12 shrink-0">
+                        <svg className="h-full w-full -rotate-90">
+                          <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="3" />
+                          <circle 
+                            cx="24" cy="24" r="20" fill="none" stroke="#6366F1" strokeWidth="3" 
+                            strokeDasharray={`${2 * Math.PI * 20}`}
+                            strokeDashoffset={`${2 * Math.PI * 20 * (1 - profileCompletionPercent / 100)}`}
+                            className="transition-all duration-500 ease-out"
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <Sparkles className="h-4 w-4 text-indigo-400" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="w-full bg-white/5 rounded-full h-1 overflow-hidden">
+                      <div className="bg-indigo-500 h-1 rounded-full transition-all duration-500" style={{ width: `${profileCompletionPercent}%` }} />
+                    </div>
+
+                    {missingProfileItems.length > 0 ? (
+                      <div className="space-y-2 pt-1 text-left">
+                        <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest block">Pending Form Fields</span>
+                        <div className="space-y-1.5">
+                          {missingProfileItems.map((item, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs font-bold text-[var(--muted)]">
+                              <span className="h-1.5 w-1.5 rounded-full bg-purple-500 shrink-0" />
+                              <span>{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
+                        <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest font-bold">✓ Form Details Complete</p>
+                      </div>
+                    )}
+
+                    {/* Divider */}
+                    <div className="border-t border-white/5 pt-2" />
+
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-[9px] font-black text-[var(--muted)] uppercase tracking-[0.2em]">Contact Information</h4>
+                    </div>
+                    
+                    <div className="space-y-3.5 text-left">
+                      <div className="flex items-start gap-3">
+                        <User className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Full Name</p>
+                          <p className="text-xs font-semibold text-[#E8EAFF]">{participant.name}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <Mail className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Email Address</p>
+                          <p className="text-xs font-semibold text-[#E8EAFF] truncate max-w-[200px]">{participant.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <Phone className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Phone Number</p>
+                          <p className="text-xs font-semibold text-[#E8EAFF]">{participant.phone || "—"}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <Building className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Company / Org</p>
+                          <p className="text-xs font-semibold text-[#E8EAFF]">{participant.company || "—"}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <Briefcase className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Designation</p>
+                          <p className="text-xs font-semibold text-[#E8EAFF]">{participant.designation || "—"}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <Globe className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-widest mb-0.5">Country / State</p>
+                          <p className="text-xs font-semibold text-[#E8EAFF]">
+                            {participant.country || "—"}
+                            {(participant.custom_fields as any)?.country_state ? `, ${(participant.custom_fields as any).country_state}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => { if (!editing) startEdit(); }}
+                      disabled={edits_locked}
+                      className="w-full py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 transition-all font-black uppercase text-[10px] text-indigo-400 tracking-wider flex items-center justify-center gap-1.5 font-bold"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" /> Edit Profile Details
+                    </button>
+                  </div>
+                )}
+
+                {/* Support Center (collapsible FAQ, Live Chat, WhatsApp, Contact) */}
+                <div className="glass-card p-6 rounded-[2rem] border border-white/5 space-y-4">
+                  <h3 className="text-[10px] font-black text-[var(--muted)] uppercase tracking-[0.2em]">Support Center</h3>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      onClick={() => setChatOpen(true)}
+                      className="p-3 rounded-xl bg-[#0d0e1b]/60 border border-white/5 hover:border-indigo-500/25 transition-all text-center group"
+                    >
+                      <Mail className="h-5 w-5 text-indigo-400 mx-auto mb-1.5 group-hover:scale-110 transition-transform" />
+                      <span className="text-[10px] font-black uppercase text-[#E8EAFF] tracking-wider block font-bold">Live Chat</span>
+                    </button>
+                    
+                    <a 
+                      href={`https://wa.me/911234567890?text=Hi,%20I%20need%20assistance%20with%20${encodeURIComponent(event.name)}`}
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="p-3 rounded-xl bg-[#0d0e1b]/60 border border-white/5 hover:border-emerald-500/25 transition-all text-center group block"
+                    >
+                      <Phone className="h-5 w-5 text-emerald-400 mx-auto mb-1.5 group-hover:scale-110 transition-transform" />
+                      <span className="text-[10px] font-black uppercase text-[#E8EAFF] tracking-wider block font-bold">WhatsApp</span>
+                    </a>
+                  </div>
+                  
+                  {/* FAQ Accordion */}
+                  <div className="pt-2 border-t border-white/5 space-y-2">
+                    <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-2 text-left">Frequently Asked Questions</span>
+                    
+                    {(() => {
+                      const allFaqs = event.faqs || [];
+                      const showDefaults = (event as any).include_default_faqs !== false;
+                      const displayedFaqs = allFaqs.filter((faq: any) => {
+                        if (!showDefaults && faq.is_default) return false;
+                        return true;
+                      });
+                      
+                      const finalFaqs = (displayedFaqs.length === 0 && showDefaults)
+                        ? [
+                            { q: "What should I bring to the event?", a: "Please bring a copy of your entry pass QR code (on your phone or printed) along with a valid photo ID for quick check-in.", is_default: true },
+                            { q: "Is there parking available?", a: "Yes, there is complimentary attendee parking available on-site at the main venue deck. Follow event signage.", is_default: true },
+                            { q: "Can I transfer my ticket?", a: "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", is_default: true }
+                          ]
+                        : displayedFaqs;
+
+                      return finalFaqs;
+                    })().map((faq, i) => {
+                      const isOpen = faqOpenIndex === i;
+                      return (
+                        <div key={i} className="border border-white/5 rounded-xl overflow-hidden bg-black/20 text-left">
+                          <button
+                            onClick={() => setFaqOpenIndex(isOpen ? null : i)}
+                            className="w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-white/[0.02]"
+                          >
+                            <span className="text-xs font-bold text-[#E8EAFF]">{faq.q}</span>
+                            <ChevronRight className={`h-3.5 w-3.5 text-[var(--muted)] shrink-0 transition-transform duration-300 ${isOpen ? "rotate-90 text-indigo-400" : ""}`} />
+                          </button>
+                          
+                          <AnimatePresence initial={false}>
+                            {isOpen && (
+                              <motion.div
+                                initial={{ height: 0 }}
+                                animate={{ height: "auto" }}
+                                exit={{ height: 0 }}
+                                className="overflow-hidden"
+                              >
+                                <p className="px-4 pb-3 pt-1 text-xs text-[var(--muted)] leading-relaxed font-bold">{faq.a}</p>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </Section>
-            )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Edit Details Drawer/Modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl bg-[#0d0e1b] border border-indigo-500/20 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-8 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01] shrink-0">
+              <div className="flex items-center gap-2">
+                <User className="h-4 w-4 text-indigo-400" />
+                <h3 className="text-sm font-black uppercase tracking-[0.25em] text-[#E8EAFF]">Edit Profile Details</h3>
+              </div>
+              <button
+                onClick={() => setEditing(false)}
+                className="h-8 w-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-[var(--muted)] hover:text-[#E8EAFF] transition-all"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            
+            <div className="p-8 overflow-y-auto flex-1 space-y-6 text-left">
+              {saveError && (
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                  <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+                  <p className="text-xs font-bold text-rose-400">{saveError}</p>
+                </div>
+              )}
+              
+              {/* Two Column Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {(["name", "email", "phone", "company", "designation", "country"] as const).map(f => {
+                  const isEmail = f === "email";
+                  const isEmailChangeLocked = isEmail && ["submitted", "pending_review", "approved", "waitlisted", "rejected"].includes(data?.registration?.status || "");
+                  
+                  if (f === "phone") {
+                    const rawValue = editForm.phone || "";
+                    let selectedCc = "+91";
+                    let numVal = rawValue;
+                    
+                    for (const cc of countryCodes) {
+                      if (rawValue.startsWith(cc.code)) {
+                        selectedCc = cc.code;
+                        numVal = rawValue.slice(cc.code.length);
+                        break;
+                      }
+                    }
+                    
+                    const isInvalid = numVal.length > 0 && (numVal.length < 7 || numVal.length > 15 || !/^\d+$/.test(numVal));
+                    
+                    const handlePhoneChange = (newCc: string, newNum: string) => {
+                      const filteredNum = newNum.replace(/\D/g, "");
+                      const combined = newCc + filteredNum;
+                      setEditForm(prev => ({ ...prev, phone: combined }));
+                    };
+                    
+                    return (
+                      <div key={f} className="space-y-1.5 sm:col-span-2">
+                        <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">Phone Number</label>
+                        <div className="flex gap-2">
+                          <div className="w-[110px] shrink-0 relative">
+                            <select
+                              value={selectedCc}
+                              onChange={(e) => handlePhoneChange(e.target.value, numVal)}
+                              className="h-11 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                            >
+                              {countryCodes.map(cc => (
+                                <option key={cc.code} value={cc.code} className="bg-[#080912]">
+                                  {cc.code} ({cc.iso})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <input 
+                            type="text"
+                            placeholder="Enter phone number..."
+                            value={numVal}
+                            onChange={(e) => handlePhoneChange(selectedCc, e.target.value)}
+                            className={`input flex-1 ${
+                              isInvalid 
+                                ? "border-rose-500/50 focus:border-rose-500" 
+                                : "border-white/10 focus:border-indigo-500"
+                            }`}
+                          />
+                        </div>
+                        {isInvalid && (
+                          <motion.p 
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="text-[9px] text-rose-400 font-bold text-left pl-2"
+                          >
+                            Phone number must contain numbers only and be between 7 and 15 digits.
+                          </motion.p>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (f === "country") {
+                    const countryField = formConfig?.fields?.find((field: any) => field.name === "country" || field.id === "country");
+                    const countries = getAllowedCountries(countryField?.options, countryStates);
+                    return (
+                      <div key={f} className="space-y-1.5">
+                        <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">
+                          Country
+                        </label>
+                        <select
+                          value={editForm.country || ""}
+                          onChange={(e) => {
+                            const selected = e.target.value;
+                            setEditForm(prev => ({
+                              ...prev,
+                              country: selected,
+                              custom_fields: {
+                                ...(prev.custom_fields || {}),
+                                country_state: ""
+                              }
+                            }));
+                          }}
+                          className="h-11 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                        >
+                          <option value="" className="bg-[#080912]">Select Country...</option>
+                          {countries.map((country) => (
+                            <option key={country} value={country} className="bg-[#080912]">{country}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div key={f} className="space-y-1.5">
+                      <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">
+                        {labelMap[f] || f}
+                      </label>
+                      <input 
+                        type={isEmail ? "email" : "text"}
+                        disabled={isEmailChangeLocked}
+                        value={(editForm as Record<string, string>)[f] || ""}
+                        onChange={e => setEditForm(prev => ({ ...prev, [f]: e.target.value }))}
+                        className={`input ${isEmailChangeLocked ? "opacity-50 cursor-not-allowed bg-white/5" : ""}`}
+                      />
+                      {isEmailChangeLocked && (
+                        <p className="text-[9px] text-indigo-400 mt-1 font-bold">Email address cannot be changed after registration.</p>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {editForm.country && (
+                  (() => {
+                    const countryField = formConfig?.fields?.find((field: any) => field.name === "country" || field.id === "country");
+                    const selectedCountry = editForm.country || "";
+                    const states = getStatesForCountry(countryStates, selectedCountry);
+                    return (
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">
+                          State / Province {(countryField?.is_required || false) && <span className="text-indigo-400 font-bold">*</span>}
+                        </label>
+                        {states.length > 0 ? (
+                          <select
+                            value={(editForm.custom_fields as any)?.["country_state"] || ""}
+                            onChange={(e) => {
+                              const selectedState = e.target.value;
+                              setEditForm(prev => ({
+                                ...prev,
+                                custom_fields: {
+                                  ...(prev.custom_fields || {}),
+                                  country_state: selectedState
+                                }
+                              }));
+                            }}
+                            className="h-11 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                          >
+                            <option value="" className="bg-[#080912]">Select State...</option>
+                            {states.map((state) => (
+                              <option key={state} value={state} className="bg-[#080912]">{state}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="Enter state / province..."
+                            value={(editForm.custom_fields as any)?.["country_state"] || ""}
+                            onChange={(e) => {
+                              const textState = e.target.value;
+                              setEditForm(prev => ({
+                                ...prev,
+                                custom_fields: {
+                                  ...(prev.custom_fields || {}),
+                                  country_state: textState
+                                }
+                              }));
+                            }}
+                            className="input text-xs"
+                          />
+                        )}
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+
+              {/* Custom Fields Edit Section */}
+              {formConfig?.fields?.filter((field: any) => !field.is_default && field.is_active).length > 0 && (
+                <div className="pt-6 border-t border-white/5 space-y-4">
+                  <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-4">Event Requirements</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {formConfig.fields.filter((field: any) => !field.is_default && field.is_active).map((field: any) => {
+                      const value = (editForm.custom_fields as Record<string, any>)?.[field.name] || "";
+                      const handleCustomFieldChange = (val: any) => {
+                        setEditForm(prev => ({
+                          ...prev,
+                          custom_fields: {
+                            ...(prev.custom_fields || {}),
+                            [field.name]: val
+                          }
+                        }));
+                      };
+
+                      if (field.type === "select") {
+                        return (
+                          <div key={field.id} className="space-y-1.5">
+                            <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">
+                              {field.label} {field.is_required && <span className="text-indigo-400">*</span>}
+                            </label>
+                            <select
+                              value={value}
+                              onChange={(e) => handleCustomFieldChange(e.target.value)}
+                              className="h-11 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                            >
+                              <option value="" className="bg-[#080912]">Select an option...</option>
+                              {field.options?.map((opt: string) => (
+                                <option key={opt} value={opt} className="bg-[#080912]">{opt}</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      }
+
+                      if (field.type === "checkbox") {
+                        const isChecked = !!value;
+                        return (
+                          <div key={field.id} className="sm:col-span-2 py-1">
+                            <label className="flex items-start gap-3 cursor-pointer select-none group">
+                              <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${
+                                isChecked ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => handleCustomFieldChange(e.target.checked)}
+                                  className="sr-only"
+                                />
+                                {isChecked && <Check className="h-2.5 w-2.5 text-white" />}
+                              </div>
+                              <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider leading-relaxed text-left group-hover:text-[#E8EAFF] transition-colors">
+                                {field.label} {field.is_required && <span className="text-indigo-400">*</span>}
+                              </span>
+                            </label>
+                          </div>
+                        );
+                      }
+
+                      if (field.type === "image" || field.type === "file") {
+                        return (
+                          <div key={field.id} className="sm:col-span-2 space-y-1.5">
+                            <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">
+                              {field.label} {field.is_required && <span className="text-indigo-400">*</span>}
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                placeholder={`Enter ${field.label.toLowerCase()} URL...`}
+                                value={value}
+                                onChange={(e) => handleCustomFieldChange(e.target.value)}
+                                className="input flex-1 text-xs"
+                              />
+                              <label className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all cursor-pointer uppercase tracking-wider flex items-center justify-center shrink-0">
+                                Upload
+                                <input
+                                  type="file"
+                                  accept={field.type === "image" ? "image/*" : "*"}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    
+                                    if (field.type === "image") {
+                                      const reader = new FileReader();
+                                      reader.onload = () => {
+                                        if (typeof reader.result === "string") {
+                                          setImageToEdit(reader.result);
+                                          setEditingFieldId(field.id);
+                                          setOriginalFileName(file.name);
+                                          setCropAspect("1:1");
+                                          setCropShape("rect");
+                                          setFilterBrightness(100);
+                                          setFilterContrast(100);
+                                          setImageEditorOpen(true);
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    } else {
+                                      const toastId = toast.loading(`Uploading ${field.label.toLowerCase()}...`);
+                                      try {
+                                        const fd = new FormData();
+                                        fd.append("file", file);
+                                        fd.append("field_name", field.label);
+                                        if (data?.participant?.regno) {
+                                          fd.append("regno", data.participant.regno);
+                                        }
+                                        if (data?.participant?.name) {
+                                          fd.append("username", data.participant.name);
+                                        }
+                                        const res = await fetch(`${API_BASE}/api/v1/portal/registration/${eventId}/upload`, {
+                                          method: "POST",
+                                          body: fd,
+                                        });
+                                        const d = await res.json();
+                                        if (!res.ok) throw new Error(d.detail || "Upload failed");
+                                        handleCustomFieldChange(d.url);
+                                        toast.success(`${field.label} uploaded!`, { id: toastId });
+                                      } catch (err: any) {
+                                        toast.error(err.message || "Failed to upload file.", { id: toastId });
+                                      }
+                                    }
+                                  }}
+                                  className="sr-only"
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={field.id} className="space-y-1.5">
+                          <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">
+                            {field.label} {field.is_required && <span className="text-indigo-400">*</span>}
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={`Enter ${field.label.toLowerCase()}...`}
+                            value={value}
+                            onChange={(e) => handleCustomFieldChange(e.target.value)}
+                            className="input text-xs"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="px-8 py-5 border-t border-white/5 bg-white/[0.01] shrink-0 flex gap-3 justify-end">
+              <button onClick={() => setEditing(false)}
+                className="px-6 h-11 rounded-xl bg-white/5 border border-white/10 text-[var(--muted)] font-black text-xs uppercase tracking-wider hover:bg-white/10 transition-all">
+                Cancel
+              </button>
+              <button onClick={saveEdit} disabled={saving}
+                className="btn-primary flex items-center gap-2 px-6 h-11 rounded-full font-bold">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Changes
+              </button>
+            </div>
           </div>
         </div>
-        </>)}
-      </div>
+      )}
+
+      {/* T&C Full Preview Modal */}
+      {tcModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl bg-[#0d0e1b] border border-indigo-500/20 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-8 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01] shrink-0">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-indigo-400" />
+                <h3 className="text-sm font-black uppercase tracking-[0.25em] text-[#E8EAFF]">Terms &amp; Conditions</h3>
+              </div>
+              <button
+                onClick={() => setTcModalOpen(false)}
+                className="h-8 w-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-[var(--muted)] hover:text-[#E8EAFF] transition-all"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-8 overflow-y-auto flex-1 prose prose-invert max-w-none text-left
+              prose-headings:text-[#E8EAFF] prose-headings:font-black prose-headings:tracking-tight
+              prose-h1:text-xl prose-h2:text-base prose-h3:text-sm prose-h4:text-xs
+              prose-p:text-[var(--muted)] prose-p:text-sm prose-p:leading-relaxed
+              prose-li:text-[var(--muted)] prose-li:text-sm
+              prose-strong:text-[#E8EAFF] prose-em:text-indigo-300
+              prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline
+              prose-hr:border-white/10 prose-ul:space-y-1 prose-ol:space-y-1">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {formConfig?.terms_and_conditions || "## Terms & Conditions\n\n1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule without prior notice."}
+              </ReactMarkdown>
+            </div>
+            <div className="px-8 py-5 border-t border-white/5 bg-white/[0.01] shrink-0 space-y-3">
+              <label className="flex items-start gap-3 cursor-pointer select-none group">
+                <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${
+                  agreedToTerms ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={agreedToTerms}
+                    onChange={(e) => setAgreedToTerms(e.target.checked)}
+                    className="sr-only"
+                  />
+                  {agreedToTerms && <Check className="h-2.5 w-2.5 text-white" />}
+                </div>
+                <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider leading-relaxed text-left group-hover:text-[#E8EAFF] transition-colors">
+                  I have read and agree to the Terms &amp; Conditions above. <span className="text-indigo-400">*</span>
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setTcModalOpen(false)}
+                className="w-full h-11 rounded-full btn-primary text-xs font-black uppercase tracking-widest font-bold"
+              >
+                {agreedToTerms ? "Agreed — Close" : "Close"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Live Chat drawer */}
+      <AnimatePresence>
+        {chatOpen && (
+          <div className="fixed bottom-6 right-6 z-50 w-full max-w-[360px] bg-[#0d0e1b] border border-indigo-500/20 rounded-[2rem] shadow-2xl overflow-hidden flex flex-col h-[450px] animate-in slide-in-from-bottom-6 fade-in duration-300">
+            <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-indigo-500/10 to-transparent">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-[#E8EAFF]">Live Support</h3>
+              </div>
+              <button
+                onClick={() => setChatOpen(false)}
+                className="h-7 w-7 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-[var(--muted)] hover:text-[#E8EAFF] transition-all"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            
+            {/* Messages */}
+            <div className="flex-1 p-6 overflow-y-auto space-y-4 text-left">
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-xs ${
+                    msg.sender === "user"
+                      ? "bg-indigo-500 text-white rounded-tr-none"
+                      : "bg-white/5 border border-white/5 text-[#E8EAFF] rounded-tl-none font-bold"
+                  }`}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            {/* Input */}
+            <form onSubmit={handleSendChatMessage} className="p-4 border-t border-white/5 bg-black/40 flex gap-2">
+              <input
+                type="text"
+                placeholder="Type a message..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                className="h-10 bg-[#080912] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 flex-1 outline-none"
+              />
+              <button
+                type="submit"
+                className="h-10 w-10 rounded-xl bg-indigo-500 hover:bg-indigo-600 flex items-center justify-center text-white shrink-0 transition-colors"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </form>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* OTP Verification Modal */}
       <AnimatePresence>
         {verifyingEmailChange && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-md bg-[#080912]/60">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-md bg-[#080912]/60 animate-in fade-in duration-200">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1643,7 +2844,7 @@ export default function PortalDashboardPage() {
                 <button
                   onClick={() => applyDetailsUpdate({ new_email: editForm.email, otp: otpInput })}
                   disabled={saving || otpInput.length < 6}
-                  className="btn-primary flex-1 h-11 rounded-xl flex items-center justify-center gap-2"
+                  className="btn-primary flex-1 h-11 rounded-xl flex items-center justify-center gap-2 font-bold"
                 >
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & Save"}
                 </button>
@@ -1658,6 +2859,272 @@ export default function PortalDashboardPage() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Image Editor & Cropper Dialog Modal */}
+      {imageEditorOpen && imageToEdit && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-xl z-[9999] flex items-center justify-center animate-in fade-in duration-200 p-4 select-none">
+          <div className="max-w-3xl w-full bg-zinc-950 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[550px]">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-zinc-850 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-zinc-100 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+                  Image Studio Editor
+                </h3>
+                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mt-0.5">Crop, frame, and filter your image</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setImageEditorOpen(false);
+                  setImageToEdit(null);
+                }}
+                className="p-1.5 bg-zinc-900 border border-zinc-800 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+              {/* Left Column: Visual Crop Preview Canvas Area */}
+              <div className="flex-1 bg-zinc-900/40 border-b md:border-b-0 md:border-r border-zinc-805 p-6 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
+                <div className="relative select-none max-w-[450px] max-h-[350px] flex items-center justify-center">
+                  <img
+                    src={imageToEdit}
+                    className="max-w-[450px] max-h-[350px] object-contain select-none pointer-events-none rounded-xl"
+                    style={{
+                      filter: `brightness(${filterBrightness}%) contrast(${filterContrast}%)`,
+                    }}
+                    onLoad={handleImageLoad}
+                    alt="Visual Editor"
+                  />
+
+                  {/* Cropper Workspace Overlay */}
+                  {imgSize.width > 0 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        width: imgSize.width,
+                        height: imgSize.height,
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                      }}
+                      className="overflow-hidden select-none cursor-default animate-in fade-in duration-150"
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseUp}
+                    >
+                      {/* Dark Overlays for non-selected crop area */}
+                      {/* Top Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: `${cropPercent.y * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+                      {/* Bottom Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: `${(cropPercent.y + cropPercent.h) * 100}%`,
+                          left: 0,
+                          width: "100%",
+                          height: `${(1 - (cropPercent.y + cropPercent.h)) * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+                      {/* Left Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: `${cropPercent.y * 100}%`,
+                          left: 0,
+                          width: `${cropPercent.x * 100}%`,
+                          height: `${cropPercent.h * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+                      {/* Right Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: `${cropPercent.y * 100}%`,
+                          left: `${(cropPercent.x + cropPercent.w) * 100}%`,
+                          width: `${(1 - (cropPercent.x + cropPercent.w)) * 100}%`,
+                          height: `${cropPercent.h * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+
+                      {/* Crop Box Selector Outline */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${cropPercent.x * 100}%`,
+                          top: `${cropPercent.y * 100}%`,
+                          width: `${cropPercent.w * 100}%`,
+                          height: `${cropPercent.h * 100}%`,
+                          borderRadius: (cropShape === "circle" && cropAspect === "1:1") ? "50%" : "0px",
+                        }}
+                        className="border-2 border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.3)] cursor-move"
+                        onMouseDown={handleMouseDownMove}
+                      >
+                        {/* Grid lines helper */}
+                        <div className="absolute inset-0 pointer-events-none border border-white/20 flex items-center justify-center">
+                          <div className="w-full h-1/3 border-y border-white/20 absolute top-1/3" />
+                          <div className="h-full w-1/3 border-x border-white/20 absolute left-1/3" />
+                        </div>
+
+                        {/* Resize Handles */}
+                        {/* Corners */}
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "tl")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -top-1.5 -left-1.5 rounded-sm shadow-md cursor-nwse-resize z-10 hover:scale-125 transition-transform"
+                        />
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "tr")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -top-1.5 -right-1.5 rounded-sm shadow-md cursor-nesw-resize z-10 hover:scale-125 transition-transform"
+                        />
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "bl")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -bottom-1.5 -left-1.5 rounded-sm shadow-md cursor-nesw-resize z-10 hover:scale-125 transition-transform"
+                        />
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "br")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -bottom-1.5 -right-1.5 rounded-sm shadow-md cursor-nwse-resize z-10 hover:scale-125 transition-transform"
+                        />
+
+                        {/* Edges - only show for freeform cropping */}
+                        {cropAspect === "free" && (
+                          <>
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "t")}
+                              className="h-1.5 w-5 bg-white border border-indigo-500 absolute -top-1 left-1/2 -translate-x-1/2 rounded-full shadow-md cursor-ns-resize z-10 hover:scale-110 transition-transform"
+                            />
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "b")}
+                              className="h-1.5 w-5 bg-white border border-indigo-500 absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full shadow-md cursor-ns-resize z-10 hover:scale-110 transition-transform"
+                            />
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "l")}
+                              className="h-5 w-1.5 bg-white border border-indigo-500 absolute top-1/2 -translate-y-1/2 -left-1 rounded-full shadow-md cursor-ew-resize z-10 hover:scale-110 transition-transform"
+                            />
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "r")}
+                              className="h-5 w-1.5 bg-white border border-indigo-500 absolute top-1/2 -translate-y-1/2 -right-1 rounded-full shadow-md cursor-ew-resize z-10 hover:scale-110 transition-transform"
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
+                  Drag corners to crop • Drag box to move
+                </span>
+              </div>
+
+              {/* Right Column: Settings Panel */}
+              <div className="w-full md:w-[280px] p-6 overflow-y-auto space-y-4 flex flex-col justify-start bg-zinc-950">
+                {/* Crop Shapes and Aspect Ratios */}
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-zinc-500 block">Aspect Ratio</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["1:1", "4:3", "16:9", "free"] as const).map(ratio => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() => handleSelectAspect(ratio)}
+                        className={`h-7 px-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all ${cropAspect === ratio ? "bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-500/20" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"}`}
+                      >
+                        {ratio === "free" ? "Freeform" : ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {cropAspect === "1:1" && (
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-500 block">Frame Shape</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["rect", "circle"] as const).map(shape => (
+                        <button
+                          key={shape}
+                          type="button"
+                          onClick={() => setCropShape(shape)}
+                          className={`h-7 px-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all ${cropShape === shape ? "bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-500/20" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"}`}
+                        >
+                          {shape === "rect" ? "Square" : "Circular"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Brightness & Contrast filters */}
+                <div className="space-y-3 pt-3 border-t border-zinc-900">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+                      <span>Brightness</span>
+                      <span className="text-indigo-400 font-mono text-[10px]">{filterBrightness}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={filterBrightness}
+                      onChange={e => setFilterBrightness(parseInt(e.target.value))}
+                      className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+                      <span>Contrast</span>
+                      <span className="text-indigo-400 font-mono text-[10px]">{filterContrast}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={filterContrast}
+                      onChange={e => setFilterContrast(parseInt(e.target.value))}
+                      className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-zinc-900 mt-auto flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCropSubmit}
+                    className="flex-grow h-9 px-4 bg-indigo-500 hover:bg-indigo-600 text-white font-black uppercase tracking-widest text-[9px] rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-indigo-500/10"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Crop & Upload
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageEditorOpen(false);
+                      setImageToEdit(null);
+                    }}
+                    className="h-9 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 font-black uppercase tracking-widest text-[9px] rounded-xl transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

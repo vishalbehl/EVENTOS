@@ -40,6 +40,7 @@ export interface SpeakerPortalAuthResponse {
   posters: PortalPoster[];
   speaker_code?: string;
   qr_code_url?: string;
+  theme_color?: string | null;
 }
 
 export function usePortalAuth(token: string) {

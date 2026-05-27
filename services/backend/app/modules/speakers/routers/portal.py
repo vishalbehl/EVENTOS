@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies import get_db
+from app.schemas.common import MessageResponse
 from app.modules.speakers.models.speaker import Speaker
 from app.modules.rbac.models.event import Event
 from app.modules.speakers.models.session import Session
@@ -73,6 +74,7 @@ class SpeakerPortalAuthResponse(BaseModel):
     posters: List[PortalPoster] = []
     speaker_code: Optional[str] = None
     qr_code_url: Optional[str] = None
+    theme_color: Optional[str] = None
 
 
 # ── Auth ──────────────────────────────────────────────────────
@@ -107,6 +109,12 @@ async def speaker_portal_auth(
 
     event = speaker.event
     
+    if not event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
+        
     talks = []
     for ss in speaker.session_speakers:
         session = ss.session
@@ -166,7 +174,8 @@ async def speaker_portal_auth(
         talks=talks,
         posters=posters,
         speaker_code=speaker.speaker_code,
-        qr_code_url=speaker.qr_code_url
+        qr_code_url=speaker.qr_code_url,
+        theme_color=event.theme_color
     )
 
 
@@ -611,21 +620,26 @@ async def download_speaker_qr(
     if not speaker:
         raise HTTPException(status_code=404, detail="Speaker not found.")
         
-    storage_path = f"thumbnails/qr/{speaker_id}.png"
+    event = speaker.event
+    reg_no = None
+    if event.registration_mode_enabled:
+        from app.modules.registration.models.participant import Participant
+        part_stmt = select(Participant).where(
+            Participant.event_id == event.id,
+            Participant.email == speaker.email.lower()
+        ).limit(1)
+        part_res = await db.execute(part_stmt)
+        part = part_res.scalar_one_or_none()
+        if part and part.regno:
+            reg_no = part.regno
+
+    from app.modules.registration.services import qr_service
     try:
-        img_bytes = upload_service.get_object_bytes(
-            bucket=settings.S3_BUCKET_THUMBNAILS,
-            storage_path=storage_path
+        img_bytes = qr_service.generate_speaker_badge_qr(
+            speaker.id, speaker.full_name, event.name, speaker.speaker_code, reg_no=reg_no
         )
-    except Exception:
-        # Fallback to generating on-the-fly
-        from app.services import qr_service
-        try:
-            img_bytes = qr_service.generate_speaker_badge_qr(
-                speaker.id, speaker.full_name, speaker.event.name, speaker.speaker_code
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to generate QR card: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate QR card: {e}")
             
     # Load into Pillow
     from PIL import Image
@@ -671,3 +685,191 @@ async def download_speaker_qr(
             "Access-Control-Expose-Headers": "Content-Disposition"
         }
     )
+
+
+# ── Speaker OTP Auth ──────────────────────────────────────────
+
+class SpeakerOtpRequestBody(BaseModel):
+    email: EmailStr
+
+class SpeakerOtpVerifyBody(BaseModel):
+    email: EmailStr
+    otp: str
+
+class SpeakerOtpTokenResponse(BaseModel):
+    token: str
+
+@router.post("/speaker/request-otp", response_model=MessageResponse)
+async def speaker_request_otp(
+    body: SpeakerOtpRequestBody,
+    db: AsyncSession = Depends(get_db)
+) -> MessageResponse:
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    import bcrypt
+    import random
+    from datetime import datetime, timezone, timedelta
+    from app.modules.registration.models.portal_otp_token import PortalOtpToken
+    from app.modules.notifications.services.email_service import send_email
+    from app.modules.registration.routers.portal_auth import _throttle_check
+    
+    # 1. Lookup speaker by email
+    stmt = select(Speaker).where(
+        Speaker.email == body.email.lower()
+    ).options(selectinload(Speaker.event))
+    res = await db.execute(stmt)
+    speakers = res.scalars().all()
+    
+    if not speakers:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No speaker record found for this email address."
+        )
+        
+    # Check active modes
+    active_speakers = [s for s in speakers if s.event.speaker_mode_enabled]
+    if not active_speakers:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
+        
+    # Check registration mode is enabled as well for OTP login
+    otp_allowed_speakers = [s for s in active_speakers if s.event.registration_mode_enabled]
+    if not otp_allowed_speakers:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="OTP login is only available if registration is active for the event. Please login using your access code."
+        )
+        
+    target_speaker = otp_allowed_speakers[0]
+    event = target_speaker.event
+    
+    # Throttle check
+    await _throttle_check(body.email, event.id, db)
+    
+    # Generate & send OTP
+    otp = f"{random.SystemRandom().randint(0, 999999):06d}"
+    token_row = PortalOtpToken(
+        email=body.email.lower(),
+        event_id=event.id,
+        otp_hash=bcrypt.hashpw(otp.encode(), bcrypt.gensalt(rounds=12)).decode(),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+    db.add(token_row)
+    await db.flush()
+    
+    html_body = f"""
+    <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+      <h2 style="font-size: 20px; font-weight: 700; color: #1e293b;">
+        Your Speaker Login Code for {event.name}
+      </h2>
+      <p style="color: #475569; font-size: 15px;">
+        Use the code below to access your speaker portal. 
+        It expires in <strong>10 minutes</strong>.
+      </p>
+      <div style="background: #f1f5f9; border-radius: 12px; padding: 24px 32px; 
+                  text-align: center; margin: 24px 0;">
+        <span style="font-size: 36px; font-weight: 900; letter-spacing: 0.25em; 
+                     color: #6366f1; font-family: monospace;">{otp}</span>
+      </div>
+      <p style="color: #94a3b8; font-size: 12px;">
+        If you did not request this code, you can safely ignore this email.
+      </p>
+    </div>
+    """
+    text_body = (
+        f"Your one-time speaker login code for {event.name} is: {otp}. "
+        f"Valid for 10 minutes."
+    )
+    
+    try:
+        await send_email(
+            to_email=body.email,
+            subject=f"Your Speaker Portal OTP for {event.name}",
+            html_body=html_body,
+            text_body=text_body,
+            event_id=event.id,
+            db=db,
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("OTP send failed — suppressing error")
+        
+    return MessageResponse(message="OTP sent successfully.")
+
+@router.post("/speaker/verify-otp", response_model=SpeakerOtpTokenResponse)
+async def speaker_verify_otp(
+    body: SpeakerOtpVerifyBody,
+    db: AsyncSession = Depends(get_db)
+) -> SpeakerOtpTokenResponse:
+    from sqlalchemy import select, and_
+    from sqlalchemy.orm import selectinload
+    import bcrypt
+    from datetime import datetime, timezone
+    
+    # 1. Find the active speaker records
+    stmt = select(Speaker).where(
+        Speaker.email == body.email.lower()
+    ).options(selectinload(Speaker.event)).order_by(Speaker.created_at.desc())
+    res = await db.execute(stmt)
+    speakers = res.scalars().all()
+    
+    active_speakers = [s for s in speakers if s.event.speaker_mode_enabled and s.event.registration_mode_enabled]
+    if not active_speakers:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active speaker record found for this email address."
+        )
+        
+    target_speaker = active_speakers[0]
+    event_id = target_speaker.event_id
+    
+    # 2. Verify OTP
+    from app.modules.registration.models.portal_otp_token import PortalOtpToken
+    now = datetime.now(timezone.utc)
+    
+    stmt = (
+        select(PortalOtpToken)
+        .where(
+            and_(
+                PortalOtpToken.email == body.email.lower(),
+                PortalOtpToken.event_id == event_id,
+                PortalOtpToken.used == False,
+                PortalOtpToken.expires_at > now,
+            )
+        )
+        .order_by(PortalOtpToken.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    token_row = result.scalar_one_or_none()
+    
+    if not token_row:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired OTP."
+        )
+        
+    token_row.attempts += 1
+    if token_row.attempts >= 5:
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Too many attempts. Please request a new OTP."
+        )
+        
+    if not bcrypt.checkpw(body.otp.encode(), token_row.otp_hash.encode()):
+        await db.commit()
+        remaining = 5 - token_row.attempts
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid OTP. {remaining} attempt(s) remaining."
+        )
+        
+    # Success
+    token_row.used = True
+    await db.commit()
+    
+    # Return upload_token as the token to redirect to
+    return SpeakerOtpTokenResponse(token=target_speaker.upload_token)

@@ -10,6 +10,7 @@ import CampaignDetail from '@/components/emails/campaign/CampaignDetail'
 import LogsTable from '@/components/emails/logs/LogsTable'
 import RegistrationTemplateEditor from '@/components/emails/templates/RegistrationTemplateEditor'
 import RegistrationCampaignBuilder from '@/components/emails/campaign/RegistrationCampaignBuilder'
+import AnnouncementsTab from '@/components/emails/AnnouncementsTab'
 
 type TabType =
   | 'dashboard'
@@ -17,7 +18,7 @@ type TabType =
   | 'sent'
   | 'campaigns'
   | 'templates'
-  | 'logs'
+  | 'announcements'
 
 export default function RegistrationEmailPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)
@@ -86,8 +87,8 @@ export default function RegistrationEmailPage({ params: paramsPromise }: { param
         )
       case 'templates':
         return <RegistrationTemplateEditor eventId={eventId} />
-      case 'logs':
-        return <LogsTable eventId={eventId} targetType="participant" />
+      case 'announcements':
+        return <AnnouncementsTab eventId={eventId} />
       default:
         return null
     }
@@ -114,7 +115,7 @@ export default function RegistrationEmailPage({ params: paramsPromise }: { param
           </div>
 
           <nav className="flex flex-wrap items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md animate-in fade-in slide-in-from-right-4 duration-700">
-            {(['dashboard', 'inbox', 'sent', 'campaigns', 'templates', 'logs'] as TabType[]).map((tab) => (
+            {(['dashboard', 'inbox', 'sent', 'campaigns', 'templates', 'announcements'] as TabType[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => { setActiveTab(tab); setSelectedCampaign(null) }}

@@ -34,6 +34,9 @@ class EventInfo:
     announcements: Any
     program_url: str
     terms_and_conditions: str
+    faqs: Optional[list] = None
+    include_default_faqs: Optional[bool] = True
+
 
 
 @dataclass
@@ -87,10 +90,22 @@ from app.modules.registration.models.registration_form_config import Registratio
 
 
 def _check_edits_locked(event: Event, is_live: bool = True) -> bool:
-    """Return True if edits are disabled (within cutoff_days of event start or registration is closed)."""
+    """Return True if edits are disabled (within cutoff_days of event start, past cutoff_date, or registration is closed)."""
     if not is_live:
         return True
     settings = event.registration_settings or {}
+    
+    # Check date-based registration/edit cutoff
+    cutoff_date_str = settings.get("edit_cutoff_date")
+    if cutoff_date_str:
+        try:
+            # Parse date in ISO format YYYY-MM-DD
+            cutoff_date = date.fromisoformat(cutoff_date_str.split("T")[0])
+            if date.today() > cutoff_date:
+                return True
+        except Exception:
+            pass
+
     cutoff_days: int = int(settings.get("edit_cutoff_days", 0))
     if cutoff_days <= 0:
         return False
@@ -127,6 +142,8 @@ async def get_dashboard_data(
         announcements=reg_settings.get("announcements", ""),
         program_url=reg_settings.get("program_url", ""),
         terms_and_conditions=reg_settings.get("terms_and_conditions", ""),
+        faqs=reg_settings.get("faqs", None),
+        include_default_faqs=reg_settings.get("include_default_faqs", True),
     )
 
     # 2 — Load confirmed participant by email
@@ -312,7 +329,31 @@ async def get_dashboard_data(
             Speaker.email == email.lower(),
         ).limit(1)
     )
-    is_speaker = sp_result.scalar_one_or_none() is not None
+    speaker_rec = sp_result.scalar_one_or_none()
+    is_speaker = speaker_rec is not None
+
+    # Check if participant's role belongs to "Presentation Related" category
+    from app.modules.registration.models.participant_role import ParticipantRole
+    is_speaker_category = False
+    if participant_info and participant_info.role:
+        role_stmt = select(ParticipantRole).where(
+            ParticipantRole.event_id == event_id,
+            ParticipantRole.name == participant_info.role
+        ).limit(1)
+        role_res = await db.execute(role_stmt)
+        role_row = role_res.scalar_one_or_none()
+        if role_row and role_row.category == "Presentation Related":
+            is_speaker_category = True
+
+    if is_speaker_category:
+        is_speaker = True
+
+    from app.config import settings
+    speaker_portal_url = ""
+    if speaker_rec:
+        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{speaker_rec.speaker_code}"
+    elif is_speaker_category:
+        speaker_portal_url = settings.SPEAKER_PORTAL_BASE_URL
 
     return DashboardData(
         event=event_info,
@@ -321,7 +362,7 @@ async def get_dashboard_data(
         payment=payment_info,
         edits_locked=_check_edits_locked(event, is_live=is_live),
         is_speaker=is_speaker,
-        speaker_portal_url=f"/speaker/{event_id}",
+        speaker_portal_url=speaker_portal_url,
     )
 
 

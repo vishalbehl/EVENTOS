@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Globe, AlertCircle, Calendar, CheckCircle2, ChevronRight, 
   Upload, FileText, Check, Copy, ArrowLeft, ArrowRight, ShieldCheck, 
-  MapPin, Loader2, Sparkles, Building, User, Mail, Phone, Map, Users, X
+  MapPin, Loader2, Sparkles, Building, User, Mail, Phone, Map, Users, X, Crop
 } from "lucide-react";
 import { toast } from "sonner";
 import { CountryStateEntry, fetchCountryStates, getAllowedCountries, getStatesForCountry } from "@/lib/country-states";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface FormField {
   id: string;
@@ -108,6 +109,289 @@ export default function PublicRegistrationPortal() {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
+
+  // Image Editor States
+  const [imageEditorOpen, setImageEditorOpen] = useState(false);
+  const [imageToEdit, setImageToEdit] = useState<string | null>(null);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [originalFileName, setOriginalFileName] = useState<string>("");
+  const [cropPercent, setCropPercent] = useState({ x: 0, y: 0, w: 1, h: 1 });
+  const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
+  const [cropAspect, setCropAspect] = useState<"1:1" | "4:3" | "16:9" | "free">("1:1");
+  const [cropShape, setCropShape] = useState<"rect" | "circle">("rect");
+  const [filterBrightness, setFilterBrightness] = useState(100);
+  const [filterContrast, setFilterContrast] = useState(100);
+  const cropperDragRef = useRef<any>(null);
+
+  const applyAspectToCrop = (ratioStr: "1:1" | "4:3" | "16:9" | "free", currentImgWidth = imgSize.width, currentImgHeight = imgSize.height) => {
+    if (ratioStr === "free") {
+      setCropPercent({ x: 0, y: 0, w: 1, h: 1 });
+      return;
+    }
+    const R = ratioStr === "1:1" ? 1.0 : ratioStr === "4:3" ? 4 / 3 : 16 / 9;
+    const imgWidth = currentImgWidth || 300;
+    const imgHeight = currentImgHeight || 300;
+    const imgRatio = imgWidth / imgHeight;
+
+    let w = 1.0;
+    let h = 1.0;
+
+    if (imgRatio > R) {
+      h = 1.0;
+      w = R / imgRatio;
+    } else {
+      w = 1.0;
+      h = imgRatio / R;
+    }
+
+    const x = (1.0 - w) / 2;
+    const y = (1.0 - h) / 2;
+    setCropPercent({ x, y, w, h });
+  };
+
+  const handleSelectAspect = (ratio: "1:1" | "4:3" | "16:9" | "free") => {
+    setCropAspect(ratio);
+    if (ratio !== "1:1") setCropShape("rect");
+    applyAspectToCrop(ratio);
+  };
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    const measuredWidth = img.clientWidth;
+    const measuredHeight = img.clientHeight;
+    setImgSize({ width: measuredWidth, height: measuredHeight });
+    applyAspectToCrop(cropAspect, measuredWidth, measuredHeight);
+  };
+
+  const handleMouseDownMove = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    cropperDragRef.current = {
+      type: "move",
+      startX: e.clientX,
+      startY: e.clientY,
+      startCropX: cropPercent.x,
+      startCropY: cropPercent.y,
+      startCropW: cropPercent.w,
+      startCropH: cropPercent.h
+    };
+  };
+
+  const handleMouseDownResize = (e: React.MouseEvent, handle: "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r") => {
+    e.stopPropagation();
+    cropperDragRef.current = {
+      type: "resize",
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      startCropX: cropPercent.x,
+      startCropY: cropPercent.y,
+      startCropW: cropPercent.w,
+      startCropH: cropPercent.h
+    };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!cropperDragRef.current || imgSize.width === 0 || imgSize.height === 0) return;
+
+    const drag = cropperDragRef.current;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const ndx = dx / imgSize.width;
+    const ndy = dy / imgSize.height;
+
+    if (drag.type === "move") {
+      let newX = drag.startCropX + ndx;
+      let newY = drag.startCropY + ndy;
+      newX = Math.max(0, Math.min(1 - drag.startCropW, newX));
+      newY = Math.max(0, Math.min(1 - drag.startCropH, newY));
+      setCropPercent(prev => ({ ...prev, x: newX, y: newY }));
+    } else if (drag.type === "resize") {
+      const handle = drag.handle;
+      const sX = drag.startCropX;
+      const sY = drag.startCropY;
+      const sW = drag.startCropW;
+      const sH = drag.startCropH;
+
+      const getAspectNum = (ratio: "1:1" | "4:3" | "16:9" | "free") => {
+        if (ratio === "1:1") return 1.0;
+        if (ratio === "4:3") return 4 / 3;
+        if (ratio === "16:9") return 16 / 9;
+        return null;
+      };
+
+      const R = getAspectNum(cropAspect);
+
+      if (R !== null) {
+        if (handle === "br") {
+          let newW = sW + ndx;
+          newW = Math.min(1 - sX, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + newH > 1.0) {
+            newH = 1.0 - sY;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          setCropPercent({ x: sX, y: sY, w: newW, h: newH });
+        } else if (handle === "tr") {
+          let newW = sW + ndx;
+          newW = Math.min(1 - sX, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + sH - newH < 0) {
+            newH = sY + sH;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          const newY = sY + sH - newH;
+          setCropPercent({ x: sX, y: newY, w: newW, h: newH });
+        } else if (handle === "bl") {
+          let newW = sW - ndx;
+          newW = Math.min(sX + sW, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + newH > 1.0) {
+            newH = 1.0 - sY;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          const newX = sX + sW - newW;
+          setCropPercent({ x: newX, y: sY, w: newW, h: newH });
+        } else if (handle === "tl") {
+          let newW = sW - ndx;
+          newW = Math.min(sX + sW, Math.max(0.05, newW));
+          let newH = (newW * imgSize.width) / (imgSize.height * R);
+          if (sY + sH - newH < 0) {
+            newH = sY + sH;
+            newW = (newH * imgSize.height * R) / imgSize.width;
+          }
+          const newX = sX + sW - newW;
+          const newY = sY + sH - newH;
+          setCropPercent({ x: newX, y: newY, w: newW, h: newH });
+        }
+      } else {
+        let newX = sX;
+        let newY = sY;
+        let newW = sW;
+        let newH = sH;
+
+        if (handle === "tl") {
+          newX = Math.max(0, Math.min(sX + sW - 0.05, sX + ndx));
+          newW = sX + sW - newX;
+          newY = Math.max(0, Math.min(sY + sH - 0.05, sY + ndy));
+          newH = sY + sH - newY;
+        } else if (handle === "tr") {
+          newW = Math.max(0.05, Math.min(1 - sX, sW + ndx));
+          newY = Math.max(0, Math.min(sY + sH - 0.05, sY + ndy));
+          newH = sY + sH - newY;
+        } else if (handle === "bl") {
+          newX = Math.max(0, Math.min(sX + sW - 0.05, sX + ndx));
+          newW = sX + sW - newX;
+          newH = Math.max(0.05, Math.min(1 - sY, sH + ndy));
+        } else if (handle === "br") {
+          newW = Math.max(0.05, Math.min(1 - sX, sW + ndx));
+          newH = Math.max(0.05, Math.min(1 - sY, sH + ndy));
+        } else if (handle === "t") {
+          newY = Math.max(0, Math.min(sY + sH - 0.05, sY + ndy));
+          newH = sY + sH - newY;
+        } else if (handle === "b") {
+          newH = Math.max(0.05, Math.min(1 - sY, sH + ndy));
+        } else if (handle === "l") {
+          newX = Math.max(0, Math.min(sX + sW - 0.05, sX + ndx));
+          newW = sX + sW - newX;
+        } else if (handle === "r") {
+          newW = Math.max(0.05, Math.min(1 - sX, sW + ndx));
+        }
+        setCropPercent({ x: newX, y: newY, w: newW, h: newH });
+      }
+    }
+  };
+
+  const handleMouseUp = () => {
+    cropperDragRef.current = null;
+  };
+
+  const dataURLtoFile = (dataurl: string, filename: string): File => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  };
+
+  const executeFileUpload = async (fieldId: string, file: File) => {
+    const field = config?.fields?.find((f: any) => f.id === fieldId) || { label: fieldId };
+    setUploadingField(fieldId);
+    try {
+      const uploadForm = new FormData();
+      uploadForm.append("file", file);
+      uploadForm.append("field_name", field.label);
+      if (formData.name) {
+        uploadForm.append("username", formData.name);
+      }
+
+      const res = await fetch(`${apiBase}/api/v1/portal/registration/${eventId}/upload`, {
+        method: "POST",
+        body: uploadForm
+      });
+
+      if (!res.ok) {
+        throw new Error("Upload failed");
+      }
+
+      const data = await res.json();
+      if (data.status === "success" && data.url) {
+        handleInputChange(fieldId, data.url);
+        toast.success(`Uploaded ${file.name} successfully!`);
+      } else {
+        throw new Error("Invalid response format");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("File upload failed. Please try again.");
+    } finally {
+      setUploadingField(null);
+    }
+  };
+
+  const handleCropSubmit = () => {
+    if (!imageToEdit) return;
+    const img = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const sx = cropPercent.x * img.width;
+      const sy = cropPercent.y * img.height;
+      const sw = cropPercent.w * img.width;
+      const sh = cropPercent.h * img.height;
+
+      canvas.width = sw;
+      canvas.height = sh;
+
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      ctx.fillRect(0, 0, sw, sh);
+
+      if (cropShape === "circle" && cropAspect === "1:1") {
+        ctx.beginPath();
+        ctx.arc(sw / 2, sh / 2, sw / 2, 0, Math.PI * 2);
+        ctx.clip();
+      }
+
+      ctx.filter = `brightness(${filterBrightness}%) contrast(${filterContrast}%)`;
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      const croppedUrl = canvas.toDataURL("image/png");
+      const croppedFile = dataURLtoFile(croppedUrl, originalFileName || "profile.png");
+
+      setImageEditorOpen(false);
+      setImageToEdit(null);
+      
+      if (editingFieldId) {
+        await executeFileUpload(editingFieldId, croppedFile);
+      }
+    };
+    img.src = imageToEdit;
+  };
 
   // Payment states
   const [promoCode, setPromoCode] = useState("");
@@ -421,32 +705,26 @@ export default function PublicRegistrationPortal() {
 
   // Upload file to backend storage
   const handleFileUpload = async (fieldId: string, file: File) => {
-    setUploadingField(fieldId);
-    try {
-      const uploadForm = new FormData();
-      uploadForm.append("file", file);
-
-      const res = await fetch(`${apiBase}/api/v1/portal/registration/${eventId}/upload`, {
-        method: "POST",
-        body: uploadForm
-      });
-
-      if (!res.ok) {
-        throw new Error("Upload failed");
-      }
-
-      const data = await res.json();
-      if (data.status === "success" && data.url) {
-        handleInputChange(fieldId, data.url);
-        toast.success(`Uploaded ${file.name} successfully!`);
-      } else {
-        throw new Error("Invalid response format");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("File upload failed. Please try again.");
-    } finally {
-      setUploadingField(null);
+    const field = config?.fields?.find((f: any) => f.id === fieldId);
+    const fieldType = field ? getEffectiveFieldType(field) : "file";
+    
+    if (fieldType === "image") {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          setImageToEdit(reader.result);
+          setEditingFieldId(fieldId);
+          setOriginalFileName(file.name);
+          setCropAspect("1:1");
+          setCropShape("rect");
+          setFilterBrightness(100);
+          setFilterContrast(100);
+          setImageEditorOpen(true);
+        }
+      };
+      reader.readAsDataURL(file);
+    } else {
+      await executeFileUpload(fieldId, file);
     }
   };
 
@@ -943,7 +1221,7 @@ export default function PublicRegistrationPortal() {
                 prose-li:text-muted prose-li:text-[11px] prose-li:my-0
                 prose-strong:text-[#E8EAFF] prose-em:text-indigo-300
                 prose-a:text-indigo-400 prose-hr:border-white/10 prose-ul:my-1 prose-ol:my-1">
-                <ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {config.terms_and_conditions || "## Terms & Conditions\n\n1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule without prior notice."}
                 </ReactMarkdown>
               </div>
@@ -990,7 +1268,7 @@ export default function PublicRegistrationPortal() {
                     prose-strong:text-[#E8EAFF] prose-em:text-indigo-300
                     prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline
                     prose-hr:border-white/10 prose-ul:space-y-1 prose-ol:space-y-1">
-                    <ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {config.terms_and_conditions || "## Terms & Conditions\n\n1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule without prior notice."}
                     </ReactMarkdown>
                   </div>
@@ -1576,6 +1854,272 @@ export default function PublicRegistrationPortal() {
                 </div>
               </div>
             </motion.div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Editor & Cropper Dialog Modal */}
+      {imageEditorOpen && imageToEdit && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-xl z-[9999] flex items-center justify-center animate-in fade-in duration-200 p-4 select-none">
+          <div className="max-w-3xl w-full bg-zinc-950 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[550px]">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-zinc-850 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-zinc-100 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+                  Image Studio Editor
+                </h3>
+                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mt-0.5">Crop, frame, and filter your image</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setImageEditorOpen(false);
+                  setImageToEdit(null);
+                }}
+                className="p-1.5 bg-zinc-900 border border-zinc-800 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+              {/* Left Column: Visual Crop Preview Canvas Area */}
+              <div className="flex-1 bg-zinc-900/40 border-b md:border-b-0 md:border-r border-zinc-805 p-6 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
+                <div className="relative select-none max-w-[450px] max-h-[350px] flex items-center justify-center">
+                  <img
+                    src={imageToEdit}
+                    className="max-w-[450px] max-h-[350px] object-contain select-none pointer-events-none rounded-xl"
+                    style={{
+                      filter: `brightness(${filterBrightness}%) contrast(${filterContrast}%)`,
+                    }}
+                    onLoad={handleImageLoad}
+                    alt="Visual Editor"
+                  />
+
+                  {/* Cropper Workspace Overlay */}
+                  {imgSize.width > 0 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        width: imgSize.width,
+                        height: imgSize.height,
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                      }}
+                      className="overflow-hidden select-none cursor-default animate-in fade-in duration-150"
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseUp}
+                    >
+                      {/* Dark Overlays for non-selected crop area */}
+                      {/* Top Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: `${cropPercent.y * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+                      {/* Bottom Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: `${(cropPercent.y + cropPercent.h) * 100}%`,
+                          left: 0,
+                          width: "100%",
+                          height: `${(1 - (cropPercent.y + cropPercent.h)) * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+                      {/* Left Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: `${cropPercent.y * 100}%`,
+                          left: 0,
+                          width: `${cropPercent.x * 100}%`,
+                          height: `${cropPercent.h * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+                      {/* Right Overlay */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: `${cropPercent.y * 100}%`,
+                          left: `${(cropPercent.x + cropPercent.w) * 100}%`,
+                          width: `${(1 - (cropPercent.x + cropPercent.w)) * 100}%`,
+                          height: `${cropPercent.h * 100}%`,
+                        }}
+                        className="bg-black/60"
+                      />
+
+                      {/* Crop Box Selector Outline */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${cropPercent.x * 100}%`,
+                          top: `${cropPercent.y * 100}%`,
+                          width: `${cropPercent.w * 100}%`,
+                          height: `${cropPercent.h * 100}%`,
+                          borderRadius: (cropShape === "circle" && cropAspect === "1:1") ? "50%" : "0px",
+                        }}
+                        className="border-2 border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.3)] cursor-move"
+                        onMouseDown={handleMouseDownMove}
+                      >
+                        {/* Grid lines helper */}
+                        <div className="absolute inset-0 pointer-events-none border border-white/20 flex items-center justify-center">
+                          <div className="w-full h-1/3 border-y border-white/20 absolute top-1/3" />
+                          <div className="h-full w-1/3 border-x border-white/20 absolute left-1/3" />
+                        </div>
+
+                        {/* Resize Handles */}
+                        {/* Corners */}
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "tl")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -top-1.5 -left-1.5 rounded-sm shadow-md cursor-nwse-resize z-10 hover:scale-125 transition-transform"
+                        />
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "tr")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -top-1.5 -right-1.5 rounded-sm shadow-md cursor-nesw-resize z-10 hover:scale-125 transition-transform"
+                        />
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "bl")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -bottom-1.5 -left-1.5 rounded-sm shadow-md cursor-nesw-resize z-10 hover:scale-125 transition-transform"
+                        />
+                        <div
+                          onMouseDown={(e) => handleMouseDownResize(e, "br")}
+                          className="h-3 w-3 bg-white border-2 border-indigo-500 absolute -bottom-1.5 -right-1.5 rounded-sm shadow-md cursor-nwse-resize z-10 hover:scale-125 transition-transform"
+                        />
+
+                        {/* Edges - only show for freeform cropping */}
+                        {cropAspect === "free" && (
+                          <>
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "t")}
+                              className="h-1.5 w-5 bg-white border border-indigo-500 absolute -top-1 left-1/2 -translate-x-1/2 rounded-full shadow-md cursor-ns-resize z-10 hover:scale-110 transition-transform"
+                            />
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "b")}
+                              className="h-1.5 w-5 bg-white border border-indigo-500 absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full shadow-md cursor-ns-resize z-10 hover:scale-110 transition-transform"
+                            />
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "l")}
+                              className="h-5 w-1.5 bg-white border border-indigo-500 absolute top-1/2 -translate-y-1/2 -left-1 rounded-full shadow-md cursor-ew-resize z-10 hover:scale-110 transition-transform"
+                            />
+                            <div
+                              onMouseDown={(e) => handleMouseDownResize(e, "r")}
+                              className="h-5 w-1.5 bg-white border border-indigo-500 absolute top-1/2 -translate-y-1/2 -right-1 rounded-full shadow-md cursor-ew-resize z-10 hover:scale-110 transition-transform"
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
+                  Drag corners to crop • Drag box to move
+                </span>
+              </div>
+
+              {/* Right Column: Settings Panel */}
+              <div className="w-full md:w-[280px] p-6 overflow-y-auto space-y-4 flex flex-col justify-start bg-zinc-950">
+                {/* Crop Shapes and Aspect Ratios */}
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-zinc-500 block">Aspect Ratio</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["1:1", "4:3", "16:9", "free"] as const).map(ratio => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() => handleSelectAspect(ratio)}
+                        className={`h-7 px-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all ${cropAspect === ratio ? "bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-500/20" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"}`}
+                      >
+                        {ratio === "free" ? "Freeform" : ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {cropAspect === "1:1" && (
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-zinc-500 block">Frame Shape</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["rect", "circle"] as const).map(shape => (
+                        <button
+                          key={shape}
+                          type="button"
+                          onClick={() => setCropShape(shape)}
+                          className={`h-7 px-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all ${cropShape === shape ? "bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-500/20" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"}`}
+                        >
+                          {shape === "rect" ? "Square" : "Circular"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Brightness & Contrast filters */}
+                <div className="space-y-3 pt-3 border-t border-zinc-900">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+                      <span>Brightness</span>
+                      <span className="text-indigo-400 font-mono text-[10px]">{filterBrightness}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={filterBrightness}
+                      onChange={e => setFilterBrightness(parseInt(e.target.value))}
+                      className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+                      <span>Contrast</span>
+                      <span className="text-indigo-400 font-mono text-[10px]">{filterContrast}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={filterContrast}
+                      onChange={e => setFilterContrast(parseInt(e.target.value))}
+                      className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-zinc-900 mt-auto flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCropSubmit}
+                    className="flex-grow h-9 px-4 bg-indigo-500 hover:bg-indigo-600 text-white font-black uppercase tracking-widest text-[9px] rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-indigo-500/10"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Crop & Upload
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageEditorOpen(false);
+                      setImageToEdit(null);
+                    }}
+                    className="h-9 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 font-black uppercase tracking-widest text-[9px] rounded-xl transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

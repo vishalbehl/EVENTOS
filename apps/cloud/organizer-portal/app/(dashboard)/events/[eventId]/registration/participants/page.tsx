@@ -14,10 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
-import { QRCodeSVG } from "qrcode.react";
-import ReactDOMServer from "react-dom/server";
+import { compileTemplateToPdf } from "@/lib/pdf-compiler";
+import AddParticipantModal from "@/components/registration/AddParticipantModal";
 
 interface Participant {
   id: string;
@@ -62,6 +60,7 @@ export default function ParticipantsDirectory() {
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedParticipantForDrawer, setSelectedParticipantForDrawer] = useState<Participant | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -255,356 +254,6 @@ export default function ParticipantsDirectory() {
     });
   };
 
-  const renderBadgeToImages = async (participant: Participant, tpl: PrintTemplate) => {
-    const template = tpl.templateData;
-    const width_mm = template.width_mm || 76;
-    const height_mm = template.height_mm || 100;
-    const orientation = template.orientation || (width_mm > height_mm ? "landscape" : "portrait");
-    
-    const pages = template.pages || [];
-
-    // Extract and preload unique Google Web Fonts
-    const fontFamilies: string[] = [];
-    for (const pageData of pages) {
-      for (const field of pageData.fields || []) {
-        if (field.fontFamily) {
-          fontFamilies.push(field.fontFamily);
-        }
-      }
-    }
-
-    const preloadFonts = async (families: string[]) => {
-      if (typeof window === "undefined") return;
-      const googleFonts = families.filter(f => !["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"].includes(f));
-      if (googleFonts.length === 0) return;
-      const uniqueFonts = Array.from(new Set(googleFonts));
-      const linkId = "google-fonts-preload";
-      let link = document.getElementById(linkId) as HTMLLinkElement;
-      const query = uniqueFonts.map(f => `family=${f.replace(/\s+/g, "+")}:ital,wght@0,400;0,700;1,400;1,700`).join("&");
-      const url = `https://fonts.googleapis.com/css2?${query}&display=swap`;
-      if (!link) {
-        link = document.createElement("link");
-        link.id = linkId;
-        link.rel = "stylesheet";
-        link.href = url;
-        document.head.appendChild(link);
-      } else {
-        link.href = url;
-      }
-      try {
-        for (const family of uniqueFonts) {
-          await document.fonts.load(`12px "${family}"`);
-          await document.fonts.load(`bold 12px "${family}"`);
-          await document.fonts.load(`italic 12px "${family}"`);
-        }
-        await document.fonts.ready;
-      } catch (e) {
-        console.error("Error preloading fonts:", e);
-      }
-    };
-
-    await preloadFonts(fontFamilies);
-    const results: { 
-      bgImgData: string | null; 
-      bgColor: string | null;
-      overlayImgData: string; 
-      width_mm: number; 
-      height_mm: number; 
-      orientation: string;
-      nativeImages: { src: string, x: number, y: number, w: number, h: number, align: string, rotation?: number }[] 
-    }[] = [];
-
-    const printContainer = document.createElement("div");
-    document.body.appendChild(printContainer);
-    Object.assign(printContainer.style, {
-      position: "fixed", top: "0", left: "0", opacity: "0", zIndex: "-1", pointerEvents: "none"
-    });
-
-    const formatDate = (dateStr: string) => {
-      if (!dateStr) return "";
-      try {
-        return new Date(dateStr).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-      } catch {
-        return dateStr;
-      }
-    };
-
-    const tokenReplace = (text: string) => {
-      if (!text) return "";
-      let res = text;
-      const replacements: Record<string, string> = {
-        name: participant.name || "",
-        first_name: participant.first_name || participant.name?.split(" ")[0] || "",
-        last_name: participant.last_name || (participant.name?.includes(" ") ? participant.name.split(" ").slice(1).join(" ") : "") || "",
-        firstname: participant.first_name || participant.name?.split(" ")[0] || "",
-        lastname: participant.last_name || (participant.name?.includes(" ") ? participant.name.split(" ").slice(1).join(" ") : "") || "",
-        role: participant.role || "",
-        regno: participant.regno || "",
-        email: participant.email || "",
-        phone: participant.phone || "",
-        company: participant.company || "",
-        designation: participant.designation || "",
-        date: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
-        todaydate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
-        eventstartdate: eventDetails?.start_date ? formatDate(eventDetails.start_date) : "",
-        eventenddate: eventDetails?.end_date ? formatDate(eventDetails.end_date) : "",
-        eventname: eventDetails?.name || "",
-        eventcode: eventDetails?.event_code || "",
-        location: eventDetails?.location || "",
-        venue: eventDetails?.venue || "",
-        paidstatus: participant.paid_status || ""
-      };
-
-      for (const [key, val] of Object.entries(replacements)) {
-        res = res.replace(new RegExp(`\\{\\{${key}\\}\\}`, "gi"), val);
-      }
-      return res;
-    };
-
-    const vcardData = {
-      name: participant.name, company: participant.company, designation: participant.designation, phone: participant.phone, email: participant.email
-    };
-    const generateVCardString = (data: any) => (
-      `BEGIN:VCARD\nVERSION:3.0\nFN:${data.name || ""}\nORG:${data.company || ""}\nTITLE:${data.designation || ""}\nTEL;TYPE=WORK,VOICE:${data.phone || ""}\nEMAIL:${data.email || ""}\nEND:VCARD`
-    );
-
-    const mmToPx = (mm: number) => (mm / 25.4) * 96;
-
-    for (const pageData of pages) {
-      const pageElement = document.createElement("div");
-      printContainer.appendChild(pageElement);
-      Object.assign(pageElement.style, {
-        width: `${mmToPx(width_mm)}px`,
-        height: `${mmToPx(height_mm)}px`,
-        position: "relative",
-        backgroundColor: "transparent",
-      });
-
-      let pageBg = null;
-      if (pageData.backgroundImage && pageData.print_backgroundImage !== false) {
-        pageBg = pageData.backgroundImage;
-      }
-      
-      let bgColor = null;
-      if (pageData.print_backgroundColor !== false) {
-        bgColor = pageData.backgroundColor || "#FFFFFF";
-      }
-
-      const nativeImages: any[] = [];
-
-      for (const field of pageData.fields || []) {
-        const fieldEl = document.createElement("div");
-        pageElement.appendChild(fieldEl);
-        const safeW = parseFloat(field.w_mm) || parseFloat(field.width_mm) || parseFloat(field.w) || parseFloat(field.width) || 20;
-        const safeH = parseFloat(field.h_mm) || parseFloat(field.height_mm) || parseFloat(field.h) || parseFloat(field.height) || 10;
-        
-        const px = mmToPx(parseFloat(field.x_mm) || parseFloat(field.x) || 0);
-        const py = mmToPx(parseFloat(field.y_mm) || parseFloat(field.y) || 0);
-        const pw = mmToPx(safeW);
-        const ph = mmToPx(safeH);
-
-        const borderStyle = field.borderStyle || "none";
-        const borderWidth = borderStyle !== "none" ? `${mmToPx(parseFloat(field.borderWidth_mm) || 0.5)}px` : undefined;
-        const borderRadius = field.type === "photo" && field.frame === "circle"
-          ? "50%"
-          : (field.cornerRadius_mm ? `${mmToPx(parseFloat(field.cornerRadius_mm))}px` : undefined);
-
-        Object.assign(fieldEl.style, {
-          position: "absolute",
-          left: `${px}px`,
-          top: `${py}px`,
-          width: `${pw}px`,
-          height: `${ph}px`,
-          transform: `rotate(${field.rotation || 0}deg)`,
-          transformOrigin: "center",
-          overflow: "visible",
-        });
-
-        const innerEl = document.createElement("div");
-        const isText = field.type !== "qr" && field.type !== "contact_qr" && field.type !== "image" && field.type !== "photo" && field.type !== "icon" && field.type !== "shape";
-        Object.assign(innerEl.style, {
-          position: "absolute",
-          top: "0",
-          left: "0",
-          width: `${pw}px`,
-          height: `${ph}px`,
-          boxSizing: "border-box",
-          overflow: "hidden",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderStyle: borderStyle !== "none" ? borderStyle : undefined,
-          borderWidth: borderStyle !== "none" ? borderWidth : undefined,
-          borderColor: borderStyle !== "none" ? (field.borderColor || "#000000") : undefined,
-          borderRadius: borderRadius || "0px",
-        });
-        fieldEl.appendChild(innerEl);
-
-        if (field.type === "qr") {
-          const qrSize = Math.round(Math.min(pw, ph));
-          innerEl.innerHTML = ReactDOMServer.renderToString(
-            <QRCodeSVG value={tokenReplace(field.qrValue || "{{regno}}")} fgColor={field.color || "#000000"} bgColor={field.bgColor || "#FFFFFF"} level="M" size={qrSize} />
-          );
-        } else if (field.type === "contact_qr") {
-          const qrSize = Math.round(Math.min(pw, ph));
-          innerEl.innerHTML = ReactDOMServer.renderToString(
-            <QRCodeSVG value={generateVCardString(vcardData)} fgColor={field.color || "#000000"} bgColor={field.bgColor || "#FFFFFF"} level="M" size={qrSize} />
-          );
-        } else if (field.type === "image" && field.src) {
-          nativeImages.push({
-            src: field.src,
-            x: parseFloat(field.x_mm) || parseFloat(field.x) || 0,
-            y: parseFloat(field.y_mm) || parseFloat(field.y) || 0,
-            w: safeW,
-            h: safeH,
-            align: field.align || "center",
-            rotation: field.rotation || 0
-          });
-          const imgPlaceholder = document.createElement("div");
-          imgPlaceholder.style.width = "100%";
-          imgPlaceholder.style.height = "100%";
-          imgPlaceholder.style.background = "transparent";
-          innerEl.appendChild(imgPlaceholder);
-        } else if (field.type === "photo") {
-          const photoUrl = (participant as any).photo || (participant as any).avatar || (participant as any).profile_picture;
-          if (photoUrl) {
-            const imgDiv = document.createElement("div");
-            imgDiv.style.width = "100%";
-            imgDiv.style.height = "100%";
-            imgDiv.style.backgroundImage = `url(${photoUrl})`;
-            imgDiv.style.backgroundSize = "cover";
-            imgDiv.style.backgroundRepeat = "no-repeat";
-            imgDiv.style.borderRadius = field.frame === "circle" ? "50%" : "0";
-            imgDiv.style.backgroundPosition = field.align === "left" ? "left center" : field.align === "right" ? "right center" : "center center";
-            innerEl.appendChild(imgDiv);
-          }
-        } else if (field.type === "icon") {
-          const IconComp = (LucideIcons as any)[field.iconName || "Star"];
-          if (IconComp) {
-            innerEl.innerHTML = ReactDOMServer.renderToString(
-              <IconComp size="100%" color={field.color || "#6366F1"} />
-            );
-          }
-        } else if (field.type === "shape") {
-          let shapeHtml = "";
-          const strokeW = mmToPx(parseFloat(field.borderWidth_mm) || 0);
-          const strokeColor = field.borderColor || "none";
-          const strokeDash = field.borderStyle === "dashed" ? "8,4" : field.borderStyle === "dotted" ? "2,4" : "";
-          const strokeAttr = strokeW > 0 ? { stroke: strokeColor, strokeWidth: strokeW, ...(strokeDash ? { strokeDasharray: strokeDash } : {}), vectorEffect: "non-scaling-stroke" } : {};
-
-          if (field.shapeType === "circle") {
-            shapeHtml = ReactDOMServer.renderToString(<div style={{
-              backgroundColor: field.color || "#6366F1",
-              borderRadius: "50%",
-              width: "100%",
-              height: "100%",
-              ...(field.borderStyle && field.borderStyle !== "none" ? { border: `${strokeW}px ${field.borderStyle} ${strokeColor}` } : {})
-            }} />);
-          } else if (field.shapeType === "triangle") {
-            shapeHtml = ReactDOMServer.renderToString(
-              <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
-                <polygon points="50,0 0,100 100,100" fill={field.color || "#6366F1"} {...strokeAttr} />
-              </svg>
-            );
-          } else if (field.shapeType === "star") {
-            shapeHtml = ReactDOMServer.renderToString(
-              <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
-                <polygon points="50,0 63,38 100,38 70,62 82,100 50,75 18,100 30,62 0,38 37,38" fill={field.color || "#6366F1"} {...strokeAttr} />
-              </svg>
-            );
-          } else if (field.shapeType === "hexagon") {
-            shapeHtml = ReactDOMServer.renderToString(
-              <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
-                <polygon points="50,0 100,25 100,75 50,100 0,75 0,25" fill={field.color || "#6366F1"} {...strokeAttr} />
-              </svg>
-            );
-          } else if (field.shapeType === "line") {
-            shapeHtml = ReactDOMServer.renderToString(<div style={{ backgroundColor: field.color || "#6366F1", width: "100%", height: "100%" }} />);
-          } else if (field.shapeType === "diamond") {
-            shapeHtml = ReactDOMServer.renderToString(
-              <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
-                <polygon points="50,0 100,50 50,100 0,50" fill={field.color || "#6366F1"} {...strokeAttr} />
-              </svg>
-            );
-          } else if (field.shapeType === "pentagon") {
-            shapeHtml = ReactDOMServer.renderToString(
-              <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
-                <polygon points="50,0 100,38 81,100 19,100 0,38" fill={field.color || "#6366F1"} {...strokeAttr} />
-              </svg>
-            );
-          } else if (field.shapeType === "octagon") {
-            shapeHtml = ReactDOMServer.renderToString(
-              <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
-                <polygon points="30,0 70,0 100,30 100,70 70,100 30,100 0,70 0,30" fill={field.color || "#6366F1"} {...strokeAttr} />
-              </svg>
-            );
-          } else {
-            shapeHtml = ReactDOMServer.renderToString(<div style={{ backgroundColor: field.color || "#6366F1", width: "100%", height: "100%" }} />);
-          }
-          innerEl.innerHTML = shapeHtml;
-        } else {
-          // Text field – match the designer canvas layout exactly
-          const rawText = field.placeholder || field.text || field.value || "";
-          let processedText = tokenReplace(rawText);
-          if (field.textCase === "uppercase") processedText = processedText.toUpperCase();
-          else if (field.textCase === "lowercase") processedText = processedText.toLowerCase();
-          else if (field.textCase === "title") processedText = processedText.replace(/\b\w/g, char => char.toUpperCase());
-          else if (field.textCase === "sentence") processedText = processedText.replace(/(^\s*|[.!?]\s+)([a-z])/g, (m, p1, p2) => p1 + p2.toUpperCase());
-
-          const justifyContent = field.align === "center" ? "center" : field.align === "right" ? "flex-end" : "flex-start";
-          const innerSpan = document.createElement("div");
-          Object.assign(innerSpan.style, {
-            display: "flex",
-            alignItems: "center",
-            justifyContent,
-            width: "100%",
-            height: "100%",
-            fontFamily: `'${field.fontFamily || "Arial"}', sans-serif`,
-            fontSize: `${field.fontSize || 10}pt`,
-            lineHeight: "1.2",
-            fontWeight: field.bold ? "700" : "400",
-            fontStyle: field.italic ? "italic" : "normal",
-            textDecoration: field.underline ? "underline" : "none",
-            color: field.color || "#000000",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            padding: "0 4px",
-            wordBreak: "keep-all",
-            boxSizing: "border-box",
-          });
-          innerSpan.innerText = processedText;
-          innerEl.appendChild(innerSpan);
-        }
-      }
-
-      if (typeof window !== "undefined") {
-        try {
-          await document.fonts.ready;
-          await new Promise(r => setTimeout(r, 100)); // Small yield to ensure rendering
-        } catch (e) {}
-      }
-
-      const canvas = await html2canvas(pageElement, {
-        scale: 3,
-        backgroundColor: null,
-        logging: false,
-        useCORS: true,
-      });
-      results.push({
-        bgImgData: pageBg,
-        bgColor,
-        overlayImgData: canvas.toDataURL("image/png"),
-        width_mm,
-        height_mm,
-        orientation,
-        nativeImages
-      });
-    }
-
-    document.body.removeChild(printContainer);
-    return results;
-  };
-
   const printParticipants = async (list: Participant[]) => {
     if (list.length === 0) {
       toast.error("Select at least one participant to print.");
@@ -612,6 +261,7 @@ export default function ParticipantsDirectory() {
     }
 
     let printBadgeDesign = badgeDesign;
+    let freshEventDetails = eventDetails;
     try {
       const [freshEvent, freshTemplates] = await Promise.all([
         apiGet<any>(`/events/${eventId}`),
@@ -619,6 +269,7 @@ export default function ParticipantsDirectory() {
       ]);
       printBadgeDesign = freshEvent?.registration_settings?.badge_design || {};
       setBadgeDesign(printBadgeDesign);
+      freshEventDetails = freshEvent;
       setEventDetails(freshEvent);
       
       const newTemplates = freshTemplates.map(t => ({
@@ -631,117 +282,48 @@ export default function ParticipantsDirectory() {
       // Continue with the latest loaded settings if the refresh fails.
     }
 
-    const fallbackList: Participant[] = [];
-    const printList = list.map(p => {
+    // Resolve template for each participant
+    const resolvedList = list.map(p => {
       let tpl = resolveTemplateForParticipant(p, printBadgeDesign);
       if (!tpl && templates.length > 0) {
         tpl = templates[0];
-        fallbackList.push(p);
       }
       return { participant: p, template: tpl };
     });
 
-    const actuallyMissing = printList.filter(item => !item.template);
-    if (actuallyMissing.length) {
-      toast.error("No badge templates are designed for this event yet.");
+    const missingTemplates = resolvedList.filter(item => !item.template);
+    if (missingTemplates.length === resolvedList.length) {
+      toast.error("No badge templates are designed or assigned for this event yet.");
       return;
     }
 
-    if (fallbackList.length > 0) {
-      toast.warning(`Using default template for ${fallbackList.length} participant(s) with unassigned roles.`);
-    }
-
     setPrinting(true);
-    toast.info(`Generating ${list.length} badge${list.length === 1 ? "" : "s"}...`);
+    toast.info(`Generating ${resolvedList.filter(i => i.template).length} badge(s)...`);
+
     try {
-      let pdf: jsPDF | null = null;
-      for (const item of printList) {
-        const participant = item.participant;
-        const tpl = item.template!;
-        const pages = await renderBadgeToImages(participant, tpl);
-        for (const page of pages) {
-          if (!pdf) {
-            pdf = new jsPDF({ 
-              orientation: page.orientation as any, 
-              unit: "mm", 
-              format: [page.width_mm, page.height_mm],
-              compress: true 
-            });
-          } else {
-            pdf.addPage([page.width_mm, page.height_mm], page.orientation as any);
-          }
-          
-          if (page.bgColor) {
-            pdf.setFillColor(page.bgColor);
-            pdf.rect(0, 0, page.width_mm, page.height_mm, "F");
-          }
-
-          if (page.bgImgData) {
-            let format = "JPEG";
-            if (page.bgImgData.startsWith("data:image/png")) format = "PNG";
-            else if (page.bgImgData.startsWith("data:image/webp")) format = "WEBP";
-            pdf.addImage(page.bgImgData, format, 0, 0, page.width_mm, page.height_mm);
-          }
-          
-          for (const nImg of page.nativeImages) {
-            await new Promise<void>((resolve) => {
-              const img = new window.Image();
-              img.crossOrigin = "Anonymous";
-              img.onload = () => {
-                const imgRatio = img.naturalWidth / img.naturalHeight;
-                const targetRatio = nImg.w / nImg.h;
-                let finalW = nImg.w;
-                let finalH = nImg.h;
-                let finalX = nImg.x;
-                let finalY = nImg.y;
-
-                if (imgRatio > targetRatio) {
-                  finalH = nImg.w / imgRatio;
-                  finalY = nImg.y + (nImg.h - finalH) / 2;
-                } else {
-                  finalW = nImg.h * imgRatio;
-                  if (nImg.align === "left") finalX = nImg.x;
-                  else if (nImg.align === "right") finalX = nImg.x + (nImg.w - finalW);
-                  else finalX = nImg.x + (nImg.w - finalW) / 2;
-                }
-                
-                let format = "JPEG";
-                if (nImg.src.startsWith("data:image/png")) format = "PNG";
-                else if (nImg.src.startsWith("data:image/webp")) format = "WEBP";
-                
-                let srcToDraw = nImg.src;
-                if (nImg.rotation) {
-                  const PX_PER_MM = 11.811;
-                  const cw = Math.round(finalW * PX_PER_MM);
-                  const ch = Math.round(finalH * PX_PER_MM);
-                  const tmpCanvas = document.createElement("canvas");
-                  tmpCanvas.width = cw;
-                  tmpCanvas.height = ch;
-                  const ctx = tmpCanvas.getContext("2d")!;
-                  ctx.translate(cw / 2, ch / 2);
-                  ctx.rotate((nImg.rotation * Math.PI) / 180);
-                  ctx.translate(-cw / 2, -ch / 2);
-                  ctx.drawImage(img, 0, 0, cw, ch);
-                  srcToDraw = tmpCanvas.toDataURL("image/png");
-                  format = "PNG";
-                }
-                
-                pdf!.addImage(srcToDraw, format, finalX, finalY, finalW, finalH);
-                resolve();
-              };
-              img.onerror = () => resolve();
-              img.src = nImg.src;
-            });
-          }
-          
-          pdf.addImage(page.overlayImgData, "PNG", 0, 0, page.width_mm, page.height_mm);
+      // Group participants by their template ID to compile spools by layout size
+      const groups: Record<string, { template: PrintTemplate; participants: Participant[] }> = {};
+      resolvedList.forEach(item => {
+        if (!item.template) return;
+        if (!groups[item.template.id]) {
+          groups[item.template.id] = { template: item.template, participants: [] };
         }
+        groups[item.template.id].participants.push(item.participant);
+      });
+
+      // Run each template group compiling
+      for (const group of Object.values(groups)) {
+        const pdf = await compileTemplateToPdf(
+          group.participants,
+          group.template.templateData,
+          freshEventDetails
+        );
+        window.open(URL.createObjectURL(pdf.output("blob")), "_blank");
       }
-      if (pdf) window.open(URL.createObjectURL(pdf.output("blob")), "_blank");
-      toast.success("Badge PDF opened.");
-    } catch (err) {
+      toast.success("Badge PDF(s) opened in print spools.");
+    } catch (err: any) {
       console.error(err);
-      toast.error("Failed to generate badge PDF.");
+      toast.error(err.message || "Failed to generate badge PDF.");
     } finally {
       setPrinting(false);
     }
@@ -764,12 +346,13 @@ export default function ParticipantsDirectory() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Sync registry
           </Button>
-          <Link href={`/events/${eventId}/registration/register`}>
-            <Button className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full hover-lift-3d flex items-center gap-1.5 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_20%,transparent)]">
-              <LucideIcons.UserPlus className="h-4 w-4" />
-              Register Participant
-            </Button>
-          </Link>
+          <Button 
+            onClick={() => setIsAddModalOpen(true)}
+            className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full hover-lift-3d flex items-center gap-1.5 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_20%,transparent)]"
+          >
+            <LucideIcons.UserPlus className="h-4 w-4" />
+            Add Participant
+          </Button>
         </div>
       </div>
 
@@ -1260,6 +843,14 @@ export default function ParticipantsDirectory() {
           </>
         )}
       </AnimatePresence>
+
+      {/* Add Participant Modal Trigger */}
+      <AddParticipantModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        eventId={eventId as string}
+        onSuccess={fetchData}
+      />
     </div>
   );
 }
