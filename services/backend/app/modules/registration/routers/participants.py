@@ -255,9 +255,16 @@ async def get_registration_stats(
     checkins_q = select(func.count(CheckIn.id)).where(CheckIn.event_id == event.id)
     
     # Role breakdown
-    roles_q = select(Participant.role, func.count(Participant.id)).where(
-        Participant.event_id == event.id
-    ).group_by(Participant.role)
+    roles_q = (
+        select(
+            ParticipantRole.name,
+            func.count(Participant.id)
+        )
+        .select_from(Participant)
+        .outerjoin(ParticipantRole, ParticipantRole.id == Participant.role_id)
+        .where(Participant.event_id == event.id)
+        .group_by(ParticipantRole.name)
+    )
 
     total_count = (await db.execute(total_q)).scalar_one() or 0
     paid_count = (await db.execute(paid_q)).scalar_one() or 0
@@ -265,7 +272,7 @@ async def get_registration_stats(
     checkin_count = (await db.execute(checkins_q)).scalar_one() or 0
     
     roles_res = (await db.execute(roles_q)).all()
-    role_breakdown = {r[0]: r[1] for r in roles_res}
+    role_breakdown = {r[0] or "Delegate": r[1] for r in roles_res}
 
     return {
         "total": total_count,
@@ -703,11 +710,18 @@ async def get_registration_analytics(
     growth_trends = [{"date": str(r[0]), "count": r[1]} for r in growth_res]
     
     # 3. Participant Type Distribution
-    roles_q = select(Participant.role, func.count(Participant.id)).where(
-        Participant.event_id == event.id
-    ).group_by(Participant.role)
+    roles_q = (
+        select(
+            ParticipantRole.name,
+            func.count(Participant.id)
+        )
+        .select_from(Participant)
+        .outerjoin(ParticipantRole, ParticipantRole.id == Participant.role_id)
+        .where(Participant.event_id == event.id)
+        .group_by(ParticipantRole.name)
+    )
     roles_res = (await db.execute(roles_q)).all()
-    role_dist = [{"role": r[0] or "Unknown", "count": r[1]} for r in roles_res]
+    role_dist = [{"role": r[0] or "Delegate", "count": r[1]} for r in roles_res]
     
     # 4. Registration Source Tracking
     sources_q = select(Participant.source, func.count(Participant.id)).where(
