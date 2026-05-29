@@ -1,0 +1,19 @@
+[33mad3594d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32marchitecture-refactor[m[33m, [m[1;31morigin/architecture-refactor[m[33m, [m[1;31morigin/HEAD[m[33m)[m new
+[33m2cbe70a[m 27-05- major changes in ui andd new features in regn+spkr+orgnsr portal
+[33m8cc6676[m 26-05 Payment and Reg Portal Upgrade v2.0
+[33m5f7dbcd[m 25-05 Minor Updates
+[33mc089bc9[m 23-05 - MAJOR CHANGES
+[33mf1447a7[m feat: implement venue registration app  + rewite organiser dashbord.
+[33m384581c[m update root README with detailed monorepo run instructions
+[33mae4cf6b[m fix next/font offline build issue in organizer-portal and update packages
+[33m41e6cf2[m fix circular import in validation_service and missing created_at in test_outbox_processor
+[33m230622b[m refactor: restructure monorepo layout and backend modularization
+[33mea8c739[m checkpoint before refactor
+[33mbff2cec[m checkpoint before refactor
+[33m018fc53[m fix: relocate nested storage to storage/ root
+[33me6552f3[m checkpoint before refactor
+[33mdaaf510[m feat: add utility script to automate project directory refactoring and monorepo restructuring
+[33ma42a9fd[m feat: add automated monorepo project refactoring and migration utility
+[33md87feaf[m docs: add project structure documentation and update existing file
+[33m4218291[m checkpoint before refactor
+[33m7566a36[m checkpoint before refactor
