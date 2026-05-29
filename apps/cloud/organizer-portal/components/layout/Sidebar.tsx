@@ -37,31 +37,21 @@ export function Sidebar() {
 
   const { checkPermission } = usePermissions(eventId as string);
   const { data: event } = useEvent(eventId as string);
-  const speakerEnabled = event?.speaker_mode_enabled ?? true;
-  const regEnabled = event?.registration_mode_enabled ?? true;
+  const speakerEnabled = event?.speaker_settings?.enabled ?? true;
+  const regEnabled = event?.registration_settings?.enabled ?? true;
 
   const eventRoutes = [
-    { label: "Overview", icon: LayoutDashboard, href: `/events/${eventId}/speaker/dashboard` },
-    { label: "Rooms", icon: MapPin, href: `/events/${eventId}/speaker/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
-    { label: "Sessions", icon: Calendar, href: `/events/${eventId}/speaker/sessions`, permission: PERMISSIONS.SESSIONS_VIEW },
-    { label: "Speakers", icon: Users, href: `/events/${eventId}/speaker/speakers`, permission: PERMISSIONS.SPEAKERS_VIEW },
-    { label: "File Monitoring", icon: FileVideo, href: `/events/${eventId}/speaker/files`, permission: PERMISSIONS.FILES_VIEW },
-    { 
-      label: "Posters", 
-      icon: MonitorPlay, 
-      href: `/events/${eventId}/speaker/eposters`,
-      permission: PERMISSIONS.POSTERS_VIEW
-    },
-    { 
-      label: "Campaigns", 
-      icon: Mail, 
-      href: `/events/${eventId}/speaker/emails`,
-      permission: PERMISSIONS.SETTINGS_EDIT // Or CAMPAIGNS:MANAGE if we add it
-    },
-    { label: "Notifications", icon: Bell, href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
+    { label: "Overview",        icon: LayoutDashboard, href: `/events/${eventId}/speaker/dashboard` },
+    { label: "Speakers",        icon: Users,            href: `/events/${eventId}/speaker/speakers`,      permission: PERMISSIONS.SPEAKERS_VIEW },
+    { label: "Sessions",        icon: Calendar,         href: `/events/${eventId}/speaker/sessions`,      permission: PERMISSIONS.SESSIONS_VIEW },
+    { label: "Rooms",           icon: MapPin,           href: `/events/${eventId}/speaker/rooms`,         permission: PERMISSIONS.ROOMS_MANAGE },
+    { label: "File Monitoring", icon: FileVideo,        href: `/events/${eventId}/speaker/files`,         permission: PERMISSIONS.FILES_VIEW },
+    { label: "Posters",         icon: MonitorPlay,      href: `/events/${eventId}/speaker/eposters`,      permission: PERMISSIONS.POSTERS_VIEW },
+    { label: "Campaigns",       icon: Mail,             href: `/events/${eventId}/speaker/emails`,        permission: PERMISSIONS.SETTINGS_EDIT },
+    { label: "Notifications",   icon: Bell,             href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
   ].filter(r => !r.permission || checkPermission(r.permission));
 
-  const isRegistrationWorkspace = !!(eventId && (pathname?.includes(`/events/${eventId}/registration`) || !speakerEnabled));
+  const isRegistrationWorkspace = !!(eventId && pathname?.includes(`/events/${eventId}/registration`));
 
   const registrationRoutes = [
     { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/registration/dashboard` },
@@ -78,17 +68,18 @@ export function Sidebar() {
 
   const bottomRoutes = isRegistrationWorkspace
     ? [
-        { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
-        { label: "Documentation", icon: FileText, href: "/docs" },
-      ]
+      { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
+      { label: "Documentation", icon: FileText, href: "/docs" },
+    ]
     : [
-        { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
-        { label: "Documentation", icon: FileText, href: "/docs" },
-      ];
+      { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
+      { label: "Documentation", icon: FileText, href: "/docs" },
+    ];
 
-  const currentRoutes = isRegistrationWorkspace 
-    ? (regEnabled ? registrationRoutes : []) 
+  const currentRoutes = isRegistrationWorkspace
+    ? (regEnabled ? registrationRoutes : [])
     : (isEventWorkspace ? (speakerEnabled ? eventRoutes : []) : filteredPlatformRoutes);
+
 
   return (
     <motion.aside

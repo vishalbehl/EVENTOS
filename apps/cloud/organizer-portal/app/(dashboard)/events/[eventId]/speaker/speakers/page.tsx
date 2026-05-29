@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, Search, Filter, Mail, MoreHorizontal, CheckCircle2,
   Clock, UserPlus, LayoutList, Columns, FileText, X,
-  ChevronDown, MapPin, Presentation, Phone, Trash2, Send, Calendar,
+  ChevronDown, MapPin, Presentation, Phone, Trash2, Send, Calendar, Loader2, RefreshCw,
 } from "lucide-react";
+import { apiPost } from "@/lib/api-client";
 import { useSpeakers, SpeakerSummary } from "@/hooks/useSpeakers";
 import { usePosters } from "@/hooks/usePosters";
 import { useSessions } from "@/hooks/useSessions";
@@ -22,6 +23,7 @@ import { SpeakerDrawer } from "@/components/speakers/SpeakerDrawer";
 import { Portal } from "@/components/ui/portal";
 import { EmailCampaignDialog } from "@/components/speakers/EmailCampaignDialog";
 import { RegisterSpeakerDialog } from "@/components/speakers/RegisterSpeakerDialog";
+import { toast } from "sonner";
 import { cn, formatDateInTZ, formatTimeInTZ } from "@/lib/utils";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
 
@@ -72,7 +74,22 @@ export default function SpeakersPage() {
     }
   }, [selectedIds, setToolbarActions]);
 
-  const { data: speakers, isLoading } = useSpeakers(eventIdStr, {
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncFromRegistration = async () => {
+    try {
+      setSyncing(true);
+      const res = await apiPost<{ message: string }>(`/events/${eventIdStr}/speakers/fetch-from-registration`);
+      toast.success(res.message || "Sync completed successfully.");
+      refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to sync speakers from registration.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const { data: speakers, isLoading, refetch } = useSpeakers(eventIdStr, {
     search: searchQuery || undefined,
     upload_status: statusFilter || undefined,
     room_id: roomFilter || undefined,
@@ -190,6 +207,13 @@ export default function SpeakersPage() {
               <Columns className="h-4 w-4" />
             </button>
           </div>
+          <Button
+            onClick={handleSyncFromRegistration}
+            disabled={syncing}
+            className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
+          >
+            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Sync Registrations
+          </Button>
           <Button
             onClick={() => setRegisterDialogOpen(true)}
             className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 hover-lift-3d"

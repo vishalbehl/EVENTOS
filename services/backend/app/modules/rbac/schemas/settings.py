@@ -35,9 +35,26 @@ class FeatureToggles(BaseModel):
         return {k: v for k, v in self.model_dump().items() if v is not None}
 
 
+class BrandingUpdate(BaseModel):
+    """Partial update to branding_settings JSONB."""
+    theme_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
+
+    @field_validator("theme_color")
+    @classmethod
+    def validate_color(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            import re
+            if not re.match(r"^#[0-9A-Fa-f]{6}$", v):
+                raise ValueError("theme_color must be a valid 6-digit hex color (e.g. #1A73E8).")
+        return v
+
+
 class SettingsUpdate(BaseModel):
     max_file_size_mb: Optional[int] = None
     allowed_formats: Optional[List[str]] = None
+    # Legacy flat fields — kept for API compatibility; they merge into branding_settings
     theme_color: Optional[str] = None
     logo_url: Optional[str] = None
     timezone: Optional[str] = None
@@ -45,6 +62,8 @@ class SettingsUpdate(BaseModel):
     feature_toggles: Optional[FeatureToggles] = None
     license_tier: Optional[str] = None  # Only super_admin can change this
     event_mode: Optional[bool] = None  # Only super_admin can change this
+    # New branding sub-document update
+    branding_settings: Optional[BrandingUpdate] = None
 
     @field_validator("max_file_size_mb")
     @classmethod
@@ -89,8 +108,11 @@ class SettingsResponse(BaseModel):
     event_id: uuid.UUID
     max_file_size_mb: int
     allowed_formats: List[str]
+    # Branding (returned as flat fields for legacy compatibility + nested object)
     theme_color: str
     logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    branding_settings: Dict = {}
     timezone: str
     upload_deadline: Optional[datetime] = None
     license_tier: str
@@ -131,3 +153,21 @@ class LicenseInfo(BaseModel):
             ),
         }
         return tiers.get(tier, tiers["starter"])
+
+
+class GlobalSettingsResponse(BaseModel):
+    timezone: str
+
+
+class GlobalSettingsUpdate(BaseModel):
+    timezone: str
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(v)
+        except Exception:
+            raise ValueError(f"Invalid timezone: {v}. Must be a valid IANA timezone (e.g. 'Asia/Kolkata').")
+        return v

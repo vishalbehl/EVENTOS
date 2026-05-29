@@ -45,10 +45,13 @@ class Speaker(Base):
         nullable=True,
     )
 
+    regno: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    designation: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     affiliation: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

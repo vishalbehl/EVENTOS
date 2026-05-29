@@ -8,6 +8,30 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
+# ── Nested JSONB schemas ────────────────────────────────────
+
+class SpeakerSettings(BaseModel):
+    """Configuration for the Speaker Presentation Desk module."""
+    enabled: bool = True
+    window_required: bool = True
+
+
+class RegistrationSettings(BaseModel):
+    """Configuration for the On-Site Registration & Badges module."""
+    enabled: bool = True
+    registration_allowed: bool = True
+    participants_list_allowed: bool = True
+
+
+class BrandingSettings(BaseModel):
+    """Branding configuration for an event (theme color, logos, banners)."""
+    theme_color: str = "#1A73E8"
+    logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
+
+
+# ── Request schemas ─────────────────────────────────────────
+
 class EventCreate(BaseModel):
     name: str = Field(min_length=2, max_length=255)
     short_code: str = Field(
@@ -17,30 +41,39 @@ class EventCreate(BaseModel):
     )
     location: Optional[str] = Field(None, max_length=255)
     venue_name: Optional[str] = Field(None, max_length=255)
+    country: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
     organizer_name: Optional[str] = Field(None, max_length=255)
+    organizer_details: dict = Field(default_factory=lambda: {"name": "", "email": "", "phone": "", "website": ""})
     start_date: date
     end_date: date
-    timezone: str = Field(default="UTC", max_length=60)
+    timezone: str = Field(default="Asia/Kolkata", max_length=60)
     upload_deadline: Optional[datetime] = None
     max_file_size_mb: int = Field(default=500, ge=1, le=2048)
     allowed_formats: List[str] = Field(default=["pptx", "pdf", "mp4"])
-    banner_url: Optional[str] = None
-    registration_allowed: bool = True
-    speaker_window_required: bool = True
     currency: str = "INR"
-    participants_list_allowed: bool = True
-    speaker_mode_enabled: bool = True
-    registration_mode_enabled: bool = True
-    speaker_settings: dict = Field(default_factory=dict)
-    registration_settings: dict = Field(default_factory=dict)
+
+    # Nested JSONB settings
+    speaker_settings: SpeakerSettings = Field(default_factory=SpeakerSettings)
+    registration_settings: RegistrationSettings = Field(default_factory=RegistrationSettings)
+    branding_settings: BrandingSettings = Field(default_factory=BrandingSettings)
 
     @model_validator(mode="after")
     def validate_dates_and_modes(self) -> "EventCreate":
         if self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
-        if not self.speaker_mode_enabled and not self.registration_mode_enabled:
+        if not self.speaker_settings.enabled and not self.registration_settings.enabled:
             raise ValueError("At least one mode (Speaker or Registration) must be enabled.")
         return self
+
+    def model_dump_for_db(self) -> dict:
+        """Returns a dict ready to be unpacked into the Event ORM model."""
+        data = self.model_dump()
+        # Convert nested Pydantic models to plain dicts for JSONB storage
+        data["speaker_settings"] = self.speaker_settings.model_dump()
+        data["registration_settings"] = self.registration_settings.model_dump()
+        data["branding_settings"] = self.branding_settings.model_dump()
+        return data
 
 
 class EventUpdate(BaseModel):
@@ -53,7 +86,10 @@ class EventUpdate(BaseModel):
     )
     location: Optional[str] = Field(None, max_length=255)
     venue_name: Optional[str] = Field(None, max_length=255)
+    country: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
     organizer_name: Optional[str] = Field(None, max_length=255)
+    organizer_details: Optional[dict] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     timezone: Optional[str] = Field(None, max_length=60)
@@ -64,23 +100,27 @@ class EventUpdate(BaseModel):
         None,
         pattern="^(draft|active|completed|archived)$"
     )
-    banner_url: Optional[str] = None
-    feature_toggles: Optional[dict] = None
-    registration_allowed: Optional[bool] = None
-    speaker_window_required: Optional[bool] = None
     currency: Optional[str] = None
-    participants_list_allowed: Optional[bool] = None
-    speaker_mode_enabled: Optional[bool] = None
-    registration_mode_enabled: Optional[bool] = None
-    speaker_settings: Optional[dict] = None
-    registration_settings: Optional[dict] = None
+    feature_toggles: Optional[dict] = None
+
+    # Nested JSONB settings (partial updates — None means "don't touch")
+    speaker_settings: Optional[SpeakerSettings] = None
+    registration_settings: Optional[RegistrationSettings] = None
+    branding_settings: Optional[BrandingSettings] = None
 
     @model_validator(mode="after")
     def validate_modes(self) -> "EventUpdate":
-        if self.speaker_mode_enabled is False and self.registration_mode_enabled is False:
+        if (
+            self.speaker_settings is not None
+            and self.registration_settings is not None
+            and not self.speaker_settings.enabled
+            and not self.registration_settings.enabled
+        ):
             raise ValueError("At least one mode (Speaker or Registration) must be enabled.")
         return self
 
+
+# ── Response schemas ────────────────────────────────────────
 
 class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -91,7 +131,10 @@ class EventResponse(BaseModel):
     short_code: str
     location: Optional[str] = None
     venue_name: Optional[str] = None
+    country: Optional[str] = None
+    state: Optional[str] = None
     organizer_name: Optional[str] = None
+    organizer_details: dict = Field(default_factory=dict)
     start_date: date
     end_date: date
     timezone: str
@@ -99,16 +142,11 @@ class EventResponse(BaseModel):
     max_file_size_mb: int
     allowed_formats: List[str]
     status: str
-    banner_url: Optional[str] = None
     feature_toggles: dict = Field(default_factory=dict)
-    registration_allowed: bool
-    speaker_window_required: bool
     currency: str
-    participants_list_allowed: bool
-    speaker_mode_enabled: bool
-    registration_mode_enabled: bool
     speaker_settings: dict = Field(default_factory=dict)
     registration_settings: dict = Field(default_factory=dict)
+    branding_settings: dict = Field(default_factory=dict)
     created_by: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
@@ -122,13 +160,14 @@ class EventSummary(BaseModel):
     name: str
     short_code: str
     location: Optional[str] = None
+    venue_name: Optional[str] = None
+    country: Optional[str] = None
+    state: Optional[str] = None
     organizer_name: Optional[str] = None
+    organizer_details: dict = Field(default_factory=dict)
     start_date: date
     end_date: date
     status: str
-    banner_url: Optional[str] = None
-    registration_allowed: bool = True
-    speaker_window_required: bool = True
-    speaker_mode_enabled: bool = True
-    registration_mode_enabled: bool = True
-
+    branding_settings: dict = Field(default_factory=dict)
+    speaker_settings: dict = Field(default_factory=dict)
+    registration_settings: dict = Field(default_factory=dict)

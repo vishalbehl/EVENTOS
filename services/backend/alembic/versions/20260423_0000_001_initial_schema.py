@@ -566,7 +566,7 @@ def upgrade() -> None:
         "ck_et_type",
         "email_templates",
         "template_type IN ('upload_invite','reminder','deadline',"
-        "'approval','rejection','confirmation')",
+        "'approval','rejection','confirmation','welcome','promotional')",
     )
 
     # ══════════════════════════════════════════════════════

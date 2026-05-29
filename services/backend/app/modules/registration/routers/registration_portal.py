@@ -30,6 +30,7 @@ from app.modules.registration.services.pricing_service import (
     get_ticket_price
 )
 from app.modules.registration.routers.registrations import helper_approve_registration
+from app.modules.registration.services.portal_service import verify_and_resolve_registration
 
 router = APIRouter(tags=["registration_portal"])
 
@@ -335,20 +336,28 @@ async def public_register_participant(
             detail="Event not found."
         )
 
-    # 3. Check email presence if email field is active
+    # 3. Check email presence and verify duplicate / merging logic
     email_val = payload.get("email", "").strip()
+    name_val = payload.get("name", "").strip()
+    phone_val = payload.get("phone", "").strip()
+    confirm_merge = payload.get("confirm_merge", False)
     if email_val:
-        # Check if already registered
-        existing_stmt = select(Participant).where(
-            Participant.event_id == event_id,
-            Participant.email == email_val
+        merged_participant = await verify_and_resolve_registration(
+            db=db,
+            event_id=event_id,
+            email=email_val,
+            name=name_val,
+            phone=phone_val,
+            confirm_merge=confirm_merge
         )
-        existing_result = await db.execute(existing_stmt)
-        if existing_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This email address is already registered for this event."
-            )
+        if merged_participant:
+            return {
+                "status": "approved",
+                "message": "Profiles successfully merged! Your registration is verified.",
+                "regno": merged_participant.regno or "",
+                "name": merged_participant.name,
+                "role": merged_participant.role
+            }
 
     # 3.5 Validate the role/category belongs to active roles and is not in disabled categories
     from app.modules.registration.models.participant_role import ParticipantRole
@@ -657,6 +666,7 @@ class CheckoutRequest(BaseModel):
     formData: Dict[str, Any]
     promo_code: Optional[str] = None
     redirect_base_url: str
+    confirm_merge: Optional[bool] = False
 
 
 class PaymentVerifyRequest(BaseModel):
@@ -747,15 +757,29 @@ async def public_checkout_payment(
     payment_enabled = reg_settings.get("payment_enabled", False)
     active_gateway = reg_settings.get("active_gateway", "simulated")
     
-    # Check duplicate email
+    # Check duplicate email and verify merging logic
     email_val = payload.formData.get("email", "").strip()
+    name_val = payload.formData.get("name", "").strip()
+    phone_val = payload.formData.get("phone", "").strip()
+    confirm_merge = payload.confirm_merge or False
     if email_val:
-        existing_stmt = select(Participant).where(
-            Participant.event_id == event_id,
-            Participant.email == email_val
+        merged_participant = await verify_and_resolve_registration(
+            db=db,
+            event_id=event_id,
+            email=email_val,
+            name=name_val,
+            phone=phone_val,
+            confirm_merge=confirm_merge
         )
-        if (await db.execute(existing_stmt)).scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="This email address is already registered.")
+        if merged_participant:
+            return {
+                "checkout_required": False,
+                "status": "approved",
+                "message": "Profiles successfully merged! Your registration is verified.",
+                "regno": merged_participant.regno or "",
+                "name": merged_participant.name,
+                "role": merged_participant.role
+            }
             
     # Resolve Price
     role = payload.formData.get("role", "").strip()

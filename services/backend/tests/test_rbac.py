@@ -111,7 +111,32 @@ async def test_scoped_permission_override(db: AsyncSession, organization):
     assert await RBACService.validate_access(db, user.id, "SESSIONS:DELETE") is True
 
 @pytest.mark.asyncio
-async def test_rbac_middleware_enforcement(client: AsyncClient, db: AsyncSession):
-    # Mocking user session in client would be complex here, 
-    # but we can test the middleware logic via direct calls or unit tests.
-    pass
+async def test_rbac_middleware_enforcement(client: AsyncClient, db: AsyncSession, organization):
+    # 1. Create a JWT token for a user that does not exist in the database (stale token)
+    from app.modules.auth.services.auth_service import create_access_token
+    from app.modules.auth.models.user import User
+    
+    stale_user = User(
+        id=uuid.uuid4(),
+        email="stale@example.com",
+        first_name="Stale",
+        last_name="User",
+        role="organiser",
+        organization_id=organization.id
+    )
+    token = create_access_token(stale_user)
+    
+    # 2. Make a request to a route covered by RBACMiddleware (e.g. /api/v1/events)
+    # The RBACMiddleware should detect the stale user and bypass checks,
+    # letting route-level dependency return 401 instead of raising a Foreign Key violation.
+    from app.config import settings
+    original_env = settings.environment
+    settings.environment = "development"
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = await client.get("/api/v1/events", headers=headers)
+    finally:
+        settings.environment = original_env
+    
+    assert response.status_code == 401
+    assert "User account not found." in response.json()["detail"]

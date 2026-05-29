@@ -1,4 +1,4 @@
-import sys
+import sys  # reload trigger
 import asyncio
 from contextlib import asynccontextmanager 
 
@@ -28,6 +28,15 @@ async def lifespan(app: FastAPI):
     from app.config import settings
     if settings.environment != "testing":
         await ensure_admin_user()
+        
+        # ── Initialize System Timezone Cache ───────────────────
+        from app.database import AsyncSessionLocal
+        from app.services.timezone_service import fetch_system_timezone_async
+        try:
+            async with AsyncSessionLocal() as db:
+                await fetch_system_timezone_async(db)
+        except Exception:
+            pass  # DB might not be ready yet (e.g. initial boot before migrations)
 
     # ── OTP cleanup scheduler ────────────────────────────────
     # Purge portal OTP tokens that are used or expired and older than 24h.

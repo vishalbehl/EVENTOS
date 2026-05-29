@@ -16,12 +16,15 @@ router = APIRouter(prefix="/events/{event_id}/settings", tags=["settings"])
 
 
 def _build_response(event) -> SettingsResponse:
+    branding = dict(event.branding_settings or {})
     return SettingsResponse(
         event_id=event.id,
         max_file_size_mb=event.max_file_size_mb,
         allowed_formats=list(event.allowed_formats),
-        theme_color=event.theme_color,
-        logo_url=event.logo_url,
+        theme_color=branding.get("theme_color", "#1A73E8"),
+        logo_url=branding.get("logo_url"),
+        banner_url=branding.get("banner_url"),
+        branding_settings=branding,
         timezone=event.timezone,
         upload_deadline=event.upload_deadline,
         license_tier=event.license_tier,
@@ -64,10 +67,10 @@ async def update_settings(
             detail="Only super_admin can change license tier or live event mode.",
         )
 
-    # Apply scalar fields
+    # Apply simple scalar fields
     simple_fields = (
-        "max_file_size_mb", "allowed_formats", "theme_color",
-        "logo_url", "timezone", "upload_deadline", "license_tier",
+        "max_file_size_mb", "allowed_formats",
+        "timezone", "upload_deadline", "license_tier",
         "event_mode",
     )
     for field in simple_fields:
@@ -81,6 +84,21 @@ async def update_settings(
         current_toggles = dict(event.feature_toggles)
         current_toggles.update(patch)
         event.feature_toggles = current_toggles
+
+    # Merge branding into branding_settings JSONB
+    # Support both legacy flat fields (theme_color, logo_url) and new branding_settings object
+    branding_patch: dict = {}
+    if payload.theme_color is not None:
+        branding_patch["theme_color"] = payload.theme_color
+    if payload.logo_url is not None:
+        branding_patch["logo_url"] = payload.logo_url
+    if payload.branding_settings is not None:
+        patch_dict = {k: v for k, v in payload.branding_settings.model_dump().items() if v is not None}
+        branding_patch.update(patch_dict)
+    if branding_patch:
+        current_branding = dict(event.branding_settings or {})
+        current_branding.update(branding_patch)
+        event.branding_settings = current_branding
 
     await db.commit()
     await db.refresh(event)

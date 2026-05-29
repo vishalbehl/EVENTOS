@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn, formatDateInTZ, formatTimeRangeInTZ, getISODateInTZ } from "@/lib/utils";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
+import { apiClient } from "@/lib/api-client";
 
 import { useSessions, SessionSummary, useDeleteSession } from "@/hooks/useSessions";
 import { useRooms } from "@/hooks/useRooms";
@@ -47,12 +48,29 @@ export default function SessionsPage() {
   const { data: event } = useEvent(eventIdStr);
   const eventTimezone = event?.timezone || "UTC";
 
+  const handleExportDocx = async () => {
+    try {
+      const response = await apiClient.get<Blob>(`/events/${eventIdStr}/sessions/export`, { responseType: "blob" });
+      const blob = new Blob([response], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${eventIdStr}_agenda.docx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert("Export failed. Please try again.");
+    }
+  };
+
   useEffect(() => {
     setToolbarActions([
       { label: "Add Session", icon: Plus, onClick: () => setCreateOpen(true), color: "bg-[var(--pri)]/10" },
-      { label: "Export Schedule", icon: Download, onClick: () => console.log("Export") },
+      { label: "Export DOCX", icon: Download, onClick: handleExportDocx },
     ]);
-  }, [setToolbarActions]);
+  }, [setToolbarActions, eventIdStr]);
 
   const uniqueDates = useMemo(() => {
     if (!sessions) return [];

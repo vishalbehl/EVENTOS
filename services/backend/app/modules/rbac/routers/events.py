@@ -113,10 +113,11 @@ async def create_event(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Short code '{payload.short_code}' already in use.")
 
+    db_data = payload.model_dump_for_db()
     event = Event(
         organization_id=current_user.organization_id,
         created_by=current_user.id,
-        **payload.model_dump(),
+        **db_data,
     )
     db.add(event)
     await db.commit()
@@ -179,7 +180,16 @@ async def update_event(
                 detail=f"Short code '{payload.short_code}' already in use.",
             )
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    update_data = payload.model_dump(exclude_unset=True)
+
+    # Handle nested JSONB settings by merging (not replacing) existing keys
+    for settings_field in ("speaker_settings", "registration_settings", "branding_settings"):
+        if settings_field in update_data and update_data[settings_field] is not None:
+            current = dict(getattr(event, settings_field) or {})
+            current.update(update_data.pop(settings_field))
+            update_data[settings_field] = current
+
+    for field, value in update_data.items():
         setattr(event, field, value)
 
     if not event.speaker_mode_enabled and not event.registration_mode_enabled:

@@ -59,9 +59,24 @@ export default function ParticipantsDirectory() {
   const [eventDetails, setEventDetails] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedParticipantForDrawer, setSelectedParticipantForDrawer] = useState<Participant | null>(null);
+  
+  const handleSyncFromSpeakers = async () => {
+    try {
+      setSyncing(true);
+      const res = await apiPost<{ message: string }>(`/events/${eventId}/participants/fetch-from-speakers`);
+      toast.success(res.message || "Sync completed successfully.");
+      fetchData(); // Refresh the table list
+    } catch (err: any) {
+      toast.error(err.message || "Failed to sync participants from speakers.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     first_name: "",
@@ -342,9 +357,17 @@ export default function ParticipantsDirectory() {
           </p>
         </div>
         <div className="flex items-center gap-3 self-start md:self-auto">
-          <Button onClick={fetchData} disabled={loading} className="h-12 px-8 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d">
+          <Button onClick={fetchData} disabled={loading || syncing} className="h-12 px-8 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d">
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Sync registry
+          </Button>
+          <Button
+            onClick={handleSyncFromSpeakers}
+            disabled={syncing || loading}
+            className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
+          >
+            {syncing ? <LucideIcons.Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+            Sync Speakers
           </Button>
           <Button 
             onClick={() => setIsAddModalOpen(true)}

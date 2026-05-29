@@ -16,6 +16,7 @@ export interface SessionSummary {
   readiness_pct?: number;
   event_timezone?: string;
   speaker_count?: number;
+  description?: string | null;
   speakers?: Array<{
     id: string;
     session_speaker_id: string;

@@ -66,7 +66,7 @@ async def ensure_rbac_defaults():
                     if p:
                         # Check if already assigned
                         check = await db.execute(select(RolePermission).where(RolePermission.role_id == role.id, RolePermission.permission_id == p.id))
-                        if not check.scalar_one_or_none():
+                        if not check.scalars().first():
                             db.add(RolePermission(role_id=role.id, permission_id=p.id))
 
             # Super Admin -> All
@@ -116,11 +116,18 @@ async def ensure_admin_user():
     # Seed RBAC first
     await ensure_rbac_defaults()
     
+    # Seed Email Templates
+    try:
+        from app.modules.notifications.tasks.seed_email_data import seed_templates
+        await seed_templates()
+    except Exception as e:
+        logger.error(f"Failed to seed email templates: {e}")
+    
     async with AsyncSessionLocal() as db:
         try:
             # 1. Check if any organization exists
             result = await db.execute(select(Organization))
-            org = result.scalar_one_or_none()
+            org = result.scalars().first()
 
             if not org:
                 logger.info("No organization found. Creating default organization...")

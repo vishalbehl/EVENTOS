@@ -607,3 +607,93 @@ async def get_speaker_sessions(
             event_timezone=event.timezone,
         ))
     return talks
+
+
+@router.post("/fetch-from-registration", response_model=MessageResponse)
+async def fetch_speakers_from_registration(
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """
+    Fetch participants whose role belongs to the "Presentation Related" category
+    and add them as speakers if they don't already exist.
+    """
+    from app.modules.registration.models.participant import Participant
+    from app.modules.registration.models.participant_role import ParticipantRole
+
+    # 1. Get all presentation-related roles for the event
+    roles_stmt = select(ParticipantRole.name).where(
+        ParticipantRole.event_id == event.id,
+        ParticipantRole.category == "Presentation Related",
+    )
+    roles_res = await db.execute(roles_stmt)
+    presentation_roles = roles_res.scalars().all()
+
+    if not presentation_roles:
+        # Fallback if no specific role is defined or configured as Presentation Related yet
+        presentation_roles = ["Speaker", "Speaker / Presenter", "Keynote Speaker", "Invited Speaker", "Panel Speaker"]
+
+    # 2. Get participants in those roles
+    parts_stmt = select(Participant).where(
+        Participant.event_id == event.id,
+        Participant.role.in_(presentation_roles),
+    )
+    parts_res = await db.execute(parts_stmt)
+    participants = parts_res.scalars().all()
+
+    # 3. Get existing speakers emails
+    existing_stmt = select(Speaker.email).where(Speaker.event_id == event.id)
+    existing_res = await db.execute(existing_stmt)
+    existing_emails = {email.lower() for email in existing_res.scalars().all()}
+
+    imported_speakers = []
+    imported_count = 0
+    for p in participants:
+        if not p.email:
+            continue
+        email_lower = p.email.lower()
+        if email_lower in existing_emails:
+            continue
+
+        token = str(uuid.uuid4())
+        code = token.split("-")[0].upper()
+
+        p_first = p.first_name or ""
+        p_last = p.last_name or ""
+        if not p_first and not p_last and p.name:
+            parts = p.name.strip().split(maxsplit=1)
+            p_first = parts[0]
+            p_last = parts[1] if len(parts) > 1 else ""
+
+        speaker = Speaker(
+            event_id=event.id,
+            first_name=p_first or "Speaker",
+            last_name=p_last,
+            email=email_lower,
+            phone=p.phone,
+            affiliation=p.company,
+            country=p.country,
+            upload_token=token,
+            speaker_code=code,
+            upload_status="pending",
+        )
+        db.add(speaker)
+        existing_emails.add(email_lower)
+        imported_speakers.append(speaker)
+        imported_count += 1
+
+    if imported_speakers:
+        await db.flush()
+        # Generate QR codes
+        for speaker in imported_speakers:
+            try:
+                qr_url = qr_service.generate_and_upload_speaker_qr(
+                    speaker.id, speaker.full_name, event.name, speaker.speaker_code
+                )
+                speaker.qr_code_url = qr_url
+            except Exception:
+                pass
+        await db.commit()
+
+    return MessageResponse(message=f"Successfully imported {imported_count} speakers from registration.")
+

@@ -30,10 +30,10 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
 
   useEffect(() => {
     if (event) {
-      setIsLive(event.speaker_mode_enabled ?? false)
+      setIsLive(event.speaker_settings?.enabled ?? false)
       
-      // Select theme based on theme_color
-      const color = event.theme_color || '#7c3aed'
+      // Select theme based on branding_settings.theme_color
+      const color = event.branding_settings?.theme_color || '#7c3aed'
       const matched = THEMES.find(t => t.color.toLowerCase() === color.toLowerCase())
       if (matched) {
         setSelectedTheme(matched.id)
@@ -58,7 +58,7 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
     setToggling(true)
     try {
       await updateEvent.mutateAsync({
-        speaker_mode_enabled: !isLive
+        speaker_settings: { enabled: !isLive, window_required: event?.speaker_settings?.window_required ?? true }
       })
       setIsLive(!isLive)
       toast.success(!isLive ? 'Speaker Portal is now LIVE 🚀' : 'Speaker Portal set to Draft')
@@ -84,7 +84,11 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
       
       await updateEvent.mutateAsync({
         upload_deadline: isoDeadline,
-        theme_color: themeColor
+        branding_settings: {
+          theme_color: themeColor,
+          logo_url: event?.branding_settings?.logo_url ?? null,
+          banner_url: event?.branding_settings?.banner_url ?? null,
+        }
       })
       toast.success('Speaker Portal settings updated successfully!')
     } catch (err: any) {

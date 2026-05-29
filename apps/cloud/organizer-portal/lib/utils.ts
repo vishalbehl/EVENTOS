@@ -9,24 +9,46 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 // ── Date formatters ───────────────────────────────────────
+export function getFallbackTimezone(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("system-timezone") || "Asia/Kolkata";
+  }
+  return "Asia/Kolkata";
+}
+
+export function getTimezoneAbbrev(timezone: string, date: Date = new Date()): string {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'short'
+    });
+    const parts = formatter.formatToParts(date);
+    return parts.find(p => p.type === 'timeZoneName')?.value || timezone;
+  } catch (e) {
+    return "IST";
+  }
+}
+
 export function formatInTZ(iso: string, timezone?: string, options?: Intl.DateTimeFormatOptions): string {
   if (!iso) return "";
   try {
+    const tz = timezone || getFallbackTimezone();
     return new Intl.DateTimeFormat('en-IN', {
       ...options,
-      timeZone: timezone || 'Asia/Kolkata'
+      timeZone: tz
     }).format(new Date(iso));
   } catch (e) {
-    return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    return new Date(iso).toLocaleString('en-IN', { timeZone: timezone || getFallbackTimezone() });
   }
 }
 
 export function formatDateInTZ(iso: string, timezone?: string): string {
-  return formatInTZ(iso, timezone || 'Asia/Kolkata', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatInTZ(iso, timezone || getFallbackTimezone(), { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function formatDateTimeInTZ(iso: string, timezone?: string): string {
-  const formatted = formatInTZ(iso, timezone || 'Asia/Kolkata', { 
+  const tz = timezone || getFallbackTimezone();
+  const formatted = formatInTZ(iso, tz, { 
     day: 'numeric', 
     month: 'short', 
     year: 'numeric', 
@@ -34,22 +56,27 @@ export function formatDateTimeInTZ(iso: string, timezone?: string): string {
     minute: '2-digit', 
     hour12: true 
   });
-  return formatted ? `${formatted} IST` : "";
+  const abbrev = getTimezoneAbbrev(tz, new Date(iso));
+  return formatted ? `${formatted} ${abbrev}` : "";
 }
 
 export function formatTimeInTZ(iso: string, timezone?: string): string {
-  const formatted = formatInTZ(iso, timezone || 'Asia/Kolkata', { 
+  const tz = timezone || getFallbackTimezone();
+  const formatted = formatInTZ(iso, tz, { 
     hour: '2-digit', 
     minute: '2-digit', 
     hour12: true 
   });
-  return formatted ? `${formatted} IST` : "";
+  const abbrev = getTimezoneAbbrev(tz, new Date(iso));
+  return formatted ? `${formatted} ${abbrev}` : "";
 }
 
 export function formatTimeRangeInTZ(start: string, end: string, timezone?: string): string {
-  const startFmt = formatInTZ(start, timezone || 'Asia/Kolkata', { hour: '2-digit', minute: '2-digit', hour12: true });
-  const endFmt = formatInTZ(end, timezone || 'Asia/Kolkata', { hour: '2-digit', minute: '2-digit', hour12: true });
-  return `${startFmt} – ${endFmt} IST`;
+  const tz = timezone || getFallbackTimezone();
+  const startFmt = formatInTZ(start, tz, { hour: '2-digit', minute: '2-digit', hour12: true });
+  const endFmt = formatInTZ(end, tz, { hour: '2-digit', minute: '2-digit', hour12: true });
+  const abbrev = getTimezoneAbbrev(tz, new Date(start));
+  return `${startFmt} – ${endFmt} ${abbrev}`;
 }
 
 /**
@@ -62,7 +89,7 @@ export function getTimeComponentsInTZ(iso: string, timezone?: string) {
     const date = new Date(iso);
     const formatter = new Intl.DateTimeFormat('en-GB', {
       hour: 'numeric', minute: 'numeric', day: 'numeric', month: 'numeric', year: 'numeric',
-      hourCycle: 'h23', timeZone: timezone || 'Asia/Kolkata'
+      hourCycle: 'h23', timeZone: timezone || getFallbackTimezone()
     });
     const parts = formatter.formatToParts(date);
     const getPart = (type: string) => parseInt(parts.find(p => p.type === type)?.value || "0");
@@ -82,7 +109,7 @@ export function getTimeComponentsInTZ(iso: string, timezone?: string) {
 
 /** Returns YYYY-MM-DD for a date in a specific timezone */
 export function getISODateInTZ(iso: string, timezone?: string): string {
-  const c = getTimeComponentsInTZ(iso, timezone || 'Asia/Kolkata');
+  const c = getTimeComponentsInTZ(iso, timezone || getFallbackTimezone());
   return `${c.year}-${String(c.month).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
 }
 
@@ -109,7 +136,7 @@ export function toDateTimeLocalString(iso: string, timezone?: string): string {
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
-      timeZone: timezone || 'Asia/Kolkata'
+      timeZone: timezone || getFallbackTimezone()
     });
     
     const parts = formatter.formatToParts(date);
@@ -136,7 +163,7 @@ export function fromDateTimeLocalString(localStr: string, timezone?: string): st
     const parts = new Intl.DateTimeFormat('en-GB', {
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false, timeZone: timezone || 'Asia/Kolkata'
+      hour12: false, timeZone: timezone || getFallbackTimezone()
     }).formatToParts(asUTC);
     
     const getPart = (type: string) => parts.find(p => p.type === type)?.value || "";

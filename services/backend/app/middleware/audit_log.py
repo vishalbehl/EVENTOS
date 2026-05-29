@@ -229,6 +229,13 @@ class AuditLogMiddleware:
 
         # Use a fresh session — middleware runs outside the request's DI session
         async with AsyncSessionLocal() as db:
+            # Verify user exists in the DB to avoid foreign key violations (e.g. on stale tokens)
+            if user_id:
+                from app.modules.auth.models.user import User
+                user_exists = await db.get(User, user_id)
+                if not user_exists:
+                    user_id = None
+
             log = AuditLog(
                 user_id=user_id,
                 entity_type=entity_type,

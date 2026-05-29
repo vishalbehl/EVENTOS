@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/Tooltip";
-import { cn } from "@/lib/utils";
+import { cn, getFallbackTimezone, getTimezoneAbbrev } from "@/lib/utils";
 import { PermissionGate } from "@/components/auth/PermissionGate";
 import { PERMISSIONS } from "@/lib/permissions";
 
@@ -185,7 +185,7 @@ export default function EventOverviewPage() {
           <div className="flex items-center gap-6">
             <div className="h-20 w-24 glass-3d rounded-[2rem] flex flex-col items-center justify-center border-[var(--pri)]/30 shadow-2xl transform -rotate-3 hover:rotate-0 transition-transform animate-fade-in px-2">
               <span className="text-[10px] font-black text-[var(--pri)] uppercase tracking-widest">
-                {event?.start_date ? new Date(event.start_date).toLocaleDateString('en-IN', { month: 'short', timeZone: 'Asia/Kolkata' }) : '---'}
+                {event?.start_date ? new Date(event.start_date).toLocaleDateString('en-IN', { month: 'short', timeZone: getFallbackTimezone() }) : '---'}
               </span>
               <span className="text-2xl font-black text-[var(--text)] tracking-tighter">
                 {event?.start_date && event?.end_date ? (
@@ -206,9 +206,9 @@ export default function EventOverviewPage() {
                   <Badge className="bg-[var(--pri)]/10 text-[var(--pri)] border-0 font-black text-[10px] px-3 py-1 rounded-full flex items-center gap-1">
                     <Calendar className="h-3 w-3" />
                     <span>
-                      {new Date(event.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}
+                      {new Date(event.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: getFallbackTimezone() })}
                       {" - "}
-                      {new Date(event.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
+                      {new Date(event.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getFallbackTimezone() })}
                     </span>
                   </Badge>
                 )}
@@ -328,7 +328,7 @@ export default function EventOverviewPage() {
                           <div className="flex-1 min-w-0 pr-8">
                             <div className="flex items-center gap-2 mb-1.5">
                               <span className="text-[10px] font-mono text-muted">
-                                {new Date(alert.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })} IST
+                                {new Date(alert.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: getFallbackTimezone() })} {getTimezoneAbbrev(getFallbackTimezone(), new Date(alert.timestamp))}
                               </span>
                               <Badge className={cn("border-0 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5", config.badge)}>
                                 {alert.severity}
@@ -416,7 +416,7 @@ export default function EventOverviewPage() {
                           </div>
                         </td>
                         <td className="px-8 py-4 text-right">
-                          <span className="text-[10px] font-mono text-muted">{new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })} IST</span>
+                           <span className="text-[10px] font-mono text-muted">{new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: getFallbackTimezone() })} {getTimezoneAbbrev(getFallbackTimezone(), new Date(item.timestamp))}</span>
                         </td>
                       </tr>
                     )) || (
@@ -462,7 +462,7 @@ export default function EventOverviewPage() {
                               {act.description}
                             </p>
                             <span className="text-[9px] font-mono text-muted shrink-0">
-                              {new Date(act.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+                               {new Date(act.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: getFallbackTimezone() })}
                             </span>
                           </div>
                           {act.speaker_name && (
@@ -526,7 +526,7 @@ export default function EventOverviewPage() {
                           </Badge>
                         </div>
                         <p className="text-[10px] font-mono text-muted">
-                          {new Date(milestone.time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })} IST
+                           {new Date(milestone.time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true, timeZone: getFallbackTimezone() })} {getTimezoneAbbrev(getFallbackTimezone(), new Date(milestone.time))}
                         </p>
                       </div>
                     );
@@ -550,19 +550,19 @@ export default function EventOverviewPage() {
                 {[
                   { 
                     title: "Submission Deadline", 
-                    time: event?.upload_deadline ? new Date(event.upload_deadline).toLocaleDateString('en-IN', { month: 'short', day: '2-digit', timeZone: 'Asia/Kolkata' }) : "TBD", 
+                    time: event?.upload_deadline ? new Date(event.upload_deadline).toLocaleDateString('en-IN', { month: 'short', day: '2-digit', timeZone: getFallbackTimezone() }) : "TBD", 
                     status: event?.upload_deadline && new Date(event.upload_deadline) < new Date() ? "Passed" : "Critical", 
                     color: "bg-[var(--dan)]" 
                   },
                   { 
                     title: "Event Operations Start", 
-                    time: event?.start_date ? new Date(event.start_date).toLocaleDateString('en-IN', { month: 'short', day: '2-digit', timeZone: 'Asia/Kolkata' }) : "TBD", 
+                    time: event?.start_date ? new Date(event.start_date).toLocaleDateString('en-IN', { month: 'short', day: '2-digit', timeZone: getFallbackTimezone() }) : "TBD", 
                     status: "Upcoming", 
                     color: "bg-[var(--warn)]" 
                   },
                   { 
                     title: "Event Wrap", 
-                    time: event?.end_date ? new Date(event.end_date).toLocaleDateString('en-IN', { month: 'short', day: '2-digit', timeZone: 'Asia/Kolkata' }) : "TBD", 
+                    time: event?.end_date ? new Date(event.end_date).toLocaleDateString('en-IN', { month: 'short', day: '2-digit', timeZone: getFallbackTimezone() }) : "TBD", 
                     status: "Scheduled", 
                     color: "bg-[var(--pri)]" 
                   }

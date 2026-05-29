@@ -37,12 +37,13 @@ export default function PortalTab({ eventId }: { eventId: string }) {
 
   useEffect(() => {
     if (event?.registration_settings) {
-      setSupportEmail(event.registration_settings.support_email || '')
-      setSupportPhone(event.registration_settings.support_phone || '')
-      setAdditionalContacts(event.registration_settings.additional_contacts || [])
-      setEditCutoffDays(event.registration_settings.edit_cutoff_days || 0)
+      const rs = event.registration_settings as Record<string, any>
+      setSupportEmail((rs.support_email as string) || '')
+      setSupportPhone((rs.support_phone as string) || '')
+      setAdditionalContacts((rs.additional_contacts as Array<{ id: string, type: 'email' | 'phone', value: string, label: string }>) || [])
+      setEditCutoffDays((rs.edit_cutoff_days as number) || 0)
       
-      const dateVal = event.registration_settings.edit_cutoff_date || '';
+      const dateVal = (rs.edit_cutoff_date as string) || '';
       setEditCutoffDate(dateVal.split('T')[0]);
     }
   }, [event])
@@ -141,10 +142,10 @@ export default function PortalTab({ eventId }: { eventId: string }) {
 
   const handleDeleteProgram = async () => {
     try {
-      const currentSettings = event?.registration_settings || {}
-      const { program_url, ...rest } = currentSettings
+      const currentSettings = (event?.registration_settings || {}) as Record<string, any>
+      const { program_url: _removed, ...rest } = currentSettings
       await updateEvent.mutateAsync({
-        registration_settings: rest
+        registration_settings: rest as any
       })
       toast.success('Program removed.')
     } catch {
@@ -373,7 +374,7 @@ export default function PortalTab({ eventId }: { eventId: string }) {
             <h2 className="text-sm font-black uppercase tracking-[0.2em] text-[var(--text)]">Event Program</h2>
           </div>
 
-          {event?.registration_settings?.program_url ? (
+          {((event?.registration_settings as Record<string, any>)?.program_url) ? (
             <div className="flex items-center justify-between p-6 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20 shrink-0">
@@ -382,7 +383,7 @@ export default function PortalTab({ eventId }: { eventId: string }) {
                 <div className="min-w-0">
                   <p className="text-xs font-black text-[var(--text)] uppercase tracking-wider">Program Document Active</p>
                   <a
-                    href={event.registration_settings.program_url}
+                    href={(event?.registration_settings as Record<string, any>)?.program_url as string}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-[10px] text-[var(--pri)] font-bold hover:underline truncate block mt-0.5"

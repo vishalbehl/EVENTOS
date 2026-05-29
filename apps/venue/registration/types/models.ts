@@ -43,6 +43,33 @@ export interface Organization {
 // ── Event ─────────────────────────────────────────────────
 export type EventStatus = "draft" | "active" | "completed" | "archived";
 
+export interface OrganizerDetails {
+  name: string;
+  email: string;
+  phone: string;
+  website: string;
+}
+
+export interface SpeakerSettings {
+  enabled: boolean;
+  window_required: boolean;
+  [key: string]: unknown;
+}
+
+export interface RegistrationSettings {
+  enabled: boolean;
+  registration_allowed: boolean;
+  participants_list_allowed: boolean;
+  [key: string]: unknown;
+}
+
+export interface BrandingSettings {
+  theme_color: string;
+  logo_url: string | null;
+  banner_url: string | null;
+  [key: string]: unknown;
+}
+
 export interface Event {
   id: string;
   organization_id: string;
@@ -50,7 +77,10 @@ export interface Event {
   short_code: string;
   location: string | null;
   venue_name: string | null;
+  country: string | null;
+  state: string | null;
   organizer_name: string | null;
+  organizer_details: OrganizerDetails;
   start_date: string;
   end_date: string;
   timezone: string;
@@ -58,7 +88,11 @@ export interface Event {
   max_file_size_mb: number;
   allowed_formats: string[];
   status: EventStatus;
-  banner_url: string | null;
+  speaker_settings: SpeakerSettings;
+  registration_settings: RegistrationSettings;
+  branding_settings: BrandingSettings;
+  feature_toggles: Record<string, boolean>;
+  currency: string;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -69,10 +103,17 @@ export interface EventSummary {
   name: string;
   short_code: string;
   location: string | null;
+  venue_name: string | null;
+  country: string | null;
+  state: string | null;
+  organizer_name: string | null;
+  organizer_details: OrganizerDetails;
   start_date: string;
   end_date: string;
   status: EventStatus;
-  banner_url: string | null;
+  speaker_settings: SpeakerSettings;
+  registration_settings: RegistrationSettings;
+  branding_settings: BrandingSettings;
 }
 
 // ── Room ──────────────────────────────────────────────────

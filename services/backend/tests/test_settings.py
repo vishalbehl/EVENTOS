@@ -61,7 +61,9 @@ class TestSettingsUpdate:
             headers=auth_headers(organizer),
         )
         assert resp.status_code == 200
+        # Returned in both the flat field and the branding_settings sub-document
         assert resp.json()["theme_color"] == "#FF5733"
+        assert resp.json()["branding_settings"]["theme_color"] == "#FF5733"
 
     async def test_invalid_color_rejected(
         self, client: AsyncClient, event: Event, organizer: User

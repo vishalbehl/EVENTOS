@@ -45,14 +45,15 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
     Supports both legacy {{ConferenceName}} and new {{EventName}} standards.
     Handles both event object and event_name string.
     """
+    from app.services.timezone_service import get_cached_timezone
     if isinstance(event, str):
         event_name = event
         upload_base = ""
-        tz_name = "Asia/Kolkata"
+        tz_name = get_cached_timezone()
     else:
         event_name = getattr(event, "name", "") or ""
         upload_base = getattr(event, "upload_base_url", "") or ""
-        tz_name = getattr(event, "timezone", "Asia/Kolkata") or "Asia/Kolkata"
+        tz_name = getattr(event, "timezone", None) or get_cached_timezone()
 
     def localize_dt(dt):
         if not dt:

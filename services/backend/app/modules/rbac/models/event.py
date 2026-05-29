@@ -61,7 +61,14 @@ class Event(Base):
     )
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     venue_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     organizer_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    organizer_details: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"name": "", "email": "", "phone": "", "website": ""}
+    )
 
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -86,14 +93,6 @@ class Event(Base):
         String(30), nullable=False, default="draft", index=True
     )
     event_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    banner_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    # ── Branding & customisation ──────────────────────────────
-    # Hex colour e.g. '#1A73E8'
-    theme_color: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="#1A73E8"
-    )
-    logo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # ── Licensing & feature flags ─────────────────────────────
     # starter | pro | enterprise
@@ -114,17 +113,29 @@ class Event(Base):
         },
     )
 
-    registration_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    speaker_window_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="INR")
-    participants_list_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    
-    speaker_mode_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    registration_mode_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    
-    speaker_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {})
-    registration_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {})
 
+    # ── Module Settings (JSONB) ───────────────────────────────
+    # speaker_settings holds: enabled, window_required, and other speaker-portal config
+    # e.g. {"enabled": true, "window_required": true}
+    speaker_settings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        default=lambda: {"enabled": True, "window_required": True}
+    )
+    # registration_settings holds: enabled, registration_allowed, participants_list_allowed
+    # e.g. {"enabled": true, "registration_allowed": true, "participants_list_allowed": true}
+    registration_settings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        default=lambda: {"enabled": True, "registration_allowed": True, "participants_list_allowed": True}
+    )
+
+    # ── Branding Settings (JSONB) ─────────────────────────────
+    # Consolidates theme_color, logo_url, banner_url into one column.
+    # e.g. {"theme_color": "#1A73E8", "logo_url": null, "banner_url": null}
+    branding_settings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        default=lambda: {"theme_color": "#1A73E8", "logo_url": None, "banner_url": None}
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -138,6 +149,90 @@ class Event(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+    # ── Backward-compatibility properties ─────────────────────
+    # These allow existing code to keep using the flat attribute names
+    # while the data now lives in JSONB sub-documents.
+
+    @property
+    def speaker_mode_enabled(self) -> bool:
+        return bool((self.speaker_settings or {}).get("enabled", True))
+
+    @speaker_mode_enabled.setter
+    def speaker_mode_enabled(self, value: bool) -> None:
+        settings = dict(self.speaker_settings or {})
+        settings["enabled"] = value
+        self.speaker_settings = settings
+
+    @property
+    def speaker_window_required(self) -> bool:
+        return bool((self.speaker_settings or {}).get("window_required", True))
+
+    @speaker_window_required.setter
+    def speaker_window_required(self, value: bool) -> None:
+        settings = dict(self.speaker_settings or {})
+        settings["window_required"] = value
+        self.speaker_settings = settings
+
+    @property
+    def registration_mode_enabled(self) -> bool:
+        return bool((self.registration_settings or {}).get("enabled", True))
+
+    @registration_mode_enabled.setter
+    def registration_mode_enabled(self, value: bool) -> None:
+        settings = dict(self.registration_settings or {})
+        settings["enabled"] = value
+        self.registration_settings = settings
+
+    @property
+    def registration_allowed(self) -> bool:
+        return bool((self.registration_settings or {}).get("registration_allowed", True))
+
+    @registration_allowed.setter
+    def registration_allowed(self, value: bool) -> None:
+        settings = dict(self.registration_settings or {})
+        settings["registration_allowed"] = value
+        self.registration_settings = settings
+
+    @property
+    def participants_list_allowed(self) -> bool:
+        return bool((self.registration_settings or {}).get("participants_list_allowed", True))
+
+    @participants_list_allowed.setter
+    def participants_list_allowed(self, value: bool) -> None:
+        settings = dict(self.registration_settings or {})
+        settings["participants_list_allowed"] = value
+        self.registration_settings = settings
+
+    @property
+    def theme_color(self) -> str:
+        return (self.branding_settings or {}).get("theme_color", "#1A73E8")
+
+    @theme_color.setter
+    def theme_color(self, value: str) -> None:
+        settings = dict(self.branding_settings or {})
+        settings["theme_color"] = value
+        self.branding_settings = settings
+
+    @property
+    def logo_url(self) -> Optional[str]:
+        return (self.branding_settings or {}).get("logo_url")
+
+    @logo_url.setter
+    def logo_url(self, value: Optional[str]) -> None:
+        settings = dict(self.branding_settings or {})
+        settings["logo_url"] = value
+        self.branding_settings = settings
+
+    @property
+    def banner_url(self) -> Optional[str]:
+        return (self.branding_settings or {}).get("banner_url")
+
+    @banner_url.setter
+    def banner_url(self, value: Optional[str]) -> None:
+        settings = dict(self.branding_settings or {})
+        settings["banner_url"] = value
+        self.branding_settings = settings
 
     # ── Relationships ─────────────────────────────────────
     organization: Mapped["Organization"] = relationship(

@@ -32,6 +32,8 @@ from app.modules.venue.models.room import Room
 from app.modules.speakers.models.session import Session
 from app.modules.speakers.models.session_speaker import SessionSpeaker
 from app.modules.speakers.models.speaker import Speaker
+from app.services.timezone_service import get_cached_timezone
+
 
 
 # ── Column indices (0-based) ──────────────────────────────────
@@ -69,8 +71,10 @@ class RowData:
         "moderator_name",
     )
 
-    def __init__(self, row_num: int, cells: list, tz_name: str = "Asia/Kolkata") -> None:
+    def __init__(self, row_num: int, cells: list, tz_name: Optional[str] = None) -> None:
         self.row_num = row_num
+        if tz_name is None:
+            tz_name = get_cached_timezone()
 
         def _str(idx: int) -> str:
             v = cells[idx] if idx < len(cells) else None
@@ -143,8 +147,10 @@ class PosterRowData:
         "poster_title", "category", "abstract",
     )
 
-    def __init__(self, row_num: int, cells: list, tz_name: str = "Asia/Kolkata") -> None:
+    def __init__(self, row_num: int, cells: list, tz_name: Optional[str] = None) -> None:
         self.row_num = row_num
+        if tz_name is None:
+            tz_name = get_cached_timezone()
 
         def _str(idx: int) -> str:
             v = cells[idx] if idx < len(cells) else None
@@ -191,7 +197,7 @@ class PosterRowData:
 
 from datetime import datetime, date, time, timezone
 
-def _parse_dt(value, base_date: Optional[date] = None, tz_name: str = "Asia/Kolkata") -> Optional[datetime]:
+def _parse_dt(value, base_date: Optional[date] = None, tz_name: Optional[str] = None) -> Optional[datetime]:
     """
     Parse Excel cell values as timezone-aware UTC datetime.
     Supports datetime objects, time objects (combined with base_date), 
@@ -202,6 +208,9 @@ def _parse_dt(value, base_date: Optional[date] = None, tz_name: str = "Asia/Kolk
     """
     if value is None:
         return None
+        
+    if tz_name is None:
+        tz_name = get_cached_timezone()
         
     try:
         tz = zoneinfo.ZoneInfo(tz_name)
@@ -269,10 +278,12 @@ def _generate_upload_token() -> str:
 
 # ── Workbook parser ───────────────────────────────────────────
 
-def parse_workbook(workbook_bytes: bytes, tz_name: str = "Asia/Kolkata", is_poster: bool = False) -> list[RowData | PosterRowData]:
+def parse_workbook(workbook_bytes: bytes, tz_name: Optional[str] = None, is_poster: bool = False) -> list[RowData | PosterRowData]:
     """
     Load an Excel workbook from bytes and parse all data rows.
     """
+    if tz_name is None:
+        tz_name = get_cached_timezone()
     wb = load_workbook(filename=io.BytesIO(workbook_bytes), read_only=True, data_only=True)
 
     # Use a sheet named "Schedule" if it exists, otherwise the first sheet
@@ -318,7 +329,7 @@ async def run_import(
     from app.modules.rbac.models.event import Event
     event_res = await db.execute(select(Event).where(Event.id == event_id))
     event_obj = event_res.scalar_one_or_none()
-    tz_name = event_obj.timezone if event_obj else "Asia/Kolkata"
+    tz_name = (event_obj.timezone if event_obj else None) or get_cached_timezone()
 
     # ── Parse ────────────────────────────────────────────────
     try:

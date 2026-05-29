@@ -120,13 +120,13 @@ export default function RolesTab({ eventId }: { eventId: string }) {
   const [defaultTemplateId, setDefaultTemplateId] = useState('')
   const [roleTemplateAssignments, setRoleTemplateAssignments] = useState<Record<string, string>>({})
 
-  const disabledCategories = event?.registration_settings?.disabled_categories || []
+  const disabledCategories: string[] = ((event?.registration_settings as Record<string, any>)?.disabled_categories as string[]) || []
 
   useEffect(() => {
-    const badgeDesign = event?.registration_settings?.badge_design || {}
+    const badgeDesign = ((event?.registration_settings as Record<string, any>)?.badge_design as Record<string, any>) || {}
     setUseSameDesign(badgeDesign.use_same_design_for_all_users ?? true)
-    setDefaultTemplateId(badgeDesign.default_template_id || '')
-    setRoleTemplateAssignments(badgeDesign.role_template_assignments || {})
+    setDefaultTemplateId((badgeDesign.default_template_id as string) || '')
+    setRoleTemplateAssignments((badgeDesign.role_template_assignments as Record<string, string>) || {})
   }, [event?.registration_settings])
 
   useEffect(() => { load() }, [eventId])
@@ -151,7 +151,8 @@ export default function RolesTab({ eventId }: { eventId: string }) {
 
   const toggleCategoryVisibility = async (cat: string, isCurrentlyEnabled: boolean) => {
     if (!event) return
-    let nextDisabled = [...(event.registration_settings?.disabled_categories || [])]
+    const currentDisabled: string[] = ((event.registration_settings as Record<string, any>)?.disabled_categories as string[]) || []
+    let nextDisabled = [...currentDisabled]
     if (isCurrentlyEnabled) {
       if (!nextDisabled.includes(cat)) nextDisabled.push(cat)
     } else {
@@ -161,10 +162,10 @@ export default function RolesTab({ eventId }: { eventId: string }) {
     try {
       await updateEvent.mutateAsync({
         registration_settings: {
-          ...(event.registration_settings || {}),
+          ...(event.registration_settings as Record<string, any> || {}),
           disabled_categories: nextDisabled,
-        }
-      } as any)
+        } as any
+      })
       toast.success(`Category "${cat}" ${isCurrentlyEnabled ? 'hidden' : 'shown'} on registration portal.`)
     } catch {
       toast.error('Failed to update category visibility.')
@@ -180,20 +181,22 @@ export default function RolesTab({ eventId }: { eventId: string }) {
     const nextUseSameDesign = overrides?.useSameDesign ?? useSameDesign
     const nextDefaultTemplateId = overrides?.defaultTemplateId ?? defaultTemplateId
     const nextAssignments = overrides?.assignments ?? roleTemplateAssignments
+    const currentRS = (event.registration_settings as Record<string, any>) || {}
+    const currentBadgeDesign = (currentRS.badge_design as Record<string, any>) || {}
 
     setTemplateSaving(true)
     try {
       await updateEvent.mutateAsync({
         registration_settings: {
-          ...(event.registration_settings || {}),
+          ...currentRS,
           badge_design: {
-            ...((event.registration_settings || {}).badge_design || {}),
+            ...currentBadgeDesign,
             use_same_design_for_all_users: nextUseSameDesign,
             default_template_id: nextDefaultTemplateId || null,
             role_template_assignments: nextAssignments,
           },
-        }
-      } as any)
+        } as any
+      })
       toast.success('Role design assignment saved.')
     } catch {
       toast.error('Failed to save role design assignment.')

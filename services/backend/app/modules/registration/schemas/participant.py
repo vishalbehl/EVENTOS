@@ -13,6 +13,7 @@ class ParticipantCreate(BaseModel):
     email: Optional[str] = Field(None, max_length=320)
     phone: Optional[str] = Field(None, max_length=30)
     role: str = Field(default="Delegate", max_length=50)
+    role_id: Optional[uuid.UUID] = Field(None)
     company: Optional[str] = Field(None, max_length=255)
     designation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
@@ -20,6 +21,7 @@ class ParticipantCreate(BaseModel):
     source: str = Field(default="offline", max_length=30)
     regno: Optional[str] = Field(None, max_length=50)
     custom_fields: Optional[dict] = Field(default_factory=dict)
+    confirm_merge: bool = Field(default=False)
 
     @model_validator(mode="after")
     def derive_name_fields(self) -> "ParticipantCreate":
@@ -50,6 +52,7 @@ class ParticipantUpdate(BaseModel):
     email: Optional[str] = Field(None, max_length=320)
     phone: Optional[str] = Field(None, max_length=30)
     role: Optional[str] = Field(None, max_length=50)
+    role_id: Optional[uuid.UUID] = Field(None)
     company: Optional[str] = Field(None, max_length=255)
     designation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
@@ -89,15 +92,21 @@ class ParticipantResponse(BaseModel):
     last_name: str = ""
     email: Optional[str] = None
     phone: Optional[str] = None
+    role_id: Optional[uuid.UUID] = None
     role: str
     company: Optional[str] = None
     designation: Optional[str] = None
     country: Optional[str] = None
+    approval_status: str
     paid_status: str
+    badge_status: str
+    checkin_status: str
     source: str
+    qr_code_url: Optional[str] = None
     custom_fields: dict = {}
     registered_at: datetime
     updated_at: datetime
+
 
 
 class CheckInCreate(BaseModel):

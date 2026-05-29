@@ -9,6 +9,7 @@ Business logic for the attendee self-service portal:
 """
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -147,16 +148,7 @@ async def get_dashboard_data(
     )
 
     # 2 — Load confirmed participant by email
-    p_stmt = (
-        select(Participant)
-        .where(
-            Participant.event_id == event_id,
-            Participant.email == email.lower(),
-        )
-        .limit(1)
-    )
-    p_result = await db.execute(p_stmt)
-    p: Optional[Participant] = p_result.scalar_one_or_none()
+    p = await Participant.find_by_email(db, event_id, email)
 
     reg_row = None
     if p:
@@ -249,6 +241,7 @@ async def get_dashboard_data(
                 waitlist_position=None,
                 rejection_reason=None,
             )
+            from app.config import settings
             return DashboardData(
                 event=event_info,
                 registration=reg_info,
@@ -256,7 +249,7 @@ async def get_dashboard_data(
                 payment=None,
                 edits_locked=True,
                 is_speaker=False,
-                speaker_portal_url=f"/speaker/{event_id}",
+                speaker_portal_url=settings.SPEAKER_PORTAL_BASE_URL,
             )
 
         if not reg_row:
@@ -267,6 +260,7 @@ async def get_dashboard_data(
                 waitlist_position=None,
                 rejection_reason=None,
             )
+            from app.config import settings
             return DashboardData(
                 event=event_info,
                 registration=reg_info,
@@ -274,7 +268,7 @@ async def get_dashboard_data(
                 payment=None,
                 edits_locked=_check_edits_locked(event, is_live=is_live),
                 is_speaker=False,
-                speaker_portal_url=f"/speaker/{event_id}",
+                speaker_portal_url=settings.SPEAKER_PORTAL_BASE_URL,
             )
 
         reg_info = RegistrationInfo(
@@ -382,16 +376,7 @@ async def update_attendee_details(
     target_email = new_email.lower() if new_email else email.lower()
 
     # Check if a confirmed Participant exists first
-    p_stmt = (
-        select(Participant)
-        .where(
-            Participant.event_id == event_id,
-            Participant.email == email.lower(),
-        )
-        .limit(1)
-    )
-    p_result = await db.execute(p_stmt)
-    participant = p_result.scalar_one_or_none()
+    participant = await Participant.find_by_email(db, event_id, email)
 
     if participant:
         if new_email:
@@ -516,3 +501,106 @@ async def update_attendee_details(
         "custom_fields": reg_data.get("custom_fields", {}),
     }
     return target_email, participant_details
+
+
+def normalize_phone(phone: Optional[str]) -> str:
+    if not phone:
+        return ""
+    return re.sub(r"\D", "", str(phone))
+
+
+def phone_numbers_match(phone1: Optional[str], phone2: Optional[str]) -> bool:
+    dig1 = normalize_phone(phone1)
+    dig2 = normalize_phone(phone2)
+    if not dig1 or not dig2:
+        return False
+    suffix_len = min(7, len(dig1), len(dig2))
+    if suffix_len < 7:
+        return dig1 == dig2
+    return dig1[-suffix_len:] == dig2[-suffix_len:]
+
+
+async def verify_and_resolve_registration(
+    db: AsyncSession,
+    event_id: uuid.UUID,
+    email: str,
+    name: str,
+    phone: Optional[str],
+    confirm_merge: bool = False
+) -> Optional[Participant]:
+    """
+    Validation helper to prevent duplicate registrations and handle profile merging:
+    - If email (primary or secondary) is already registered: raises 400 Bad Request.
+    - If same name + phone is found under a different email:
+        - If confirm_merge is False: raises 409 Conflict with masked email and existing participant ID.
+        - If confirm_merge is True: appends email to existing participant's additional_emails list and returns them.
+    - Else: returns None (no conflict, can proceed with normal creation).
+    """
+    from fastapi import HTTPException, status
+
+    # 1. Check if email exists (either primary or secondary)
+    existing_by_email = await Participant.find_by_email(db, event_id, email)
+    if existing_by_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This email address is already registered."
+        )
+
+    # 2. Check for Name + Phone match on a different email
+    if not name or not phone:
+        return None
+
+    # Fetch all participants for this event to check name + phone matches
+    stmt = select(Participant).where(Participant.event_id == event_id)
+    result = await db.execute(stmt)
+    all_participants = result.scalars().all()
+
+    match_participant = None
+    for p in all_participants:
+        # Check Name Match (case-insensitive, trimmed)
+        n1 = " ".join(name.strip().lower().split())
+        n2 = " ".join((p.name or "").strip().lower().split())
+        if n1 == n2:
+            # Check Phone Match
+            if phone_numbers_match(phone, p.phone):
+                match_participant = p
+                break
+
+    if match_participant:
+        if not confirm_merge:
+            # Mask existing email (e.g. as***@example.com)
+            existing_email = match_participant.email or ""
+            parts = existing_email.split("@")
+            if len(parts) == 2:
+                local, domain = parts
+                masked_local = local[:2] + "***" if len(local) > 2 else local + "***"
+                masked_email = f"{masked_local}@{domain}"
+            else:
+                masked_email = "***"
+
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "PROFILE_MERGE_REQUIRED",
+                    "message": f"An existing profile with the same name and phone was found under the email {masked_email}. Would you like to merge your registration?",
+                    "existing_participant_id": str(match_participant.id),
+                    "masked_email": masked_email
+                }
+            )
+        else:
+            # confirm_merge is True, link the new email as a secondary email
+            custom = dict(match_participant.custom_fields or {})
+            emails = list(custom.get("additional_emails") or [])
+            lower_email = email.strip().lower()
+            if lower_email not in emails:
+                emails.append(lower_email)
+            custom["additional_emails"] = emails
+            match_participant.custom_fields = custom
+            match_participant.updated_at = datetime.now(timezone.utc)
+
+            # Save and return
+            await db.commit()
+            return match_participant
+
+    return None
+

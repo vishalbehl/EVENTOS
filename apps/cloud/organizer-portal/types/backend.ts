@@ -1,3 +1,5 @@
+import { OrganizerDetails, SpeakerSettings, RegistrationSettings, BrandingSettings } from "./models";
+
 export type EventStatus = 'draft' | 'active' | 'completed' | 'archived';
 
 export interface EventSummary {
@@ -5,31 +7,27 @@ export interface EventSummary {
   name: string;
   short_code: string;
   location?: string;
+  venue_name?: string;
+  country?: string;
+  state?: string;
   organizer_name?: string;
+  organizer_details?: OrganizerDetails;
   start_date: string;
   end_date: string;
   status: EventStatus;
-  banner_url?: string;
-  speaker_mode_enabled?: boolean;
-  registration_mode_enabled?: boolean;
+  speaker_settings: SpeakerSettings;
+  registration_settings: RegistrationSettings;
+  branding_settings: BrandingSettings;
 }
 
 export interface EventResponse extends EventSummary {
   organization_id: string;
-  venue_name?: string;
-  organizer_name?: string;
   timezone: string;
   upload_deadline?: string;
   max_file_size_mb: number;
   allowed_formats: string[];
-  feature_toggles: Record<string, any>;
-  registration_allowed: boolean;
-  speaker_window_required: boolean;
+  feature_toggles: Record<string, boolean>;
   currency: string;
-  participants_list_allowed: boolean;
-  speaker_settings: Record<string, any>;
-  registration_settings: Record<string, any>;
-  theme_color?: string | null;
   created_by?: string;
   created_at: string;
   updated_at: string;

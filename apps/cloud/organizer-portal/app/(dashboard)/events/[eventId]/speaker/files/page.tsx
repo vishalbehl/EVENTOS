@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { cn, getFallbackTimezone, getTimezoneAbbrev } from "@/lib/utils";
 import { toast } from "sonner";
 import { PermissionGate } from "@/components/auth/PermissionGate";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -212,7 +212,7 @@ export default function FileMonitoringPage() {
       
       const nameMatch = speaker.name.toLowerCase().includes(searchQuery.toLowerCase());
       const hasMatchingAssignment = speaker.assignments.some((a: Assignment) => {
-        const dMatch = filterDay === "all" || new Date(a.startTime).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) === filterDay;
+        const dMatch = filterDay === "all" || new Date(a.startTime).toLocaleDateString('en-IN', { timeZone: getFallbackTimezone() }) === filterDay;
         const rMatch = filterRoom === "all" || a.roomName === filterRoom;
         const sMatch = filterSession === "all" || a.sessionName === filterSession;
         
@@ -383,7 +383,7 @@ export default function FileMonitoringPage() {
                  className="h-11 min-w-[150px] bg-[var(--base)] border border-default rounded-xl px-4 text-[11px] font-black uppercase tracking-widest text-[var(--text)] focus:outline-none focus:border-[var(--pri)]/50 transition-all cursor-pointer hover:bg-[var(--base)]/80 shadow-sm"
                >
                   <option value="all">All Dates</option>
-                  {Array.from(new Set(masterList.flatMap(s => s.assignments.map(a => new Date(a.startTime).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }))))).sort().map(d => <option key={d} value={d}>{d}</option>)}
+                  {Array.from(new Set(masterList.flatMap(s => s.assignments.map(a => new Date(a.startTime).toLocaleDateString('en-IN', { timeZone: getFallbackTimezone() }))))).sort().map(d => <option key={d} value={d}>{d}</option>)}
                </select>
 
                <select 
@@ -478,7 +478,7 @@ export default function FileMonitoringPage() {
                                {(() => {
                                  const allFiles = speaker.assignments.flatMap((a: any) => a.files);
                                  const latest = allFiles.sort((a: any, b: any) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime())[0];
-                                 return latest ? new Date(latest.uploaded_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : "—";
+                                 return latest ? new Date(latest.uploaded_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getFallbackTimezone() }) : "—";
                                })()}
                             </td>
                             <td className="py-3 px-6 text-right"><Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg group-hover:bg-[var(--pri)] group-hover:text-white transition-all"><Eye className="h-4 w-4" /></Button></td>
@@ -685,7 +685,7 @@ export default function FileMonitoringPage() {
                                    <div className="grid grid-cols-2 gap-y-6 gap-x-12">
                                     <div className="border-b border-default pb-3"><p className="text-[8px] font-black text-muted uppercase tracking-widest mb-1">MIME Type</p><p className="text-[11px] font-bold">{activeFileAudit.validation?.mime_type_detected ?? "—"}</p></div>
                                     <div className="border-b border-default pb-3"><p className="text-[8px] font-black text-muted uppercase tracking-widest mb-1">Antivirus</p><p className={cn("text-[11px] font-bold", (activeFileAudit.validation?.antivirus_status??"CLEAN")==="CLEAN"?"text-emerald-500":"text-rose-500")}>{activeFileAudit.validation?.antivirus_status ?? "CLEAN"}</p></div>
-                                    <div className="border-b border-default pb-3"><p className="text-[8px] font-black text-muted uppercase tracking-widest mb-1">Upload Time</p><p className="text-[11px] font-bold">{new Date(activeFileAudit.uploaded_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</p></div>
+                                    <div className="border-b border-default pb-3"><p className="text-[8px] font-black text-muted uppercase tracking-widest mb-1">Upload Time</p><p className="text-[11px] font-bold">{new Date(activeFileAudit.uploaded_at).toLocaleString('en-IN', { timeZone: getFallbackTimezone() })} {getTimezoneAbbrev(getFallbackTimezone(), new Date(activeFileAudit.uploaded_at))}</p></div>
                                     <div className="border-b border-default pb-3"><p className="text-[8px] font-black text-muted uppercase tracking-widest mb-1">Pass/Fail Status</p><p className={cn("text-[11px] font-black uppercase", activeFileAudit.validation?.overall_result==="pass"?"text-emerald-500":activeFileAudit.validation?.overall_result==="fail"?"text-rose-500":"text-amber-500")}>{activeFileAudit.validation?.overall_result ?? "Processing"}</p></div>
                                    </div>
                                  </div>

@@ -80,6 +80,14 @@ class RBACMiddleware:
             return
 
         async with AsyncSessionLocal() as db:
+            # Check if user exists in DB first to handle stale tokens/JWTs (e.g. after DB wipe/reset)
+            from app.modules.auth.models.user import User
+            user = await db.get(User, user_id)
+            if not user:
+                # User does not exist, let route-level auth dependencies return a proper 401
+                await self.app(scope, receive, send)
+                return
+
             is_allowed = await RBACService.validate_access(db, user_id, required_perm, scope_id)
             
             if not is_allowed:

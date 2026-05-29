@@ -32,6 +32,22 @@ export default function DashboardLayout({
 
   useEffect(() => {
     setHydrated(true);
+    const fetchGlobalSettings = async () => {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/global-settings`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.timezone) {
+            localStorage.setItem("system-timezone", data.timezone);
+            // Dispatch custom event to notify timezone changes in the UI
+            window.dispatchEvent(new Event("system-timezone-changed"));
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch global timezone settings:", error);
+      }
+    };
+    fetchGlobalSettings();
   }, []);
 
   useEffect(() => {
@@ -135,8 +151,8 @@ export default function DashboardLayout({
   const isSpeakerPath = pathname?.includes(`/events/${eventId}/speaker`);
   const isRegPath = pathname?.includes(`/events/${eventId}/registration`);
 
-  const speakerModeEnabled = event?.speaker_mode_enabled ?? true;
-  const regModeEnabled = event?.registration_mode_enabled ?? true;
+  const speakerModeEnabled = event?.speaker_settings?.enabled ?? true;
+  const regModeEnabled = event?.registration_settings?.enabled ?? true;
 
   const isBlocked = (isSpeakerPath && !speakerModeEnabled) || (isRegPath && !regModeEnabled);
 

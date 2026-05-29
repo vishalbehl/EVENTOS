@@ -9,10 +9,12 @@ from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 
 class SpeakerCreate(BaseModel):
+    regno: Optional[str] = Field(None, max_length=50)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     email: EmailStr
     phone: Optional[str] = Field(None, max_length=30)
+    designation: Optional[str] = Field(None, max_length=255)
     affiliation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
     bio: Optional[str] = None
@@ -20,10 +22,12 @@ class SpeakerCreate(BaseModel):
 
 
 class SpeakerUpdate(BaseModel):
+    regno: Optional[str] = Field(None, max_length=50)
     first_name: Optional[str] = Field(None, min_length=1, max_length=100)
     last_name: Optional[str] = Field(None, min_length=1, max_length=100)
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, max_length=30)
+    designation: Optional[str] = Field(None, max_length=255)
     affiliation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
     bio: Optional[str] = None
@@ -35,10 +39,12 @@ class SpeakerResponse(BaseModel):
 
     id: uuid.UUID
     event_id: uuid.UUID
+    regno: Optional[str] = None
     first_name: str
     last_name: str
     email: str
     phone: Optional[str] = None
+    designation: Optional[str] = None
     affiliation: Optional[str] = None
     country: Optional[str] = None
     bio: Optional[str] = None
@@ -57,10 +63,12 @@ class SpeakerSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    regno: Optional[str] = None
     first_name: str
     last_name: str
     email: str
     phone: Optional[str] = None
+    designation: Optional[str] = None
     country: Optional[str] = None
     affiliation: Optional[str] = None
     upload_status: str
@@ -122,10 +130,12 @@ class SpeakerTalkCreate(BaseModel):
 
 class ManualRegisterRequest(BaseModel):
     """Schema for manual speaker registration (including multiple talks)."""
+    regno: Optional[str] = Field(None, max_length=50)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     email: EmailStr
     phone: Optional[str] = Field(None, max_length=30)
+    designation: Optional[str] = Field(None, max_length=255)
     affiliation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
     

@@ -43,6 +43,60 @@ function SettingsPageContent() {
    const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null);
    const [expandedApiKeyId, setExpandedApiKeyId] = useState<string | null>(null);
 
+   const [systemTimezone, setSystemTimezone] = useState("Asia/Kolkata");
+   const [isSavingSystem, setIsSavingSystem] = useState(false);
+
+   useEffect(() => {
+      if (activeTab === "system") {
+         const fetchTz = async () => {
+            try {
+               const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/global-settings`, {
+                  headers: {
+                     'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+                  }
+               });
+               if (response.ok) {
+                  const data = await response.json();
+                  if (data && data.timezone) {
+                     setSystemTimezone(data.timezone);
+                  }
+               }
+            } catch (err) {
+               console.error("Failed to load global timezone:", err);
+            }
+         };
+         fetchTz();
+      }
+   }, [activeTab]);
+
+   const handleSaveSystemSettings = async () => {
+      setIsSavingSystem(true);
+      try {
+         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/global-settings`, {
+            method: 'PATCH',
+            headers: {
+               'Content-Type': 'application/json',
+               'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+            },
+            body: JSON.stringify({ timezone: systemTimezone })
+         });
+
+         if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || "Failed to update global settings");
+         }
+
+         const data = await response.json();
+         localStorage.setItem("system-timezone", data.timezone);
+         window.dispatchEvent(new Event("system-timezone-changed"));
+         toast.success("System configurations updated successfully");
+      } catch (error: any) {
+         toast.error(error.message);
+      } finally {
+         setIsSavingSystem(false);
+      }
+   };
+
    const [formData, setFormData] = useState({
       first_name: user?.first_name || "",
       last_name: user?.last_name || "",
@@ -144,6 +198,7 @@ function SettingsPageContent() {
    const adminTabs = isSuperAdmin ? [
       { id: "api", label: "Developer Keys", icon: Key },
       { id: "orgs", label: "Organizations", icon: Building2 },
+      { id: "system", label: "System Settings", icon: Globe },
    ] : [];
 
    const tabs = [...baseTabs, ...adminTabs];
@@ -636,6 +691,71 @@ function SettingsPageContent() {
                               ))}
                            </div>
 
+                        </div>
+                     </motion.div>
+                  )}
+
+                  {activeTab === "system" && isSuperAdmin && (
+                     <motion.div
+                        key="system"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="space-y-12 relative z-10"
+                     >
+                        <div>
+                           <h3 className="text-xl font-black text-[var(--text)] mb-2">System Configurations</h3>
+                           <p className="text-[13px] text-muted font-medium tracking-tight">Configure global options for the entire event ecosystem.</p>
+                        </div>
+
+                        <div className="p-10 rounded-[3rem] glass-3d border-default bg-[var(--pri)]/5 space-y-8">
+                           <div className="flex items-center gap-4">
+                              <Globe className="h-6 w-6 text-[var(--pri)]" />
+                              <div>
+                                 <h4 className="text-[15px] font-black text-[var(--text)] uppercase tracking-widest">Global Timezone</h4>
+                                 <p className="text-[11px] text-muted font-medium mt-1 leading-relaxed">
+                                    All dates, deadlines, schedules, agenda exports, and emails will use this timezone.
+                                 </p>
+                              </div>
+                           </div>
+
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-default">
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-muted uppercase tracking-widest px-1">Selected Timezone</label>
+                                 <select
+                                    value={systemTimezone}
+                                    onChange={(e) => setSystemTimezone(e.target.value)}
+                                    className="w-full h-14 bg-[var(--base)]/50 border border-default rounded-2xl px-5 font-bold focus:outline-none focus:border-[var(--pri)]/50 transition-all cursor-pointer text-[14px]"
+                                 >
+                                    <option value="Asia/Kolkata">Asia/Kolkata (IST - UTC+05:30)</option>
+                                    <option value="UTC">UTC (Coordinated Universal Time - UTC+00:00)</option>
+                                    <option value="America/New_York">America/New_York (EST/EDT - UTC-05:00/04:00)</option>
+                                    <option value="America/Chicago">America/Chicago (CST/CDT - UTC-06:00/05:00)</option>
+                                    <option value="America/Denver">America/Denver (MST/MDT - UTC-07:00/06:00)</option>
+                                    <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT - UTC-08:00/07:00)</option>
+                                    <option value="Europe/London">Europe/London (GMT/BST - UTC+00:00/01:00)</option>
+                                    <option value="Europe/Paris">Europe/Paris (CET/CEST - UTC+01:00/02:00)</option>
+                                    <option value="Asia/Singapore">Asia/Singapore (SGT - UTC+08:00)</option>
+                                    <option value="Asia/Tokyo">Asia/Tokyo (JST - UTC+09:00)</option>
+                                    <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT - UTC+10:00/11:00)</option>
+                                 </select>
+                              </div>
+                           </div>
+
+                           <div className="flex justify-end pt-4 border-t border-default">
+                              <Button
+                                 onClick={handleSaveSystemSettings}
+                                 disabled={isSavingSystem}
+                                 className="h-12 px-8 bg-[var(--pri)] text-white font-black uppercase tracking-widest text-[10px] rounded-xl border-0 flex items-center gap-2"
+                              >
+                                 {isSavingSystem ? (
+                                    <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                 ) : (
+                                    <Save className="h-4 w-4" />
+                                 )}
+                                 Save System Settings
+                              </Button>
+                           </div>
                         </div>
                      </motion.div>
                   )}

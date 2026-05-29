@@ -149,31 +149,54 @@ async def qr_checkin(
     """Kiosk App calls this when scanning a speaker QR badge. Token-auth only."""
     scanned_token = payload.token.strip()
     
-    # Try to extract the access code from the custom QR text: "Speaker: ...\nAccess Code: CODE"
-    import re
-    access_code = None
-    code_match = re.search(r"Access Code:\s*([A-Za-z0-9]+)", scanned_token, re.IGNORECASE)
-    if code_match:
-        access_code = code_match.group(1).upper()
-    else:
-        # Fallback to check if it's a URL with /upload/{code}
-        url_match = re.search(r"/upload/([A-Za-z0-9]+)", scanned_token, re.IGNORECASE)
-        if url_match:
-            access_code = url_match.group(1).upper()
-        elif len(scanned_token) <= 20 and scanned_token.isalnum():
-            # If the token is a short alphanumeric code, it is the raw access code
-            access_code = scanned_token.upper()
-
     speaker = None
-    if access_code:
-        # Find the speaker by unique speaker_code (access code)
-        speaker_result = await db.execute(
+    
+    # 1. Try to see if scanned_token is a Participant Registration Number (e.g. REG-0001)
+    from app.modules.registration.models.participant import Participant
+    from sqlalchemy import func
+    
+    part_result = await db.execute(
+        select(Participant).where(
+            Participant.regno == scanned_token,
+            Participant.event_id == event_id
+        )
+    )
+    part = part_result.scalar_one_or_none()
+    if part and part.email:
+        # Find speaker with this email for the event
+        spk_result = await db.execute(
             select(Speaker).where(
-                Speaker.speaker_code == access_code,
+                func.lower(Speaker.email) == part.email.lower(),
                 Speaker.event_id == event_id,
             )
         )
-        speaker = speaker_result.scalar_one_or_none()
+        speaker = spk_result.scalar_one_or_none()
+
+    if not speaker:
+        # 2. Try to extract the access code from the custom QR text: "Speaker: ...\nAccess Code: CODE"
+        import re
+        access_code = None
+        code_match = re.search(r"Access Code:\s*([A-Za-z0-9]+)", scanned_token, re.IGNORECASE)
+        if code_match:
+            access_code = code_match.group(1).upper()
+        else:
+            # Fallback to check if it's a URL with /upload/{code}
+            url_match = re.search(r"/upload/([A-Za-z0-9]+)", scanned_token, re.IGNORECASE)
+            if url_match:
+                access_code = url_match.group(1).upper()
+            elif len(scanned_token) <= 20 and scanned_token.isalnum():
+                # If the token is a short alphanumeric code, it is the raw access code
+                access_code = scanned_token.upper()
+
+        if access_code:
+            # Find the speaker by unique speaker_code (access code)
+            speaker_result = await db.execute(
+                select(Speaker).where(
+                    Speaker.speaker_code == access_code,
+                    Speaker.event_id == event_id,
+                )
+            )
+            speaker = speaker_result.scalar_one_or_none()
 
     # Fallback to legacy upload_token hashing if not found by access code
     if not speaker:
@@ -185,6 +208,7 @@ async def qr_checkin(
             )
         )
         speaker = speaker_result.scalar_one_or_none()
+
 
     if speaker is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,

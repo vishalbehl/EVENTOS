@@ -133,7 +133,7 @@ class TestEventModel:
     @pytest.mark.asyncio
     async def test_event_validation_both_modes_disabled(self, db: AsyncSession, organization: Organization, organizer: User):
         from pydantic import ValidationError
-        from app.modules.rbac.schemas.event import EventCreate, EventUpdate
+        from app.modules.rbac.schemas.event import EventCreate, EventUpdate, SpeakerSettings, RegistrationSettings
 
         # Test schema validator for create
         with pytest.raises(ValidationError) as exc_info:
@@ -143,16 +143,16 @@ class TestEventModel:
                 start_date=date(2026, 9, 1),
                 end_date=date(2026, 9, 3),
                 timezone="UTC",
-                speaker_mode_enabled=False,
-                registration_mode_enabled=False,
+                speaker_settings=SpeakerSettings(enabled=False),
+                registration_settings=RegistrationSettings(enabled=False),
             )
         assert "At least one mode (Speaker or Registration) must be enabled." in str(exc_info.value)
 
         # Test schema validator for update
         with pytest.raises(ValidationError) as exc_info:
             EventUpdate(
-                speaker_mode_enabled=False,
-                registration_mode_enabled=False,
+                speaker_settings=SpeakerSettings(enabled=False),
+                registration_settings=RegistrationSettings(enabled=False),
             )
         assert "At least one mode (Speaker or Registration) must be enabled." in str(exc_info.value)
 

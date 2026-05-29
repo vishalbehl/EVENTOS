@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Globe, Sliders, Shield, Trash2, Save, Loader2, Building2, MapPin, Calendar, Users, Info, ToggleLeft, FileArchive, Zap, AlertCircle, Clock
+  Globe, Sliders, Shield, Trash2, Save, Loader2, Building2, MapPin, Calendar, Users, Info, ToggleLeft, FileArchive, Zap, AlertCircle, Clock, Mail, Phone
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { apiClient } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CountryStateEntry, fetchCountryStates, getStatesForCountry } from "@/lib/country-states";
 
 type SettingsTab = "profile" | "policies" | "team" | "danger";
 type ProgramStatus = "draft" | "final" | "updated";
@@ -86,10 +87,23 @@ export default function EventSettingsPage() {
     }
   }, [activeTab, isAdmin, eventIdValue]);
 
+  const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
+
+  useEffect(() => {
+    fetchCountryStates().then(setCountryStates).catch(console.error);
+  }, []);
+
   const [form, setForm] = useState({
     name: "",
     short_code: "",
-    organiser: "",
+    country: "",
+    state: "",
+    organizer_details: {
+      name: "",
+      email: "",
+      phone: "",
+      website: "",
+    },
     location: "",
     venue_name: "",
     start_date: "",
@@ -111,11 +125,19 @@ export default function EventSettingsPage() {
   useEffect(() => {
     if (!event) return;
     const toggles = (event as any).feature_toggles || {};
+    const details = (event as any).organizer_details || { name: "", email: "", phone: "", website: "" };
     setForm((current) => ({
       ...current,
       name: event.name || "",
       short_code: event.short_code || "",
-      organiser: (event as any).organizer_name || event.created_by || "",
+      country: (event as any).country || "",
+      state: (event as any).state || "",
+      organizer_details: {
+        name: details.name || (event as any).organizer_name || "",
+        email: details.email || "",
+        phone: details.phone || "",
+        website: details.website || ""
+      },
       location: event.location || "",
       venue_name: event.venue_name || "",
       start_date: toDateInput(event.start_date),
@@ -145,7 +167,10 @@ export default function EventSettingsPage() {
       const eventPayload: Record<string, unknown> = {
         name: form.name,
         short_code: form.short_code.toUpperCase(),
-        organizer_name: form.organiser || null,
+        country: form.country || null,
+        state: form.state || null,
+        organizer_name: form.organizer_details.name || null,
+        organizer_details: form.organizer_details,
         location: form.location || null,
         venue_name: form.venue_name || null,
         status: programToStatus(form.status),
@@ -297,49 +322,95 @@ export default function EventSettingsPage() {
                     onChange={(val) => setForm({ ...form, short_code: val.toUpperCase() })}
                     placeholder="e.g. TECH2026"
                   />
-                  <Field
-                    icon={Users}
-                    label="Organiser Name"
-                    value={form.organiser}
-                    disabled={!isAdmin}
-                    onChange={(val) => setForm({ ...form, organiser: val })}
-                    placeholder="e.g. Ingress Incorp"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-3">
-                    <Field
-                      icon={Clock}
-                      label="Event Timezone"
-                      value={form.timezone}
-                      disabled={!isAdmin}
-                      onChange={(val) => setForm({ ...form, timezone: val })}
-                      placeholder="e.g. Asia/Kolkata"
-                    />
-                    <p className="px-1 text-[9px] font-bold text-muted">e.g. UTC, Asia/Kolkata, Europe/London</p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <label className="px-1 text-[10px] font-black uppercase tracking-widest text-muted">Event Status</label>
-                    <div className="grid grid-cols-3 gap-2 rounded-2xl border border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] p-1">
-                      {(["draft", "final", "updated"] as const).map((item) => (
-                        <button
-                          key={item}
-                          type="button"
-                          disabled={!isAdmin}
-                          onClick={() => setForm({ ...form, status: item })}
-                          className={cn(
-                            "rounded-xl px-2 py-3 text-[9px] font-black uppercase tracking-wider transition-all",
-                            form.status === item ? "bg-[var(--pri)] text-[var(--text)]" : "text-muted hover:text-[var(--text)]",
-                            !isAdmin && "opacity-50 cursor-not-allowed"
-                          )}
-                        >
-                          {item}
-                        </button>
-                      ))}
+                    <label className="px-1 text-[10px] font-black uppercase tracking-widest text-muted">Event Timezone</label>
+                    <div className="relative">
+                      <Clock className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted pointer-events-none" />
+                      <select
+                        value={form.timezone}
+                        disabled={!isAdmin}
+                        onChange={e => setForm({ ...form, timezone: e.target.value })}
+                        className="w-full h-14 rounded-2xl border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] pl-12 pr-5 text-[14px] font-bold text-[var(--text)] outline-none focus:border-[var(--pri)]/50 transition-colors appearance-none disabled:opacity-60 cursor-pointer"
+                      >
+                        <option value="Asia/Kolkata">Asia/Kolkata (IST - UTC+05:30)</option>
+                        <option value="UTC">UTC (Coordinated Universal Time - UTC+00:00)</option>
+                        <option value="America/New_York">America/New_York (EST/EDT - UTC-05:00/04:00)</option>
+                        <option value="America/Chicago">America/Chicago (CST/CDT - UTC-06:00/05:00)</option>
+                        <option value="America/Denver">America/Denver (MST/MDT - UTC-07:00/06:00)</option>
+                        <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT - UTC-08:00/07:00)</option>
+                        <option value="Europe/London">Europe/London (GMT/BST - UTC+00:00/01:00)</option>
+                        <option value="Europe/Paris">Europe/Paris (CET/CEST - UTC+01:00/02:00)</option>
+                        <option value="Asia/Singapore">Asia/Singapore (SGT - UTC+08:00)</option>
+                        <option value="Asia/Tokyo">Asia/Tokyo (JST - UTC+09:00)</option>
+                      </select>
                     </div>
                   </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="px-1 text-[10px] font-black uppercase tracking-widest text-muted">Event Status</label>
+                  <div className="grid grid-cols-3 gap-2 rounded-2xl border border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] p-1">
+                    {(["draft", "final", "updated"] as const).map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => setForm({ ...form, status: item })}
+                        className={cn(
+                          "rounded-xl px-2 py-3 text-[9px] font-black uppercase tracking-wider transition-all",
+                          form.status === item ? "bg-[var(--pri)] text-[var(--text)]" : "text-muted hover:text-[var(--text)]",
+                          !isAdmin && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Organizer Contact Info */}
+                <div className="glass-3d p-6 rounded-3xl border border-default/50 space-y-6">
+                  <div>
+                    <h4 className="text-[12px] font-black text-[var(--text)] uppercase tracking-wider">Organizer Contact Info</h4>
+                    <p className="text-muted text-[9px] font-bold uppercase tracking-widest mt-0.5">Specify organizer details and public contact channels.</p>
+                  </div>
+
+                  <Field
+                    icon={Users}
+                    label="Organizer Name"
+                    value={form.organizer_details.name}
+                    disabled={!isAdmin}
+                    onChange={(val) => setForm({ ...form, organizer_details: { ...form.organizer_details, name: val } })}
+                    placeholder="e.g. Ingress Incorp"
+                  />
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <Field
+                      icon={Mail}
+                      label="Organizer Email"
+                      value={form.organizer_details.email}
+                      disabled={!isAdmin}
+                      onChange={(val) => setForm({ ...form, organizer_details: { ...form.organizer_details, email: val } })}
+                      placeholder="org@example.com"
+                    />
+                    <Field
+                      icon={Phone}
+                      label="Organizer Phone"
+                      value={form.organizer_details.phone}
+                      disabled={!isAdmin}
+                      onChange={(val) => setForm({ ...form, organizer_details: { ...form.organizer_details, phone: val } })}
+                      placeholder="+1 555 1234"
+                    />
+                  </div>
+
+                  <Field
+                    icon={Globe}
+                    label="Organizer Website"
+                    value={form.organizer_details.website}
+                    disabled={!isAdmin}
+                    onChange={(val) => setForm({ ...form, organizer_details: { ...form.organizer_details, website: val } })}
+                    placeholder="www.organizer.com"
+                  />
                 </div>
               </div>
             </Card>
@@ -355,20 +426,59 @@ export default function EventSettingsPage() {
 
               <div className="space-y-6">
                 <Field
-                  icon={MapPin}
-                  label="City & Location"
-                  value={form.location}
-                  disabled={!isAdmin}
-                  onChange={(val) => setForm({ ...form, location: val })}
-                  placeholder="e.g. Mumbai, Maharashtra"
-                />
-                <Field
                   icon={Building2}
                   label="Venue Center"
                   value={form.venue_name}
                   disabled={!isAdmin}
                   onChange={(val) => setForm({ ...form, venue_name: val })}
                   placeholder="e.g. Grand Convention Plaza"
+                />
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <label className="px-1 text-[10px] font-black uppercase tracking-widest text-muted">Country</label>
+                    <div className="relative">
+                      <Globe className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted pointer-events-none" />
+                      <select
+                        value={form.country}
+                        disabled={!isAdmin}
+                        onChange={e => setForm({ ...form, country: e.target.value, state: "" })}
+                        className="w-full h-14 rounded-2xl border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] pl-12 pr-5 text-[14px] font-bold text-[var(--text)] outline-none focus:border-[var(--pri)]/50 transition-colors appearance-none disabled:opacity-60"
+                      >
+                        <option value="" disabled className="bg-[var(--base)] text-muted">Select Country</option>
+                        {countryStates.map(c => (
+                          <option key={c.country} value={c.country} className="bg-[var(--base)] text-[var(--text)]">{c.country}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="px-1 text-[10px] font-black uppercase tracking-widest text-muted">State / Province</label>
+                    <div className="relative">
+                      <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted pointer-events-none" />
+                      <select
+                        value={form.state}
+                        disabled={!isAdmin || !form.country}
+                        onChange={e => setForm({ ...form, state: e.target.value })}
+                        className="w-full h-14 rounded-2xl border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] pl-12 pr-5 text-[14px] font-bold text-[var(--text)] outline-none focus:border-[var(--pri)]/50 transition-colors appearance-none disabled:opacity-60"
+                      >
+                        <option value="" className="bg-[var(--base)] text-muted">Select State</option>
+                        {getStatesForCountry(countryStates, form.country).map(s => (
+                          <option key={s} value={s} className="bg-[var(--base)] text-[var(--text)]">{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <Field
+                  icon={MapPin}
+                  label="Street Address / City details"
+                  value={form.location}
+                  disabled={!isAdmin}
+                  onChange={(val) => setForm({ ...form, location: val })}
+                  placeholder="e.g. 5th Avenue, California"
                 />
 
                 <div className="space-y-3">

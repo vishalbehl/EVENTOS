@@ -22,6 +22,216 @@ from app.schemas.common import MessageResponse
 router = APIRouter(prefix="/events/{event_id}/sessions", tags=["sessions"])
 
 
+@router.get("/export")
+async def export_sessions_docx(
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Export all event sessions as a beautifully formatted Word (.docx) agenda.
+    """
+    import io
+    from datetime import datetime
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement, parse_xml
+    from docx.oxml.ns import nsdecls, qn
+    from fastapi.responses import StreamingResponse
+    
+    # 1. Fetch all sessions for this event sorted by start time
+    stmt = (
+        select(Session)
+        .options(
+            selectinload(Session.room),
+            selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker)
+        )
+        .where(Session.event_id == event.id)
+        .order_by(Session.start_time)
+    )
+    res = await db.execute(stmt)
+    sessions = res.scalars().all()
+
+    # 1.1 Localize timezone setup
+    from zoneinfo import ZoneInfo
+    from app.services.timezone_service import get_cached_timezone
+    from datetime import timezone
+    tz_name = event.timezone or get_cached_timezone()
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("Asia/Kolkata")
+
+    def localize_dt(dt):
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz)
+
+    # Group sessions by date
+    from collections import defaultdict
+    sessions_by_date = defaultdict(list)
+    for s in sessions:
+        local_start = localize_dt(s.start_time)
+        date_str = local_start.strftime("%A, %d %B %Y") if local_start else "TBD"
+        sessions_by_date[date_str].append(s)
+
+    # 2. Build Document
+    doc = Document()
+
+    # Style definitions
+    style_normal = doc.styles['Normal']
+    style_normal.font.name = 'Arial'
+    style_normal.font.size = Pt(11)
+
+    # Title block
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title_p.add_run(f"OFFICIAL AGENDA & SCHEDULE")
+    title_run.font.size = Pt(22)
+    title_run.font.bold = True
+    title_run.font.color.rgb = RGBColor(49, 46, 129)  # Deep Indigo (#312e81)
+
+    event_p = doc.add_paragraph()
+    event_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    event_run = event_p.add_run(event.name)
+    event_run.font.size = Pt(15)
+    event_run.font.bold = True
+    event_run.font.color.rgb = RGBColor(79, 70, 229)  # Vibrant Indigo (#4f46e5)
+
+    info_p = doc.add_paragraph()
+    info_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    loc = event.location or "Venue Location"
+    info_run = info_p.add_run(f"Location: {loc}\nDate generated: {datetime.now().strftime('%d %B %Y')}")
+    info_run.font.size = Pt(10)
+    info_run.font.italic = True
+    info_run.font.color.rgb = RGBColor(100, 116, 139)  # Slate gray
+
+    doc.add_paragraph().paragraph_format.space_after = Pt(20)
+
+    # Daily agendas
+    for date_str, daily_sessions in sorted(sessions_by_date.items(), key=lambda x: x[1][0].start_time):
+        doc.add_heading(date_str, level=1)
+        h1 = doc.paragraphs[-1]
+        h1.runs[0].font.name = 'Arial'
+        h1.runs[0].font.size = Pt(15)
+        h1.runs[0].font.bold = True
+        h1.runs[0].font.color.rgb = RGBColor(49, 46, 129)
+
+        # Add a table for this day's schedule
+        table = doc.add_table(rows=1, cols=3)
+        table.autofit = False
+        table.allow_autofit = False
+
+        # Width definitions
+        widths = [Inches(1.5), Inches(1.5), Inches(4.5)]
+        
+        # Header row styling
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = 'Time Block'
+        hdr_cells[1].text = 'Session & Room'
+        hdr_cells[2].text = 'Agenda Details / Presentation Topics'
+
+        for i, cell in enumerate(hdr_cells):
+            cell.width = widths[i]
+            # Set background color of header
+            shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="312e81"/>')
+            cell._tc.get_or_add_tcPr().append(shading_elm)
+            p = cell.paragraphs[0]
+            for r in p.runs:
+                r.font.bold = True
+                r.font.color.rgb = RGBColor(255, 255, 255)
+                r.font.size = Pt(10.5)
+
+        for session in sorted(daily_sessions, key=lambda x: x.start_time):
+            row_cells = table.add_row().cells
+            for i, cell in enumerate(row_cells):
+                cell.width = widths[i]
+
+            local_start = localize_dt(session.start_time)
+            local_end = localize_dt(session.end_time)
+            if local_start and local_end:
+                time_range = f"{local_start.strftime('%I:%M %p')} - {local_end.strftime('%I:%M %p')}"
+            else:
+                time_range = "TBD"
+            row_cells[0].text = time_range
+            row_cells[0].paragraphs[0].runs[0].font.bold = True
+            row_cells[0].paragraphs[0].runs[0].font.size = Pt(9.5)
+
+            room_name = session.room.name if session.room else "Unassigned Room"
+            row_cells[1].text = f"Code: {session.session_code}\nRoom: {room_name}"
+            for r in row_cells[1].paragraphs[0].runs:
+                r.font.size = Pt(9.5)
+            row_cells[1].paragraphs[0].runs[0].font.bold = True
+
+            # Agenda details: Session title, description, speakers
+            p_desc = row_cells[2].paragraphs[0]
+            p_title_run = p_desc.add_run(session.name)
+            p_title_run.font.bold = True
+            p_title_run.font.size = Pt(11)
+            p_title_run.font.color.rgb = RGBColor(79, 70, 229)
+
+            if session.description:
+                p_desc.add_run(f"\n{session.description}").font.size = Pt(9)
+                p_desc.runs[-1].font.color.rgb = RGBColor(100, 116, 139)
+
+            if session.session_speakers:
+                p_desc.add_run("\n\nPresentations:").font.bold = True
+                p_desc.runs[-1].font.size = Pt(9.5)
+                for ss in sorted(session.session_speakers, key=lambda x: x.talk_order):
+                    sp_name = ss.speaker.full_name if ss.speaker else "Unknown Speaker"
+                    title = ss.presentation_title or "No Title Provided"
+                    duration = f"{ss.talk_duration_minutes} min" if ss.talk_duration_minutes else ""
+                    time_info = ""
+                    if ss.start_time and ss.end_time:
+                        local_ss_start = localize_dt(ss.start_time)
+                        local_ss_end = localize_dt(ss.end_time)
+                        if local_ss_start and local_ss_end:
+                            time_info = f" ({local_ss_start.strftime('%I:%M %p')} - {local_ss_end.strftime('%I:%M %p')})"
+                    
+                    bullets_p = row_cells[2].add_paragraph(style='List Bullet')
+                    bullets_p.paragraph_format.space_before = Pt(2)
+                    bullets_p.paragraph_format.space_after = Pt(2)
+                    
+                    r_sp = bullets_p.add_run(f"{sp_name}")
+                    r_sp.font.bold = True
+                    r_sp.font.size = Pt(9.5)
+                    
+                    r_title = bullets_p.add_run(f" — \"{title}\"")
+                    r_title.font.italic = True
+                    r_title.font.size = Pt(9.5)
+                    
+                    if duration or time_info:
+                        r_time = bullets_p.add_run(f" [{duration}{time_info}]")
+                        r_time.font.size = Pt(8.5)
+                        r_time.font.color.rgb = RGBColor(100, 116, 139)
+
+            # Cell Margins padding
+            for cell in row_cells:
+                tcPr = cell._tc.get_or_add_tcPr()
+                tcMar = OxmlElement('w:tcMar')
+                for margin_type in ['top', 'bottom', 'left', 'right']:
+                    node = OxmlElement(f'w:{margin_type}')
+                    node.set(qn('w:w'), '120')
+                    node.set(qn('w:type'), 'dxa')
+                    tcMar.append(node)
+                tcPr.append(tcMar)
+
+        doc.add_paragraph().paragraph_format.space_after = Pt(18)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    
+    filename = f"agenda-{event.short_code.lower()}-{datetime.now().strftime('%Y%m%d')}.docx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
 @router.get("", response_model=List[SessionSummary])
 async def list_sessions(
     event: CurrentEvent,

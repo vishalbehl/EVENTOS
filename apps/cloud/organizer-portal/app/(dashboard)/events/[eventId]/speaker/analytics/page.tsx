@@ -13,7 +13,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, getFallbackTimezone } from "@/lib/utils";
 import {
   useDashboardStats,
   useApprovalTimes,
@@ -137,9 +137,9 @@ export default function AnalyticsPage() {
                 <Badge className="bg-[var(--pri)]/10 text-[var(--pri)] border-0 font-black text-[10px] px-3 py-1 rounded-full flex items-center gap-1">
                   <Calendar className="h-3.5 w-3.5" />
                   <span>
-                    {new Date(event.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}
+                    {new Date(event.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: getFallbackTimezone() })}
                     {" - "}
-                    {new Date(event.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
+                    {new Date(event.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getFallbackTimezone() })}
                   </span>
                 </Badge>
               )}
@@ -265,10 +265,10 @@ export default function AnalyticsPage() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-[12px] font-black text-[var(--pri)] tracking-tight">
-                          {new Date(sess.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+                          {new Date(sess.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: getFallbackTimezone() })}
                         </p>
                         <p className="text-[8px] font-black text-muted uppercase tracking-widest mt-0.5">
-                          {new Date(sess.start_time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}
+                          {new Date(sess.start_time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: getFallbackTimezone() })}
                         </p>
                       </div>
                     </div>

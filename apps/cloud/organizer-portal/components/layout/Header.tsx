@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, getTimezoneAbbrev } from "@/lib/utils";
 import { useState, useEffect, useRef } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/use-auth-store";
@@ -23,6 +23,7 @@ export function Header() {
   const pathname = usePathname();
   const { eventId } = useParams();
   const [time, setTime] = useState<Date | null>(null);
+  const [timezone, setTimezone] = useState("Asia/Kolkata");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const { theme, setTheme, themes } = useTheme();
@@ -38,6 +39,17 @@ export function Header() {
     setTime(new Date());
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const handleTzChange = () => {
+        setTimezone(localStorage.getItem("system-timezone") || "Asia/Kolkata");
+      };
+      handleTzChange();
+      window.addEventListener("system-timezone-changed", handleTzChange);
+      return () => window.removeEventListener("system-timezone-changed", handleTzChange);
+    }
   }, []);
 
   useEffect(() => {
@@ -93,9 +105,9 @@ export function Header() {
         {/* System Clock */}
         <div className="hidden xl:flex flex-col items-end pr-6 border-r border-default">
           <p className="text-[14px] font-black text-[var(--text)] tracking-tighter tabular-nums leading-none mb-1">
-            {time ? time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : "--:--:-- --"}
+            {time ? time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: timezone }) : "--:--:-- --"}
           </p>
-          <p className="text-[9px] font-black text-[var(--pri)] uppercase tracking-[0.2em]">Indian Standard Time (IST)</p>
+          <p className="text-[9px] font-black text-[var(--pri)] uppercase tracking-[0.2em]">{timezone.split('/').pop()?.replace(/_/g, ' ') || timezone} Time ({getTimezoneAbbrev(timezone, time || new Date())})</p>
         </div>
 
         <div className="flex items-center gap-3">
