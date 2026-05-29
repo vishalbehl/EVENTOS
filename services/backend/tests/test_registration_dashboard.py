@@ -19,9 +19,25 @@ async def test_get_registration_analytics_dashboard(
     event: Event,
     session_obj: Session,
 ):
-    # 0. Set event location to specify local country
+    # 0. Set event location to specify local country and seed roles
     event.location = "Mumbai, India"
     db.add(event)
+    await db.flush()
+
+    from app.modules.registration.models.participant_role import ParticipantRole
+    role_del = ParticipantRole(
+        event_id=event.id,
+        name="Delegate",
+        role_code="DEL",
+        is_default=True
+    )
+    role_vip = ParticipantRole(
+        event_id=event.id,
+        name="VIP",
+        role_code="VIP",
+        is_default=False
+    )
+    db.add_all([role_del, role_vip])
     await db.flush()
 
     # 1. Seed Ticket Types for pricing matrix
