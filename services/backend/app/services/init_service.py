@@ -28,6 +28,60 @@ async def ensure_rbac_defaults():
                         perm = Permission(code=code, name=f"{act.capitalize()} {mod.capitalize()}", module=mod)
                         db.add(perm)
             
+            # Custom Granular Registration Permissions
+            custom_perms = [
+                # Registration Domain
+                ("PARTICIPANTS:IMPORT", "Import Participants from Excel", "PARTICIPANTS"),
+                ("PARTICIPANTS:EXPORT", "Export Participants to Excel", "PARTICIPANTS"),
+                # Approval Workflow
+                ("REGISTRATION:VIEW_QUEUE", "View Registration Queue", "REGISTRATION"),
+                ("REGISTRATION:APPROVE", "Approve Registration", "REGISTRATION"),
+                ("REGISTRATION:REJECT", "Reject Registration", "REGISTRATION"),
+                ("REGISTRATION:WAITLIST", "Manage Registration Waitlist", "REGISTRATION"),
+                ("REGISTRATION:OVERRIDE", "Capacity Override", "REGISTRATION"),
+                # Registration Config
+                ("REG_CONFIG:VIEW", "View Registration Config", "REG_CONFIG"),
+                ("REG_CONFIG:EDIT", "Edit Registration Config", "REG_CONFIG"),
+                ("REG_CONFIG:PRICING", "Manage Registration Pricing", "REG_CONFIG"),
+                ("REG_CONFIG:ROLES", "Manage Participant Roles", "REG_CONFIG"),
+                ("REG_CONFIG:FORM", "Registration Form Builder", "REG_CONFIG"),
+                ("REG_CONFIG:FAQ", "Configure Registration FAQs", "REG_CONFIG"),
+                # Badges
+                ("BADGES:VIEW", "View Badges", "BADGES"),
+                ("BADGES:GENERATE", "Generate Badges", "BADGES"),
+                ("BADGES:PRINT", "Print Badges", "BADGES"),
+                ("BADGES:REPRINT", "Reprint Badges", "BADGES"),
+                ("BADGES:TEMPLATES", "Manage Badge Templates", "BADGES"),
+                ("BADGES:QUEUE", "View Badge Print Queue", "BADGES"),
+                # Check-in
+                ("CHECKIN:VIEW", "View Check-ins", "CHECKIN"),
+                ("CHECKIN:QR", "QR Check-in Scanner", "CHECKIN"),
+                ("CHECKIN:MANUAL", "Manual Check-in", "CHECKIN"),
+                ("CHECKIN:UNDO", "Undo Check-in", "CHECKIN"),
+                ("CHECKIN:LOGS", "View Attendance Logs", "CHECKIN"),
+                # Payments
+                ("PAYMENTS:VIEW", "View Payments", "PAYMENTS"),
+                ("PAYMENTS:MARK_PAID", "Mark Payment as Paid", "PAYMENTS"),
+                ("PAYMENTS:MARK_UNPAID", "Mark Payment as Unpaid", "PAYMENTS"),
+                ("PAYMENTS:REFUND", "Issue Payment Refund", "PAYMENTS"),
+                ("PAYMENTS:PRICING", "Configure Pricing Matrix", "PAYMENTS"),
+                # Campaigns
+                ("CAMPAIGNS:VIEW", "View Email Campaigns", "CAMPAIGNS"),
+                ("CAMPAIGNS:CREATE", "Create Email Campaign", "CAMPAIGNS"),
+                ("CAMPAIGNS:EDIT", "Edit Email Campaign", "CAMPAIGNS"),
+                ("CAMPAIGNS:SEND", "Send Email Campaign", "CAMPAIGNS"),
+                ("CAMPAIGNS:DELETE", "Delete Email Campaign", "CAMPAIGNS"),
+                ("CAMPAIGNS:TEMPLATES", "Manage Campaign Templates", "CAMPAIGNS"),
+                # Analytics
+                ("ANALYTICS:REG_DASHBOARD", "View Registration Dashboard", "ANALYTICS"),
+                ("ANALYTICS:HUB", "View Analytics Hub", "ANALYTICS"),
+                ("ANALYTICS:EXPORT", "Export Analytics Reports", "ANALYTICS"),
+            ]
+            for code, name, mod in custom_perms:
+                if code not in existing_perms:
+                    perm = Permission(code=code, name=name, module=mod)
+                    db.add(perm)
+            
             await db.flush()
             
             # 2. Define Standard Roles
@@ -40,6 +94,15 @@ async def ensure_rbac_defaults():
                 ("Moderator", "Session flow control.", False),
                 ("Speaker", "Own presentation management.", False),
                 ("Viewer", "Read-only access.", False),
+                ("Registration Manager", "Full registration control.", False),
+                ("Registration Coordinator", "Participant operations.", False),
+                ("Registration Reviewer", "Approval workflow.", False),
+                ("Badge Manager", "Badge & print operations.", False),
+                ("Check-in Staff", "Onsite operations.", False),
+                ("Registration Viewer", "Read-only registration access.", False),
+                ("Speaker Manager", "Manage speakers and eposters.", False),
+                ("Room Manager", "Manage specific rooms.", False),
+                ("Venue Operator", "Onsite room playback operations.", False),
             ]
             
             existing_roles_res = await db.execute(select(Role.name))
@@ -49,6 +112,8 @@ async def ensure_rbac_defaults():
                 if name not in existing_roles:
                     role = Role(name=name, description=desc, is_system_role=is_sys)
                     db.add(role)
+            
+            await db.flush()
             
             # 3. Assign Permissions to Roles
             res = await db.execute(select(Role))
@@ -101,6 +166,105 @@ async def ensure_rbac_defaults():
                 tech_perms = [c for c in all_perms.keys() if c.startswith(("DEVICES:", "QUEUE:", "ROOMS:", "FILES:", "SPEAKERS:", "SESSIONS:", "POSTERS:"))]
                 tech_perms.append("EVENTS:VIEW")
                 await assign_batch("Technician", tech_perms)
+
+            # Registration Manager
+            if "Registration Manager" in all_roles:
+                reg_mgr_perms = [
+                    "EVENTS:VIEW",
+                    "PARTICIPANTS:VIEW", "PARTICIPANTS:CREATE", "PARTICIPANTS:EDIT", "PARTICIPANTS:DELETE", "PARTICIPANTS:IMPORT", "PARTICIPANTS:EXPORT",
+                    "REGISTRATION:VIEW_QUEUE", "REGISTRATION:APPROVE", "REGISTRATION:REJECT", "REGISTRATION:WAITLIST", "REGISTRATION:OVERRIDE",
+                    "REG_CONFIG:VIEW", "REG_CONFIG:EDIT", "REG_CONFIG:PRICING", "REG_CONFIG:ROLES", "REG_CONFIG:FORM", "REG_CONFIG:FAQ",
+                    "BADGES:VIEW", "BADGES:GENERATE", "BADGES:PRINT", "BADGES:REPRINT", "BADGES:TEMPLATES", "BADGES:QUEUE",
+                    "CHECKIN:VIEW", "CHECKIN:QR", "CHECKIN:MANUAL", "CHECKIN:UNDO", "CHECKIN:LOGS",
+                    "PAYMENTS:VIEW", "PAYMENTS:MARK_PAID", "PAYMENTS:MARK_UNPAID", "PAYMENTS:REFUND", "PAYMENTS:PRICING",
+                    "CAMPAIGNS:VIEW", "CAMPAIGNS:CREATE", "CAMPAIGNS:EDIT", "CAMPAIGNS:SEND", "CAMPAIGNS:DELETE", "CAMPAIGNS:TEMPLATES",
+                    "ANALYTICS:REG_DASHBOARD", "ANALYTICS:HUB", "ANALYTICS:EXPORT",
+                ]
+                await assign_batch("Registration Manager", reg_mgr_perms)
+
+            # Registration Coordinator
+            if "Registration Coordinator" in all_roles:
+                reg_coord_perms = [
+                    "EVENTS:VIEW",
+                    "PARTICIPANTS:VIEW", "PARTICIPANTS:CREATE", "PARTICIPANTS:EDIT", "PARTICIPANTS:IMPORT", "PARTICIPANTS:EXPORT",
+                    "REGISTRATION:VIEW_QUEUE",
+                    "REG_CONFIG:VIEW",
+                    "BADGES:VIEW",
+                    "CHECKIN:VIEW", "CHECKIN:LOGS",
+                    "PAYMENTS:VIEW",
+                    "CAMPAIGNS:VIEW", "CAMPAIGNS:CREATE", "CAMPAIGNS:EDIT", "CAMPAIGNS:SEND", "CAMPAIGNS:TEMPLATES",
+                    "ANALYTICS:REG_DASHBOARD", "ANALYTICS:HUB", "ANALYTICS:EXPORT",
+                ]
+                await assign_batch("Registration Coordinator", reg_coord_perms)
+
+            # Registration Reviewer
+            if "Registration Reviewer" in all_roles:
+                reg_rev_perms = [
+                    "EVENTS:VIEW",
+                    "PARTICIPANTS:VIEW", "PARTICIPANTS:EXPORT",
+                    "REGISTRATION:VIEW_QUEUE", "REGISTRATION:APPROVE", "REGISTRATION:REJECT", "REGISTRATION:WAITLIST",
+                    "REG_CONFIG:VIEW",
+                    "ANALYTICS:REG_DASHBOARD", "ANALYTICS:HUB",
+                ]
+                await assign_batch("Registration Reviewer", reg_rev_perms)
+
+            # Badge Manager
+            if "Badge Manager" in all_roles:
+                badge_mgr_perms = [
+                    "EVENTS:VIEW",
+                    "PARTICIPANTS:VIEW", "PARTICIPANTS:EXPORT",
+                    "BADGES:VIEW", "BADGES:GENERATE", "BADGES:PRINT", "BADGES:REPRINT", "BADGES:TEMPLATES", "BADGES:QUEUE",
+                    "CHECKIN:VIEW",
+                ]
+                await assign_batch("Badge Manager", badge_mgr_perms)
+
+            # Check-in Staff
+            if "Check-in Staff" in all_roles:
+                checkin_perms = [
+                    "EVENTS:VIEW",
+                    "PARTICIPANTS:VIEW", "PARTICIPANTS:EXPORT",
+                    "BADGES:VIEW",
+                    "CHECKIN:VIEW", "CHECKIN:QR", "CHECKIN:MANUAL", "CHECKIN:UNDO", "CHECKIN:LOGS",
+                ]
+                await assign_batch("Check-in Staff", checkin_perms)
+
+            # Registration Viewer
+            if "Registration Viewer" in all_roles:
+                reg_viewer_perms = [
+                    "EVENTS:VIEW",
+                    "PARTICIPANTS:VIEW",
+                    "REG_CONFIG:VIEW",
+                    "BADGES:VIEW",
+                    "CHECKIN:VIEW", "CHECKIN:LOGS",
+                    "PAYMENTS:VIEW",
+                    "CAMPAIGNS:VIEW",
+                    "ANALYTICS:REG_DASHBOARD", "ANALYTICS:HUB", "ANALYTICS:EXPORT",
+                ]
+                await assign_batch("Registration Viewer", reg_viewer_perms)
+
+            # Speaker Manager
+            if "Speaker Manager" in all_roles:
+                spk_mgr_perms = [
+                    "EVENTS:VIEW", "ROOMS:VIEW", "SESSIONS:VIEW",
+                    "SPEAKERS:VIEW", "SPEAKERS:CREATE", "SPEAKERS:EDIT", "SPEAKERS:DELETE",
+                    "FILES:VIEW", "FILES:CREATE", "FILES:EDIT", "FILES:DELETE", "FILES:APPROVE", "FILES:REJECT", "FILES:DOWNLOAD",
+                    "POSTERS:VIEW", "POSTERS:CREATE", "POSTERS:EDIT", "POSTERS:DELETE",
+                ]
+                await assign_batch("Speaker Manager", spk_mgr_perms)
+
+            # Room Manager
+            if "Room Manager" in all_roles:
+                rm_mgr_perms = [
+                    "EVENTS:VIEW", "ROOMS:VIEW", "SESSIONS:VIEW", "SPEAKERS:VIEW", "FILES:VIEW", "POSTERS:VIEW",
+                ]
+                await assign_batch("Room Manager", rm_mgr_perms)
+
+            # Venue Operator
+            if "Venue Operator" in all_roles:
+                vo_perms = [
+                    "EVENTS:VIEW", "ROOMS:VIEW", "SESSIONS:VIEW", "SPEAKERS:VIEW", "FILES:VIEW", "POSTERS:VIEW",
+                ]
+                await assign_batch("Venue Operator", vo_perms)
             
             await db.commit()
             logger.info("RBAC defaults and assignments seeded.")

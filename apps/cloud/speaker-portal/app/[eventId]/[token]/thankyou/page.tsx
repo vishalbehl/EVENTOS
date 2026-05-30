@@ -10,7 +10,8 @@ import { PortalHeader } from "@/components/PortalHeader";
 export default function ThankYouPage() {
   const params = useParams();
   const token = params.token as string;
-  const { data: portal, isLoading } = usePortalAuth(token);
+  const eventId = params.eventId as string;
+  const { data: portal, isLoading } = usePortalAuth(eventId, token);
 
   if (isLoading) return (
     <div className="flex items-center justify-center min-h-screen">
@@ -30,7 +31,7 @@ export default function ThankYouPage() {
           }
         `}} />
       )}
-      <PortalHeader speakerName={speakerName} token={token} />
+      <PortalHeader speakerName={speakerName} email={portal ? portal.email : ""} token={token} eventId={eventId} />
       
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
         <motion.div 
@@ -76,7 +77,7 @@ export default function ThankYouPage() {
               className="flex flex-col sm:flex-row gap-4 justify-center"
             >
               <Link 
-                href={`/${token}`} 
+                href={`/${eventId}/${token}`} 
                 className="btn-primary px-10 h-14 flex items-center justify-center gap-3 rounded-full"
               >
                 <ChevronLeft className="h-4 w-4" /> Return to Hub

@@ -70,7 +70,7 @@ class Participant(Base):
 
     # Relationships
     event: Mapped["Event"] = relationship("Event")
-    role_rel: Mapped[Optional["ParticipantRole"]] = relationship("ParticipantRole")
+    role_rel: Mapped[Optional["ParticipantRole"]] = relationship("ParticipantRole", lazy="selectin")
 
     @hybrid_property
     def name(self) -> str:

@@ -53,6 +53,8 @@ class RegistrationInfo:
 class ParticipantInfo:
     regno: str
     name: str
+    first_name: str
+    last_name: str
     email: str
     phone: str
     company: str
@@ -209,6 +211,8 @@ async def get_dashboard_data(
         participant_info = ParticipantInfo(
             regno=p.regno or "",
             name=p.name,
+            first_name=p.first_name,
+            last_name=p.last_name,
             email=p.email or "",
             phone=p.phone or "",
             company=p.company or "",
@@ -282,6 +286,8 @@ async def get_dashboard_data(
         participant_info = ParticipantInfo(
             regno="",
             name=reg_data.get("name", ""),
+            first_name=reg_data.get("first_name", ""),
+            last_name=reg_data.get("last_name", ""),
             email=reg_data.get("email", ""),
             phone=reg_data.get("phone", ""),
             company=reg_data.get("company", ""),
@@ -372,7 +378,7 @@ async def update_attendee_details(
     If new_email is verified, we also update the email field.
     Returns a tuple of (updated_email, updated_details_dict).
     """
-    allowed_fields = {"name", "phone", "company", "designation", "country"}
+    allowed_fields = {"name", "first_name", "last_name", "phone", "company", "designation", "country"}
     target_email = new_email.lower() if new_email else email.lower()
 
     # Check if a confirmed Participant exists first
@@ -446,6 +452,8 @@ async def update_attendee_details(
         participant_details = {
             "regno": participant.regno or "",
             "name": participant.name,
+            "first_name": participant.first_name,
+            "last_name": participant.last_name,
             "phone": participant.phone or "",
             "company": participant.company or "",
             "designation": participant.designation or "",
@@ -494,6 +502,8 @@ async def update_attendee_details(
     participant_details = {
         "regno": "",
         "name": reg_data.get("name", ""),
+        "first_name": reg_data.get("first_name", ""),
+        "last_name": reg_data.get("last_name", ""),
         "phone": reg_data.get("phone", ""),
         "company": reg_data.get("company", ""),
         "designation": reg_data.get("designation", ""),

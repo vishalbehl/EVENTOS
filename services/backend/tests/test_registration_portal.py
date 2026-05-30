@@ -29,10 +29,10 @@ async def test_get_form_config_default(
     assert config["event_id"] == event.id
     assert config["is_live"] is False
     assert len(config["fields"]) > 0
-    # Check Name is a default field
-    name_field = next(f for f in config["fields"] if f["id"] == "name")
-    assert name_field["is_default"] is True
-    assert name_field["is_required"] is True
+    # Check First Name is a default field
+    first_name_field = next(f for f in config["fields"] if f["id"] == "first_name")
+    assert first_name_field["is_default"] is True
+    assert first_name_field["is_required"] is True
 
 
 @pytest.mark.asyncio

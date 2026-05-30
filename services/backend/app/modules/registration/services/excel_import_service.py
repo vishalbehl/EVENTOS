@@ -65,54 +65,62 @@ class RowData:
         "session_code", "session_name", "session_type",
         "room_name", "start_dt", "end_dt",
         "first_name", "last_name", "email",
-        "phone", "affiliation", "country",
+        "phone", "affiliation", "country", "designation",
         "presentation_title", "talk_start", "talk_end",
         "talk_order", "talk_duration",
         "moderator_name",
     )
 
-    def __init__(self, row_num: int, cells: list, tz_name: Optional[str] = None) -> None:
+    def __init__(self, row_num: int, cells: list, col_map: dict[str, int], tz_name: Optional[str] = None) -> None:
         self.row_num = row_num
         if tz_name is None:
             tz_name = get_cached_timezone()
 
-        def _str(idx: int) -> str:
-            v = cells[idx] if idx < len(cells) else None
+        def _str(field: str) -> str:
+            idx = col_map.get(field, -1)
+            if idx == -1 or idx >= len(cells):
+                return ""
+            v = cells[idx]
             return str(v).strip() if v is not None else ""
 
-        def _int(idx: int) -> Optional[int]:
-            v = cells[idx] if idx < len(cells) else None
+        def _int(field: str) -> Optional[int]:
+            idx = col_map.get(field, -1)
+            if idx == -1 or idx >= len(cells):
+                return None
+            v = cells[idx]
             try:
                 return int(v) if v is not None else None
             except (TypeError, ValueError):
                 return None
 
-        self.session_code = _str(COL_SESSION_CODE)
-        self.session_name = _str(COL_SESSION_NAME)
-        self.session_type = _str(COL_SESSION_TYPE).lower() or "regular"
-        self.room_name = _str(COL_ROOM_NAME)
-        self.first_name = _str(COL_FIRST_NAME)
-        self.last_name = _str(COL_LAST_NAME)
-        self.email = _str(COL_EMAIL).lower()
-        self.phone = _str(COL_PHONE) or None
-        self.affiliation = _str(COL_AFFILIATION) or None
-        self.country = _str(COL_COUNTRY) or None
-        self.presentation_title = _str(COL_PRES_TITLE) or None
-        self.talk_order = _int(COL_TALK_ORDER) or 0
-        self.talk_duration = _int(COL_TALK_DURATION)
-        self.moderator_name = _str(COL_MODERATOR) or None
+        self.session_code = _str("session_code")
+        self.session_name = _str("session_name")
+        self.session_type = _str("session_type").lower() or "regular"
+        self.room_name = _str("room_name")
+        self.first_name = _str("first_name")
+        self.last_name = _str("last_name")
+        self.email = _str("email").lower()
+        self.phone = _str("phone") or None
+        self.affiliation = _str("affiliation") or None
+        self.country = _str("country") or None
+        self.designation = _str("designation") or None
+        self.presentation_title = _str("presentation_title") or None
+        self.talk_order = _int("talk_order") or 0
+        self.talk_duration = _int("talk_duration")
+        self.moderator_name = _str("moderator_name") or None
 
         # Parse datetimes (Session)
-        raw_start = cells[COL_START_DT] if COL_START_DT < len(cells) else None
-        raw_end = cells[COL_END_DT] if COL_END_DT < len(cells) else None
+        raw_start = cells[col_map["start_dt"]] if "start_dt" in col_map and col_map["start_dt"] < len(cells) else None
+        raw_end = cells[col_map["end_dt"]] if "end_dt" in col_map and col_map["end_dt"] < len(cells) else None
         self.start_dt = _parse_dt(raw_start, tz_name=tz_name)
         self.end_dt = _parse_dt(raw_end, tz_name=tz_name)
 
         # Parse talk datetimes (SessionSpeaker)
-        # We use the session's start date as the base for talk timings if they are just times
         base_date = self.start_dt.date() if self.start_dt else None
-        self.talk_start = _parse_dt(cells[COL_TALK_START] if COL_TALK_START < len(cells) else None, base_date=base_date, tz_name=tz_name)
-        self.talk_end = _parse_dt(cells[COL_TALK_END] if COL_TALK_END < len(cells) else None, base_date=base_date, tz_name=tz_name)
+        raw_talk_start = cells[col_map["talk_start"]] if "talk_start" in col_map and col_map["talk_start"] < len(cells) else None
+        raw_talk_end = cells[col_map["talk_end"]] if "talk_end" in col_map and col_map["talk_end"] < len(cells) else None
+        self.talk_start = _parse_dt(raw_talk_start, base_date=base_date, tz_name=tz_name)
+        self.talk_end = _parse_dt(raw_talk_end, base_date=base_date, tz_name=tz_name)
 
     def validate(self) -> list[str]:
         """Return a list of validation error messages, empty if valid."""
@@ -143,34 +151,40 @@ class PosterRowData:
         "session_code", "session_name",
         "start_dt", "end_dt",
         "first_name", "last_name", "email",
-        "phone", "affiliation", "country",
+        "phone", "affiliation", "country", "designation",
         "poster_title", "category", "abstract",
     )
 
-    def __init__(self, row_num: int, cells: list, tz_name: Optional[str] = None) -> None:
+    def __init__(self, row_num: int, cells: list, col_map: dict[str, int], tz_name: Optional[str] = None) -> None:
         self.row_num = row_num
         if tz_name is None:
             tz_name = get_cached_timezone()
 
-        def _str(idx: int) -> str:
-            v = cells[idx] if idx < len(cells) else None
+        def _str(field: str) -> str:
+            idx = col_map.get(field, -1)
+            if idx == -1 or idx >= len(cells):
+                return ""
+            v = cells[idx]
             return str(v).strip() if v is not None else ""
 
-        self.session_code = _str(0)
-        self.session_name = _str(1)
-        self.first_name = _str(6)
-        self.last_name = _str(7)
-        self.email = _str(8).lower()
-        self.phone = _str(9) or None
-        self.affiliation = _str(10) or None
-        self.country = _str(11) or None
-        self.poster_title = _str(12)
-        self.category = _str(13) or None
-        self.abstract = _str(14) or None
+        self.session_code = _str("session_code")
+        self.session_name = _str("session_name")
+        self.first_name = _str("first_name")
+        self.last_name = _str("last_name")
+        self.email = _str("email").lower()
+        self.phone = _str("phone") or None
+        self.affiliation = _str("affiliation") or None
+        self.country = _str("country") or None
+        self.designation = _str("designation") or None
+        self.poster_title = _str("poster_title")
+        self.category = _str("category") or None
+        self.abstract = _str("abstract") or None
 
         # Parse datetimes (Session)
-        self.start_dt = _parse_dt(cells[4] if 4 < len(cells) else None, tz_name=tz_name)
-        self.end_dt = _parse_dt(cells[5] if 5 < len(cells) else None, tz_name=tz_name)
+        raw_start = cells[col_map["start_dt"]] if "start_dt" in col_map and col_map["start_dt"] < len(cells) else None
+        raw_end = cells[col_map["end_dt"]] if "end_dt" in col_map and col_map["end_dt"] < len(cells) else None
+        self.start_dt = _parse_dt(raw_start, tz_name=tz_name)
+        self.end_dt = _parse_dt(raw_end, tz_name=tz_name)
 
     def validate(self) -> list[str]:
         errors = []
@@ -290,6 +304,78 @@ def parse_workbook(workbook_bytes: bytes, tz_name: Optional[str] = None, is_post
     sheet_name = "Schedule" if "Schedule" in wb.sheetnames else wb.sheetnames[0]
     ws: Worksheet = wb[sheet_name]
 
+    # Dynamically match headers to indices if header row is present
+    first_row = next(ws.iter_rows(max_row=1, values_only=True), [])
+    headers = [str(h).strip().lower().replace("_", " ").replace(" ", "") if h is not None else "" for h in first_row]
+
+    if is_poster:
+        col_map = {
+            "session_code": 0,
+            "session_name": 1,
+            "start_dt": 4,
+            "end_dt": 5,
+            "first_name": 6,
+            "last_name": 7,
+            "email": 8,
+            "phone": 9,
+            "affiliation": 10,
+            "country": 11,
+            "designation": -1,
+            "poster_title": 12,
+            "category": 13,
+            "abstract": 14,
+        }
+    else:
+        col_map = {
+            "session_code": 0,
+            "session_name": 1,
+            "session_type": 2,
+            "room_name": 3,
+            "start_dt": 4,
+            "end_dt": 5,
+            "first_name": 6,
+            "last_name": 7,
+            "email": 8,
+            "phone": 9,
+            "affiliation": 10,
+            "country": 11,
+            "designation": -1,
+            "presentation_title": 12,
+            "talk_start": 13,
+            "talk_end": 14,
+            "talk_order": 15,
+            "talk_duration": 16,
+            "moderator_name": 17,
+        }
+
+    field_synonyms = {
+        "sessioncode": "session_code", "sessioncode*": "session_code",
+        "sessionname": "session_name", "sessionname*": "session_name",
+        "sessiontype": "session_type",
+        "roomname": "room_name",
+        "startdatetime": "start_dt", "startdatetime*": "start_dt",
+        "enddatetime": "end_dt", "enddatetime*": "end_dt",
+        "speakerfirstname": "first_name", "speakerfirstname*": "first_name", "firstname": "first_name", "firstname*": "first_name",
+        "speakerlastname": "last_name", "speakerlastname*": "last_name", "lastname": "last_name", "lastname*": "last_name",
+        "speakeremail": "email", "speakeremail*": "email", "email": "email", "email*": "email",
+        "speakerphone": "phone", "phone": "phone",
+        "speakeraffiliation": "affiliation", "affiliation": "affiliation", "company": "affiliation",
+        "speakercountry": "country", "country": "country",
+        "speakerdesignation": "designation", "designation": "designation", "jobtitle": "designation",
+        "presentationtitle": "presentation_title", "presentation": "presentation_title", "poster_title": "poster_title", "postertitle": "poster_title", "postertitle*": "poster_title",
+        "talkstarttime": "talk_start", "talkstart": "talk_start",
+        "talkendtime": "talk_end", "talkend": "talk_end",
+        "talkorder": "talk_order",
+        "talkdurationmin": "talk_duration", "duration": "talk_duration",
+        "moderatorname": "moderator_name", "moderator": "moderator_name",
+        "category": "category",
+        "abstract": "abstract",
+    }
+
+    for idx, h in enumerate(headers):
+        if h in field_synonyms:
+            col_map[field_synonyms[h]] = idx
+
     rows: list[RowData | PosterRowData] = []
     for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         # Skip completely empty rows
@@ -297,9 +383,9 @@ def parse_workbook(workbook_bytes: bytes, tz_name: Optional[str] = None, is_post
             continue
         
         if is_poster:
-            rows.append(PosterRowData(row_num, list(row), tz_name=tz_name))
+            rows.append(PosterRowData(row_num, list(row), col_map, tz_name=tz_name))
         else:
-            rows.append(RowData(row_num, list(row), tz_name=tz_name))
+            rows.append(RowData(row_num, list(row), col_map, tz_name=tz_name))
 
     wb.close()
     return rows
@@ -605,6 +691,7 @@ async def _get_or_create_speaker(
             phone=row.phone,
             affiliation=row.affiliation,
             country=row.country,
+            designation=row.designation,
             upload_token=token,
             speaker_code=token[:8].upper(),
             upload_status="pending",
@@ -631,12 +718,14 @@ async def _get_or_create_speaker(
             speaker.last_name != row.last_name or
             speaker.phone != row.phone or
             speaker.affiliation != row.affiliation or
-            speaker.country != row.country):
+            speaker.country != row.country or
+            speaker.designation != row.designation):
             speaker.first_name = row.first_name
             speaker.last_name = row.last_name
             speaker.phone = row.phone
             speaker.affiliation = row.affiliation
             speaker.country = row.country
+            speaker.designation = row.designation
             await db.flush()
             updated = True
             logger.debug(f"Updated speaker profile: {row.email}")

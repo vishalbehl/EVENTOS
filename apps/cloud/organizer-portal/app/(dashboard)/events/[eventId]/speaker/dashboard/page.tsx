@@ -11,10 +11,11 @@ import {
   History, ArrowRight, Activity, Zap, PlayCircle,
   BarChart as BarChartIcon, MapPin, Laptop, ShieldCheck,
   AlertTriangle, FileWarning, HelpCircle as FileQuestion,
-  Copy, RefreshCw, Upload
+  Copy, RefreshCw, Upload, ToggleLeft, ToggleRight, Check
 } from "lucide-react";
+import { toast } from "sonner";
 
-import { useEvent, useDashboardStats, useActivity, useMainDashboardStats } from "@/hooks/useEvents";
+import { useEvent, useDashboardStats, useActivity, useMainDashboardStats, useUpdateEvent } from "@/hooks/useEvents";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
@@ -45,6 +46,10 @@ export default function EventOverviewPage() {
   const setToolbarActions = useFloatingToolbarStore((state) => state.setActions);
   const [isImportOpen, setIsImportOpen] = useState(false);
 
+  const updateEvent = useUpdateEvent(eventId as string);
+  const [toggling, setToggling] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   // Data fetching
   const { data: event, isLoading: eventLoading } = useEvent(eventId as string);
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useDashboardStats(eventId as string);
@@ -53,6 +58,30 @@ export default function EventOverviewPage() {
 
   // WebSocket connection
   const { socket } = useWebSocket(eventId as string);
+
+  const isLive = event?.speaker_settings?.enabled ?? false;
+  const portalUrl = `${process.env.NEXT_PUBLIC_SPEAKER_PORTAL_URL || "http://localhost:3001"}/${eventId}`;
+
+  const handleToggleLive = async () => {
+    setToggling(true);
+    try {
+      await updateEvent.mutateAsync({
+        speaker_settings: { enabled: !isLive, window_required: event?.speaker_settings?.window_required ?? true }
+      });
+      toast.success(!isLive ? "Portal is now LIVE 🚀" : "Portal set to Draft");
+    } catch {
+      toast.error("Failed to update portal status.");
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(portalUrl);
+    setCopied(true);
+    toast.success("Link copied!");
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   useEffect(() => {
     if (!socket) return;
@@ -218,6 +247,36 @@ export default function EventOverviewPage() {
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-[11px] font-bold text-muted uppercase tracking-[0.2em]">
                 <span>Unified Speaker & Venue Surveillance</span>
+              </div>
+
+              {/* Portal status toggle & URL copy button */}
+              <div className="flex items-center gap-3 mt-3 flex-wrap">
+                <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-xs font-semibold">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-muted mr-1">Portal Control:</span>
+                  <div className={`h-2 w-2 rounded-full ${isLive ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${isLive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {isLive ? 'Live' : 'Draft'}
+                  </span>
+                  <button
+                    onClick={handleToggleLive}
+                    disabled={toggling}
+                    className="ml-2 hover:scale-105 transition-all text-muted hover:text-[var(--text)] disabled:opacity-50"
+                    title={isLive ? "Set to Draft" : "Go Live"}
+                  >
+                    {isLive ? <ToggleRight className="h-5 w-5 text-emerald-400" /> : <ToggleLeft className="h-5 w-5 text-muted" />}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-xs font-semibold">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-muted mr-1">Portal Link:</span>
+                  <button
+                    onClick={copyLink}
+                    className="flex items-center gap-1.5 hover:text-[var(--text)] transition-all font-mono text-[10px] text-muted hover:underline"
+                  >
+                    {copied ? <Check className="h-3 w-3 text-emerald-400 animate-bounce" /> : <Copy className="h-3 w-3" />}
+                    {copied ? 'Copied Link' : 'Copy URL'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

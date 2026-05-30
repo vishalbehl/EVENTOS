@@ -77,7 +77,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 interface EventInfo { name: string; start_date: string | null; end_date: string | null; venue: string; support_email: string; announcements: string; program_url: string; theme_color?: string; faqs?: any[]; }
 interface RegistrationInfo { status: string; registration_id: string | null; submitted_at: string | null; waitlist_position: number | null; rejection_reason: string | null; }
-interface ParticipantInfo { regno: string; name: string; email: string; phone: string; company: string; designation: string; country: string; role: string; paid_status: string; custom_fields: Record<string, unknown>; registered_at: string | null; }
+interface ParticipantInfo { regno: string; name: string; first_name?: string; last_name?: string; email: string; phone: string; company: string; designation: string; country: string; role: string; paid_status: string; custom_fields: Record<string, unknown>; registered_at: string | null; }
 interface PaymentInfo { status: string; amount: number; currency: string; payment_method: string; transaction_id: string; created_at: string; gateway_payment_id: string | null; discount_applied: number; }
 interface DashboardData { event: EventInfo; registration: RegistrationInfo; participant: ParticipantInfo | null; payment: PaymentInfo | null; edits_locked: boolean; is_speaker: boolean; speaker_portal_url: string; }
 
@@ -676,7 +676,7 @@ export default function PortalDashboardPage() {
         }
       },
       prefill: {
-        name: data?.participant?.name || "",
+        name: data?.participant?.name || `${data?.participant?.first_name || ""} ${data?.participant?.last_name || ""}`.trim() || "",
         email: data?.participant?.email || "",
         contact: data?.participant?.phone || ""
       },
@@ -740,6 +740,8 @@ export default function PortalDashboardPage() {
     if (!data?.participant) return;
     setEditForm({ 
       name: data.participant.name, 
+      first_name: data.participant.first_name,
+      last_name: data.participant.last_name,
       email: data.participant.email,
       phone: data.participant.phone, 
       company: data.participant.company, 
@@ -829,7 +831,9 @@ export default function PortalDashboardPage() {
     setSaving(true);
     try {
       const payload = {
-        name: editForm.name,
+        name: editForm.name || `${editForm.first_name || ""} ${editForm.last_name || ""}`.trim() || "",
+        first_name: editForm.first_name,
+        last_name: editForm.last_name,
         phone: editForm.phone,
         company: editForm.company,
         designation: editForm.designation,
@@ -1376,6 +1380,8 @@ export default function PortalDashboardPage() {
 
   const labelMap: Record<string, string> = {
     name: "Full Name",
+    first_name: "First Name",
+    last_name: "Last Name",
     email: "Email Address",
     phone: "Phone Number",
     company: "Company / Organization",
@@ -2364,7 +2370,7 @@ export default function PortalDashboardPage() {
               
               {/* Two Column Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {(["name", "email", "phone", "company", "designation", "country"] as const).map(f => {
+                {(["first_name", "last_name", "email", "phone", "company", "designation", "country"] as const).map(f => {
                   const isEmail = f === "email";
                   const isEmailChangeLocked = isEmail && ["submitted", "pending_review", "approved", "waitlisted", "rejected"].includes(data?.registration?.status || "");
                   

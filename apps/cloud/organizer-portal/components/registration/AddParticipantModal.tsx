@@ -35,7 +35,7 @@ interface Role {
   is_active: boolean;
 }
 
-const DEFAULT_FIELD_IDS = new Set(["name", "email", "phone", "company", "designation", "country", "role"]);
+const DEFAULT_FIELD_IDS = new Set(["name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "role"]);
 
 const COUNTRY_STATES: Record<string, string[]> = {
   India: ["Andhra Pradesh", "Delhi", "Gujarat", "Karnataka", "Kerala", "Maharashtra", "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal"],

@@ -85,7 +85,43 @@ export default function RegistrationFormBuilder() {
     setLoading(true);
     try {
       const res = await apiGet<any>(`/events/${eventId}/registration/form-config?t=${Date.now()}`);
-      setFields((res.fields || []).map(normalizeSystemField));
+      
+      let fetchedFields = res.fields || [];
+      const hasNameField = fetchedFields.some((f: any) => f.id === "name");
+      if (hasNameField) {
+        const migrated: any[] = [];
+        fetchedFields.forEach((f: any) => {
+          if (f.id === "name") {
+            migrated.push(
+              {
+                id: "first_name",
+                name: "first_name",
+                label: "First Name",
+                type: "text",
+                is_default: true,
+                is_required: true,
+                is_active: true,
+                placeholder: "Enter your first name"
+              },
+              {
+                id: "last_name",
+                name: "last_name",
+                label: "Last Name",
+                type: "text",
+                is_default: true,
+                is_required: true,
+                is_active: true,
+                placeholder: "Enter your last name"
+              }
+            );
+          } else {
+            migrated.push(f);
+          }
+        });
+        fetchedFields = migrated;
+      }
+
+      setFields(fetchedFields.map(normalizeSystemField));
       setIsLive(res.is_live || false);
       setTermsAndConditions(res.terms_and_conditions || "");
       
@@ -290,7 +326,7 @@ export default function RegistrationFormBuilder() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {defaultFieldsList.map(field => {
-                const isCore = field.id === "name" || field.id === "email";
+                const isCore = field.id === "name" || field.id === "first_name" || field.id === "last_name" || field.id === "email";
                 const fieldType = getEffectiveFieldType(field);
                 return (
                   <Card 

@@ -231,6 +231,7 @@ async def approve_file(
     pf.upload_status = "approved"
     pf.approved_by = current_user.id
     pf.approved_at = datetime.now(timezone.utc)
+    pf.rejection_reason = None
     sp = await db.get(Speaker, pf.speaker_id)
     if sp:
         sp.upload_status = "approved"

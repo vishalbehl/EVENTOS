@@ -64,6 +64,10 @@ class SpeakerPortalAuthResponse(BaseModel):
     first_name: str
     last_name: str
     email: str
+    phone: Optional[str] = None
+    designation: Optional[str] = None
+    affiliation: Optional[str] = None
+    country: Optional[str] = None
     event_id: uuid.UUID
     event_name: str
     upload_deadline: Optional[datetime]
@@ -75,12 +79,44 @@ class SpeakerPortalAuthResponse(BaseModel):
     speaker_code: Optional[str] = None
     qr_code_url: Optional[str] = None
     theme_color: Optional[str] = None
+    upload_token: Optional[str] = None
+
+
+class SpeakerPortalConfigResponse(BaseModel):
+    event_name: str
+    theme_color: Optional[str] = None
+    speaker_mode_enabled: bool
+    registration_mode_enabled: bool
+
 
 
 # ── Auth ──────────────────────────────────────────────────────
 
-@router.get("/auth/{token_or_code}", response_model=SpeakerPortalAuthResponse)
+@router.get("/config/{event_id}", response_model=SpeakerPortalConfigResponse)
+async def get_speaker_portal_config(
+    event_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> SpeakerPortalConfigResponse:
+    """
+    Get public branding and configuration for the speaker portal.
+    """
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found."
+        )
+    return SpeakerPortalConfigResponse(
+        event_name=event.name,
+        theme_color=event.theme_color,
+        speaker_mode_enabled=event.speaker_mode_enabled,
+        registration_mode_enabled=event.registration_mode_enabled
+    )
+
+
+@router.get("/auth/{event_id}/{token_or_code}", response_model=SpeakerPortalAuthResponse)
 async def speaker_portal_auth(
+    event_id: uuid.UUID,
     token_or_code: str,
     db: AsyncSession = Depends(get_db)
 ) -> SpeakerPortalAuthResponse:
@@ -88,8 +124,9 @@ async def speaker_portal_auth(
     Authenticate a speaker using their upload_token or speaker_code.
     Returns speaker, event, and talk info.
     """
-    # Try by token first
+    # Try by token first, scoped to event_id
     q = select(Speaker).where(
+        Speaker.event_id == event_id,
         (Speaker.upload_token == token_or_code) | (Speaker.speaker_code == token_or_code.upper())
     ).options(
         selectinload(Speaker.event),
@@ -165,6 +202,10 @@ async def speaker_portal_auth(
         first_name=speaker.first_name,
         last_name=speaker.last_name,
         email=speaker.email,
+        phone=speaker.phone,
+        designation=speaker.designation,
+        affiliation=speaker.affiliation,
+        country=speaker.country,
         event_id=event.id,
         event_name=event.name,
         upload_deadline=event.upload_deadline,
@@ -175,7 +216,8 @@ async def speaker_portal_auth(
         posters=posters,
         speaker_code=speaker.speaker_code,
         qr_code_url=speaker.qr_code_url,
-        theme_color=event.theme_color
+        theme_color=event.theme_color,
+        upload_token=speaker.upload_token
     )
 
 
@@ -198,6 +240,11 @@ async def portal_request_upload_url(
         raise HTTPException(status_code=401, detail="Invalid token.")
 
     event = speaker.event
+    if not event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
     
     # Verify the slot belongs to this speaker
     ss_result = await db.execute(
@@ -347,12 +394,18 @@ async def portal_confirm_upload(
     """Speaker-facing confirm upload. Requires valid token."""
     speaker_q = select(Speaker).where(
         (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
-    )
+    ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
     
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
+
+    if not speaker.event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
 
     # Get file and verify it belongs to this speaker
     pf_q = select(PresentationFile).where(
@@ -557,12 +610,18 @@ async def portal_confirm_poster_upload(
     """Speaker-facing confirm poster upload."""
     speaker_q = select(Speaker).where(
         (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
-    )
+    ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
     
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
+
+    if not speaker.event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
 
     poster_q = select(Poster).where(
         Poster.id == poster_id,
@@ -621,6 +680,11 @@ async def download_speaker_qr(
         raise HTTPException(status_code=404, detail="Speaker not found.")
         
     event = speaker.event
+    if not event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed."
+        )
     reg_no = None
     if event.registration_mode_enabled:
         from app.modules.registration.models.participant import Participant
@@ -691,9 +755,11 @@ async def download_speaker_qr(
 
 class SpeakerOtpRequestBody(BaseModel):
     email: EmailStr
+    event_id: uuid.UUID
 
 class SpeakerOtpVerifyBody(BaseModel):
     email: EmailStr
+    event_id: uuid.UUID
     otp: str
 
 class SpeakerOtpTokenResponse(BaseModel):
@@ -713,9 +779,10 @@ async def speaker_request_otp(
     from app.modules.notifications.services.email_service import send_email
     from app.modules.registration.routers.portal_auth import _throttle_check
     
-    # 1. Lookup speaker by email
+    # 1. Lookup speaker by email AND event_id
     stmt = select(Speaker).where(
-        Speaker.email == body.email.lower()
+        Speaker.email == body.email.lower(),
+        Speaker.event_id == body.event_id
     ).options(selectinload(Speaker.event))
     res = await db.execute(stmt)
     speakers = res.scalars().all()
@@ -798,6 +865,7 @@ async def speaker_request_otp(
         
     return MessageResponse(message="OTP sent successfully.")
 
+
 @router.post("/speaker/verify-otp", response_model=SpeakerOtpTokenResponse)
 async def speaker_verify_otp(
     body: SpeakerOtpVerifyBody,
@@ -808,9 +876,10 @@ async def speaker_verify_otp(
     import bcrypt
     from datetime import datetime, timezone
     
-    # 1. Find the active speaker records
+    # 1. Find the active speaker records scoped to email and event_id
     stmt = select(Speaker).where(
-        Speaker.email == body.email.lower()
+        Speaker.email == body.email.lower(),
+        Speaker.event_id == body.event_id
     ).options(selectinload(Speaker.event)).order_by(Speaker.created_at.desc())
     res = await db.execute(stmt)
     speakers = res.scalars().all()
@@ -873,3 +942,4 @@ async def speaker_verify_otp(
     
     # Return upload_token as the token to redirect to
     return SpeakerOtpTokenResponse(token=target_speaker.upload_token)
+

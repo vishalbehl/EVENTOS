@@ -18,8 +18,13 @@ async def test_speaker_portal_auth_by_code(
     db: AsyncSession,
     speaker: Speaker,
 ):
+    # Enable speaker portal mode for test
+    speaker.event.speaker_mode_enabled = True
+    db.add(speaker.event)
+    await db.commit()
+
     # Authenticate via access code directly
-    res = await speaker_portal_auth(token_or_code=speaker.speaker_code, db=db)
+    res = await speaker_portal_auth(event_id=speaker.event_id, token_or_code=speaker.speaker_code, db=db)
     
     # Assert return fields
     assert res.speaker_id == speaker.id
@@ -32,6 +37,11 @@ async def test_download_speaker_qr_jpg(
     db: AsyncSession,
     speaker: Speaker,
 ):
+    # Enable speaker portal mode for test
+    speaker.event.speaker_mode_enabled = True
+    db.add(speaker.event)
+    await db.commit()
+
     # Call direct function for JPG format
     response = await download_speaker_qr(speaker_id=speaker.id, format="jpg", db=db)
     assert response is not None
@@ -44,6 +54,11 @@ async def test_download_speaker_qr_pdf(
     db: AsyncSession,
     speaker: Speaker,
 ):
+    # Enable speaker portal mode for test
+    speaker.event.speaker_mode_enabled = True
+    db.add(speaker.event)
+    await db.commit()
+
     # Call direct function for PDF format
     response = await download_speaker_qr(speaker_id=speaker.id, format="pdf", db=db)
     assert response is not None

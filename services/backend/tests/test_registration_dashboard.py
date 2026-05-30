@@ -121,3 +121,45 @@ async def test_get_registration_analytics_dashboard(
     assert len(data["registration_source_tracking"]) > 0
     assert len(data["payment_status_analytics"]) > 0
     assert len(data["country_registrations"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_reset_registration_data_endpoint(
+    client: AsyncClient,
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+):
+    from httpx import AsyncClient
+    from app.modules.auth.models.user import User
+    from app.modules.registration.models.participant import Participant
+    from sqlalchemy import select, func
+    from tests.conftest import auth_headers
+
+    # 1. Seed a participant
+    p = Participant(
+        event_id=event.id,
+        regno="DEL-9999",
+        name="Temporary Participant",
+        role="Delegate",
+        paid_status="Unpaid",
+    )
+    db.add(p)
+    await db.commit()
+
+    # Verify count is 1
+    count_before = (await db.execute(select(func.count(Participant.id)).where(Participant.event_id == event.id))).scalar()
+    assert count_before == 1
+
+    # 2. Call reset endpoint with organizer auth
+    headers = auth_headers(organizer)
+    resp = await client.post(
+        f"/events/{event.id}/registrations/reset-data",
+        headers=headers
+    )
+    assert resp.status_code == 200
+    assert "reset" in resp.json()["message"].lower()
+
+    # 3. Verify count is 0
+    count_after = (await db.execute(select(func.count(Participant.id)).where(Participant.event_id == event.id))).scalar()
+    assert count_after == 0

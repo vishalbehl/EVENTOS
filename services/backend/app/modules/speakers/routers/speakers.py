@@ -296,6 +296,8 @@ async def manual_register_speaker(
         speaker.last_name = payload.last_name
         speaker.phone = payload.phone
         speaker.affiliation = payload.affiliation
+        speaker.designation = payload.designation
+        speaker.country = payload.country
     else:
         token = str(uuid.uuid4())
         # Generate a human-readable code (8 chars, uppercase)
@@ -307,6 +309,8 @@ async def manual_register_speaker(
             email=str(payload.email).lower(),
             phone=payload.phone,
             affiliation=payload.affiliation,
+            designation=payload.designation,
+            country=payload.country,
             upload_token=token,
             speaker_code=code,
             upload_status="pending",
@@ -641,23 +645,21 @@ async def fetch_speakers_from_registration(
     parts_res = await db.execute(parts_stmt)
     participants = parts_res.scalars().all()
 
-    # 3. Get existing speakers emails
-    existing_stmt = select(Speaker.email).where(Speaker.event_id == event.id)
+    # 3. Get existing speakers
+    existing_stmt = select(Speaker).where(Speaker.event_id == event.id)
     existing_res = await db.execute(existing_stmt)
-    existing_emails = {email.lower() for email in existing_res.scalars().all()}
+    existing_speakers = list(existing_res.scalars().all())
+
+    def clean_name(first: str, last: str) -> str:
+        fullName = f"{first or ''} {last or ''}"
+        cleaned = " ".join(fullName.strip().lower().split())
+        cleaned = re.sub(r'^(dr\.|prof\.|mr\.|ms\.|mrs\.|dr|prof)\s+', '', cleaned)
+        return cleaned
 
     imported_speakers = []
     imported_count = 0
     for p in participants:
-        if not p.email:
-            continue
-        email_lower = p.email.lower()
-        if email_lower in existing_emails:
-            continue
-
-        token = str(uuid.uuid4())
-        code = token.split("-")[0].upper()
-
+        p_email = p.email.strip().lower() if p.email else ""
         p_first = p.first_name or ""
         p_last = p.last_name or ""
         if not p_first and not p_last and p.name:
@@ -665,20 +667,66 @@ async def fetch_speakers_from_registration(
             p_first = parts[0]
             p_last = parts[1] if len(parts) > 1 else ""
 
+        p_name = clean_name(p_first, p_last)
+
+        # Check duplication against existing speakers
+        is_duplicate = False
+        matching_s = None
+
+        for s in existing_speakers:
+            s_email = s.email.strip().lower() if s.email else ""
+            s_name = clean_name(s.first_name, s.last_name)
+
+            if p_email and s_email and p_email == s_email:
+                is_duplicate = True
+                matching_s = s
+                break
+            elif p_name == s_name:
+                if p_email and s_email:
+                    if p_email == s_email:
+                        is_duplicate = True
+                        matching_s = s
+                        break
+                else:
+                    # At least one has no email, and names match -> duplicate
+                    is_duplicate = True
+                    matching_s = s
+                    break
+
+        if is_duplicate:
+            # Sync details back to the existing speaker if missing or updated
+            if matching_s:
+                if p.regno and not matching_s.regno:
+                    matching_s.regno = p.regno
+                if p.phone:
+                    matching_s.phone = p.phone
+                if p.company:
+                    matching_s.affiliation = p.company
+                if p.designation:
+                    matching_s.designation = p.designation
+                if p.country:
+                    matching_s.country = p.country
+            continue
+
+        token = str(uuid.uuid4())
+        code = token.split("-")[0].upper()
+
         speaker = Speaker(
             event_id=event.id,
+            regno=p.regno,
             first_name=p_first or "Speaker",
             last_name=p_last,
-            email=email_lower,
+            email=p_email or None,
             phone=p.phone,
             affiliation=p.company,
             country=p.country,
+            designation=p.designation,
             upload_token=token,
             speaker_code=code,
             upload_status="pending",
         )
         db.add(speaker)
-        existing_emails.add(email_lower)
+        existing_speakers.append(speaker)
         imported_speakers.append(speaker)
         imported_count += 1
 

@@ -7,7 +7,7 @@ import {
   Calendar, Clock, MapPin, FileUp, CheckCircle2, 
   AlertCircle, ChevronRight, Presentation, LogOut,
   FileVideo, Info, History, ArrowRight, Zap, ShieldCheck,
-  Monitor, FileText, Lock, QrCode, Download, FileImage
+  Monitor, FileText, Lock, QrCode, Download, FileImage, User
 } from "lucide-react";
 import Link from "next/link";
 import { PortalHeader } from "@/components/PortalHeader";
@@ -19,8 +19,9 @@ export default function SpeakerLandingPage() {
   const params = useParams();
   const router = useRouter();
   const token = params.token as string;
+  const eventId = params.eventId as string;
 
-  const { data: portal, isLoading, error } = usePortalAuth(token);
+  const { data: portal, isLoading, error } = usePortalAuth(eventId, token);
 
   // Always compute deadline status (hook cannot be called conditionally)
   const deadlineInfo = useDeadlineStatus(
@@ -63,7 +64,7 @@ export default function SpeakerLandingPage() {
             {errorMessage}
           </p>
           <button 
-            onClick={() => router.push('/')}
+            onClick={() => router.push(`/${eventId}/login`)}
             className="btn-primary w-full h-12"
           >
             Go Back
@@ -102,7 +103,7 @@ export default function SpeakerLandingPage() {
       {/* Sticky deadline banner — mounts above header */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
 
-      <PortalHeader speakerName={speakerName} token={token} />
+      <PortalHeader speakerName={speakerName} email={portal.email} token={token} eventId={eventId} />
            <main className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 py-12 space-y-12">
         {/* Welcome Section */}
         <motion.section 
@@ -248,7 +249,7 @@ export default function SpeakerLandingPage() {
                           </div>
                         ) : (
                           <Link 
-                            href={`/${token}/upload?slot=${talk.session_speaker_id}`}
+                            href={`/${eventId}/${token}/upload?slot=${talk.session_speaker_id}`}
                             className={cn(
                               "px-10 h-14 w-full sm:w-auto flex items-center justify-center gap-3 rounded-full font-black text-[11px] uppercase tracking-widest transition-all",
                               deadlineInfo.status === "override"
@@ -347,7 +348,7 @@ export default function SpeakerLandingPage() {
                           </div>
                         ) : (
                           <Link 
-                            href={`/${token}/upload?poster=${poster.id}`}
+                            href={`/${eventId}/${token}/upload?poster=${poster.id}`}
                             className={cn(
                               "px-10 h-14 w-full sm:w-auto flex items-center justify-center gap-3 rounded-full font-black text-[11px] uppercase tracking-widest transition-all",
                               deadlineInfo.status === "override"
@@ -369,79 +370,138 @@ export default function SpeakerLandingPage() {
               </motion.section>
             )}
           </div>
-
-          {/* Right Column - Premium Event Access Pass */}
-          <motion.section 
-            variants={item}
-            initial="hidden"
-            animate="show"
-            className="space-y-6 lg:sticky lg:top-24"
-          >
-            <div className="flex items-center justify-between border-b border-white/5 pb-4">
-              <h2 className="text-[12px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-3">
-                <QrCode className="h-4 w-4 text-indigo-400" /> Event Access Pass
-              </h2>
-            </div>
-
-            <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-700" />
-              <div className="absolute bottom-0 left-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
-
-              <div className="text-center space-y-6">
-                <div>
-                  <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block mb-1">
-                    Your Digital Badge
-                  </span>
-                  <h3 className="text-xl font-black tracking-tight text-[#E8EAFF]">
-                    Event Entry Pass
-                  </h3>
-                </div>
-
-                {/* Branded QR Card Image */}
-                <div className="relative mx-auto max-w-[240px] aspect-[2/3] rounded-[1.5rem] overflow-hidden border border-white/15 bg-white shadow-2xl transition-transform duration-500 hover:scale-[1.03] group-hover:border-indigo-500/30">
-                  <img 
-                    src={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/v1/portal/speaker-qr/${portal.speaker_id}/download?format=jpg`} 
-                    alt="Speaker Badge Pass QR"
-                    className="w-full h-full object-contain"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
-                </div>
-
-                <div className="space-y-4">
-                  <div className="inline-flex flex-col items-center px-4 py-2 rounded-xl bg-white/5 border border-white/5">
-                    <span className="text-[8px] font-black text-muted uppercase tracking-widest">
-                      Access Code
-                    </span>
-                    <span className="text-lg font-black text-indigo-400 uppercase tracking-wider">
-                      {portal.speaker_code || 'N/A'}
-                    </span>
+          <div className="space-y-10 lg:sticky lg:top-24">
+            
+            {/* Speaker Profile Section */}
+            <motion.section 
+              variants={item}
+              initial="hidden"
+              animate="show"
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                <h2 className="text-[12px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-3">
+                  <User className="h-4 w-4 text-indigo-400" /> Speaker Profile
+                </h2>
+              </div>
+              
+              <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-2xl font-black tracking-tight text-[#E8EAFF]">
+                      {portal.first_name} {portal.last_name}
+                    </h3>
+                    <p className="text-sm font-medium text-indigo-400 mt-1">
+                      {portal.email}
+                    </p>
                   </div>
-
-                  <p className="text-[10px] font-bold text-muted leading-relaxed max-w-[200px] mx-auto">
-                    Show this QR code at the event check-in kiosk or Speaker Ready Room (SRR).
-                  </p>
-                </div>
-
-                {/* Download Actions */}
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <a 
-                    href={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/v1/portal/speaker-qr/${portal.speaker_id}/download?format=jpg`}
-                    download
-                    className="flex items-center justify-center gap-2 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-black uppercase tracking-wider text-[#E8EAFF] transition-all hover:scale-[1.02] active:scale-95 cursor-pointer animate-pulse-subtle"
-                  >
-                    <FileImage className="h-4 w-4 text-indigo-400" /> JPG
-                  </a>
-                  <a 
-                    href={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/v1/portal/speaker-qr/${portal.speaker_id}/download?format=pdf`}
-                    download
-                    className="flex items-center justify-center gap-2 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-black uppercase tracking-wider text-[#E8EAFF] transition-all hover:scale-[1.02] active:scale-95 cursor-pointer"
-                  >
-                    <FileText className="h-4 w-4 text-emerald-400" /> PDF
-                  </a>
+                  
+                  {(portal.designation || portal.affiliation || portal.phone || portal.country) && (
+                    <div className="space-y-4 pt-2 border-t border-white/5">
+                      {portal.designation && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Designation</span>
+                          <span className="text-sm font-bold text-[#E8EAFF]">{portal.designation}</span>
+                        </div>
+                      )}
+                      {portal.affiliation && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Affiliation / Company</span>
+                          <span className="text-sm font-bold text-[#E8EAFF]">{portal.affiliation}</span>
+                        </div>
+                      )}
+                      {portal.phone && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Contact Number</span>
+                          <span className="text-sm font-bold text-[#E8EAFF]">{portal.phone}</span>
+                        </div>
+                      )}
+                      {portal.country && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Country</span>
+                          <span className="text-sm font-bold text-[#E8EAFF]">{portal.country}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          </motion.section>
+            </motion.section>
+
+            {/* Event Access Pass */}
+            <motion.section 
+              variants={item}
+              initial="hidden"
+              animate="show"
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                <h2 className="text-[12px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-3">
+                  <QrCode className="h-4 w-4 text-indigo-400" /> Event Access Pass
+                </h2>
+              </div>
+
+              <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-700" />
+                <div className="absolute bottom-0 left-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
+
+                <div className="text-center space-y-6">
+                  <div>
+                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block mb-1">
+                      Your Digital Badge
+                    </span>
+                    <h3 className="text-xl font-black tracking-tight text-[#E8EAFF]">
+                      Event Entry Pass
+                    </h3>
+                  </div>
+
+                  {/* Branded QR Card Image */}
+                  <div className="relative mx-auto max-w-[240px] aspect-[2/3] rounded-[1.5rem] overflow-hidden border border-white/15 bg-white shadow-2xl transition-transform duration-500 hover:scale-[1.03] group-hover:border-indigo-500/30">
+                    <img 
+                      src={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/v1/portal/speaker-qr/${portal.speaker_id}/download?format=jpg`} 
+                      alt="Speaker Badge Pass QR"
+                      className="w-full h-full object-contain"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="inline-flex flex-col items-center px-4 py-2 rounded-xl bg-white/5 border border-white/5">
+                      <span className="text-[8px] font-black text-muted uppercase tracking-widest">
+                        Access Code
+                      </span>
+                      <span className="text-lg font-black text-indigo-400 uppercase tracking-wider">
+                        {portal.speaker_code || 'N/A'}
+                      </span>
+                    </div>
+
+                    <p className="text-[10px] font-bold text-muted leading-relaxed max-w-[200px] mx-auto">
+                      Show this QR code at the event check-in kiosk or Speaker Ready Room (SRR).
+                    </p>
+                  </div>
+
+                  {/* Download Actions */}
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <a 
+                      href={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/v1/portal/speaker-qr/${portal.speaker_id}/download?format=jpg`}
+                      download
+                      className="flex items-center justify-center gap-2 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-black uppercase tracking-wider text-[#E8EAFF] transition-all hover:scale-[1.02] active:scale-95 cursor-pointer animate-pulse-subtle"
+                    >
+                      <FileImage className="h-4 w-4 text-indigo-400" /> JPG
+                    </a>
+                    <a 
+                      href={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/v1/portal/speaker-qr/${portal.speaker_id}/download?format=pdf`}
+                      download
+                      className="flex items-center justify-center gap-2 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-black uppercase tracking-wider text-[#E8EAFF] transition-all hover:scale-[1.02] active:scale-95 cursor-pointer"
+                    >
+                      <FileText className="h-4 w-4 text-emerald-400" /> PDF
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </motion.section>
+          </div>
         </div>
       </main>
 

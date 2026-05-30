@@ -4,7 +4,7 @@ import {
   Globe, ToggleLeft, ToggleRight, Copy, Check, 
   Zap, Palette, ExternalLink, Info,
   Mail, Clock, Megaphone, FileText, Upload, X, Loader2, Save,
-  Calendar, Phone
+  Calendar, Phone, AlertTriangle, Trash2
 } from 'lucide-react'
 import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
 import { apiClient } from '@/lib/api-client'
@@ -34,6 +34,32 @@ export default function PortalTab({ eventId }: { eventId: string }) {
   const [editCutoffDays, setEditCutoffDays] = useState(0)
   const [savingSettings, setSavingSettings] = useState(false)
   const [uploadingProgram, setUploadingProgram] = useState(false)
+  const [resetting, setResetting] = useState(false)
+
+  const handleResetData = async () => {
+    const confirmation = window.confirm(
+      "CRITICAL WARNING:\n\nThis will permanently DELETE all participants, registrations, badges, logs, and check-in records for this event.\n\nThis action CANNOT be undone.\n\nAre you sure you want to proceed?"
+    )
+    if (!confirmation) return
+
+    const secondConfirm = window.prompt(
+      "To confirm deletion, please type the word 'RESET' in all caps below:"
+    )
+    if (secondConfirm !== "RESET") {
+      toast.error("Confirmation code did not match. Operation cancelled.")
+      return
+    }
+
+    setResetting(true)
+    try {
+      const res = await apiClient.post<any>(`/events/${eventId}/registrations/reset-data`)
+      toast.success(res.message || "Registration data successfully reset.")
+    } catch (err: any) {
+      toast.error(err.message || "Failed to reset registration data.")
+    } finally {
+      setResetting(false)
+    }
+  }
 
   useEffect(() => {
     if (event?.registration_settings) {
@@ -362,6 +388,27 @@ export default function PortalTab({ eventId }: { eventId: string }) {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Danger Zone Card */}
+        <div className="glass-card rounded-[2rem] p-8 border border-red-500/10 bg-red-500/[0.01] space-y-6">
+          <div className="flex items-center gap-3 text-red-400">
+            <AlertTriangle className="h-5 w-5" />
+            <h2 className="text-sm font-black uppercase tracking-[0.2em]">Danger Zone</h2>
+          </div>
+
+          <p className="text-[11px] font-bold text-muted leading-relaxed">
+            Completely reset this event's registration database. This will permanently delete all delegates, waitlists, badges, print queues, check-ins, and transaction logs. This action <strong className="text-red-400">cannot be undone</strong>.
+          </p>
+
+          <button
+            onClick={handleResetData}
+            disabled={resetting}
+            className="flex items-center justify-center gap-2 w-full sm:w-auto px-8 py-3.5 bg-red-600/80 hover:bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg hover-lift-3d disabled:opacity-50"
+          >
+            {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Reset Registration Data
+          </button>
         </div>
       </div>
 

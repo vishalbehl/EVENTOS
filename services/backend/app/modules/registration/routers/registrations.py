@@ -23,6 +23,7 @@ from app.modules.registration.schemas.registration import (
     RegistrationRejectionRequest,
 )
 from app.modules.registration.routers.participants import generate_next_regno
+from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/events/{event_id}/registrations", tags=["registrations"])
 
@@ -136,9 +137,28 @@ async def helper_approve_registration(
     country = (reg_data.get("country") or "").strip() or None
     paid_status = (reg_data.get("paid_status") or "Unpaid").strip()
 
-    # Create participant regno only if paid
+    # Create participant regno based on ticket pricing rules
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_stmt = select(Event).where(Event.id == reg.event_id)
+    event_res = await db.execute(event_stmt)
+    event_obj = event_res.scalar_one_or_none()
+
+    role_price = 0.0
+    if event_obj and event_obj.registration_settings and event_obj.registration_settings.get("payment_enabled", False):
+        prices = await get_active_prices_for_event(db, event_obj)
+        role_price = prices.get(role, 0.0)
+
+    should_generate_regno = False
+    if role_price <= 0.0:
+        should_generate_regno = True
+        paid_status = "Paid"
+    elif paid_status == "Paid":
+        should_generate_regno = True
+
     regno = None
-    if paid_status == "Paid":
+    if should_generate_regno:
         regno = await generate_next_regno(db, reg.event_id, role)
 
     participant = Participant(
@@ -380,3 +400,35 @@ async def promote_registration(
         await db.commit()
 
     return approved_reg
+
+
+@router.post("/reset-data", response_model=MessageResponse)
+async def reset_registration_data(
+    event: CurrentEvent,
+    current_user: AdminOrAbove,
+    db: AsyncSession = Depends(get_db)
+) -> MessageResponse:
+    """
+    Completely reset/delete all registration-related transaction data for this event.
+    """
+    from sqlalchemy import delete
+    from app.modules.registration.models.participant import Participant
+    from app.modules.registration.models.participant_registration import ParticipantRegistration
+    from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
+    from app.modules.registration.models.payment_transaction import PaymentTransaction
+    from app.modules.registration.models.check_in import CheckIn
+    from app.modules.registration.models.portal_otp_token import PortalOtpToken
+    from app.modules.registration.models.import_job import ImportJob
+
+    # Delete in order of dependency
+    await db.execute(delete(CheckIn).where(CheckIn.event_id == event.id))
+    await db.execute(delete(ParticipantRegistration).where(ParticipantRegistration.event_id == event.id))
+    await db.execute(delete(PaymentTransaction).where(PaymentTransaction.event_id == event.id))
+    await db.execute(delete(PortalOtpToken).where(PortalOtpToken.event_id == event.id))
+    await db.execute(delete(ImportJob).where(ImportJob.event_id == event.id))
+    
+    # Cascade deletes Badges, print jobs, badge scans, and badge history logs
+    await db.execute(delete(Participant).where(Participant.event_id == event.id))
+
+    await db.commit()
+    return MessageResponse(message="All registration-related transaction data and logs have been completely reset.")

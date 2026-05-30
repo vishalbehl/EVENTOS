@@ -30,6 +30,10 @@ export interface SpeakerPortalAuthResponse {
   first_name: string;
   last_name: string;
   email: string;
+  phone?: string;
+  designation?: string;
+  affiliation?: string;
+  country?: string;
   event_id: string;
   event_name: string;
   upload_deadline: string | null;
@@ -41,16 +45,36 @@ export interface SpeakerPortalAuthResponse {
   speaker_code?: string;
   qr_code_url?: string;
   theme_color?: string | null;
+  upload_token?: string | null;
 }
 
-export function usePortalAuth(token: string) {
+export interface SpeakerPortalConfigResponse {
+  event_name: string;
+  theme_color: string | null;
+  speaker_mode_enabled: boolean;
+  registration_mode_enabled: boolean;
+}
+
+export function usePortalConfig(eventId: string) {
   return useQuery({
-    queryKey: ["portal-auth", token],
+    queryKey: ["portal-config", eventId],
     queryFn: async () => {
-      const response = await apiClient.get<SpeakerPortalAuthResponse>(`/portal/auth/${token}`);
+      const response = await apiClient.get<SpeakerPortalConfigResponse>(`/portal/config/${eventId}`);
       return response.data;
     },
-    enabled: !!token,
+    enabled: !!eventId,
+    retry: false,
+  });
+}
+
+export function usePortalAuth(eventId: string, token: string) {
+  return useQuery({
+    queryKey: ["portal-auth", eventId, token],
+    queryFn: async () => {
+      const response = await apiClient.get<SpeakerPortalAuthResponse>(`/portal/auth/${eventId}/${token}`);
+      return response.data;
+    },
+    enabled: !!token && !!eventId,
     retry: false,
   });
 }

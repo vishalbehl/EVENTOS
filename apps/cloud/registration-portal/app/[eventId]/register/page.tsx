@@ -324,8 +324,9 @@ export default function PublicRegistrationPortal() {
       const uploadForm = new FormData();
       uploadForm.append("file", file);
       uploadForm.append("field_name", field.label);
-      if (formData.name) {
-        uploadForm.append("username", formData.name);
+      const fullNameVal = formData.name || `${formData.first_name || ""} ${formData.last_name || ""}`.trim() || "";
+      if (fullNameVal) {
+        uploadForm.append("username", fullNameVal);
       }
 
       const res = await fetch(`${apiBase}/api/v1/portal/registration/${eventId}/upload`, {
@@ -605,7 +606,7 @@ export default function PublicRegistrationPortal() {
         }
       },
       prefill: {
-        name: formData.name || "",
+        name: formData.name || `${formData.first_name || ""} ${formData.last_name || ""}`.trim() || "",
         email: formData.email || "",
         contact: formData.phone || ""
       },
@@ -879,7 +880,9 @@ export default function PublicRegistrationPortal() {
 
   const getFieldIcon = (fieldId: string) => {
     switch (fieldId) {
-      case "name": return <User className="h-4 w-4 text-indigo-400" />;
+      case "name":
+      case "first_name":
+      case "last_name": return <User className="h-4 w-4 text-indigo-400" />;
       case "email": return <Mail className="h-4 w-4 text-indigo-400" />;
       case "phone": return <Phone className="h-4 w-4 text-indigo-400" />;
       case "company": return <Building className="h-4 w-4 text-indigo-400" />;
@@ -1347,343 +1350,367 @@ export default function PublicRegistrationPortal() {
               </div>
 
               <div className="space-y-6">
-                {config.fields.filter(f => f.is_active).map(field => {
-                  const fieldType = getEffectiveFieldType(field);
+                {(() => {
+                  const activeFields = config.fields.filter(f => f.is_active);
+                  const renderedFields: React.ReactNode[] = [];
 
-                  return (
-                    <div key={field.id} className="space-y-2">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
-                        {field.label}
-                        {field.is_required && <span className="text-indigo-400 font-bold">*</span>}
-                      </label>
+                  const renderField = (field: FormField) => {
+                    const fieldType = getEffectiveFieldType(field);
+                    return (
+                      <div key={field.id} className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
+                          {field.label}
+                          {field.is_required && <span className="text-indigo-400 font-bold">*</span>}
+                        </label>
 
-                      {/* Text Input Types */}
-                      {fieldType === "text" && (
-                        <div className="relative">
-                          {getFieldIcon(field.id) && (
-                            <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                              {getFieldIcon(field.id)}
-                            </div>
-                          )}
-                          <input
-                            type="text"
-                            required={field.is_required}
-                            placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
-                            value={formData[field.id] || ""}
-                            onChange={(e) => handleInputChange(field.id, e.target.value)}
-                            className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all ${
-                              getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                            }`}
-                          />
-                        </div>
-                      )}
+                        {/* Text Input Types */}
+                        {fieldType === "text" && (
+                          <div className="relative">
+                            {getFieldIcon(field.id) && (
+                              <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                                {getFieldIcon(field.id)}
+                              </div>
+                            )}
+                            <input
+                              type="text"
+                              required={field.is_required}
+                              placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
+                              value={formData[field.id] || ""}
+                              onChange={(e) => handleInputChange(field.id, e.target.value)}
+                              className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all ${
+                                getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                              }`}
+                            />
+                          </div>
+                        )}
 
-                      {/* Email Input Types */}
-                      {fieldType === "email" && (
-                        <div className="relative">
-                          {getFieldIcon(field.id) && (
-                            <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                              {getFieldIcon(field.id)}
-                            </div>
-                          )}
-                          <input
-                            type="email"
-                            required={field.is_required}
-                            disabled={field.id === "email"}
-                            placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
-                            value={formData[field.id] || ""}
-                            onChange={(e) => handleInputChange(field.id, e.target.value)}
-                            className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF]/50 cursor-not-allowed focus:border-indigo-500 focus:ring-0 transition-all ${
-                              getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                            }`}
-                          />
-                          {field.id === "email" && (
-                            <p className="text-[10px] text-indigo-400 mt-1 font-bold">Bound to your verified login email.</p>
-                          )}
-                        </div>
-                      )}
+                        {/* Email Input Types */}
+                        {fieldType === "email" && (
+                          <div className="relative">
+                            {getFieldIcon(field.id) && (
+                              <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                                {getFieldIcon(field.id)}
+                              </div>
+                            )}
+                            <input
+                              type="email"
+                              required={field.is_required}
+                              disabled={field.id === "email"}
+                              placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
+                              value={formData[field.id] || ""}
+                              onChange={(e) => handleInputChange(field.id, e.target.value)}
+                              className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF]/50 cursor-not-allowed focus:border-indigo-500 focus:ring-0 transition-all ${
+                                getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                              }`}
+                            />
+                            {field.id === "email" && (
+                              <p className="text-[10px] text-indigo-400 mt-1 font-bold">Bound to your verified login email.</p>
+                            )}
+                          </div>
+                        )}
 
-                      {/* Phone Input Types with Country Code Select */}
-                      {fieldType === "phone" && (
-                        (() => {
-                          const rawValue = formData[field.id] || "";
-                          
-                          // Parse country code and number
-                          let selectedCc = "+91"; // default
-                          let numVal = rawValue;
-                          
-                          for (const cc of countryCodes) {
-                            if (rawValue.startsWith(cc.code)) {
-                              selectedCc = cc.code;
-                              numVal = rawValue.slice(cc.code.length);
-                              break;
+                        {/* Phone Input Types with Country Code Select */}
+                        {fieldType === "phone" && (
+                          (() => {
+                            const rawValue = formData[field.id] || "";
+                            
+                            // Parse country code and number
+                            let selectedCc = "+91"; // default
+                            let numVal = rawValue;
+                            
+                            for (const cc of countryCodes) {
+                              if (rawValue.startsWith(cc.code)) {
+                                selectedCc = cc.code;
+                                numVal = rawValue.slice(cc.code.length);
+                                break;
+                              }
                             }
-                          }
-                          
-                          // Real-time validation
-                          const isInvalid = numVal.length > 0 && (numVal.length < 7 || numVal.length > 15 || !/^\d+$/.test(numVal));
-                          
-                          const handlePhoneChange = (newCc: string, newNum: string) => {
-                            const filteredNum = newNum.replace(/\D/g, "");
-                            const combined = newCc + filteredNum;
-                            handleInputChange(field.id, combined);
-                          };
-                          
-                          return (
-                            <div className="space-y-1.5 w-full">
-                              <div className="flex gap-2">
-                                <div className="w-[120px] shrink-0 relative">
-                                  <select
-                                    value={selectedCc}
-                                    onChange={(e) => handlePhoneChange(e.target.value, numVal)}
-                                    className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
-                                  >
-                                    {countryCodes.map(cc => (
-                                      <option key={cc.code} value={cc.code} className="bg-[#080912]">
-                                        {cc.code} ({cc.iso})
-                                      </option>
-                                    ))}
-                                  </select>
+                            
+                            // Real-time validation
+                            const isInvalid = numVal.length > 0 && (numVal.length < 7 || numVal.length > 15 || !/^\d+$/.test(numVal));
+                            
+                            const handlePhoneChange = (newCc: string, newNum: string) => {
+                              const filteredNum = newNum.replace(/\D/g, "");
+                              const combined = newCc + filteredNum;
+                              handleInputChange(field.id, combined);
+                            };
+                            
+                            return (
+                              <div className="space-y-1.5 w-full">
+                                <div className="flex gap-2">
+                                  <div className="w-[120px] shrink-0 relative">
+                                    <select
+                                      value={selectedCc}
+                                      onChange={(e) => handlePhoneChange(e.target.value, numVal)}
+                                      className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl px-3 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                                    >
+                                      {countryCodes.map(cc => (
+                                        <option key={cc.code} value={cc.code} className="bg-[#080912]">
+                                          {cc.code} ({cc.iso})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="relative flex-1">
+                                    {getFieldIcon(field.id) && (
+                                      <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                                        {getFieldIcon(field.id)}
+                                      </div>
+                                    )}
+                                    <input
+                                      type="text"
+                                      required={field.is_required}
+                                      placeholder={field.placeholder || "Enter phone number..."}
+                                      value={numVal}
+                                      onChange={(e) => handlePhoneChange(selectedCc, e.target.value)}
+                                      className={`h-12 w-full bg-white/5 border rounded-xl font-semibold text-xs text-[#E8EAFF] focus:ring-0 transition-all ${
+                                        isInvalid 
+                                          ? "border-rose-500/50 focus:border-rose-500" 
+                                          : "border-white/10 focus:border-indigo-500"
+                                      } ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"}`}
+                                    />
+                                  </div>
                                 </div>
-                                <div className="relative flex-1">
+                                {isInvalid && (
+                                  <motion.p 
+                                    initial={{ opacity: 0, y: -4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="text-[10px] text-rose-400 font-bold text-left pl-2"
+                                  >
+                                    Phone number must contain numbers only and be between 7 and 15 digits.
+                                  </motion.p>
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
+
+                        {/* Country Input Types */}
+                        {fieldType === "country" && (
+                          (() => {
+                            const countries = getCountryChoices(field);
+                            const selectedCountry = formData[field.id] || (countries.length === 1 ? countries[0] : "");
+                            const states = getStatesForCountry(countryStates, selectedCountry);
+
+                            return (
+                              <div className="space-y-4">
+                                <div className="relative">
                                   {getFieldIcon(field.id) && (
                                     <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
                                       {getFieldIcon(field.id)}
                                     </div>
                                   )}
-                                  <input
-                                    type="text"
-                                    required={field.is_required}
-                                    placeholder={field.placeholder || "Enter phone number..."}
-                                    value={numVal}
-                                    onChange={(e) => handlePhoneChange(selectedCc, e.target.value)}
-                                    className={`h-12 w-full bg-white/5 border rounded-xl font-semibold text-xs text-[#E8EAFF] focus:ring-0 transition-all ${
-                                      isInvalid 
-                                        ? "border-rose-500/50 focus:border-rose-500" 
-                                        : "border-white/10 focus:border-indigo-500"
-                                    } ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"}`}
-                                  />
+                                  {countries.length === 1 ? (
+                                    <select
+                                      disabled
+                                      value={countries[0]}
+                                      className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] opacity-100 focus:border-indigo-500 focus:ring-0 transition-all cursor-not-allowed"
+                                    >
+                                      <option value={countries[0]} className="bg-[#080912]">{countries[0]}</option>
+                                    </select>
+                                  ) : (
+                                    <select
+                                      required={field.is_required}
+                                      value={selectedCountry}
+                                      onChange={(e) => {
+                                        handleInputChange(field.id, e.target.value);
+                                        handleInputChange(`${field.id}_state`, "");
+                                      }}
+                                      className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
+                                        getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                                      }`}
+                                    >
+                                      <option value="" className="bg-[#080912]">Select Country...</option>
+                                      {countries.map((country) => (
+                                        <option key={country} value={country} className="bg-[#080912]">{country}</option>
+                                      ))}
+                                    </select>
+                                  )}
                                 </div>
-                              </div>
-                              {isInvalid && (
-                                <motion.p 
-                                  initial={{ opacity: 0, y: -4 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  className="text-[10px] text-rose-400 font-bold text-left pl-2"
-                                >
-                                  Phone number must contain numbers only and be between 7 and 15 digits.
-                                </motion.p>
-                              )}
-                            </div>
-                          );
-                        })()
-                      )}
 
-                      {/* Country Input Types */}
-                      {fieldType === "country" && (
-                        (() => {
-                          const countries = getCountryChoices(field);
-                          const selectedCountry = formData[field.id] || (countries.length === 1 ? countries[0] : "");
-                          const states = getStatesForCountry(countryStates, selectedCountry);
-
-                          return (
-                            <div className="space-y-4">
-                              <div className="relative">
-                                {getFieldIcon(field.id) && (
-                                  <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                                    {getFieldIcon(field.id)}
-                                  </div>
-                                )}
-                                {countries.length === 1 ? (
-                                  <select
-                                    disabled
-                                    value={countries[0]}
-                                    className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] opacity-100 focus:border-indigo-500 focus:ring-0 transition-all cursor-not-allowed"
-                                  >
-                                    <option value={countries[0]} className="bg-[#080912]">{countries[0]}</option>
-                                  </select>
-                                ) : (
-                                  <select
-                                    required={field.is_required}
-                                    value={selectedCountry}
-                                    onChange={(e) => {
-                                      handleInputChange(field.id, e.target.value);
-                                      handleInputChange(`${field.id}_state`, "");
-                                    }}
-                                    className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
-                                      getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                                    }`}
-                                  >
-                                    <option value="" className="bg-[#080912]">Select Country...</option>
-                                    {countries.map((country) => (
-                                      <option key={country} value={country} className="bg-[#080912]">{country}</option>
-                                    ))}
-                                  </select>
-                                )}
-                              </div>
-
-                              {selectedCountry && (
-                                <div className="space-y-2 animate-in fade-in duration-200">
-                                  <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
-                                    State / Province
-                                    {field.is_required && <span className="text-indigo-400 font-bold">*</span>}
-                                  </label>
-                                  <div className="relative">
-                                    <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                                      <MapPin className="h-4 w-4 text-indigo-400" />
+                                {selectedCountry && (
+                                  <div className="space-y-2 animate-in fade-in duration-200">
+                                    <label className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5">
+                                      State / Province
+                                      {field.is_required && <span className="text-indigo-400 font-bold">*</span>}
+                                    </label>
+                                    <div className="relative">
+                                      <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                                        <MapPin className="h-4 w-4 text-indigo-400" />
+                                      </div>
+                                      {states.length ? (
+                                        <select
+                                          required={field.is_required}
+                                          value={formData[`${field.id}_state`] || ""}
+                                          onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
+                                          className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                                        >
+                                          <option value="" className="bg-[#080912]">Select State / Province...</option>
+                                          {states.map((state) => (
+                                            <option key={state} value={state} className="bg-[#080912]">{state}</option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <input
+                                          type="text"
+                                          required={field.is_required}
+                                          value={formData[`${field.id}_state`] || ""}
+                                          onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
+                                          placeholder="Enter state / province..."
+                                          className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all"
+                                        />
+                                      )}
                                     </div>
-                                    {states.length ? (
-                                      <select
-                                        required={field.is_required}
-                                        value={formData[`${field.id}_state`] || ""}
-                                        onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
-                                        className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
-                                      >
-                                        <option value="" className="bg-[#080912]">Select State / Province...</option>
-                                        {states.map((state) => (
-                                          <option key={state} value={state} className="bg-[#080912]">{state}</option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <input
-                                        type="text"
-                                        required={field.is_required}
-                                        value={formData[`${field.id}_state`] || ""}
-                                        onChange={(e) => handleInputChange(`${field.id}_state`, e.target.value)}
-                                        placeholder="Enter state / province..."
-                                        className="h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl pl-12 pr-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all"
-                                      />
-                                    )}
                                   </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()
-                      )}
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
 
-                      {/* Date Selector */}
-                      {fieldType === "date" && (
-                        <input
-                          type="date"
-                          required={field.is_required}
-                          value={formData[field.id] || ""}
-                          onChange={(e) => handleInputChange(field.id, e.target.value)}
-                          className="h-12 w-full bg-white/5 border border-white/10 rounded-xl px-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
-                        />
-                      )}
-
-                      {/* Dropdown Select option menu */}
-                      {fieldType === "select" && (
-                        <div className="relative">
-                          {getFieldIcon(field.id) && (
-                            <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                              {getFieldIcon(field.id)}
-                            </div>
-                          )}
-                          <select
+                        {/* Date Selector */}
+                        {fieldType === "date" && (
+                          <input
+                            type="date"
+                            required={field.is_required}
                             value={formData[field.id] || ""}
                             onChange={(e) => handleInputChange(field.id, e.target.value)}
-                            className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
-                              getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                            }`}
-                          >
-                            {(field.options || []).map((opt) => (
-                              <option key={opt} value={opt} className="bg-[#080912]">
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
+                            className="h-12 w-full bg-white/5 border border-white/10 rounded-xl px-4 font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer"
+                          />
+                        )}
 
-                      {/* Checkboxes Choice list */}
-                      {fieldType === "checkbox" && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/5 border border-white/5 p-4 rounded-2xl">
-                          {(field.options || []).map((opt) => {
-                            const isChecked = (formData[field.id] || []).includes(opt);
-                            return (
-                              <label key={opt} className="flex items-center gap-3 cursor-pointer select-none">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={(e) => handleCheckboxChange(field.id, opt, e.target.checked)}
-                                  className="h-4 w-4 bg-white/5 border border-white/10 rounded text-indigo-500 focus:ring-0 cursor-pointer"
-                                />
-                                <span className="text-xs font-bold text-muted uppercase tracking-wider">{opt}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* File or Image Upload widget */}
-                      {(fieldType === "image" || fieldType === "file") && (
-                        <div className="space-y-3">
-                          {formData[field.id] ? (
-                            <div className="flex items-center justify-between p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-2xl">
-                              <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 bg-emerald-500/10 rounded-xl flex items-center justify-center shrink-0 border border-emerald-500/20">
-                                  <Check className="h-4 w-4 text-emerald-400" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-xs font-black text-[#E8EAFF] uppercase tracking-wider truncate">File Uploaded</p>
-                                  <a 
-                                    href={formData[field.id]} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="text-[9px] text-indigo-400 font-bold hover:underline truncate block"
-                                  >
-                                    View Uploaded File
-                                  </a>
-                                </div>
+                        {/* Dropdown Select option menu */}
+                        {fieldType === "select" && (
+                          <div className="relative">
+                            {getFieldIcon(field.id) && (
+                              <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                                {getFieldIcon(field.id)}
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleInputChange(field.id, "")}
-                                className="text-[9px] font-black uppercase tracking-widest text-muted hover:text-rose-400 transition-colors"
-                              >
-                                Change File
-                              </button>
-                            </div>
-                          ) : (
-                            <label className="flex flex-col items-center justify-center border border-dashed border-white/10 hover:border-indigo-500/40 rounded-2xl p-6 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative group">
-                              <input
-                                type="file"
-                                accept={fieldType === "image" ? "image/*" : ".pdf,.docx,.xlsx,.doc"}
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) handleFileUpload(field.id, file);
-                                }}
-                                disabled={uploadingField !== null}
-                                className="hidden"
-                              />
-                              
-                              {uploadingField === field.id ? (
-                                <div className="flex flex-col items-center gap-2">
-                                  <Loader2 className="h-6 w-6 text-indigo-400 animate-spin" />
-                                  <span className="text-[9px] font-black text-muted uppercase tracking-widest">Uploading...</span>
-                                </div>
-                              ) : (
-                                <div className="flex flex-col items-center gap-2 text-center">
-                                  <Upload className="h-5 w-5 text-indigo-400 group-hover:scale-110 transition-transform" />
-                                  <div>
-                                    <span className="text-[10px] font-black text-muted uppercase tracking-widest block">
-                                      Select {fieldType === "image" ? "Image" : "Document"}
-                                    </span>
-                                    <span className="text-[8px] font-bold text-muted/60 uppercase tracking-wider mt-1 block">
-                                      Max 10MB
-                                    </span>
+                            )}
+                            <select
+                              value={formData[field.id] || ""}
+                              onChange={(e) => handleInputChange(field.id, e.target.value)}
+                              className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
+                                getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                              }`}
+                            >
+                              {(field.options || []).map((opt) => (
+                                <option key={opt} value={opt} className="bg-[#080912]">
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* Checkboxes Choice list */}
+                        {fieldType === "checkbox" && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/5 border border-white/5 p-4 rounded-2xl">
+                            {(field.options || []).map((opt) => {
+                              const isChecked = (formData[field.id] || []).includes(opt);
+                              return (
+                                <label key={opt} className="flex items-center gap-3 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={(e) => handleCheckboxChange(field.id, opt, e.target.checked)}
+                                    className="h-4 w-4 bg-white/5 border border-white/10 rounded text-indigo-500 focus:ring-0 cursor-pointer"
+                                  />
+                                  <span className="text-xs font-bold text-muted uppercase tracking-wider">{opt}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* File or Image Upload widget */}
+                        {(fieldType === "image" || fieldType === "file") && (
+                          <div className="space-y-3">
+                            {formData[field.id] ? (
+                              <div className="flex items-center justify-between p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-2xl">
+                                <div className="flex items-center gap-3">
+                                  <div className="h-8 w-8 bg-emerald-500/10 rounded-xl flex items-center justify-center shrink-0 border border-emerald-500/20">
+                                    <Check className="h-4 w-4 text-emerald-400" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-black text-[#E8EAFF] uppercase tracking-wider truncate">File Uploaded</p>
+                                    <a 
+                                      href={formData[field.id]} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="text-[9px] text-indigo-400 font-bold hover:underline truncate block"
+                                    >
+                                      View Uploaded File
+                                    </a>
                                   </div>
                                 </div>
-                              )}
-                            </label>
-                          )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleInputChange(field.id, "")}
+                                  className="text-[9px] font-black uppercase tracking-widest text-muted hover:text-rose-400 transition-colors"
+                                >
+                                  Change File
+                                </button>
+                              </div>
+                            ) : (
+                              <label className="flex flex-col items-center justify-center border border-dashed border-white/10 hover:border-indigo-500/40 rounded-2xl p-6 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative group">
+                                <input
+                                  type="file"
+                                  accept={fieldType === "image" ? "image/*" : ".pdf,.docx,.xlsx,.doc"}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleFileUpload(field.id, file);
+                                  }}
+                                  disabled={uploadingField !== null}
+                                  className="hidden"
+                                />
+                                
+                                {uploadingField === field.id ? (
+                                  <div className="flex flex-col items-center gap-2">
+                                    <Loader2 className="h-6 w-6 text-indigo-400 animate-spin" />
+                                    <span className="text-[9px] font-black text-muted uppercase tracking-widest">Uploading...</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col items-center gap-2 text-center">
+                                    <Upload className="h-5 w-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                                    <div>
+                                      <span className="text-[10px] font-black text-muted uppercase tracking-widest block">
+                                        Select {fieldType === "image" ? "Image" : "Document"}
+                                      </span>
+                                      <span className="text-[8px] font-bold text-muted/60 uppercase tracking-wider mt-1 block">
+                                        Max 10MB
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+                              </label>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
+
+                  for (let i = 0; i < activeFields.length; i++) {
+                    const field = activeFields[i];
+                    if (field.id === "first_name") {
+                      const lastNameField = activeFields.find(f => f.id === "last_name");
+                      renderedFields.push(
+                        <div key="name_row" className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {renderField(field)}
+                          {lastNameField && renderField(lastNameField)}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      );
+                      continue;
+                    }
+                    if (field.id === "last_name") {
+                      const firstNameActive = activeFields.some(f => f.id === "first_name");
+                      if (firstNameActive) continue;
+                    }
+                    renderedFields.push(renderField(field));
+                  }
+                  return renderedFields;
+                })()}
               </div>
 
               {/* Pricing & Promo Code Section */}

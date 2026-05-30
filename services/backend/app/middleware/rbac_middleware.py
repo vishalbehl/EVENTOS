@@ -12,17 +12,82 @@ from app.models.audit_log import AuditLog
 from app.modules.rbac.models.rbac import PermissionAuditLog
 from datetime import datetime, timezone
 
-# Mapping of paths to required permissions
-# (This is a simplified version, usually this would be dynamic or based on route decorators)
 PERMISSION_MAPPING = [
+    # ── Granular Registration & Participant Permissions ────────
+    (re.compile(r"/participants/import-excel"), {"POST": "PARTICIPANTS:IMPORT"}),
+    (re.compile(r"/participants/import"), {"POST": "PARTICIPANTS:IMPORT"}),
+    (re.compile(r"/participants/import-template"), {"GET": "PARTICIPANTS:VIEW"}),
+    (re.compile(r"/participants/export"), {"GET": "PARTICIPANTS:EXPORT"}),
+    (re.compile(r"/participants/stats"), {"GET": "PARTICIPANTS:VIEW"}),
+    (re.compile(r"/participants/analytics-dashboard"), {"GET": "ANALYTICS:REG_DASHBOARD"}),
+    (re.compile(r"/participants/[^/]+/checkin"), {"POST": "CHECKIN:MANUAL", "DELETE": "CHECKIN:UNDO"}),
+    (re.compile(r"/participants/[^/]+/checkins"), {"GET": "CHECKIN:LOGS"}),
+    (re.compile(r"/participants/bulk-delete"), {"POST": "PARTICIPANTS:DELETE"}),
+    (re.compile(r"/participants/bulk"), {"POST": "PARTICIPANTS:CREATE"}),
+    (re.compile(r"/participants/fetch-from-speakers"), {"POST": "PARTICIPANTS:CREATE"}),
+    (re.compile(r"/participants"), {
+        "GET": "PARTICIPANTS:VIEW", 
+        "POST": "PARTICIPANTS:CREATE", 
+        "PATCH": "PARTICIPANTS:EDIT", 
+        "PUT": "PARTICIPANTS:EDIT", 
+        "DELETE": "PARTICIPANTS:DELETE"
+    }),
+    
+    (re.compile(r"/registrations(?!/submit)/[^/]+/approve"), {"PATCH": "REGISTRATION:APPROVE"}),
+    (re.compile(r"/registrations(?!/submit)/[^/]+/reject"), {"PATCH": "REGISTRATION:REJECT"}),
+    (re.compile(r"/registrations(?!/submit)/[^/]+/waitlist"), {"PATCH": "REGISTRATION:WAITLIST"}),
+    (re.compile(r"/registrations(?!/submit)/[^/]+/promote"), {"PATCH": "REGISTRATION:OVERRIDE"}),
+    (re.compile(r"/registrations(?!/submit)"), {
+        "GET": "REGISTRATION:VIEW_QUEUE"
+    }),
+
+    (re.compile(r"/badges/generate"), {"POST": "BADGES:GENERATE"}),
+    (re.compile(r"/badges/reprint"), {"POST": "BADGES:REPRINT"}),
+    (re.compile(r"/badges/print-jobs"), {"GET": "BADGES:QUEUE", "PATCH": "BADGES:QUEUE"}),
+    (re.compile(r"/badges/[^/]+/print"), {"POST": "BADGES:PRINT"}),
+    (re.compile(r"/badges"), {
+        "GET": "BADGES:VIEW",
+        "POST": "BADGES:GENERATE"
+    }),
+
+    (re.compile(r"/payments/config"), {"GET": "REG_CONFIG:VIEW", "POST": "REG_CONFIG:EDIT"}),
+    (re.compile(r"/payments/promos"), {
+        "GET": "PAYMENTS:VIEW",
+        "POST": "PAYMENTS:PRICING",
+        "PATCH": "PAYMENTS:PRICING",
+        "DELETE": "PAYMENTS:PRICING"
+    }),
+    (re.compile(r"/payments/transactions"), {"GET": "PAYMENTS:VIEW"}),
+    
+    (re.compile(r"/ticket-types"), {
+        "GET": "REG_CONFIG:VIEW",
+        "POST": "REG_CONFIG:EDIT"
+    }),
+    (re.compile(r"/participant-roles"), {
+        "GET": "REG_CONFIG:VIEW",
+        "POST": "REG_CONFIG:EDIT",
+        "PATCH": "REG_CONFIG:EDIT",
+        "DELETE": "REG_CONFIG:EDIT"
+    }),
+
+    (re.compile(r"/print-templates"), {
+        "GET": "BADGES:VIEW",
+        "POST": "BADGES:TEMPLATES",
+        "PATCH": "BADGES:TEMPLATES",
+        "DELETE": "BADGES:TEMPLATES"
+    }),
+    (re.compile(r"/printers"), {
+        "GET": "BADGES:VIEW",
+        "POST": "BADGES:TEMPLATES",
+        "PATCH": "BADGES:TEMPLATES",
+        "DELETE": "BADGES:TEMPLATES"
+    }),
+    
+    # ── Core Conference Platform Mappings ───────────────
     (re.compile(r"/sessions"), {"GET": "SESSIONS:VIEW", "POST": "SESSIONS:CREATE", "PUT": "SESSIONS:EDIT", "DELETE": "SESSIONS:DELETE"}),
     (re.compile(r"/speakers"), {"GET": "SPEAKERS:VIEW", "POST": "SPEAKERS:CREATE", "PUT": "SPEAKERS:EDIT", "DELETE": "SPEAKERS:DELETE"}),
     (re.compile(r"/rooms"), {"GET": "ROOMS:VIEW", "POST": "ROOMS:CREATE", "PUT": "ROOMS:EDIT", "DELETE": "ROOMS:DELETE"}),
     (re.compile(r"/capacity"), {"GET": "EVENTS:VIEW", "POST": "EVENTS:EDIT", "PATCH": "EVENTS:EDIT", "DELETE": "EVENTS:EDIT"}),
-    (re.compile(r"/registrations(?!/submit)"), {"GET": "EVENTS:VIEW", "POST": "EVENTS:EDIT", "PATCH": "EVENTS:EDIT", "DELETE": "EVENTS:EDIT"}),
-    (re.compile(r"/badges"), {"GET": "EVENTS:VIEW", "POST": "EVENTS:EDIT", "PATCH": "EVENTS:EDIT", "DELETE": "EVENTS:EDIT"}),
-    (re.compile(r"/printers"), {"GET": "EVENTS:VIEW", "POST": "EVENTS:EDIT", "PATCH": "EVENTS:EDIT", "DELETE": "EVENTS:EDIT"}),
-    (re.compile(r"/attendance"), {"GET": "EVENTS:VIEW", "POST": "EVENTS:EDIT", "PATCH": "EVENTS:EDIT", "DELETE": "EVENTS:EDIT"}),
     (re.compile(r"/events"), {"GET": "EVENTS:VIEW", "POST": "EVENTS:CREATE", "PUT": "EVENTS:EDIT", "DELETE": "EVENTS:DELETE"}),
     (re.compile(r"/users"), {"GET": "USERS:VIEW", "POST": "USERS:CREATE", "PUT": "USERS:EDIT", "DELETE": "USERS:DELETE"}),
     (re.compile(r"/posters"), {"GET": "POSTERS:VIEW", "POST": "POSTERS:CREATE", "PUT": "POSTERS:EDIT", "DELETE": "POSTERS:DELETE"}),

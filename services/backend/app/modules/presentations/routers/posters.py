@@ -292,6 +292,7 @@ async def request_poster_upload_url(
     poster.version_number = poster.version_number + 1
     poster.status = "submitted"
     poster.submitted_at = datetime.now(timezone.utc)
+    poster.rejection_reason = None
     await db.commit()
 
     return PresignedPosterUploadResponse(
@@ -364,6 +365,8 @@ async def review_poster(
     poster.reviewed_at = datetime.now(timezone.utc)
     if payload.decision == "rejected":
         poster.rejection_reason = payload.rejection_reason
+    elif payload.decision == "approved":
+        poster.rejection_reason = None
         
     # Log review
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -548,6 +551,7 @@ async def batch_approve_posters(
             p.status = "approved"
             p.reviewed_by = current_user.id
             p.reviewed_at = datetime.now(timezone.utc)
+            p.rejection_reason = None
             approved += 1
     await db.commit()
     return MessageResponse(message=f"{approved} poster(s) approved.")
@@ -661,6 +665,7 @@ async def batch_update_posters_status(
         if payload.status == "approved":
             p.reviewed_by = current_user.id
             p.reviewed_at = datetime.now(timezone.utc)
+            p.rejection_reason = None
         updated_count += 1
             
     await db.commit()

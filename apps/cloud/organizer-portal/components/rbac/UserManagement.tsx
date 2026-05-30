@@ -1122,6 +1122,46 @@ export function UserManagement() {
                         <Label className="text-[10px] font-black uppercase tracking-widest text-muted">Phone Number</Label>
                         <Input value={sidebarFormData.phone} onChange={e => setSidebarFormData({...sidebarFormData, phone: e.target.value})} className="h-14 bg-white/5 border-default rounded-2xl px-6 font-bold" />
                       </div>
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase tracking-widest text-muted">Global Role</Label>
+                        <Select 
+                          value={sidebarFormData.role} 
+                          onValueChange={(val: string) => setSidebarFormData({...sidebarFormData, role: val})}
+                          disabled={currentUser?.role !== 'super_admin' && (selectedUserForEdit?.role === 'super_admin' || selectedUserForEdit?.role === 'organiser')}
+                        >
+                          <SelectTrigger className="h-14 bg-white/5 border-default rounded-2xl px-6 font-bold">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="glass-3d border-default rounded-2xl">
+                            {currentUser?.role === 'super_admin' && (
+                              <>
+                                <SelectItem 
+                                  value="super_admin" 
+                                  className="font-bold py-3 text-red-500"
+                                  disabled={((roles?.find(r => r.name === 'Super Admin')?.users_count) ?? 0) >= 3 && selectedUserForEdit?.role !== 'super_admin'}
+                                >
+                                  Super Admin {((roles?.find(r => r.name === 'Super Admin')?.users_count) ?? 0) >= 3 && selectedUserForEdit?.role !== 'super_admin' && "(Limit Reached)"}
+                                </SelectItem>
+                                <SelectItem value="organiser" className="font-bold py-3 text-[var(--pri)]">Organiser</SelectItem>
+                              </>
+                            )}
+                            <SelectItem value="admin" className="font-bold py-3">Admin</SelectItem>
+                            <SelectItem value="registration_manager" className="font-bold py-3">Registration Manager</SelectItem>
+                            <SelectItem value="registration_coordinator" className="font-bold py-3">Registration Coordinator</SelectItem>
+                            <SelectItem value="registration_reviewer" className="font-bold py-3">Registration Reviewer</SelectItem>
+                            <SelectItem value="badge_manager" className="font-bold py-3">Badge Manager</SelectItem>
+                            <SelectItem value="checkin_staff" className="font-bold py-3">Check-in Staff</SelectItem>
+                            <SelectItem value="registration_viewer" className="font-bold py-3">Registration Viewer</SelectItem>
+                            <SelectItem value="speaker_manager" className="font-bold py-3">Speaker Manager</SelectItem>
+                            <SelectItem value="session_manager" className="font-bold py-3">Session Manager</SelectItem>
+                            <SelectItem value="room_manager" className="font-bold py-3">Room Manager</SelectItem>
+                            <SelectItem value="venue_operator" className="font-bold py-3">Venue Operator</SelectItem>
+                            <SelectItem value="technician" className="font-bold py-3">Technician</SelectItem>
+                            <SelectItem value="volunteer" className="font-bold py-3">Volunteer</SelectItem>
+                            <SelectItem value="viewer" className="font-bold py-3">Viewer</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <Button onClick={() => handleUpdateUser(selectedUserForEdit.id, sidebarFormData)} disabled={sidebarLoading} className="w-full h-14 bg-[var(--pri)] text-white font-black uppercase tracking-widest text-[11px] rounded-2xl shadow-xl">{sidebarLoading ? "Saving..." : "Save Changes"}</Button>
                     </div>
                   )}

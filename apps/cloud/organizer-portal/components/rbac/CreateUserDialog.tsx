@@ -209,17 +209,27 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
                       <SelectItem 
                         value="super_admin" 
                         className="font-bold py-3 text-red-500"
-                        disabled={roles?.find(r => r.name === 'Super Admin')?.users_count >= 3}
+                        disabled={((roles?.find(r => r.name === 'Super Admin')?.users_count) ?? 0) >= 3}
                       >
-                        Super Admin {roles?.find(r => r.name === 'Super Admin')?.users_count >= 3 && "(Limit Reached)"}
+                        Super Admin {((roles?.find(r => r.name === 'Super Admin')?.users_count) ?? 0) >= 3 && "(Limit Reached)"}
                       </SelectItem>
                       <SelectItem value="organiser" className="font-bold py-3 text-[var(--pri)]">Organiser</SelectItem>
                     </>
                   )}
                   <SelectItem value="admin" className="font-bold py-3">Admin</SelectItem>
+                  <SelectItem value="registration_manager" className="font-bold py-3">Registration Manager</SelectItem>
+                  <SelectItem value="registration_coordinator" className="font-bold py-3">Registration Coordinator</SelectItem>
+                  <SelectItem value="registration_reviewer" className="font-bold py-3">Registration Reviewer</SelectItem>
+                  <SelectItem value="badge_manager" className="font-bold py-3">Badge Manager</SelectItem>
+                  <SelectItem value="checkin_staff" className="font-bold py-3">Check-in Staff</SelectItem>
+                  <SelectItem value="registration_viewer" className="font-bold py-3">Registration Viewer</SelectItem>
+                  <SelectItem value="speaker_manager" className="font-bold py-3">Speaker Manager</SelectItem>
                   <SelectItem value="session_manager" className="font-bold py-3">Session Manager</SelectItem>
+                  <SelectItem value="room_manager" className="font-bold py-3">Room Manager</SelectItem>
+                  <SelectItem value="venue_operator" className="font-bold py-3">Venue Operator</SelectItem>
                   <SelectItem value="technician" className="font-bold py-3">Technician</SelectItem>
                   <SelectItem value="volunteer" className="font-bold py-3">Volunteer</SelectItem>
+                  <SelectItem value="viewer" className="font-bold py-3">Viewer</SelectItem>
                 </SelectContent>
               </Select>
             </div>

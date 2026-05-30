@@ -36,7 +36,12 @@ async def list_users(
     if current_user.role != "super_admin":
         q = q.where(User.organization_id == current_user.organization_id)
         # An organizer can only see lower roles
-        q = q.where(User.role.in_(["admin", "session_manager", "technician", "volunteer"]))
+        q = q.where(User.role.in_([
+            "admin", "registration_manager", "registration_coordinator", 
+            "registration_reviewer", "badge_manager", "checkin_staff", 
+            "registration_viewer", "speaker_manager", "session_manager", 
+            "room_manager", "venue_operator", "technician", "volunteer", "viewer"
+        ]))
     
     result = await db.execute(q)
     return result.scalars().all()
@@ -51,7 +56,10 @@ async def create_user(
     """Create a new user with a specific role and organization."""
     if current_user.role != "super_admin":
         if payload.role in ["super_admin", "organiser"]:
-            raise HTTPException(status_code=403, detail="Organizers can only create admins, session managers, technicians, and volunteers.")
+            raise HTTPException(
+                status_code=403, 
+                detail="Organizers can only create roles lower than organizer."
+            )
 
     # Check if email exists
     existing = await db.execute(

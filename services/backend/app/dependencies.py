@@ -240,9 +240,19 @@ ROLE_HIERARCHY = [
     "super_admin",
     "organiser",
     "admin",
+    "registration_manager",
+    "registration_coordinator",
+    "registration_reviewer",
+    "badge_manager",
+    "checkin_staff",
+    "registration_viewer",
+    "speaker_manager",
     "session_manager",
+    "room_manager",
+    "venue_operator",
     "technician",
     "volunteer",
+    "viewer",
 ]
 
 

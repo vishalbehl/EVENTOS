@@ -36,14 +36,24 @@ router = APIRouter(tags=["registration_portal"])
 
 DEFAULT_FIELDS = [
     {
-        "id": "name",
-        "name": "name",
-        "label": "Full Name",
+        "id": "first_name",
+        "name": "first_name",
+        "label": "First Name",
         "type": "text",
         "is_default": True,
         "is_required": True,
         "is_active": True,
-        "placeholder": "Enter your full name"
+        "placeholder": "Enter your first name"
+    },
+    {
+        "id": "last_name",
+        "name": "last_name",
+        "label": "Last Name",
+        "type": "text",
+        "is_default": True,
+        "is_required": True,
+        "is_active": True,
+        "placeholder": "Enter your last name"
     },
     {
         "id": "email",
@@ -338,7 +348,16 @@ async def public_register_participant(
 
     # 3. Check email presence and verify duplicate / merging logic
     email_val = payload.get("email", "").strip()
+    first_name_val = payload.get("first_name", "").strip()
+    last_name_val = payload.get("last_name", "").strip()
     name_val = payload.get("name", "").strip()
+    if not first_name_val and not last_name_val and name_val:
+        parts = name_val.split(" ", 1)
+        first_name_val = parts[0]
+        last_name_val = parts[1] if len(parts) > 1 else ""
+    elif not name_val:
+        name_val = f"{first_name_val} {last_name_val}".strip()
+
     phone_val = payload.get("phone", "").strip()
     confirm_merge = payload.get("confirm_merge", False)
     if email_val:
@@ -396,12 +415,14 @@ async def public_register_participant(
 
     # 4. Validate and map form submissions into default fields and custom fields
     import re
-    default_fields = ["name", "email", "phone", "company", "designation", "country", "role"]
+    default_fields = ["name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "role"]
     participant_data: Dict[str, Any] = {
         "event_id": event_id,
-        "name": payload.get("name", "Unnamed Participant").strip(),
+        "name": name_val or "Unnamed Participant",
+        "first_name": first_name_val,
+        "last_name": last_name_val,
         "email": email_val or None,
-        "phone": payload.get("phone", "").strip() or None,
+        "phone": phone_val or None,
         "company": payload.get("company", "").strip() or None,
         "designation": payload.get("designation", "").strip() or None,
         "country": payload.get("country", "").strip() or None,
@@ -526,6 +547,8 @@ async def public_register_participant(
 
     registration_data = {
         "name": participant_data["name"],
+        "first_name": participant_data["first_name"],
+        "last_name": participant_data["last_name"],
         "email": participant_data["email"],
         "phone": participant_data["phone"],
         "company": participant_data["company"],
@@ -759,7 +782,16 @@ async def public_checkout_payment(
     
     # Check duplicate email and verify merging logic
     email_val = payload.formData.get("email", "").strip()
+    first_name_val = payload.formData.get("first_name", "").strip()
+    last_name_val = payload.formData.get("last_name", "").strip()
     name_val = payload.formData.get("name", "").strip()
+    if not first_name_val and not last_name_val and name_val:
+        parts = name_val.split(" ", 1)
+        first_name_val = parts[0]
+        last_name_val = parts[1] if len(parts) > 1 else ""
+    elif not name_val:
+        name_val = f"{first_name_val} {last_name_val}".strip()
+
     phone_val = payload.formData.get("phone", "").strip()
     confirm_merge = payload.confirm_merge or False
     if email_val:
@@ -852,7 +884,7 @@ async def public_checkout_payment(
     custom_fields = dict(payload.formData.get("custom_fields", {}))
     if config:
         form_fields = config.fields
-        default_fields = {"name", "email", "phone", "company", "designation", "country", "role"}
+        default_fields = {"name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "role"}
         for field in form_fields:
             field_id = field.get("id")
             field_type = field.get("type", "text")
@@ -869,9 +901,11 @@ async def public_checkout_payment(
                     custom_fields[field_id] = payload.formData.get(field_id)
 
     registration_data = {
-        "name": payload.formData.get("name", "Unnamed Participant").strip(),
+        "name": name_val or "Unnamed Participant",
+        "first_name": first_name_val,
+        "last_name": last_name_val,
         "email": email_val or None,
-        "phone": payload.formData.get("phone", "").strip() or None,
+        "phone": phone_val or None,
         "company": payload.formData.get("company", "").strip() or None,
         "designation": payload.formData.get("designation", "").strip() or None,
         "country": payload.formData.get("country", "").strip() or None,

@@ -13,6 +13,7 @@ from loguru import logger
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.dependencies import get_db, get_current_event, CurrentEvent
 from app.modules.registration.models.participant import Participant
@@ -90,7 +91,8 @@ async def generate_next_regno(db: AsyncSession, event_id: uuid.UUID, role: str) 
 
 DEFAULT_PARTICIPANT_FIELDS = {"name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "role"}
 DEFAULT_REGISTRATION_FIELDS = [
-    {"id": "name", "name": "name", "label": "Full Name", "type": "text", "is_default": True, "is_required": True, "is_active": True},
+    {"id": "first_name", "name": "first_name", "label": "First Name", "type": "text", "is_default": True, "is_required": True, "is_active": True},
+    {"id": "last_name", "name": "last_name", "label": "Last Name", "type": "text", "is_default": True, "is_required": True, "is_active": True},
     {"id": "email", "name": "email", "label": "Email Address", "type": "email", "is_default": True, "is_required": True, "is_active": True},
     {"id": "phone", "name": "phone", "label": "Phone Number", "type": "phone", "is_default": True, "is_required": False, "is_active": True},
     {"id": "company", "name": "company", "label": "Company/Affiliation", "type": "text", "is_default": True, "is_required": False, "is_active": True},
@@ -276,6 +278,16 @@ async def insert_participants(
 
     role_state: Dict[str, tuple[str, set[int], Optional[uuid.UUID], Optional[ParticipantRole]]] = {}
 
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_obj = await db.get(Event, event_id)
+    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
+
+    active_prices = {}
+    if payment_enabled:
+        active_prices = await get_active_prices_for_event(db, event_obj)
+
     for item in to_insert_new:
         if slots_remaining > 0:
             # Fits in capacity -> Add directly as approved Participant
@@ -288,11 +300,23 @@ async def insert_participants(
 
             prefix, used_numbers, role_id, role_obj = role_state[role]
 
+            role_price = active_prices.get(role, 0.0) if payment_enabled else 0.0
+            paid_status = item.paid_status or "Unpaid"
+            if role_price <= 0.0:
+                paid_status = "Paid"
+
             regno = item.regno
             if not regno:
-                number = smallest_available_number(used_numbers)
-                used_numbers.add(number)
-                regno = f"{prefix}-{number:04d}"
+                should_generate = False
+                if role_price <= 0.0:
+                    should_generate = True
+                elif paid_status == "Paid":
+                    should_generate = True
+
+                if should_generate:
+                    number = smallest_available_number(used_numbers)
+                    used_numbers.add(number)
+                    regno = f"{prefix}-{number:04d}"
 
             p = Participant(
                 event_id=event_id,
@@ -306,7 +330,7 @@ async def insert_participants(
                 company=item.company,
                 designation=item.designation,
                 country=item.country,
-                paid_status=item.paid_status or "Unpaid",
+                paid_status=paid_status,
                 source=item.source or default_source,
                 custom_fields=item.custom_fields or {},
             )
@@ -320,17 +344,23 @@ async def insert_participants(
             if waitlist_position:
                 next_wl_pos += 1
 
+            role = item.role or "Delegate"
+            role_price = active_prices.get(role, 0.0) if payment_enabled else 0.0
+            reg_paid_status = item.paid_status or "Unpaid"
+            if role_price <= 0.0:
+                reg_paid_status = "Paid"
+
             reg_data = {
                 "name": item.name,
                 "first_name": item.first_name or "",
                 "last_name": item.last_name or "",
                 "email": item.email,
                 "phone": item.phone,
-                "role": item.role or "Delegate",
+                "role": role,
                 "company": item.company,
                 "designation": item.designation,
                 "country": item.country,
-                "paid_status": item.paid_status or "Unpaid",
+                "paid_status": reg_paid_status,
                 "custom_fields": item.custom_fields or {},
             }
 
@@ -358,7 +388,7 @@ async def list_participants(
     page_size: int = Query(250, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
 ) -> List[ParticipantResponse]:
-    q = select(Participant).where(Participant.event_id == event.id)
+    q = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id)
     
     if search:
         search_term = f"%{search}%"
@@ -441,10 +471,31 @@ async def create_participant(
         if merged_participant:
             return merged_participant
 
-    # Ensure sequential regno is calculated
+    # Ensure sequential regno is calculated under pricing rules
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_obj = await db.get(Event, event.id)
+    role_price = 0.0
+    if event_obj and event_obj.registration_settings and event_obj.registration_settings.get("payment_enabled", False):
+        prices = await get_active_prices_for_event(db, event_obj)
+        role_price = prices.get(payload.role, 0.0)
+
+    paid_status = payload.paid_status
+    if role_price <= 0.0:
+        paid_status = "Paid"
+
+    # Ensure sequential regno is calculated under pricing rules
     regno = payload.regno
     if not regno:
-        regno = await generate_next_regno(db, event.id, payload.role)
+        should_generate = False
+        if role_price <= 0.0:
+            should_generate = True
+        elif paid_status == "Paid":
+            should_generate = True
+
+        if should_generate:
+            regno = await generate_next_regno(db, event.id, payload.role)
 
     # Resolve role_id and role_rel from payload.role_id or payload.role name
     role_id = payload.role_id
@@ -467,14 +518,18 @@ async def create_participant(
         company=payload.company,
         designation=payload.designation,
         country=payload.country,
-        paid_status=payload.paid_status,
+        paid_status=paid_status,
         source=payload.source,
         custom_fields=payload.custom_fields or {},
     )
     db.add(participant)
     await db.commit()
-    await db.refresh(participant)
-    return participant
+    res = await db.execute(
+        select(Participant)
+        .options(selectinload(Participant.role_rel))
+        .where(Participant.id == participant.id)
+    )
+    return res.scalar_one()
 
 
 @router.post("/bulk", response_model=MessageResponse)
@@ -525,7 +580,11 @@ async def download_import_template(
     sample = []
     for field in fields:
         field_id = field.get("id")
-        if field_id == "name":
+        if field_id == "first_name":
+            sample.append("Asha")
+        elif field_id == "last_name":
+            sample.append("Mehta")
+        elif field_id == "name":
             sample.append("Asha Mehta")
         elif field_id == "email":
             sample.append("asha@example.com")
@@ -729,13 +788,39 @@ async def update_participant(
         if field not in ("role", "role_id"):
             setattr(p, field, value)
 
+    # Check ticket pricing rules to set paid_status automatically if role is free
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_obj = await db.get(Event, event.id)
+    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
+
+    active_prices = {}
+    if payment_enabled:
+        active_prices = await get_active_prices_for_event(db, event_obj)
+
+    current_role = p.role or "Delegate"
+    role_price = active_prices.get(current_role, 0.0) if payment_enabled else 0.0
+
+    if role_price <= 0.0:
+        if p.paid_status not in {"Cancelled", "Canceled", "Refunded", "Refund Requested", "Pending Refund"}:
+            p.paid_status = "Paid"
+
     # Regenerate regno if role prefix changed and new regno was not explicitly provided
     if role_changed and "regno" not in update_data:
         p.regno = await generate_next_regno(db, event.id, p.role)
 
+    # Generate regno if paid_status changed to Paid and they don't have a regno
+    if (("paid_status" in update_data and update_data["paid_status"] == "Paid") or p.paid_status == "Paid") and not p.regno:
+        p.regno = await generate_next_regno(db, event.id, p.role)
+
     await db.commit()
-    await db.refresh(p)
-    return p
+    res = await db.execute(
+        select(Participant)
+        .options(selectinload(Participant.role_rel))
+        .where(Participant.id == p.id)
+    )
+    return res.scalar_one()
 
 
 @router.delete("/{participant_id}", response_model=MessageResponse)
@@ -982,7 +1067,7 @@ async def fetch_participants_from_speakers(
 ) -> MessageResponse:
     """
     Fetch all speakers and add them as participants with 'Unpaid' paid_status and 'Speaker' role
-    if their email is not already registered as a participant.
+    if their email or name is not already registered as a participant, and update the speaker's regno.
     """
     from app.modules.speakers.models.speaker import Speaker
 
@@ -991,38 +1076,135 @@ async def fetch_participants_from_speakers(
     speakers_res = await db.execute(speakers_stmt)
     speakers = speakers_res.scalars().all()
 
-    # 2. Get existing participant emails
-    existing_stmt = select(Participant.email).where(Participant.event_id == event.id)
+    # 2. Get existing participants to build lookup sets for email and name
+    existing_stmt = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id)
     existing_res = await db.execute(existing_stmt)
-    existing_emails = {email.lower() for email in existing_res.scalars().all() if email}
+    existing_participants = list(existing_res.scalars().all())
 
-    payloads = []
+    def clean_name(first: str, last: str) -> str:
+        fullName = f"{first or ''} {last or ''}"
+        cleaned = " ".join(fullName.strip().lower().split())
+        cleaned = re.sub(r'^(dr\.|prof\.|mr\.|ms\.|mrs\.|dr|prof)\s+', '', cleaned)
+        return cleaned
+
+    # 3. Resolve role prefix and sequential number tracking for Speaker role
+    role_name = "Speaker"
+    prefix = await get_role_prefix_for_event(db, event.id, role_name)
+    used_numbers = await get_used_numbers_for_prefix(db, event.id, prefix)
+    role_obj = await get_role_by_name(db, event.id, role_name)
+    role_id = role_obj.id if role_obj else None
+
+    # Get active pricing to determine paid_status for imported speakers
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_obj = await db.get(Event, event.id)
+    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
+
+    active_prices = {}
+    if payment_enabled:
+        active_prices = await get_active_prices_for_event(db, event_obj)
+
+    role_price = active_prices.get(role_name, 0.0) if payment_enabled else 0.0
+    paid_status = "Paid" if role_price <= 0.0 else "Unpaid"
+
+    inserted_count = 0
     for s in speakers:
-        if not s.email:
-            continue
-        email_lower = s.email.lower()
-        if email_lower in existing_emails:
+        email_lower = s.email.strip().lower() if s.email else ""
+        s_name = clean_name(s.first_name, s.last_name)
+
+        # Check duplication by name and email
+        is_duplicate = False
+        matching_p = None
+
+        for p in existing_participants:
+            p_email = p.email.strip().lower() if p.email else ""
+            # Get additional emails if any
+            custom = p.custom_fields or {}
+            additional = [e.strip().lower() for e in (custom.get("additional_emails") or [])]
+            p_name = clean_name(p.first_name, p.last_name)
+
+            # Match criteria:
+            # 1. Emails match directly
+            # 2. Or one of the additional emails matches
+            # 3. Or names match AND (emails match or one is missing)
+            email_match = False
+            if email_lower:
+                if email_lower == p_email or email_lower in additional:
+                    email_match = True
+
+            if email_match:
+                is_duplicate = True
+                matching_p = p
+                break
+            elif s_name == p_name:
+                if email_lower and p_email:
+                    if email_lower == p_email or email_lower in additional:
+                        is_duplicate = True
+                        matching_p = p
+                        break
+                else:
+                    # At least one has no email, and names match -> duplicate
+                    is_duplicate = True
+                    matching_p = p
+                    break
+
+        if is_duplicate:
+            # Synchronize registration numbers and profile details if needed
+            if matching_p:
+                if matching_p.regno:
+                    if s.regno != matching_p.regno:
+                        s.regno = matching_p.regno
+                else:
+                    # Generate regno for both participant and speaker if missing
+                    number = smallest_available_number(used_numbers)
+                    used_numbers.add(number)
+                    regno = f"{prefix}-{number:04d}"
+                    matching_p.regno = regno
+                    s.regno = regno
+                
+                # Copy/sync details from speaker if present on speaker
+                if s.phone:
+                    matching_p.phone = s.phone
+                if s.affiliation:
+                    matching_p.company = s.affiliation
+                if s.designation:
+                    matching_p.designation = s.designation
+                if s.country:
+                    matching_p.country = s.country
             continue
 
-        payloads.append(ParticipantCreate(
+        # Generate unique sequential registration number for new participant
+        number = smallest_available_number(used_numbers)
+        used_numbers.add(number)
+        regno = f"{prefix}-{number:04d}"
+
+        # Sync regno to the Speaker model
+        s.regno = regno
+
+        # Create Participant record
+        p = Participant(
+            event_id=event.id,
+            regno=regno,
             first_name=s.first_name,
             last_name=s.last_name,
-            name=s.full_name,
-            email=email_lower,
+            email=email_lower or None,
             phone=s.phone,
+            role_id=role_id,
+            role_rel=role_obj,
             company=s.affiliation,
+            designation=s.designation,
             country=s.country,
-            role="Speaker",
-            paid_status="Unpaid",
-            source="speaker_import"
-        ))
-        existing_emails.add(email_lower)
+            paid_status=paid_status,
+            source="speaker_import",
+            custom_fields={},
+        )
+        db.add(p)
+        existing_participants.append(p)
+        inserted_count += 1
 
-    if payloads:
-        # Re-use insert_participants helper
-        inserted_count, _, _ = await insert_participants(db, event.id, payloads, "speaker_import")
-    else:
-        inserted_count = 0
+    if inserted_count > 0 or any(db.is_modified(s) for s in speakers):
+        await db.commit()
 
     return MessageResponse(message=f"Successfully imported {inserted_count} participants from speakers.")
 

@@ -71,6 +71,8 @@ class RegistrationInfoResponse(BaseModel):
 class ParticipantInfoResponse(BaseModel):
     regno: str
     name: str
+    first_name: Optional[str] = ""
+    last_name: Optional[str] = ""
     email: str
     phone: str
     company: str
@@ -105,6 +107,8 @@ class DashboardResponse(BaseModel):
 
 class AttendeeUpdateBody(BaseModel):
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
     designation: Optional[str] = None
@@ -117,6 +121,8 @@ class AttendeeUpdateBody(BaseModel):
 class ParticipantUpdateResponse(BaseModel):
     regno: str
     name: str
+    first_name: Optional[str] = ""
+    last_name: Optional[str] = ""
     phone: str
     company: str
     designation: str
@@ -185,6 +191,8 @@ async def get_portal_dashboard(
             ParticipantInfoResponse(
                 regno=data.participant.regno,
                 name=data.participant.name,
+                first_name=data.participant.first_name,
+                last_name=data.participant.last_name,
                 email=data.participant.email,
                 phone=data.participant.phone,
                 company=data.participant.company,
@@ -317,6 +325,8 @@ async def patch_attendee_details(
     return ParticipantUpdateResponse(
         regno=details.get("regno", ""),
         name=details.get("name", ""),
+        first_name=details.get("first_name", ""),
+        last_name=details.get("last_name", ""),
         phone=details.get("phone", ""),
         company=details.get("company", ""),
         designation=details.get("designation", ""),

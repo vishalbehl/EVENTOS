@@ -27,6 +27,7 @@ export default function UploadPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = params.token as string;
+  const eventId = params.eventId as string;
   const slotId = searchParams.get("slot");
   const posterId = searchParams.get("poster");
 
@@ -41,7 +42,7 @@ export default function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: portal, isLoading } = usePortalAuth(token);
+  const { data: portal, isLoading } = usePortalAuth(eventId, token);
   const requestUpload = useRequestUploadUrl();
   const confirmUpload = useConfirmUpload();
   const requestPosterUpload = useRequestPosterUploadUrl();
@@ -78,7 +79,7 @@ export default function UploadPage() {
         <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
         <h2 className="text-xl font-black mb-2 uppercase tracking-tighter">Invalid Item</h2>
         <p className="text-muted text-sm mb-6 font-bold">This upload slot could not be verified.</p>
-        <Link href={`/${token}`} className="btn-primary w-full rounded-full">Go Back</Link>
+        <Link href={`/${eventId}/${token}`} className="btn-primary w-full rounded-full">Go Back</Link>
       </div>
     </div>
   );
@@ -196,7 +197,7 @@ export default function UploadPage() {
         toast.success("Presentation uploaded successfully!");
       }
       
-      router.push(`/${token}/thankyou`);
+      router.push(`/${eventId}/${token}/thankyou`);
     } catch (err: any) {
       console.error("Upload failed:", err);
       let msg = "System error during upload.";
@@ -229,12 +230,12 @@ export default function UploadPage() {
       {/* Sticky deadline banner */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
 
-      <PortalHeader speakerName={speakerName} token={token} />
+      <PortalHeader speakerName={speakerName} email={portal ? portal.email : ""} token={token} eventId={eventId} />
 
       <main className="flex-1 max-w-4xl mx-auto w-full px-6 md:px-10 py-12">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="mb-12">
           <Link 
-            href={`/${token}`} 
+            href={`/${eventId}/${token}`} 
             className="inline-flex items-center gap-2 text-[10px] font-black text-muted uppercase tracking-[0.2em] hover:text-indigo-400 transition-colors group"
           >
             <ArrowLeft className="h-3 w-3 group-hover:-translate-x-1 transition-transform" /> Back to Hub
@@ -307,7 +308,7 @@ export default function UploadPage() {
                   </p>
                 </div>
                 <Link
-                  href={`/${token}`}
+                  href={`/${eventId}/${token}`}
                   className="mt-4 inline-flex items-center gap-2 text-[10px] font-black text-muted uppercase tracking-[0.2em] hover:text-indigo-400 transition-colors border border-white/10 rounded-full px-6 py-3 hover:border-indigo-500/30"
                 >
                   <ArrowLeft className="h-3 w-3" /> Back to Hub

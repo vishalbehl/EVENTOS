@@ -26,9 +26,23 @@ export interface UserMe {
 
 export type UserRole =
   | "super_admin"
+  | "organiser"
   | "event_organizer"
+  | "admin"
+  | "registration_manager"
+  | "registration_coordinator"
+  | "registration_reviewer"
+  | "badge_manager"
+  | "checkin_staff"
+  | "registration_viewer"
+  | "speaker_manager"
   | "session_manager"
-  | "technical_manager";
+  | "room_manager"
+  | "venue_operator"
+  | "technician"
+  | "technical_manager"
+  | "volunteer"
+  | "viewer";
 
 // ── Organization ──────────────────────────────────────────
 export interface Organization {

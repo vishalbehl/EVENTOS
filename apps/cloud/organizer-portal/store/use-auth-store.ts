@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { UserRole } from '../types/models';
 
 export interface User {
   id: string;
@@ -7,7 +8,7 @@ export interface User {
   first_name: string;
   last_name: string;
   full_name?: string;
-  role: 'super_admin' | 'organiser' | 'admin' | 'session_manager' | 'technician' | 'volunteer';
+  role: UserRole;
   organization_id: string;
   phone?: string;
   avatar_url?: string;
