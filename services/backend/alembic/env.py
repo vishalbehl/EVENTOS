@@ -52,8 +52,14 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)
 def include_object(object, name, type_, reflected, compare_to):
     """
     Filter which objects Alembic tracks during autogenerate.
-    Excludes PostGIS and other system tables.
+    Excludes PostGIS, other system tables, and system schemas.
     """
+    if type_ == "schema":
+        return name in {
+            "auth", "rbac", "speakers", "presentations", 
+            "registration", "notifications", "venue", "public"
+        }
+
     if type_ == "table" and name in (
         "spatial_ref_sys",      # PostGIS
         "geography_columns",    # PostGIS
@@ -82,6 +88,7 @@ def run_migrations_offline() -> None:
         compare_type=True,          # Detect column type changes
         compare_server_default=True, # Detect default value changes
         render_as_batch=False,      # PostgreSQL supports DDL in transactions
+        include_schemas=True,
     )
 
     with context.begin_transaction():
@@ -113,7 +120,7 @@ def run_migrations_online() -> None:
             compare_server_default=True,
             render_as_batch=False,
             # Include schema-level changes
-            include_schemas=False,
+            include_schemas=True,
         )
 
         with context.begin_transaction():

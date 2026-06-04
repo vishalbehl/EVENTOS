@@ -3,11 +3,11 @@ from loguru import logger
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, ConfigDict, EmailStr
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -68,6 +68,8 @@ class SpeakerPortalAuthResponse(BaseModel):
     designation: Optional[str] = None
     affiliation: Optional[str] = None
     country: Optional[str] = None
+    bio: Optional[str] = None
+    photo_url: Optional[str] = None
     event_id: uuid.UUID
     event_name: str
     upload_deadline: Optional[datetime]
@@ -80,6 +82,10 @@ class SpeakerPortalAuthResponse(BaseModel):
     qr_code_url: Optional[str] = None
     theme_color: Optional[str] = None
     upload_token: Optional[str] = None
+    announcements: List[Any] = []
+    social_links: Optional[dict] = None
+    research_interests: Optional[List[str]] = None
+    profile_completeness: int = 0
 
 
 class SpeakerPortalConfigResponse(BaseModel):
@@ -186,6 +192,35 @@ async def speaker_portal_auth(
             rejection_reason=p.rejection_reason
         ))
 
+    # Fetch active announcements
+    from app.modules.notifications.models.announcement import Announcement
+    now_time = datetime.now(timezone.utc)
+    ann_stmt = (
+        select(Announcement)
+        .where(
+            Announcement.event_id == event.id,
+            Announcement.audience.in_(["all", "speakers"]),
+            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
+            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
+        )
+        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    )
+    ann_res = await db.execute(ann_stmt)
+    active_anns = ann_res.scalars().all()
+
+    announcements_list = [
+        {
+            "id": str(ann.id),
+            "title": ann.title,
+            "message": ann.body,
+            "type": ann.priority,
+            "is_pinned": ann.is_pinned,
+            "created_at": ann.created_at.isoformat(),
+            "attachments": ann.attachments or []
+        }
+        for ann in active_anns
+    ]
+
     # Log portal access
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
     db.add(VenueActivityLog(
@@ -197,6 +232,27 @@ async def speaker_portal_auth(
     ))
     await db.commit()
 
+    # Calculate completeness
+    score = 0
+    if speaker.photo_url and speaker.photo_url.strip():
+        score += 20
+    if speaker.bio and speaker.bio.strip():
+        score += 20
+    if speaker.designation and speaker.designation.strip():
+        score += 15
+    if speaker.affiliation and speaker.affiliation.strip():
+        score += 15
+    if speaker.country and speaker.country.strip():
+        score += 10
+    if speaker.social_links:
+        has_social = any(val and str(val).strip() for val in speaker.social_links.values())
+        if has_social:
+            score += 10
+    if speaker.research_interests:
+        has_interest = any(str(item).strip() for item in speaker.research_interests)
+        if has_interest:
+            score += 10
+
     return SpeakerPortalAuthResponse(
         speaker_id=speaker.id,
         first_name=speaker.first_name,
@@ -206,6 +262,8 @@ async def speaker_portal_auth(
         designation=speaker.designation,
         affiliation=speaker.affiliation,
         country=speaker.country,
+        bio=speaker.bio,
+        photo_url=speaker.photo_url,
         event_id=event.id,
         event_name=event.name,
         upload_deadline=event.upload_deadline,
@@ -217,7 +275,11 @@ async def speaker_portal_auth(
         speaker_code=speaker.speaker_code,
         qr_code_url=speaker.qr_code_url,
         theme_color=event.theme_color,
-        upload_token=speaker.upload_token
+        upload_token=speaker.upload_token,
+        announcements=announcements_list,
+        social_links=speaker.social_links,
+        research_interests=speaker.research_interests,
+        profile_completeness=score
     )
 
 
@@ -942,4 +1004,502 @@ async def speaker_verify_otp(
     
     # Return upload_token as the token to redirect to
     return SpeakerOtpTokenResponse(token=target_speaker.upload_token)
+
+
+# ── Profile Management ────────────────────────────────────────
+
+class SpeakerProfileUpdate(BaseModel):
+    designation: Optional[str] = None
+    affiliation: Optional[str] = None
+    country: Optional[str] = None
+    bio: Optional[str] = None
+    phone: Optional[str] = None
+    social_links: Optional[dict] = None
+    research_interests: Optional[List[str]] = None
+    photo_url: Optional[str] = None
+
+
+def calculate_profile_completeness(speaker: Speaker) -> int:
+    score = 0
+    if speaker.photo_url and speaker.photo_url.strip():
+        score += 20
+    if speaker.bio and speaker.bio.strip():
+        score += 20
+    if speaker.designation and speaker.designation.strip():
+        score += 15
+    if speaker.affiliation and speaker.affiliation.strip():
+        score += 15
+    if speaker.country and speaker.country.strip():
+        score += 10
+    if speaker.social_links:
+        has_social = any(val and str(val).strip() for val in speaker.social_links.values())
+        if has_social:
+            score += 10
+    if speaker.research_interests:
+        has_interest = any(str(item).strip() for item in speaker.research_interests)
+        if has_interest:
+            score += 10
+    return score
+
+
+@router.get("/profile/template")
+async def get_profile_template(
+    token: str,
+    format: str = "docx",
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate and download a pre-filled profile template (docx/pptx).
+    """
+    speaker_q = select(Speaker).where(
+        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+    ).options(selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session))
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    talk_title = "Speaker Profile"
+    session_code = "N/A"
+    date_time = "N/A"
+    if speaker.session_speakers:
+        ss = speaker.session_speakers[0]
+        talk_title = ss.presentation_title or "Speaker Profile"
+        session = ss.session
+        session_code = session.session_code if session else "N/A"
+        start = ss.start_time or (session.start_time if session else None)
+        date_time = start.strftime("%Y-%m-%d %H:%M") if start else "N/A"
+
+    from app.modules.speakers.services import profile_parser
+    import io
+    from fastapi.responses import StreamingResponse
+
+    if format.lower() == "pptx":
+        file_bytes = profile_parser.generate_profile_pptx_template(
+            speaker.full_name, talk_title, session_code, date_time
+        )
+        filename = f"{speaker.full_name.replace(' ', '_')}_Profile_Template.pptx"
+        media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    else:
+        file_bytes = profile_parser.generate_profile_docx_template(
+            speaker.full_name, talk_title, session_code, date_time
+        )
+        filename = f"{speaker.full_name.replace(' ', '_')}_Profile_Template.docx"
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+    return StreamingResponse(
+        io.BytesIO(file_bytes),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
+
+@router.post("/profile/template/upload", response_model=SpeakerPortalAuthResponse)
+async def upload_profile_template(
+    token: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload a filled DOCX/PPTX profile template. Extracts details and profile photo.
+    """
+    speaker_q = select(Speaker).where(
+        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+    ).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.posters)
+    )
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    contents = await file.read()
+    filename = file.filename.lower()
+
+    from app.modules.speakers.services import profile_parser
+    if filename.endswith(".pptx"):
+        profile_data, photo_bytes = profile_parser.parse_profile_pptx_template(contents)
+    elif filename.endswith(".docx"):
+        profile_data, photo_bytes = profile_parser.parse_profile_docx_template(contents)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported template format. Please upload DOCX or PPTX.")
+
+    def is_placeholder(val: str) -> bool:
+        if not val:
+            return True
+        v = val.strip().lower()
+        placeholders = [
+            "enter your designation",
+            "enter designation here",
+            "enter your university",
+            "enter organization here",
+            "enter your country",
+            "enter country here",
+            "enter your short biography",
+            "type your biography here",
+            "biography details",
+            "insert or paste profile picture here",
+            "insert profile photo here",
+            "[type your",
+            "[enter"
+        ]
+        return any(p in v for p in placeholders) or (val.strip().startswith("[") and val.strip().endswith("]"))
+
+    # Update fields if not placeholders
+    if "designation" in profile_data and not is_placeholder(profile_data["designation"]):
+        speaker.designation = profile_data["designation"]
+    if "affiliation" in profile_data and not is_placeholder(profile_data["affiliation"]):
+        speaker.affiliation = profile_data["affiliation"]
+    if "country" in profile_data and not is_placeholder(profile_data["country"]):
+        speaker.country = profile_data["country"]
+    if "bio" in profile_data and not is_placeholder(profile_data["bio"]):
+        bio_text = profile_data["bio"]
+        if len(bio_text.split()) > 400:
+            bio_text = " ".join(bio_text.split()[:400])
+        speaker.bio = bio_text
+
+    # Upload extracted photo
+    if photo_bytes:
+        photo_path = f"{speaker.event.organization_id}/{speaker.event_id}/speakers/{speaker.id}/profile_photo.png"
+        bucket = settings.S3_BUCKET_ASSETS
+        try:
+            upload_service.upload_bytes(
+                bucket=bucket,
+                storage_path=photo_path,
+                data=photo_bytes,
+                content_type="image/png"
+            )
+            if settings.STORAGE_MODE == "local":
+                speaker.photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
+            else:
+                speaker.photo_url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{photo_path}"
+        except Exception as e:
+            logger.error(f"Failed to upload profile photo from template: {e}")
+
+    await db.commit()
+    # Reload speaker with selectinload options to prevent lazy loading
+    speaker_q = select(Speaker).where(Speaker.id == speaker.id).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.posters)
+    )
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one()
+
+    # Reconstruct the auth response structure
+    talks = []
+    for ss in speaker.session_speakers:
+        session = ss.session
+        current_file = ss.current_file
+        upload_status = current_file.upload_status if current_file else "pending"
+        is_locked = current_file.is_locked if current_file else False
+        talks.append(PortalTalk(
+            session_speaker_id=ss.id,
+            session_name=session.name,
+            session_code=session.session_code,
+            start_time=ss.start_time or session.start_time,
+            end_time=ss.end_time or session.end_time,
+            talk_title=ss.presentation_title,
+            room_name=None,
+            upload_status=upload_status,
+            is_locked=is_locked,
+            rejection_reason=current_file.rejection_reason if current_file else None
+        ))
+
+    posters = []
+    for p in speaker.posters:
+        posters.append(PortalPoster(
+            id=p.id,
+            title=p.title,
+            authors=p.authors,
+            category=p.category,
+            status=p.status,
+            original_filename=p.original_filename,
+            submitted_at=p.submitted_at,
+            rejection_reason=p.rejection_reason
+        ))
+
+    # Fetch active announcements
+    from app.modules.notifications.models.announcement import Announcement
+    now_time = datetime.now(timezone.utc)
+    ann_stmt = (
+        select(Announcement)
+        .where(
+            Announcement.event_id == speaker.event_id,
+            Announcement.audience.in_(["all", "speakers"]),
+            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
+            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
+        )
+        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    )
+    ann_res = await db.execute(ann_stmt)
+    active_anns = ann_res.scalars().all()
+    announcements_list = [
+        {
+            "id": str(ann.id),
+            "title": ann.title,
+            "message": ann.body,
+            "type": ann.priority,
+            "is_pinned": ann.is_pinned,
+            "created_at": ann.created_at.isoformat(),
+            "attachments": ann.attachments or []
+        }
+        for ann in active_anns
+    ]
+
+    return SpeakerPortalAuthResponse(
+        speaker_id=speaker.id,
+        first_name=speaker.first_name,
+        last_name=speaker.last_name,
+        email=speaker.email,
+        phone=speaker.phone,
+        designation=speaker.designation,
+        affiliation=speaker.affiliation,
+        country=speaker.country,
+        bio=speaker.bio,
+        photo_url=speaker.photo_url,
+        event_id=speaker.event_id,
+        event_name=speaker.event.name,
+        upload_deadline=speaker.event.upload_deadline,
+        max_file_size_mb=speaker.event.max_file_size_mb,
+        allowed_formats=speaker.event.allowed_formats,
+        allow_override=speaker.allow_override,
+        talks=talks,
+        posters=posters,
+        speaker_code=speaker.speaker_code,
+        qr_code_url=speaker.qr_code_url,
+        theme_color=speaker.event.theme_color,
+        upload_token=speaker.upload_token,
+        announcements=announcements_list,
+        social_links=speaker.social_links,
+        research_interests=speaker.research_interests,
+        profile_completeness=calculate_profile_completeness(speaker)
+    )
+
+
+@router.post("/profile/cv/upload")
+async def upload_profile_cv(
+    token: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Extract data from a PDF CV and return the parsed values.
+    """
+    speaker_q = select(Speaker).where(
+        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+    )
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    contents = await file.read()
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF CVs are supported.")
+
+    from app.modules.speakers.services import profile_parser
+    try:
+        extracted = profile_parser.extract_text_from_cv_pdf(contents)
+    except Exception as e:
+        logger.error(f"Failed to parse CV PDF: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse CV: {str(e)}")
+
+    return extracted
+
+
+@router.post("/profile/photo", response_model=dict)
+async def upload_profile_photo(
+    token: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload a speaker profile photo (e.g. from the cropping component).
+    """
+    speaker_q = select(Speaker).where(
+        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+    ).options(selectinload(Speaker.event))
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    contents = await file.read()
+    photo_path = f"{speaker.event.organization_id}/{speaker.event_id}/speakers/{speaker.id}/profile_photo.png"
+    bucket = settings.S3_BUCKET_ASSETS
+    try:
+        upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=photo_path,
+            data=contents,
+            content_type=file.content_type or "image/png"
+        )
+        if settings.STORAGE_MODE == "local":
+            photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
+        else:
+            photo_url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{photo_path}"
+        
+        # Save directly to speaker
+        speaker.photo_url = photo_url
+        await db.commit()
+        
+        return {"photo_url": photo_url}
+    except Exception as e:
+        logger.error(f"Failed to upload profile photo: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
+
+
+@router.patch("/profile", response_model=SpeakerPortalAuthResponse)
+async def update_speaker_profile(
+    token: str,
+    payload: SpeakerProfileUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update speaker profile fields directly. Validates bio word counts.
+    """
+    speaker_q = select(Speaker).where(
+        (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
+    ).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.posters)
+    )
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    if payload.bio is not None:
+        word_count = len(payload.bio.split())
+        if word_count > 400:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Biography exceeds 400 words limit. Current: {word_count} words."
+            )
+        speaker.bio = payload.bio
+
+    if payload.designation is not None:
+        speaker.designation = payload.designation
+    if payload.affiliation is not None:
+        speaker.affiliation = payload.affiliation
+    if payload.country is not None:
+        speaker.country = payload.country
+    if payload.phone is not None:
+        speaker.phone = payload.phone
+    if payload.social_links is not None:
+        speaker.social_links = payload.social_links
+    if payload.research_interests is not None:
+        speaker.research_interests = payload.research_interests
+    if payload.photo_url is not None:
+        speaker.photo_url = payload.photo_url
+
+    await db.commit()
+    # Reload speaker with selectinload options to prevent lazy loading
+    speaker_q = select(Speaker).where(Speaker.id == speaker.id).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.posters)
+    )
+    speaker_res = await db.execute(speaker_q)
+    speaker = speaker_res.scalar_one()
+
+    # Reconstruct the auth response structure
+    talks = []
+    for ss in speaker.session_speakers:
+        session = ss.session
+        current_file = ss.current_file
+        upload_status = current_file.upload_status if current_file else "pending"
+        is_locked = current_file.is_locked if current_file else False
+        talks.append(PortalTalk(
+            session_speaker_id=ss.id,
+            session_name=session.name,
+            session_code=session.session_code,
+            start_time=ss.start_time or session.start_time,
+            end_time=ss.end_time or session.end_time,
+            talk_title=ss.presentation_title,
+            room_name=None,
+            upload_status=upload_status,
+            is_locked=is_locked,
+            rejection_reason=current_file.rejection_reason if current_file else None
+        ))
+
+    posters = []
+    for p in speaker.posters:
+        posters.append(PortalPoster(
+            id=p.id,
+            title=p.title,
+            authors=p.authors,
+            category=p.category,
+            status=p.status,
+            original_filename=p.original_filename,
+            submitted_at=p.submitted_at,
+            rejection_reason=p.rejection_reason
+        ))
+
+    from app.modules.notifications.models.announcement import Announcement
+    now_time = datetime.now(timezone.utc)
+    ann_stmt = (
+        select(Announcement)
+        .where(
+            Announcement.event_id == speaker.event_id,
+            Announcement.audience.in_(["all", "speakers"]),
+            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
+            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
+        )
+        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    )
+    ann_res = await db.execute(ann_stmt)
+    active_anns = ann_res.scalars().all()
+    announcements_list = [
+        {
+            "id": str(ann.id),
+            "title": ann.title,
+            "message": ann.body,
+            "type": ann.priority,
+            "is_pinned": ann.is_pinned,
+            "created_at": ann.created_at.isoformat(),
+            "attachments": ann.attachments or []
+        }
+        for ann in active_anns
+    ]
+
+    return SpeakerPortalAuthResponse(
+        speaker_id=speaker.id,
+        first_name=speaker.first_name,
+        last_name=speaker.last_name,
+        email=speaker.email,
+        phone=speaker.phone,
+        designation=speaker.designation,
+        affiliation=speaker.affiliation,
+        country=speaker.country,
+        bio=speaker.bio,
+        photo_url=speaker.photo_url,
+        event_id=speaker.event_id,
+        event_name=speaker.event.name,
+        upload_deadline=speaker.event.upload_deadline,
+        max_file_size_mb=speaker.event.max_file_size_mb,
+        allowed_formats=speaker.event.allowed_formats,
+        allow_override=speaker.allow_override,
+        talks=talks,
+        posters=posters,
+        speaker_code=speaker.speaker_code,
+        qr_code_url=speaker.qr_code_url,
+        theme_color=speaker.event.theme_color,
+        upload_token=speaker.upload_token,
+        announcements=announcements_list,
+        social_links=speaker.social_links,
+        research_interests=speaker.research_interests,
+        profile_completeness=calculate_profile_completeness(speaker)
+    )
 

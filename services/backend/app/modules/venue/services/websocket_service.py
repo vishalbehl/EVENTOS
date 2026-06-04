@@ -7,11 +7,11 @@
 # Architecture:
 #   - Single global Socket.IO server (AsyncServer)
 #   - Rooms are keyed by event_id: "event:{event_id}"
-#   - Organizer portal connects on login and joins its event room
+#   - Command Center connects on login and joins its event room
 #   - Station, Room, and Moderator apps join on device auth
 #
 # Room membership:
-#   - Organizers join "event:{event_id}" for all organizer notifications
+#   - Command Center connections join "event:{event_id}" for all notifications
 #   - Room apps join "room:{room_id}" for room-specific commands
 #   - SRR technicians join "srr:{event_id}" for ready-room live feed
 #
@@ -66,7 +66,7 @@ socket_app = socketio.ASGIApp(sio, socketio_path="")
 # ── Room name helpers ─────────────────────────────────────────
 
 def event_room(event_id: uuid.UUID | str) -> str:
-    """Socket.IO room for all organizers of an event."""
+    """Socket.IO room for Command Center event connections."""
     return f"event:{event_id}"
 
 
@@ -88,7 +88,7 @@ async def broadcast_to_event(
     event_name: str = "notification",
 ) -> None:
     """
-    Emit an event to all clients in the event's organizer room.
+    Emit an event to all clients in the event's Command Center room.
 
     Used by notification_service to push real-time alerts.
 
@@ -147,7 +147,7 @@ async def connect(sid: str, environ: dict, auth: dict | None = None) -> None:
     Called when a client connects.
 
     Client should pass auth data:
-        { token: "<jwt>" }             for organizer portal
+        { token: "<jwt>" }             for Command Center
         { device_key: "<key>" }        for Electron apps
         { upload_token: "<token>" }    for speaker portal (SRR)
 

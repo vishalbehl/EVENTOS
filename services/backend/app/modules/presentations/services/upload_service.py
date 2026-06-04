@@ -27,6 +27,7 @@ from pathlib import Path
 from loguru import logger
 
 from app.config import settings
+from app.database import tenant_org_id
 
 # Local storage root from settings
 LOCAL_STORAGE_ROOT = Path(settings.STORAGE_LOCAL_PATH)
@@ -108,8 +109,11 @@ def build_presentation_path(
         # Default filename format should be a collision-resistant UUID
         stored_filename = f"{uuid.uuid4()}.{ext}"
         
+    org_id = tenant_org_id.get()
+    prefix = f"{org_id}/" if org_id else ""
+
     if any([event_name, hall_name, session_date, session_name, speaker_name]):
-        storage_path = "/".join(
+        storage_path = prefix + "/".join(
             [
                 "presentations",
                 _safe_path_part(event_name, str(event_id)),
@@ -121,7 +125,7 @@ def build_presentation_path(
             ]
         )
     else:
-        storage_path = f"presentations/{event_id}/{speaker_id}/{stored_filename}"
+        storage_path = f"{prefix}presentations/{event_id}/{speaker_id}/{stored_filename}"
     return storage_path, stored_filename
 
 
@@ -149,8 +153,11 @@ def build_poster_path(
     else:
         stored_filename = f"{base_name}.{ext}"
 
+    org_id = tenant_org_id.get()
+    prefix = f"{org_id}/" if org_id else ""
+
     if any([event_name, hall_name, session_name, speaker_name]):
-        storage_path = "/".join(
+        storage_path = prefix + "/".join(
             [
                 "posters",
                 _safe_path_part(event_name, str(event_id)),
@@ -161,22 +168,26 @@ def build_poster_path(
             ]
         )
     else:
-        storage_path = f"posters/{event_id}/{speaker_id}/{stored_filename}"
+        storage_path = f"{prefix}posters/{event_id}/{speaker_id}/{stored_filename}"
 
     return storage_path, stored_filename
 
 
 def build_import_path(event_id: uuid.UUID, original_filename: str) -> tuple[str, str]:
     """Storage path for Excel schedule import files."""
+    org_id = tenant_org_id.get()
+    prefix = f"{org_id}/" if org_id else ""
     ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "xlsx"
     stored_filename = f"{uuid.uuid4()}.{ext}"
-    storage_path = f"imports/{event_id}/{stored_filename}"
+    storage_path = f"{prefix}imports/{event_id}/{stored_filename}"
     return storage_path, stored_filename
 
 
 def build_thumbnail_path(file_id: uuid.UUID) -> str:
     """Storage path for first-slide thumbnail images."""
-    return f"thumbnails/{file_id}.webp"
+    org_id = tenant_org_id.get()
+    prefix = f"{org_id}/" if org_id else ""
+    return f"{prefix}thumbnails/{file_id}.webp"
 
 
 # ── Pre-signed URL generation ─────────────────────────────────

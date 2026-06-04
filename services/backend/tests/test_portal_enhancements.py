@@ -22,16 +22,34 @@ async def test_get_dashboard_data_unapproved(
     db: AsyncSession,
     event: Event
 ):
-    # 1. Seed unapproved registration settings with multiple announcements
+    # 1. Seed unapproved registration settings with support email and program url
     event.registration_settings = {
         "support_email": "help@test.com",
-        "announcements": [
-            {"id": "ann_1", "message": "Keynote at 9 AM", "type": "info"},
-            {"id": "ann_2", "message": "Bring your ID card", "type": "warning"}
-        ],
         "program_url": "https://test.com/program.pdf"
     }
     db.add(event)
+    await db.flush()
+
+    from app.modules.notifications.models.announcement import Announcement
+    ann1 = Announcement(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        title="ann_1",
+        body="Keynote at 9 AM",
+        priority="info",
+        audience="participants",
+        created_at=datetime.now(timezone.utc)
+    )
+    ann2 = Announcement(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        title="ann_2",
+        body="Bring your ID card",
+        priority="warning",
+        audience="all",
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=1)
+    )
+    db.add_all([ann1, ann2])
     await db.flush()
 
     # 2. Create an unapproved participant registration (status = pending_review)

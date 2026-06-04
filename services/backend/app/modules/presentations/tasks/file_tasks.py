@@ -100,8 +100,8 @@ def validate_poster(self, poster_id_str: str) -> None:
             f"mime={mime_type}, sha256={sha256[:12]}…, size={size_bytes}B"
         )
 
-        # Technical check passed — move to 'under_review' for organizer approval.
-        # The organizer must manually approve or reject via the Organizer Portal.
+        # Technical check passed — move to 'under_review' for reviewer approval.
+        # The reviewer must manually approve or reject via the Command Center.
         poster.status = "under_review"
         db.commit()
-        logger.info(f"[Celery] Poster {poster_id} → under_review ✓ (awaiting organizer approval)")
+        logger.info(f"[Celery] Poster {poster_id} → under_review ✓ (awaiting reviewer approval)")

@@ -16,7 +16,7 @@ class APIRequestLog(Base):
     __tablename__ = "api_request_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, index=True)
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     correlation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
     
     # ── Path & Performance ───────────────────────────────

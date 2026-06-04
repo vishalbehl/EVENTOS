@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, tenant_org_id
 
 # ── Model imports ─────────────────────────────────────────
 from app.modules.rbac.models.event import Event
@@ -53,7 +53,16 @@ async def get_db() -> AsyncSession:
     Usage:
         async def endpoint(db: DB): ...
     """
+    from sqlalchemy import text
     async with AsyncSessionLocal() as session:
+        org_id = tenant_org_id.get()
+        if org_id:
+            await session.execute(
+                text("SET app.current_organization_id = :org_id"),
+                {"org_id": str(org_id)}
+            )
+        else:
+            await session.execute(text("RESET app.current_organization_id"))
         try:
             yield session
         except Exception:
@@ -194,10 +203,12 @@ async def get_current_user(
     Usage:
         async def endpoint(user: CurrentUser): ...
     """
+    print(f"DEBUG: get_current_user user_id={token_data.user_id} org_id={token_data.organization_id}")
     result = await db.execute(
         select(User).where(User.id == token_data.user_id)
     )
     user = result.scalar_one_or_none()
+    print(f"DEBUG: get_current_user found={user}")
 
     if user is None:
         raise HTTPException(
@@ -633,7 +644,7 @@ async def verify_device_key(
     if device is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid device key. Register this device in the Organizer Portal.",
+            detail="Invalid device key. Register this device in the Command Center.",
         )
 
     if device.status == "maintenance":

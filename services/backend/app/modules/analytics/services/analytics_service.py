@@ -2,7 +2,7 @@
 # Conference Platform — Analytics Service
 # backend/app/services/analytics_service.py
 #
-# Provides aggregated statistics for the Organizer Portal
+# Provides aggregated statistics for the Command Center
 # Analytics dashboard.
 #
 # All queries are read-only. Results are computed on-the-fly

@@ -162,6 +162,107 @@ export default function PortalDashboardPage() {
     fetchCountryStates().then(setCountryStates);
   }, []);
 
+  const [activeTab, setActiveTab] = useState<"ticket" | "announcements">("ticket");
+  const [expandedAnnouncements, setExpandedAnnouncements] = useState<Record<string, boolean>>({});
+  const [pdfViewerUrl, setPdfViewerUrl] = useState<string | null>(null);
+  const [pdfViewerTitle, setPdfViewerTitle] = useState<string>("");
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const [lightboxTitle, setLightboxTitle] = useState<string>("");
+
+  useEffect(() => {
+    if (announcementsList && announcementsList.length > 0) {
+      const firstId = announcementsList[0].id || "0";
+      setExpandedAnnouncements(prev => {
+        if (Object.keys(prev).length === 0) {
+          return { [firstId]: true };
+        }
+        return prev;
+      });
+    }
+  }, [announcementsList]);
+
+  const handleAttachmentClick = async (att: any) => {
+    if (att.type === "link") {
+      window.open(att.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    
+    if (att.type === "file" && att.storage_path) {
+      const filename = att.name || "";
+      const ext = filename.split(".").pop()?.toLowerCase() || "";
+      const toastId = toast.loading("Opening attachment...");
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/portal/announcements/signed-url?storage_path=${encodeURIComponent(att.storage_path)}`);
+        if (!res.ok) throw new Error("Failed to get file URL");
+        const d = await res.json();
+        toast.dismiss(toastId);
+        
+        if (ext === "pdf") {
+          setPdfViewerUrl(d.url);
+          setPdfViewerTitle(att.name);
+        } else if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
+          setLightboxImageUrl(d.url);
+          setLightboxTitle(att.name);
+        } else {
+          window.open(d.url, "_blank");
+        }
+      } catch (err: any) {
+        toast.error(err.message || "Failed to load attachment.", { id: toastId });
+      }
+    }
+  };
+
+  const getAttachmentIcon = (att: any) => {
+    if (att.type === "link") {
+      const url = att.url || "";
+      if (url.includes("drive.google.com") || url.includes("docs.google.com")) {
+        return (
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+            <path d="M7.784 14.417L14.773 2.25H9.227L2.239 14.417h5.545z" fill="#0066DA"/>
+            <path d="M16.216 14.417L9.227 26.583h5.546L21.76 14.417H16.216z" fill="#00A859"/>
+            <path d="M20.625 22.083L13.636 9.917h5.546l6.989 12.166H20.625z" fill="#FFCC00"/>
+          </svg>
+        );
+      }
+      if (url.includes("onedrive") || url.includes("sharepoint.com") || url.includes("live.com")) {
+        return (
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="#0078D4"/>
+          </svg>
+        );
+      }
+      if (url.includes("dropbox.com")) {
+        return (
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="#0061FE">
+            <path d="M6 2L1 5.3L6 8.7L11 5.3L6 2Z" />
+            <path d="M18 2L13 5.3L18 8.7L23 5.3L18 2Z" />
+            <path d="M1 11.7L6 15L11 11.7L6 8.3L1 11.7Z" />
+            <path d="M23 11.7L18 15L13 11.7L18 8.3L23 11.7Z" />
+            <path d="M6 16.3V21.3L11 18V13L6 16.3Z" />
+            <path d="M18 16.3V21.3L13 18V13L18 16.3Z" />
+          </svg>
+        );
+      }
+      return <ExternalLink className="h-4 w-4 text-indigo-400 shrink-0" />;
+    }
+
+    const filename = att.name || "";
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
+    if (ext === "pdf") {
+      return <FileText className="h-4 w-4 text-rose-400 shrink-0" />;
+    }
+    if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
+      return <Image className="h-4 w-4 text-emerald-400 shrink-0" />;
+    }
+    if (["docx", "doc"].includes(ext)) {
+      return <FileText className="h-4 w-4 text-blue-400 shrink-0" />;
+    }
+    if (["xlsx", "xls", "csv"].includes(ext)) {
+      return <FileText className="h-4 w-4 text-emerald-500 shrink-0" />;
+    }
+    return <FileText className="h-4 w-4 text-indigo-400 shrink-0" />;
+  };
+
   // Image Editor States
   const [imageEditorOpen, setImageEditorOpen] = useState(false);
   const [imageToEdit, setImageToEdit] = useState<string | null>(null);
@@ -1748,320 +1849,466 @@ export default function PortalDashboardPage() {
             {/* 12-Column Responsive Layout Grid */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
               
-              {/* Left Column - Wider Content Column */}
-              <div className="md:col-span-8 space-y-6">
-
-                {/* Announcements Center (Now at the top) */}
-                {isRegistered && announcementsList.length > 0 && (
-                  <Section title="Event Notifications & Announcements" icon={<Megaphone className="h-4 w-4" />}>
-                    <div className="space-y-4 text-left max-h-[350px] overflow-y-auto pr-2">
-                      {announcementsList.map((ann: any, idx: number) => {
-                        const type = ann.type || "info";
-                        const styles = {
-                          info: { border: "border-indigo-500/20 bg-indigo-500/5", badge: "text-indigo-400 border-indigo-500/25", label: "Notice" },
-                          warning: { border: "border-amber-500/20 bg-amber-500/5", badge: "text-amber-400 border-amber-500/25", label: "Warning" },
-                          success: { border: "border-emerald-500/20 bg-emerald-500/5", badge: "text-emerald-400 border-emerald-500/25", label: "Update" },
-                          error: { border: "border-rose-500/20 bg-rose-500/5", badge: "text-rose-400 border-rose-500/25", label: "Alert" }
-                        }[type as "info" | "warning" | "success" | "error"] || { border: "border-indigo-500/20 bg-indigo-500/5", badge: "text-indigo-400 border-indigo-500/25", label: "Notice" };
-
-                        return (
-                          <div key={ann.id || idx} className={`border rounded-2xl px-5 py-4 ${styles.border}`}>
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <span className={`inline-flex px-1.5 py-0.5 rounded border text-[8px] font-black uppercase tracking-wider ${styles.badge}`}>
-                                {styles.label}
-                              </span>
-                              {ann.created_at && (
-                                <span className="text-[8px] font-bold text-[var(--muted)] uppercase tracking-wider">
-                                  {new Date(ann.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs font-bold text-[var(--muted)] whitespace-pre-line leading-relaxed">
-                              {ann.message}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </Section>
-                )}
-                
-                {/* Registration prompts / non-approved notices */}
-                {!isRegistered && (
-                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-indigo-500/20 bg-indigo-500/[0.02] text-center space-y-5">
-                    <div className="h-12 w-12 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto text-indigo-400">
-                      <User className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Complete Your Registration</h3>
-                      <p className="text-xs text-[var(--muted)] font-bold mt-1">You are currently logged in but haven't submitted the registration form yet.</p>
-                    </div>
-                    <a href={`/${eventId}/register`} className="btn-primary inline-flex items-center gap-2 px-8 h-12 rounded-full font-black uppercase text-xs tracking-wider">
-                      Open Registration Form <ChevronRight className="h-4 w-4" />
-                    </a>
-                  </div>
-                )}
-
-                {isRegistered && registration.status === "waitlisted" && (
-                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-purple-500/20 bg-purple-500/[0.02] text-center space-y-4">
-                    <div className="h-12 w-12 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mx-auto text-purple-400">
-                      <Clock className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Waitlisted</h3>
-                      <p className="text-xs text-[var(--muted)] font-bold mt-1">We are currently at capacity, but we have placed you on the waitlist.</p>
-                    </div>
-                    {registration.waitlist_position && (
-                      <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 px-4 py-2 rounded-xl">
-                        <span className="text-xs font-black text-purple-400 uppercase tracking-widest">
-                          Queue Position: #{registration.waitlist_position}
-                        </span>
-                      </div>
-                    )}
-                    <p className="text-xs font-bold text-[var(--muted)] max-w-md mx-auto leading-relaxed">
-                      We will contact you immediately via email at <span className="text-[#E8EAFF]">{participant?.email}</span> if a spot opens up. Thank you for your patience!
-                    </p>
-                  </div>
-                )}
-
-                {isRegistered && registration.status === "rejected" && (
-                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-rose-500/20 bg-rose-500/[0.02] text-center space-y-4">
-                    <div className="h-12 w-12 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto text-rose-400">
-                      <XCircle className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Registration Status: Not Approved</h3>
-                      <p className="text-xs text-[var(--muted)] font-bold mt-1">Unfortunately, your registration request for this event could not be approved.</p>
-                    </div>
-                    {registration.rejection_reason && (
-                      <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3 max-w-md mx-auto">
-                        <p className="text-xs font-bold text-rose-400 leading-relaxed text-left">
-                          <span className="font-black uppercase tracking-wider block mb-1">Feedback from Organizers:</span>
-                          {registration.rejection_reason}
-                        </p>
-                      </div>
-                    )}
-                    {event.support_email && (
-                      <p className="text-xs font-bold text-[var(--muted)]">
-                        If you believe this is a misunderstanding, please reach out to us at{" "}
-                        <a href={`mailto:${event.support_email}`} className="text-indigo-400 hover:underline font-black">{event.support_email}</a>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {isRegistered && ["submitted", "pending_review"].includes(registration.status) && (
-                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-amber-500/20 bg-amber-500/[0.02] text-center space-y-4">
-                    <div className="h-12 w-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400">
-                      <Clock className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Registration Under Review</h3>
-                      <p className="text-xs text-[var(--muted)] font-bold mt-1">Thank you for submitting your registration. Our team is currently reviewing your details.</p>
-                    </div>
-                    <p className="text-xs font-bold text-[var(--muted)] max-w-md mx-auto leading-relaxed">
-                      We will process your registration shortly and send a confirmation email once a decision has been reached. Please check back later.
-                    </p>
-                    {registration.submitted_at && (
-                      <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest">
-                        Submitted on {fmtDate(registration.submitted_at)}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* Digital Ticket Pass (Approved and Paid/Free) */}
-                {isApproved && participant && (participant.paid_status === "Paid" || getTicketBasePrice() === 0) && (
-                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-white/5 relative overflow-hidden bg-[#0d0e1b]/40 text-center">
-                    {/* Glowing Accent */}
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
-                    <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
-
-                    <div className="flex flex-col lg:flex-row items-center gap-8 relative z-10">
-                      {/* Ticket Card Pass */}
-                      <div className="w-full max-w-[320px] bg-white border-[6px] border-[#6366f1] rounded-[24px] p-6 text-center relative overflow-hidden shadow-2xl shrink-0 flex flex-col items-center mx-auto lg:mx-0 hover-lift-3d">
-                        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 to-purple-500" />
-                        <span className="text-[10px] font-extrabold text-[#6366f1] uppercase tracking-[0.25em] block mb-1">
-                          ENTRY PASS
-                        </span>
-                        <h4 className="text-sm font-extrabold text-[#1e1b4b] uppercase tracking-wider mb-2 max-w-full truncate">
-                          {event.name}
-                        </h4>
-
-                        {/* Perforated separator line */}
-                        <div className="w-full flex items-center justify-between my-2">
-                          <div className="h-4 w-4 bg-[#0d0e1b] rounded-full -ml-8 border-r border-[#6366f1]/20" />
-                          <div className="flex-1 border-t border-dashed border-gray-300 mx-2" />
-                          <div className="h-4 w-4 bg-[#0d0e1b] rounded-full -mr-8 border-l border-[#6366f1]/20" />
-                        </div>
-
-                        <div className="p-2.5 bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl my-3">
-                          <img
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(participant.regno)}`}
-                            alt={`QR code for ${participant.regno}`}
-                            className="w-36 h-36 rounded-xl block"
-                          />
-                        </div>
-
-                        <h3 className="text-base font-extrabold text-[#111827] uppercase tracking-wider mb-1 max-w-full truncate">
-                          {participant.name}
-                        </h3>
-                        <span className="text-xs font-mono font-bold text-[#6366f1] tracking-widest block mb-3">
-                          REG: {participant.regno || "—"}
-                        </span>
-
-                        <span className="inline-block px-4 py-1.5 bg-[#f3f4f6] border border-[#e5e7eb] text-[10px] font-extrabold text-[#4b5563] uppercase tracking-widest rounded-full">
-                          {participant.role}
-                        </span>
-                      </div>
-
-                      {/* Right details / Actions */}
-                      <div className="flex-1 w-full text-left space-y-5">
-                        <div className="space-y-1">
-                          <h4 className="text-lg font-black text-[#E8EAFF] tracking-tight">Your Digital Pass is Ready!</h4>
-                          <p className="text-xs text-[var(--muted)] font-bold leading-relaxed">Present this pass at the registration desk for check-in and instantaneous badge generation.</p>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 py-2 border-y border-white/5">
-                          <div>
-                            <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-0.5">Attendee Category</span>
-                            <span className="text-xs font-extrabold text-indigo-400 uppercase tracking-wider">{participant.role}</span>
-                          </div>
-                          <div>
-                            <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-0.5">Verification Status</span>
-                            <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-emerald-400">
-                              <CheckCircle2 className="h-3.5 w-3.5" /> Verified
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Action Buttons (Simplified) */}
-                        <div className="pt-4 flex flex-wrap gap-2.5">
-                          <button
-                            onClick={() => downloadTicketJPG(participant.regno, participant.name, participant.role, event.name)}
-                            className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider font-bold"
-                          >
-                            <Download className="h-4 w-4 text-indigo-400" /> Download JPG
-                          </button>
-                          <button
-                            onClick={() => downloadTicketPDF(participant.regno, participant.name, participant.role, event.name)}
-                            className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider font-bold"
-                          >
-                            <FileText className="h-4 w-4 text-indigo-400" /> Download PDF
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Payment Details Section */}
-                {isRegistered && payment && (
-                  <Section title="Payment Details" icon={<Ticket className="h-4 w-4" />}>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-left">
-                      <Field label="Transaction ID" value={payment.transaction_id.toUpperCase()} />
-                      <Field label="Amount Paid" value={`${payment.currency} ${payment.amount.toLocaleString()}`} />
-                      <Field label="Payment Date" value={new Date(payment.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })} />
-                      <Field label="Payment Method" value={payment.payment_method ? payment.payment_method.toUpperCase() : "—"} />
-                      {payment.discount_applied > 0 ? (
-                        <Field label="Discount Applied" value={`${payment.currency} ${payment.discount_applied.toLocaleString()}`} />
-                      ) : (
-                        <Field label="Discount Applied" value="None" />
-                      )}
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
-                      <button
-                        onClick={() => downloadReceipt(payment, event, participant)}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 text-xs font-black text-indigo-400 transition-all uppercase tracking-wider font-bold"
-                      >
-                        <FileText className="h-4 w-4" /> Download Receipt
-                      </button>
-                    </div>
-                  </Section>
-                )}
-
-                {/* Checkout Payment required section */}
-                {isApproved && participant && participant.paid_status !== "Paid" && getTicketBasePrice() > 0 && (
-                  <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-amber-500/20 bg-amber-500/[0.02] relative overflow-hidden space-y-6">
-                    <div className="flex items-start gap-4">
-                      <div className="h-10 w-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0 text-amber-400">
-                        <AlertCircle className="h-5 w-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="text-base font-black text-[#E8EAFF]">Payment Verification Pending</h3>
-                        <p className="text-xs text-[var(--muted)] font-bold leading-relaxed">
-                          Your event registration is fully approved! Complete checkout to activate your entry ticket and unlock agenda selection.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-5 rounded-2xl bg-white/5 border border-white/5 space-y-3 text-left">
-                      <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-[var(--muted)] font-bold">
-                        <span>Ticket Category</span>
-                        <span className="text-[#E8EAFF] uppercase tracking-wider">{participant.role}</span>
-                      </div>
-                      
-                      <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-[var(--muted)] font-bold">
-                        <span>Base Cost</span>
-                        <span className="text-[#E8EAFF]">{formConfig?.currency || "INR"} {getTicketBasePrice().toLocaleString()}</span>
-                      </div>
-                      
-                      {appliedPromo && (
-                        <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-emerald-400 font-bold">
-                          <span>Discount Applied ({appliedPromo.code})</span>
-                          <span>-{formConfig?.currency || "INR"} {appliedPromo.discount_amount.toLocaleString()}</span>
-                        </div>
-                      )}
-                      
-                      <div className="flex justify-between items-center pt-2 text-sm font-bold">
-                        <span className="text-[#E8EAFF]">Total Payable</span>
-                        <span className="text-indigo-400 font-black">{formConfig?.currency || "INR"} {getTicketPrice().toLocaleString()}</span>
-                      </div>
-                    </div>
-
-                    {/* Promo validation */}
-                    {formConfig?.payment_enabled && (
-                      <div className="space-y-2 text-left">
-                        <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block">Apply Promo Coupon</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="PROMO CODE"
-                            value={promoCode}
-                            onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                            disabled={appliedPromo !== null || validatingPromo}
-                            className="input flex-1 uppercase tracking-wider text-xs h-11 py-2"
-                          />
-                          {appliedPromo ? (
-                            <button
-                              onClick={() => {
-                                setPromoCode("");
-                                setAppliedPromo(null);
-                              }}
-                              className="px-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-                            >
-                              Remove
-                            </button>
-                          ) : (
-                            <button
-                              onClick={handlePromoApply}
-                              disabled={!promoCode.trim() || validatingPromo}
-                              className="px-5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-                            >
-                              {validatingPromo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
+                {/* Glassmorphic Tab Selector */}
+                {isRegistered && (
+                  <div className="flex gap-2 p-1.5 bg-white/[0.03] border border-white/10 rounded-2xl mb-6 backdrop-blur-md">
                     <button
-                      onClick={() => setCheckoutStep("confirm")}
-                      className="w-full btn-primary h-12 rounded-full flex items-center justify-center gap-2 mt-4 font-black uppercase tracking-widest text-xs"
+                      onClick={() => setActiveTab("ticket")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${
+                        activeTab === "ticket"
+                          ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.15)]"
+                          : "text-[var(--muted)] hover:text-[#E8EAFF] border border-transparent"
+                      }`}
                     >
-                      Proceed to Checkout
+                      <Ticket className="h-4 w-4" /> My Ticket
+                    </button>
+                    <button
+                      onClick={() => setActiveTab("announcements")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all relative ${
+                        activeTab === "announcements"
+                          ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.15)]"
+                          : "text-[var(--muted)] hover:text-[#E8EAFF] border border-transparent"
+                      }`}
+                    >
+                      <Megaphone className="h-4 w-4" /> Announcements 
+                      {announcementsList.length > 0 && (
+                        <span className="h-5 min-w-5 px-1.5 flex items-center justify-center bg-indigo-500 text-white text-[9px] font-black rounded-full shadow-[0_0_8px_rgba(99,102,241,0.5)]">
+                          {announcementsList.length}
+                        </span>
+                      )}
                     </button>
                   </div>
+                )}
+
+                {/* Ticket Tab Content */}
+                {(!isRegistered || activeTab === "ticket") && (
+                  <div className="space-y-6">
+                    {/* Registration prompts / non-approved notices */}
+                    {!isRegistered && (
+                      <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-indigo-500/20 bg-indigo-500/[0.02] text-center space-y-5">
+                        <div className="h-12 w-12 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto text-indigo-400">
+                          <User className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Complete Your Registration</h3>
+                          <p className="text-xs text-[var(--muted)] font-bold mt-1">You are currently logged in but haven't submitted the registration form yet.</p>
+                        </div>
+                        <a href={`/${eventId}/register`} className="btn-primary inline-flex items-center gap-2 px-8 h-12 rounded-full font-black uppercase text-xs tracking-wider">
+                          Open Registration Form <ChevronRight className="h-4 w-4" />
+                        </a>
+                      </div>
+                    )}
+
+                    {isRegistered && registration.status === "waitlisted" && (
+                      <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-purple-500/20 bg-purple-500/[0.02] text-center space-y-4">
+                        <div className="h-12 w-12 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mx-auto text-purple-400">
+                          <Clock className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Waitlisted</h3>
+                          <p className="text-xs text-[var(--muted)] font-bold mt-1">We are currently at capacity, but we have placed you on the waitlist.</p>
+                        </div>
+                        {registration.waitlist_position && (
+                          <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 px-4 py-2 rounded-xl">
+                            <span className="text-xs font-black text-purple-400 uppercase tracking-widest">
+                              Queue Position: #{registration.waitlist_position}
+                            </span>
+                          </div>
+                        )}
+                        <p className="text-xs font-bold text-[var(--muted)] max-w-md mx-auto leading-relaxed">
+                          We will contact you immediately via email at <span className="text-[#E8EAFF]">{participant?.email}</span> if a spot opens up. Thank you for your patience!
+                        </p>
+                      </div>
+                    )}
+
+                    {isRegistered && registration.status === "rejected" && (
+                      <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-rose-500/20 bg-rose-500/[0.02] text-center space-y-4">
+                        <div className="h-12 w-12 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto text-rose-400">
+                          <XCircle className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Registration Status: Not Approved</h3>
+                          <p className="text-xs text-[var(--muted)] font-bold mt-1">Unfortunately, your registration request for this event could not be approved.</p>
+                        </div>
+                        {registration.rejection_reason && (
+                          <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3 max-w-md mx-auto">
+                            <p className="text-xs font-bold text-rose-400 leading-relaxed text-left">
+                              <span className="font-black uppercase tracking-wider block mb-1">Feedback from Organizers:</span>
+                              {registration.rejection_reason}
+                            </p>
+                          </div>
+                        )}
+                        {event.support_email && (
+                          <p className="text-xs font-bold text-[var(--muted)]">
+                            If you believe this is a misunderstanding, please reach out to us at{" "}
+                            <a href={`mailto:${event.support_email}`} className="text-indigo-400 hover:underline font-black">{event.support_email}</a>
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {isRegistered && ["submitted", "pending_review"].includes(registration.status) && (
+                      <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-amber-500/20 bg-amber-500/[0.02] text-center space-y-4">
+                        <div className="h-12 w-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400">
+                          <Clock className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-[#E8EAFF] tracking-tight">Registration Under Review</h3>
+                          <p className="text-xs text-[var(--muted)] font-bold mt-1">Thank you for submitting your registration. Our team is currently reviewing your details.</p>
+                        </div>
+                        <p className="text-xs font-bold text-[var(--muted)] max-w-md mx-auto leading-relaxed">
+                          We will process your registration shortly and send a confirmation email once a decision has been reached. Please check back later.
+                        </p>
+                        {registration.submitted_at && (
+                          <p className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest">
+                            Submitted on {fmtDate(registration.submitted_at)}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Digital Ticket Pass (Approved and Paid/Free) */}
+                    {isApproved && participant && (participant.paid_status === "Paid" || getTicketBasePrice() === 0) && (
+                      <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-white/5 relative overflow-hidden bg-[#0d0e1b]/40 text-center animate-in fade-in duration-300">
+                        {/* Glowing Accent */}
+                        <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
+                        <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+
+                        <div className="flex flex-col lg:flex-row items-center gap-8 relative z-10">
+                          {/* Ticket Card Pass */}
+                          <div className="w-full max-w-[320px] bg-white border-[6px] border-[#6366f1] rounded-[24px] p-6 text-center relative overflow-hidden shadow-2xl shrink-0 flex flex-col items-center mx-auto lg:mx-0 hover-lift-3d">
+                            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 to-purple-500" />
+                            <span className="text-[10px] font-extrabold text-[#6366f1] uppercase tracking-[0.25em] block mb-1">
+                              ENTRY PASS
+                            </span>
+                            <h4 className="text-sm font-extrabold text-[#1e1b4b] uppercase tracking-wider mb-2 max-w-full truncate">
+                              {event.name}
+                            </h4>
+
+                            {/* Perforated separator line */}
+                            <div className="w-full flex items-center justify-between my-2">
+                              <div className="h-4 w-4 bg-[#0d0e1b] rounded-full -ml-8 border-r border-[#6366f1]/20" />
+                              <div className="flex-1 border-t border-dashed border-gray-300 mx-2" />
+                              <div className="h-4 w-4 bg-[#0d0e1b] rounded-full -mr-8 border-l border-[#6366f1]/20" />
+                            </div>
+
+                            <div className="p-2.5 bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl my-3">
+                              <img
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&bgcolor=FFFFFF&color=000000&data=${encodeURIComponent(participant.regno)}`}
+                                alt={`QR code for ${participant.regno}`}
+                                className="w-36 h-36 rounded-xl block"
+                              />
+                            </div>
+
+                            <h3 className="text-base font-extrabold text-[#111827] uppercase tracking-wider mb-1 max-w-full truncate">
+                              {participant.name}
+                            </h3>
+                            <span className="text-xs font-mono font-bold text-[#6366f1] tracking-widest block mb-3">
+                              REG: {participant.regno || "—"}
+                            </span>
+
+                            <span className="inline-block px-4 py-1.5 bg-[#f3f4f6] border border-[#e5e7eb] text-[10px] font-extrabold text-[#4b5563] uppercase tracking-widest rounded-full">
+                              {participant.role}
+                            </span>
+                          </div>
+
+                          {/* Right details / Actions */}
+                          <div className="flex-1 w-full text-left space-y-5">
+                            <div className="space-y-1">
+                              <h4 className="text-lg font-black text-[#E8EAFF] tracking-tight">Your Digital Pass is Ready!</h4>
+                              <p className="text-xs text-[var(--muted)] font-bold leading-relaxed">Present this pass at the registration desk for check-in and instantaneous badge generation.</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4 py-2 border-y border-white/5">
+                              <div>
+                                <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-0.5">Attendee Category</span>
+                                <span className="text-xs font-extrabold text-indigo-400 uppercase tracking-wider">{participant.role}</span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-0.5">Verification Status</span>
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-emerald-400">
+                                  <CheckCircle2 className="h-3.5 w-3.5" /> Verified
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Action Buttons (Simplified) */}
+                            <div className="pt-4 flex flex-wrap gap-2.5">
+                              <button
+                                onClick={() => downloadTicketJPG(participant.regno, participant.name, participant.role, event.name)}
+                                className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider font-bold"
+                              >
+                                <Download className="h-4 w-4 text-indigo-400" /> Download JPG
+                              </button>
+                              <button
+                                onClick={() => downloadTicketPDF(participant.regno, participant.name, participant.role, event.name)}
+                                className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-[#E8EAFF] hover:bg-indigo-500/20 hover:border-indigo-500/30 transition-all uppercase tracking-wider font-bold"
+                              >
+                                <FileText className="h-4 w-4 text-indigo-400" /> Download PDF
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Payment Details Section */}
+                    {isRegistered && payment && (
+                      <Section title="Payment Details" icon={<Ticket className="h-4 w-4" />}>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-left">
+                          <Field label="Transaction ID" value={payment.transaction_id.toUpperCase()} />
+                          <Field label="Amount Paid" value={`${payment.currency} ${payment.amount.toLocaleString()}`} />
+                          <Field label="Payment Date" value={new Date(payment.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })} />
+                          <Field label="Payment Method" value={payment.payment_method ? payment.payment_method.toUpperCase() : "—"} />
+                          {payment.discount_applied > 0 ? (
+                            <Field label="Discount Applied" value={`${payment.currency} ${payment.discount_applied.toLocaleString()}`} />
+                          ) : (
+                            <Field label="Discount Applied" value="None" />
+                          )}
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
+                          <button
+                            onClick={() => downloadReceipt(payment, event, participant)}
+                            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 text-xs font-black text-indigo-400 transition-all uppercase tracking-wider font-bold"
+                          >
+                            <FileText className="h-4 w-4" /> Download Receipt
+                          </button>
+                        </div>
+                      </Section>
+                    )}
+
+                    {/* Checkout Payment required section */}
+                    {isApproved && participant && participant.paid_status !== "Paid" && getTicketBasePrice() > 0 && (
+                      <div className="glass-card p-6 md:p-8 rounded-[2rem] border border-amber-500/20 bg-amber-500/[0.02] relative overflow-hidden space-y-6">
+                        <div className="flex items-start gap-4">
+                          <div className="h-10 w-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0 text-amber-400">
+                            <AlertCircle className="h-5 w-5" />
+                          </div>
+                          <div className="space-y-1">
+                            <h3 className="text-base font-black text-[#E8EAFF]">Payment Verification Pending</h3>
+                            <p className="text-xs text-[var(--muted)] font-bold leading-relaxed">
+                              Your event registration is fully approved! Complete checkout to activate your entry ticket and unlock agenda selection.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-5 rounded-2xl bg-white/5 border border-white/5 space-y-3 text-left">
+                          <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-[var(--muted)] font-bold">
+                            <span>Ticket Category</span>
+                            <span className="text-[#E8EAFF] uppercase tracking-wider">{participant.role}</span>
+                          </div>
+                          
+                          <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-[var(--muted)] font-bold">
+                            <span>Base Cost</span>
+                            <span className="text-[#E8EAFF]">{formConfig?.currency || "INR"} {getTicketBasePrice().toLocaleString()}</span>
+                          </div>
+                          
+                          {appliedPromo && (
+                            <div className="flex justify-between items-center py-1.5 border-b border-white/5 text-xs text-emerald-400 font-bold">
+                              <span>Discount Applied ({appliedPromo.code})</span>
+                              <span>-{formConfig?.currency || "INR"} {appliedPromo.discount_amount.toLocaleString()}</span>
+                            </div>
+                          )}
+                          
+                          <div className="flex justify-between items-center pt-2 text-sm font-bold">
+                            <span className="text-[#E8EAFF]">Total Payable</span>
+                            <span className="text-indigo-400 font-black">{formConfig?.currency || "INR"} {getTicketPrice().toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        {/* Promo validation */}
+                        {formConfig?.payment_enabled && (
+                          <div className="space-y-2 text-left">
+                            <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block">Apply Promo Coupon</label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                placeholder="PROMO CODE"
+                                value={promoCode}
+                                onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                                disabled={appliedPromo !== null || validatingPromo}
+                                className="input flex-1 uppercase tracking-wider text-xs h-11 py-2"
+                              />
+                              {appliedPromo ? (
+                                <button
+                                  onClick={() => {
+                                    setPromoCode("");
+                                    setAppliedPromo(null);
+                                  }}
+                                  className="px-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                                >
+                                  Remove
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={handlePromoApply}
+                                  disabled={!promoCode.trim() || validatingPromo}
+                                  className="px-5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                                >
+                                  {validatingPromo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={() => setCheckoutStep("confirm")}
+                          className="w-full btn-primary h-12 rounded-full flex items-center justify-center gap-2 mt-4 font-black uppercase tracking-widest text-xs"
+                        >
+                          Proceed to Checkout
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Announcements Tab Content */}
+                {isRegistered && activeTab === "announcements" && (
+                  <Section title="Event Notifications & Announcements" icon={<Megaphone className="h-4 w-4" />}>
+                    {announcementsList.length === 0 ? (
+                      <p className="text-xs text-[var(--muted)] text-center py-8 font-bold">No notifications or announcements at this time.</p>
+                    ) : (
+                      <div className="space-y-4 text-left">
+                        {announcementsList.map((ann: any, idx: number) => {
+                          const type = ann.type || "info";
+                          const isPinned = ann.is_pinned;
+                          const isExpanded = !!expandedAnnouncements[ann.id || idx];
+                          
+                          // Priority styles mapping (Red for Critical, Yellow for Warning, Blue for Info)
+                          const styles = {
+                            critical: {
+                              border: "border-rose-500/20 bg-rose-500/[0.02]",
+                              badge: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+                              label: "Critical",
+                              accent: "bg-rose-500"
+                            },
+                            warning: {
+                              border: "border-amber-500/20 bg-amber-500/[0.02]",
+                              badge: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                              label: "Warning",
+                              accent: "bg-amber-500"
+                            },
+                            info: {
+                              border: "border-indigo-500/20 bg-indigo-500/[0.02]",
+                              badge: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+                              label: "Info",
+                              accent: "bg-indigo-500"
+                            },
+                            success: {
+                              border: "border-emerald-500/20 bg-emerald-500/[0.02]",
+                              badge: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                              label: "Success",
+                              accent: "bg-emerald-500"
+                            }
+                          }[type as "critical" | "warning" | "info" | "success"] || {
+                            border: "border-indigo-500/20 bg-indigo-500/[0.02]",
+                            badge: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+                            label: "Notice",
+                            accent: "bg-indigo-500"
+                          };
+
+                          const toggleExpand = () => {
+                            setExpandedAnnouncements(prev => ({
+                              ...prev,
+                              [ann.id || idx]: !prev[ann.id || idx]
+                            }));
+                          };
+
+                          return (
+                            <div
+                              key={ann.id || idx}
+                              className={`border rounded-[1.5rem] overflow-hidden transition-all duration-300 ${styles.border}`}
+                            >
+                              {/* Header: Clickable to toggle collapse */}
+                              <div
+                                onClick={toggleExpand}
+                                className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-white/[0.02] transition-colors"
+                              >
+                                <div className="flex-1 min-w-0 pr-4">
+                                  <div className="flex items-center gap-2 mb-1.5">
+                                    {isPinned && (
+                                      <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-indigo-400 tracking-wide">
+                                        📌 Pinned
+                                      </span>
+                                    )}
+                                    <span className={`inline-flex px-2 py-0.5 rounded-full border text-[8px] font-black uppercase tracking-wider ${styles.badge}`}>
+                                      {styles.label}
+                                    </span>
+                                    {ann.created_at && (
+                                      <span className="text-[8px] font-bold text-[var(--muted)] uppercase tracking-wider">
+                                        {new Date(ann.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <h4 className="text-sm font-black text-[#E8EAFF] tracking-tight truncate">
+                                    {ann.title || "Announcement Update"}
+                                  </h4>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <ChevronRight
+                                    className={`h-4 w-4 text-[var(--muted)] transition-transform duration-300 ${
+                                      isExpanded ? "rotate-90 text-indigo-400" : ""
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Expandable Body */}
+                              <AnimatePresence initial={false}>
+                                {isExpanded && (
+                                  <motion.div
+                                    initial={{ height: 0 }}
+                                    animate={{ height: "auto" }}
+                                    exit={{ height: 0 }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="px-5 pb-5 pt-1 border-t border-white/5 space-y-4">
+                                      <div className="prose prose-invert prose-xs max-w-none text-left leading-relaxed
+                                        prose-headings:text-[#E8EAFF] prose-headings:font-black prose-headings:text-xs
+                                        prose-p:text-[var(--muted)] prose-p:text-[11px] prose-p:leading-relaxed prose-p:my-1
+                                        prose-li:text-[var(--muted)] prose-li:text-[11px] prose-li:my-0
+                                        prose-strong:text-[#E8EAFF] prose-em:text-indigo-300
+                                        prose-a:text-indigo-400 prose-hr:border-white/10 prose-ul:my-1 prose-ol:my-1">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                          {ann.message || ""}
+                                        </ReactMarkdown>
+                                      </div>
+
+                                      {/* Attachments Section */}
+                                      {ann.attachments && ann.attachments.length > 0 && (
+                                        <div className="space-y-2 pt-2 border-t border-white/5">
+                                          <span className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block">
+                                            Attachments ({ann.attachments.length})
+                                          </span>
+                                          <div className="flex flex-wrap gap-2">
+                                            {ann.attachments.map((att: any, attIdx: number) => (
+                                              <button
+                                                key={attIdx}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleAttachmentClick(att);
+                                                }}
+                                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-[10px] font-bold rounded-xl transition-all text-[#E8EAFF]"
+                                              >
+                                                {getAttachmentIcon(att)}
+                                                <span className="truncate max-w-[150px]">{att.name}</span>
+                                                {att.type === "link" && <ExternalLink className="h-3 w-3 opacity-60" />}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </Section>
                 )}
               </div>
 
@@ -3128,6 +3375,82 @@ export default function PortalDashboardPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom PDFViewerModal */}
+      {pdfViewerUrl && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="relative w-full max-w-4xl bg-[#0d0e1b] border border-indigo-500/20 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-8 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01] shrink-0">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-indigo-400" />
+                <h3 className="text-sm font-black uppercase tracking-[0.25em] text-[#E8EAFF] truncate max-w-[200px] sm:max-w-md">
+                  {pdfViewerTitle}
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setPdfViewerUrl(null);
+                  setPdfViewerTitle("");
+                }}
+                className="h-8 w-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-[var(--muted)] hover:text-[#E8EAFF] transition-all"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4 flex-1 bg-black/20">
+              <iframe
+                src={pdfViewerUrl}
+                className="w-full h-[65vh] rounded-2xl border border-white/10 bg-white"
+                title="PDF Document Viewer"
+              />
+            </div>
+            <div className="px-8 py-4 border-t border-white/5 bg-white/[0.01] shrink-0 flex justify-end">
+              <button
+                onClick={() => {
+                  setPdfViewerUrl(null);
+                  setPdfViewerTitle("");
+                }}
+                className="px-6 h-10 rounded-xl bg-white/5 border border-white/10 text-[var(--muted)] font-black text-xs uppercase tracking-wider hover:bg-white/10 transition-all"
+              >
+                Close Viewer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Lightbox Modal */}
+      {lightboxImageUrl && (
+        <div 
+          className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/95 backdrop-blur-md p-4 animate-in fade-in duration-200"
+          onClick={() => {
+            setLightboxImageUrl(null);
+            setLightboxTitle("");
+          }}
+        >
+          <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+            <span className="text-xs font-black text-white/60 uppercase tracking-widest bg-white/5 border border-white/10 px-3 py-1 rounded-full">
+              {lightboxTitle}
+            </span>
+            <button
+              onClick={() => {
+                setLightboxImageUrl(null);
+                setLightboxTitle("");
+              }}
+              className="h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl border border-white/10 shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightboxImageUrl}
+              alt={lightboxTitle}
+              className="max-w-full max-h-[85vh] object-contain rounded-2xl"
+            />
           </div>
         </div>
       )}

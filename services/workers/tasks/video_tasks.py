@@ -116,7 +116,7 @@ def normalise_video_file(self, file_id: str) -> dict:
 )
 def extract_video_metadata(file_id: str) -> dict:
     """
-    Extract and persist video metadata for display in Organizer Portal.
+    Extract and persist video metadata for display in Command Center.
     Non-destructive — does not modify the stored file.
     """
     file_uuid = uuid.UUID(file_id)

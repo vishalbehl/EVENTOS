@@ -1,19 +1,13 @@
 """
-db_to_docx.py  —  PostgreSQL schema → Word document
+inspect_db.py  —  PostgreSQL schema → Word document
 ────────────────────────────────────────────────────
 Usage:
     pip install psycopg2-binary python-docx
-    python db_to_docx.py
+    python inspect_db.py
 
-    DB_URL="postgresql://user:pass@host:5432/db" python db_to_docx.py
+    DB_URL="postgresql://user:pass@host:5432/db" python inspect_db.py
 
 Output:  db_schema_<dbname>.docx
-
-Fixes vs v1:
-  • Partition / child tables excluded  (only parent tables shown)
-  • Page breaks only inserted when the next table won't fit on the
-    remaining space — eliminates blank pages
-  • Two-column TOC reflects the reduced table count
 """
 
 import os, sys, json, datetime, re
@@ -122,34 +116,28 @@ def _page_break(doc):
 
 def db_parent_tables(cur):
     """
-    Return only the top-level (non-partition) tables.
-
-    Strategy:
-      1. Start with all BASE TABLEs in public schema.
-      2. Remove any table that pg_inherits lists as a child (partition or
-         classic inheritance).  This strips _y2026m01, _default, etc.
-      3. Also strip tables whose names match the auto-partition pattern
-         _y<year>m<month> or _default  even if pg_inherits missed them.
+    Return only the top-level (non-partition) tables grouped by schema.
     """
-    # All base tables
+    # All base tables across all user-defined schemas
     cur.execute("""
-        SELECT table_name
+        SELECT table_schema, table_name
         FROM   information_schema.tables
-        WHERE  table_schema = 'public'
+        WHERE  table_schema NOT IN ('pg_catalog', 'information_schema')
+          AND  table_schema NOT LIKE 'pg_toast%'
+          AND  table_schema NOT LIKE 'pg_temp%'
           AND  table_type   = 'BASE TABLE'
-        ORDER  BY table_name
+        ORDER  BY table_schema, table_name
     """)
-    all_tables = {r[0] for r in cur.fetchall()}
+    all_tables = {r for r in cur.fetchall()}
 
     # Tables that are children in pg_inherits
     cur.execute("""
-        SELECT c.relname
+        SELECT n.nspname, c.relname
         FROM   pg_inherits i
         JOIN   pg_class    c ON c.oid = i.inhrelid
         JOIN   pg_namespace n ON n.oid = c.relnamespace
-        WHERE  n.nspname = 'public'
     """)
-    child_tables = {r[0] for r in cur.fetchall()}
+    child_tables = {r for r in cur.fetchall()}
 
     # Regex fallback for any missed partition naming patterns
     partition_re = re.compile(
@@ -157,16 +145,16 @@ def db_parent_tables(cur):
     )
 
     result = []
-    for t in sorted(all_tables):
-        if t in child_tables:
+    for schema, table in sorted(all_tables):
+        if (schema, table) in child_tables:
             continue
-        if partition_re.search(t):
+        if partition_re.search(table):
             continue
-        result.append(t)
+        result.append((schema, table))
 
     return result
 
-def db_columns(cur, table):
+def db_columns(cur, schema, table):
     cur.execute("""
         SELECT c.column_name, c.data_type,
                c.character_maximum_length, c.is_nullable,
@@ -174,39 +162,42 @@ def db_columns(cur, table):
                pgd.description
         FROM   information_schema.columns c
         LEFT   JOIN pg_class       pgc ON pgc.relname  = c.table_name
+                                      AND pgc.relnamespace = (
+                                          SELECT oid FROM pg_namespace WHERE nspname = c.table_schema
+                                      )
         LEFT   JOIN pg_description pgd ON pgd.objoid   = pgc.oid
                                       AND pgd.objsubid = c.ordinal_position
-        WHERE  c.table_schema = 'public' AND c.table_name = %s
+        WHERE  c.table_schema = %s AND c.table_name = %s
         ORDER  BY c.ordinal_position
-    """, (table,))
+    """, (schema, table))
     return cur.fetchall()
 
-def db_constraints(cur, table):
+def db_constraints(cur, schema, table):
     cur.execute("""
         SELECT kcu.column_name, tc.constraint_type
         FROM   information_schema.table_constraints tc
         JOIN   information_schema.key_column_usage  kcu
                ON  tc.constraint_name = kcu.constraint_name
                AND tc.table_schema    = kcu.table_schema
-        WHERE  tc.table_schema = 'public' AND tc.table_name = %s
-    """, (table,))
+        WHERE  tc.table_schema = %s AND tc.table_name = %s
+    """, (schema, table))
     out = {}
     for col, ctype in cur.fetchall():
         out.setdefault(col, []).append(ctype)
     return out
 
-def db_sample(cur, table):
+def db_sample(cur, schema, table):
     try:
-        cur.execute(f'SELECT * FROM "{table}" LIMIT 1')
+        cur.execute(f'SELECT * FROM "{schema}"."{table}" LIMIT 1')
         cols = [d[0] for d in cur.description]
         row  = cur.fetchone()
         return (cols, list(row)) if row else ([], [])
     except Exception:
         return [], []
 
-def db_count(cur, table):
+def db_count(cur, schema, table):
     try:
-        cur.execute(f'SELECT COUNT(*) FROM "{table}"')
+        cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
         return cur.fetchone()[0]
     except Exception:
         return "?"
@@ -248,6 +239,9 @@ def build(tables_data, db_name):
        content_w - 0.3 - 1.4 - 1.2 - 0.5 - 1.0]    
     HDR = ["#", "Column Name", "Data Type", "Nullable", "Constraint", "Default"]
 
+    # Unique schemas list
+    schemas_list = sorted(list({td["schema"] for td in tables_data}))
+
     # ── Cover ──
     _add_para(doc, "Database Schema Reference",
               bold=True, size_pt=22, color=CLR_NAVY,
@@ -255,7 +249,8 @@ def build(tables_data, db_name):
     _add_para(doc,
               f"Database: {db_name}   ·   "
               f"Generated: {datetime.datetime.now().strftime('%d %b %Y %H:%M')}   ·   "
-              f"Tables: {len(tables_data)}",
+              f"Tables: {len(tables_data)}\n"
+              f"Schemas: {', '.join(schemas_list)}",
               italic=True, size_pt=10, color=CLR_GREY,
               before=0, after=60, align=WD_ALIGN_PARAGRAPH.CENTER)
 
@@ -279,7 +274,7 @@ def build(tables_data, db_name):
             if ri < len(items):
                 td  = items[ri]
                 idx = (ri if ci == 0 else ri + half) + 1
-                r1  = p.add_run(f"{idx}. {td['table']}")
+                r1  = p.add_run(f"{idx}. {td['schema']}.{td['table']}")
                 r1.font.name = "Calibri"
                 r1.font.size = Pt(9)
                 r1.bold = True
@@ -296,6 +291,7 @@ def build(tables_data, db_name):
         # which pushes it past the TOC — clean and predictable)
         _page_break(doc)
 
+        schema = td["schema"]
         tname  = td["table"]
         cols   = td["columns"]
         constr = td["constraints"]
@@ -304,9 +300,9 @@ def build(tables_data, db_name):
         rcount = td["row_count"]
 
         # Heading
-        _add_para(doc, f"{idx}. {tname}",
+        _add_para(doc, f"{idx}. {schema}.{tname}",
                   bold=True, size_pt=13, color=CLR_NAVY, before=0, after=10)
-        _add_para(doc, f"Rows: {rcount}   ·   Columns: {len(cols)}",
+        _add_para(doc, f"Schema: {schema}   ·   Rows: {rcount}   ·   Columns: {len(cols)}",
                   italic=True, size_pt=8, color=CLR_GREY, before=0, after=20)
 
         # Schema table
@@ -375,27 +371,28 @@ def main():
         conn = psycopg2.connect(DB_URL)
         conn.set_session(readonly=True)
     except Exception as e:
-        print(f"❌  Connection failed: {e}")
+        print(f"Connection failed: {e}")
         sys.exit(1)
 
     cur     = conn.cursor()
     db_name = DB_URL.rstrip("/").split("/")[-1]
 
-    print("Reading parent tables (partitions excluded)…")
+    print("Reading parent tables across all schemas (partitions excluded)…")
     tables = db_parent_tables(cur)
     print(f"Found {len(tables)} tables (after filtering partitions).\n")
 
     data = []
-    for t in tables:
-        print(f"  {t}")
-        s_cols, s_vals = db_sample(cur, t)
+    for s, t in tables:
+        print(f"  {s}.{t}")
+        s_cols, s_vals = db_sample(cur, s, t)
         data.append({
+            "schema":      s,
             "table":       t,
-            "columns":     db_columns(cur, t),
-            "constraints": db_constraints(cur, t),
+            "columns":     db_columns(cur, s, t),
+            "constraints": db_constraints(cur, s, t),
             "sample_cols": s_cols,
             "sample_vals": s_vals,
-            "row_count":   db_count(cur, t),
+            "row_count":   db_count(cur, s, t),
         })
     conn.close()
 
@@ -403,7 +400,7 @@ def main():
     doc = build(data, db_name)
     out = f"db_schema_{db_name}.docx"
     doc.save(out)
-    print(f"\n✅  Saved: {out}  ({len(data)} tables, partitions excluded)")
+    print(f"\nSaved: {out}  ({len(data)} tables across user schemas, partitions excluded)")
 
 if __name__ == "__main__":
     main()

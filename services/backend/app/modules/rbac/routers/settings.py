@@ -109,7 +109,7 @@ async def update_settings(
 async def get_license_info(event: CurrentEvent) -> LicenseInfo:
     """
     Returns the capabilities unlocked by the event's current license tier.
-    Used by the Organizer Portal Settings → License tab.
+    Used by the Command Center Settings → License tab.
     """
     return LicenseInfo.for_tier(event.license_tier)
 

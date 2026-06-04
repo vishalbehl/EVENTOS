@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
     from app.modules.rbac.models.user_assignment import UserEventAssignment
     from app.modules.rbac.models.rbac import UserRoleAssignment, UserAccessNode, ScopedPermission
+    from app.modules.auth.models.user_organization_membership import UserOrganizationMembership
 
 
 class User(Base):
@@ -109,6 +110,10 @@ class User(Base):
     
     scoped_permissions: Mapped[List["ScopedPermission"]] = relationship(
         "ScopedPermission", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    organization_memberships: Mapped[List["UserOrganizationMembership"]] = relationship(
+        "UserOrganizationMembership", back_populates="user", cascade="all, delete-orphan"
     )
 
     @property

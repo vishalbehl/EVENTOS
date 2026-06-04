@@ -11,6 +11,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.modules.auth.models.user import User
     from app.modules.rbac.models.event import Event
+    from app.modules.auth.models.user_organization_membership import UserOrganizationMembership
 
 
 class Organization(Base):
@@ -50,6 +51,9 @@ class Organization(Base):
     )
     events: Mapped[List["Event"]] = relationship(
         "Event", back_populates="organization", cascade="all, delete-orphan"
+    )
+    memberships: Mapped[List["UserOrganizationMembership"]] = relationship(
+        "UserOrganizationMembership", back_populates="organization", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

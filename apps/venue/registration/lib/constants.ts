@@ -1,1 +1,1 @@
-export const APP_NAME = "Organizer Portal";
+export const APP_NAME = "Venue Registration";

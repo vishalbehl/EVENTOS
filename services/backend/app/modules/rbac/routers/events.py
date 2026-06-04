@@ -251,9 +251,9 @@ async def _perform_nuclear_wipe(event_id: uuid.UUID, db: AsyncSession):
     await db.execute(delete(EmailLog).where(EmailLog.speaker_id.in_(speaker_ids)))
     
     # Many-to-Many and Tables without direct CASCADE relationships in code
-    await db.execute(text("DELETE FROM bundle_files WHERE bundle_id IN (SELECT id FROM presentation_bundles WHERE event_id = :eid)").bindparams(eid=event_id))
-    await db.execute(text("DELETE FROM session_speakers WHERE session_id IN (SELECT id FROM sessions WHERE event_id = :eid)").bindparams(eid=event_id))
-    await db.execute(text("DELETE FROM presentation_queue WHERE session_id IN (SELECT id FROM sessions WHERE event_id = :eid)").bindparams(eid=event_id))
+    await db.execute(text("DELETE FROM presentations.bundle_files WHERE bundle_id IN (SELECT id FROM presentations.presentation_bundles WHERE event_id = :eid)").bindparams(eid=event_id))
+    await db.execute(text("DELETE FROM speakers.session_speakers WHERE session_id IN (SELECT id FROM speakers.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
+    await db.execute(text("DELETE FROM presentations.presentation_queue WHERE session_id IN (SELECT id FROM speakers.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
     
     # 1. Main Tables (presorted for FK dependencies where possible)
     await db.execute(delete(Session).where(Session.event_id == event_id))

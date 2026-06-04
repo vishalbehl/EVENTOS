@@ -34,6 +34,8 @@ export interface SpeakerPortalAuthResponse {
   designation?: string;
   affiliation?: string;
   country?: string;
+  bio?: string;
+  photo_url?: string;
   event_id: string;
   event_name: string;
   upload_deadline: string | null;
@@ -46,6 +48,10 @@ export interface SpeakerPortalAuthResponse {
   qr_code_url?: string;
   theme_color?: string | null;
   upload_token?: string | null;
+  announcements: any[];
+  social_links?: Record<string, string> | null;
+  research_interests?: string[] | null;
+  profile_completeness: number;
 }
 
 export interface SpeakerPortalConfigResponse {

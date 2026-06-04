@@ -713,7 +713,7 @@ async def send_to_speakers(
 ):
     """
     Create a campaign targeting a specific list of speakers and dispatch it immediately.
-    Used by the speaker-row mail button and the bulk-email dialog in the organizer portal.
+    Used by the speaker-row mail button and the bulk-email dialog in the Command Center.
     """
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
 

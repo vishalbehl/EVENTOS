@@ -82,7 +82,7 @@ class WebhookCreateResponse(WebhookResponse):
 
 
 class WebhookDeliverRequest(BaseModel):
-    """Manual test delivery trigger from Organizer Portal."""
+    """Manual test delivery trigger from Command Center."""
     event_type: str
 
     @field_validator("event_type")

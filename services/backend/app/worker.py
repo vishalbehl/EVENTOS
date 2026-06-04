@@ -20,3 +20,34 @@ celery_app.conf.update(
 
 # Autodiscover tasks in app.tasks package
 celery_app.autodiscover_tasks(["app.tasks"])
+
+# ── Celery Worker Multi-Tenancy Signal Handlers ─────────────────
+import uuid
+from celery.signals import before_task_publish, task_prerun, task_postrun
+from app.database import tenant_org_id
+
+@before_task_publish.connect
+def on_task_publish(headers=None, body=None, **kwargs):
+    org_id = tenant_org_id.get()
+    if org_id:
+        if headers is not None:
+            headers["tenant_org_id"] = str(org_id)
+
+@task_prerun.connect
+def on_task_prerun(task_id, task, args, kwargs, **signature):
+    request = task.request
+    # Celery request headers can be in task.request or task.request.headers
+    headers = getattr(request, "headers", None) or request.get("headers", {})
+    org_id_str = headers.get("tenant_org_id")
+    if org_id_str:
+        try:
+            org_id = uuid.UUID(org_id_str)
+            task._tenant_token = tenant_org_id.set(org_id)
+        except ValueError:
+            pass
+
+@task_postrun.connect
+def on_task_postrun(task_id, task, args, kwargs, retval, state, **signature):
+    token = getattr(task, "_tenant_token", None)
+    if token:
+        tenant_org_id.reset(token)

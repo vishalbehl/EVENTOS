@@ -137,7 +137,7 @@ from sqlalchemy import event, text
 def before_insert_participant(mapper, connection, target: Participant):
     if target.role_id is None and hasattr(target, "_role_str") and target._role_str:
         res = connection.execute(
-            text("SELECT id FROM participant_roles WHERE event_id = :event_id AND name = :name"),
+            text("SELECT id FROM registration.participant_roles WHERE event_id = :event_id AND name = :name"),
             {"event_id": target.event_id, "name": target._role_str}
         ).fetchone()
         if res:
@@ -145,7 +145,7 @@ def before_insert_participant(mapper, connection, target: Participant):
         else:
             # Fallback to the first default/active role for the event
             res = connection.execute(
-                text("SELECT id FROM participant_roles WHERE event_id = :event_id AND is_default = true LIMIT 1"),
+                text("SELECT id FROM registration.participant_roles WHERE event_id = :event_id AND is_default = true LIMIT 1"),
                 {"event_id": target.event_id}
             ).fetchone()
             if res:
@@ -155,7 +155,7 @@ def before_insert_participant(mapper, connection, target: Participant):
 def before_update_participant(mapper, connection, target: Participant):
     if hasattr(target, "_role_str") and target._role_str:
         res = connection.execute(
-            text("SELECT id FROM participant_roles WHERE event_id = :event_id AND name = :name"),
+            text("SELECT id FROM registration.participant_roles WHERE event_id = :event_id AND name = :name"),
             {"event_id": target.event_id, "name": target._role_str}
         ).fetchone()
         if res:

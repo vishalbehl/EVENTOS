@@ -120,9 +120,11 @@ async def response_validation_exception_handler(request, exc):
 # so we add them in reverse of the intended flow.
 
 from app.middleware.rbac_middleware import RBACMiddleware
+from app.middleware.tenant_context import TenantContextMiddleware
 
 app.add_middleware(AuditLogMiddleware)
 app.add_middleware(RBACMiddleware)
+app.add_middleware(TenantContextMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(

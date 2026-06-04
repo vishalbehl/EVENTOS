@@ -314,7 +314,7 @@ def send_import_completion_notification(
           <li>⏭ Rows skipped: <strong>{rows_skipped}</strong></li>
           <li>❌ Errors: <strong>{error_count}</strong></li>
         </ul>
-        <p>Log into the Organizer Portal to review the results.</p>
+        <p>Log into the Command Center to review the results.</p>
         """
 
         send_email.delay(

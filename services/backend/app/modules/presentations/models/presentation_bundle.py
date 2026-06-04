@@ -42,7 +42,7 @@ class PresentationBundle(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     chain_mode: Mapped[ChainMode] = mapped_column(
-        Enum(ChainMode), nullable=False, default=ChainMode.manual
+        Enum(ChainMode, inherit_schema=True), nullable=False, default=ChainMode.manual
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

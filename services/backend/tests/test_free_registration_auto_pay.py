@@ -8,6 +8,7 @@ from app.modules.rbac.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.participant_registration import ParticipantRegistration
+from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.routers.participants import (
     create_participant,
     update_participant,
@@ -16,7 +17,6 @@ from app.modules.registration.routers.participants import (
 )
 from app.modules.registration.routers.registrations import helper_approve_registration
 from app.modules.registration.schemas.participant import ParticipantCreate, ParticipantUpdate
-from app.modules.registration.services.pricing_service import TicketPrice
 from app.modules.speakers.models.speaker import Speaker
 
 @pytest.mark.asyncio
@@ -51,18 +51,18 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
 
     # Enable payments for the event
     event.registration_settings = {
-        "payment_enabled": True
+        "payment_enabled": True,
+        "tiers": ["Early Bird", "Standard"]
     }
     db.add(event)
     await db.commit()
 
-    # Seed TicketPrice for VIP (100.0) but leave Delegate and Speaker unset (free/0.0)
-    vip_price = TicketPrice(
+    # Seed TicketType for VIP (100.0) under active tier 'Early Bird'
+    vip_price = TicketType(
         event_id=event.id,
-        role="VIP",
-        amount=100.0,
-        currency="INR",
-        is_active=True
+        role_name="VIP",
+        tier_name="Early Bird",
+        price=100.0
     )
     db.add(vip_price)
     await db.commit()
@@ -137,7 +137,9 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
         email="speaker1@example.com",
         affiliation="Meta",
         designation="Developer",
-        country="India"
+        country="India",
+        upload_token="test_upload_token_speaker1",
+        speaker_code="spk1_code"
     )
     db.add(speaker_model)
     await db.commit()

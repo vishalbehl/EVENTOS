@@ -11,7 +11,7 @@
 #
 #   1. Socket.IO (services/websocket_service.py)
 #      → Full-featured: rooms, namespaces, reconnect, binary.
-#      → Used by Organizer Portal, Room Apps, Moderator App.
+#      → Used by Command Center, Room Apps, Moderator App.
 #      → Mounted at /ws.
 #
 #   2. Native FastAPI WebSockets (this module)

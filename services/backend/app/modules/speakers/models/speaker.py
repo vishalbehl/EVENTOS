@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -56,6 +56,8 @@ class Speaker(Base):
     country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     photo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    social_links: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    research_interests: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
 
     # ── Upload Token (the heart of speaker auth) ──────────
     # Unique token embedded in speaker's email link

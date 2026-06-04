@@ -135,6 +135,36 @@ async def get_dashboard_data(
     config = (await db.execute(config_stmt)).scalar_one_or_none()
     is_live = config.is_live if config else True
 
+    from app.modules.notifications.models.announcement import Announcement
+    from sqlalchemy import or_
+
+    now_time = datetime.now(timezone.utc)
+    ann_stmt = (
+        select(Announcement)
+        .where(
+            Announcement.event_id == event_id,
+            Announcement.audience.in_(["all", "participants"]),
+            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
+            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
+        )
+        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    )
+    ann_res = await db.execute(ann_stmt)
+    active_anns = ann_res.scalars().all()
+
+    announcements_list = [
+        {
+            "id": str(ann.id),
+            "title": ann.title,
+            "message": ann.body,
+            "type": ann.priority,
+            "is_pinned": ann.is_pinned,
+            "created_at": ann.created_at.isoformat(),
+            "attachments": ann.attachments or []
+        }
+        for ann in active_anns
+    ]
+
     reg_settings = event.registration_settings or {}
     event_info = EventInfo(
         name=event.name,
@@ -142,7 +172,7 @@ async def get_dashboard_data(
         end_date=event.end_date,
         venue=event.venue_name or event.location or "",
         support_email=reg_settings.get("support_email", ""),
-        announcements=reg_settings.get("announcements", ""),
+        announcements=announcements_list,
         program_url=reg_settings.get("program_url", ""),
         terms_and_conditions=reg_settings.get("terms_and_conditions", ""),
         faqs=reg_settings.get("faqs", None),

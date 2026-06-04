@@ -16,7 +16,7 @@ from app.modules.registration.routers import (
     payments, portal_auth, portal_dashboard
 )
 from app.modules.analytics.routers import analytics
-from app.modules.notifications.routers import notifications, webhooks
+from app.modules.notifications.routers import notifications, webhooks, announcements
 
 api_router = APIRouter()
 
@@ -30,6 +30,7 @@ api_router.include_router(portal.router)
 api_router.include_router(files.router)
 api_router.include_router(import_jobs.router)
 api_router.include_router(notifications.router)
+api_router.include_router(announcements.router)
 api_router.include_router(srr.router)
 api_router.include_router(rooms_devices.router)
 api_router.include_router(queue.router)

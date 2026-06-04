@@ -33,6 +33,7 @@ from app.modules.auth.models.refresh_token import RefreshToken
 from app.modules.notifications.models.webhook import Webhook
 from app.modules.presentations.models.presentation_bundle import BundleFile, PresentationBundle
 from app.modules.auth.models.security_event import SecurityEvent, SystemErrorLog
+from app.modules.auth.models.user_organization_membership import UserOrganizationMembership
 from app.models.api_request_log import APIRequestLog, WorkerJobLog
 from app.modules.venue.models.venue_telemetry import DeviceHeartbeat, RoomRuntimeEvent, WebsocketEvent
 from app.modules.venue.models.venue_infrastructure import VenueNetworkEvent, VenueSecurityEvent, SyncTransferLog
@@ -51,6 +52,7 @@ from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.registration.models.portal_otp_token import PortalOtpToken
 from app.modules.rbac.models.system_setting import SystemSetting
+from app.modules.notifications.models.announcement import Announcement
 
 __all__ = [
     "Organization", "User", "Event", "Room", "Session",
@@ -61,11 +63,12 @@ __all__ = [
     "PresentationQueue", "PlaybackEvent", "VenueSyncJob",
     "AuditLog", "Poster", "RefreshToken", "Webhook",
     "PresentationBundle", "BundleFile", "SecurityEvent", "SystemErrorLog",
+    "UserOrganizationMembership",
     "APIRequestLog", "WorkerJobLog", "DeviceHeartbeat", "RoomRuntimeEvent",
     "WebsocketEvent", "VenueNetworkEvent", "VenueSecurityEvent", "SyncTransferLog",
     "Role", "Permission", "RolePermission", "UserRoleAssignment", "UserAccessNode", "ScopedPermission", "PermissionAuditLog", "RoleInheritanceMap",
     "Participant", "CheckIn", "PrintTemplate", "TicketType", "RegistrationFormConfig",
     "ParticipantRole", "ParticipantRegistration", "CapacityRule",
     "Printer", "Badge", "BadgeHistory", "BadgePrintJob", "BadgeScan", "AttendanceLog",
-    "PromoCode", "PaymentTransaction", "PortalOtpToken", "SystemSetting"
+    "PromoCode", "PaymentTransaction", "PortalOtpToken", "SystemSetting", "Announcement"
 ]

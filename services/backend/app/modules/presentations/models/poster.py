@@ -20,14 +20,14 @@ class Poster(Base):
 
     Workflow:
         1. Author submits PDF via speaker portal /poster/[token]
-        2. Organizer reviews and approves/rejects in Organizer Portal
+        2. Command Center reviews and approves/rejects in Command Center
         3. Approved poster is assigned to a display screen
         4. ePoster Display App (kiosk) shows all approved posters
 
     status lifecycle:
         pending     → Initial state after organizer creates record
-        submitted   → PDF uploaded, pending organizer review
-        under_review → Organizer has opened it
+        submitted   → PDF uploaded, pending review
+        under_review → Reviewer has opened it
         approved    → Cleared for display
         rejected    → Returned to author with reason
         withdrawn   → Author retracted submission

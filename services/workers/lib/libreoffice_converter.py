@@ -5,7 +5,7 @@
 # Converts PPTX / PPT / KEY files to PDF using LibreOffice.
 # The resulting PDF is used for:
 #   - Thumbnail generation
-#   - Preview in Organizer Portal
+#   - Preview in Command Center
 #   - Fallback rendering on venue PCs without MS Office
 # =============================================================
 

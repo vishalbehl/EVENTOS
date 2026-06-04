@@ -51,6 +51,9 @@ class SessionSpeaker(Base):
     talk_duration_minutes: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True
     )
+    speaker_type: Mapped[Optional[str]] = mapped_column(
+        String(10), nullable=True
+    )
     is_confirmed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )

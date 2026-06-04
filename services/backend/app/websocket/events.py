@@ -382,7 +382,7 @@ async def handle_srr_connection(
 
     Clients:
       - Technician Dashboard (browser)
-      - Ready Room View in Organizer Portal
+      - Ready Room View in Command Center
     """
     room = f"srr:{event_id}"
     await manager.connect(websocket, room)

@@ -50,7 +50,7 @@ def generate_sample():
         adjusted_width = (max_length + 2)
         ws.column_dimensions[column].width = adjusted_width
 
-    wb.save("cloud/organizer-portal/public/samples/sample_agenda.xlsx")
+    wb.save("apps/cloud/command-center/public/samples/sample_agenda.xlsx")
     print("Sample agenda generated successfully.")
 
 if __name__ == "__main__":

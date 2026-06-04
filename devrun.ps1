@@ -10,8 +10,8 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd services/backe
 # 2. Start Celery Worker
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd services/backend; .\.venv\Scripts\activate; python -m celery -A app.worker worker --loglevel=info -P solo" -WindowStyle Normal
 
-# 3. Start Organizer Frontend (Port 3000)
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "npm run dev:organizer" -WindowStyle Normal
+# 3. Start Command Center (Port 3000)
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "npm run dev:command-center" -WindowStyle Normal
 
 # 4. Start Speaker Portal (Port 3002)
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "npm run dev:speaker" -WindowStyle Normal

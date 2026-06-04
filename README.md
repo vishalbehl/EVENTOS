@@ -10,7 +10,7 @@ Welcome to the **EventOS** enterprise monorepo! Following our system-wide struct
 conf-platform/
 ├── apps/                        # Frontend & Client Applications
 │   ├── cloud/                   # Cloud-Hosted Portals (Next.js / React)
-│   │   ├── organizer-portal     # Event control center (Port 3000)
+│   │   ├── command-center       # Ecosystem command center / brain (Port 3000)
 │   │   ├── registration-portal  # Attendee ticketing & badges (Port 3003)
 │   │   └── speaker-portal       # Slide uploads & speaker profile (Port 3002)
 │   └── venue/                   # Offline Venue Client Apps
@@ -92,9 +92,9 @@ python -m uvicorn app.main:app --reload --port 8001
 ### Step 5: Start Frontend Portals
 Start the web portals from the root workspace folder:
 
-* **Organizer Control Portal**:
+* **Command Center**:
   ```bash
-  npm run dev:organizer
+  npm run dev:command-center
   ```
 * **Speaker Portal**:
   ```bash

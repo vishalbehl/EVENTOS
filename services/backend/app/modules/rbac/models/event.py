@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
     from app.modules.notifications.models.webhook import Webhook
     from app.modules.presentations.models.presentation_bundle import PresentationBundle
+    from app.modules.notifications.models.announcement import Announcement
 
 
 class Event(Base):
@@ -285,6 +286,9 @@ class Event(Base):
     )
     presentation_bundles: Mapped[List["PresentationBundle"]] = relationship(
         "PresentationBundle", back_populates="event", cascade="all, delete-orphan"
+    )
+    announcements: Mapped[List["Announcement"]] = relationship(
+        "Announcement", back_populates="event", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

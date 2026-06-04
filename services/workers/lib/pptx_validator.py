@@ -58,7 +58,7 @@ def validate_pptx(data: bytes) -> PptxValidationResult:
     Validate a PPTX file from raw bytes.
 
     Returns a PptxValidationResult containing errors (critical)
-    and warnings (non-blocking) for display in the Organizer Portal.
+    and warnings (non-blocking) for display in the Command Center.
     """
     result = PptxValidationResult()
 

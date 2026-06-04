@@ -247,7 +247,7 @@ def generate_file_thumbnail(self, file_id: str) -> dict:
     default_retry_delay=60,
 )
 def convert_presentation_to_pdf(self, file_id: str) -> dict:
-    """Convert a PPTX/PPT to PDF for browser preview in Organizer Portal."""
+    """Convert a PPTX/PPT to PDF for browser preview in Command Center."""
     file_uuid = uuid.UUID(file_id)
     logger.info(f"[pdf-convert] Starting PDF conversion for file {file_id}")
 

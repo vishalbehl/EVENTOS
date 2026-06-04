@@ -56,7 +56,7 @@ from app.models import (  # ensures all models are registered with Base
     FileValidation, ImportJob, Organization, PlaybackEvent,
     PresentationBundle, BundleFile, PresentationFile, PresentationQueue, Poster, RefreshToken,
     Room, RoomDevice, Session, SessionSpeaker, Speaker,
-    SRRCheckin, SRRStation, User, VenueSyncJob,
+    SRRCheckin, SRRStation, User, VenueSyncJob, UserOrganizationMembership,
 )
 from app.modules.auth.services.auth_service import hash_password
 
@@ -99,7 +99,10 @@ async def setup_test_database():
     Create all tables in the test database once before tests run.
     Drop and recreate to ensure a clean schema.
     """
+    from sqlalchemy import text
     async with _test_engine.begin() as conn:
+        for schema in ["auth", "rbac", "speakers", "presentations", "registration", "notifications", "venue"]:
+            await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     await _test_engine.dispose()
@@ -107,6 +110,9 @@ async def setup_test_database():
     # Teardown: drop everything after the session
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+        from sqlalchemy import text
+        for schema in ["auth", "rbac", "speakers", "presentations", "registration", "notifications", "venue"]:
+            await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
     await _test_engine.dispose()
 
 
@@ -193,6 +199,14 @@ async def organizer(db: AsyncSession, organization: Organization) -> User:
     )
     db.add(user)
     await db.flush()
+
+    membership = UserOrganizationMembership(
+        user_id=user.id,
+        organization_id=organization.id,
+        role="organiser"
+    )
+    db.add(membership)
+    await db.flush()
     return user
 
 
@@ -209,6 +223,14 @@ async def super_admin(db: AsyncSession, organization: Organization) -> User:
         is_active=True,
     )
     db.add(user)
+    await db.flush()
+
+    membership = UserOrganizationMembership(
+        user_id=user.id,
+        organization_id=organization.id,
+        role="super_admin"
+    )
+    db.add(membership)
     await db.flush()
     return user
 
