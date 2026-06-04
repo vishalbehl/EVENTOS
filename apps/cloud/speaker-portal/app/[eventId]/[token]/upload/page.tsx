@@ -18,7 +18,6 @@ import Link from "next/link";
 import axios from "axios";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { PortalHeader } from "@/components/PortalHeader";
 import { TermsModal, RecordingRights } from "@/components/TermsModal";
 import { SpeakerPortalLayout } from "@/components/SpeakerPortalLayout";
 import JSZip from "jszip";
@@ -221,18 +220,22 @@ export default function UploadPage() {
   return (
     <SpeakerPortalLayout
       branding={portal?.branding_settings || {}}
+      termsAndConditions={portal?.terms_and_conditions}
+      faqs={portal?.faqs}
       eventName={portal?.event_name}
       startDate={portal?.start_date}
       endDate={portal?.end_date}
       location={portal?.location}
       venueName={portal?.venue_name}
       organizerName={portal?.organizer_name}
+      email={portal?.email}
+      speakerName={speakerName}
+      token={token}
+      eventId={eventId}
     >
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col w-full">
       {/* Sticky deadline banner */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
-
-      <PortalHeader speakerName={speakerName} email={portal ? portal.email : ""} token={token} eventId={eventId} logoUrl={portal?.branding_settings?.logo_url} />
 
       <main className="flex-1 max-w-4xl mx-auto w-full px-6 md:px-10 py-12">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="mb-12">

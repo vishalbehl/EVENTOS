@@ -327,6 +327,14 @@ async def get_profile_template(
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
 
+    # Redirect to custom template if uploaded
+    speaker_settings = event.speaker_settings or {}
+    profile_settings = speaker_settings.get("profile_settings", {})
+    custom_template_url = profile_settings.get("template_url")
+    if custom_template_url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=custom_template_url)
+
     # 3. Fetch session speakers
     ss_result = await db.execute(
         select(SessionSpeaker)

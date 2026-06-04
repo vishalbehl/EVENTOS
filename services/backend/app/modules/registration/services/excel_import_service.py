@@ -699,16 +699,10 @@ async def _get_or_create_speaker(
         db.add(speaker)
         await db.flush()
         
-        # ── Generate QR Code ──
-        from app.services import qr_service
-        try:
-            qr_url = qr_service.generate_and_upload_speaker_qr(
-                speaker.id, speaker.full_name, event_name, speaker.speaker_code
-            )
-            speaker.qr_code_url = qr_url
-            await db.flush()
-        except Exception as e:
-            logger.warning(f"Failed to generate QR for speaker {speaker.id}: {e}")
+        # ── Set dynamic QR Code ──
+        from app.config import settings
+        speaker.qr_code_url = f"{settings.API_BASE_URL}/api/v1/portal/speaker-qr/{speaker.id}/download?format=jpg"
+        await db.flush()
 
         logger.debug(f"Created speaker: {speaker.full_name} ({row.email})")
         stats["speakers_created"] += 1

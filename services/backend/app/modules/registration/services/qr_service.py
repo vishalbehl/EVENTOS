@@ -117,7 +117,7 @@ def generate_speaker_badge_qr(
         qr_text = reg_no
         code_text = f"Registration No: {reg_no}"
     else:
-        qr_text = f"Speaker: {speaker_name}\nAccess Code: {speaker_code.upper()}"
+        qr_text = speaker_code.upper()
         code_text = f"Access Code: {speaker_code.upper()}"
 
     qr_bytes = generate_qr_code(qr_text, box_size=12, border=3)

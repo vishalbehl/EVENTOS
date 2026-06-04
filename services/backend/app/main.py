@@ -38,6 +38,18 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass  # DB might not be ready yet (e.g. initial boot before migrations)
 
+        # ── Ensure state column in speaker_profiles ────────────
+        try:
+            from sqlalchemy import text
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    text("ALTER TABLE speakers.speaker_profiles ADD COLUMN IF NOT EXISTS state VARCHAR(100);")
+                )
+                await session.commit()
+        except Exception as e:
+            from loguru import logger
+            logger.warning(f"Failed to automatically add state column to speaker_profiles: {e}")
+
     # ── OTP cleanup scheduler ────────────────────────────────
     # Purge portal OTP tokens that are used or expired and older than 24h.
     # Runs every 6 hours. APScheduler is already a project dependency.

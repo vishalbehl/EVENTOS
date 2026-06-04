@@ -253,6 +253,8 @@ export default function SpeakerPortalLoginPage() {
   return (
     <SpeakerPortalLayout
       branding={config.branding_settings || {}}
+      termsAndConditions={config.terms_and_conditions}
+      faqs={config.faqs}
       eventName={config.event_name}
       startDate={config.start_date}
       endDate={config.end_date}

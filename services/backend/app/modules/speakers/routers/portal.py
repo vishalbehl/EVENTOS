@@ -88,11 +88,17 @@ class SpeakerPortalAuthResponse(BaseModel):
     profile_completeness: int = 0
     # Branding & event metadata
     branding_settings: dict = {}
+    terms_and_conditions: Optional[str] = None
+    faqs: List[dict] = []
+    include_default_faqs: bool = True
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     location: Optional[str] = None
     venue_name: Optional[str] = None
     organizer_name: Optional[str] = None
+    profile_settings: Optional[dict] = None
+    reg_no: Optional[str] = None
+    state: Optional[str] = None
 
 
 class SpeakerPortalConfigResponse(BaseModel):
@@ -102,12 +108,16 @@ class SpeakerPortalConfigResponse(BaseModel):
     registration_mode_enabled: bool
     # Full branding blob (speaker overrides merged over global)
     branding_settings: dict = {}
+    terms_and_conditions: Optional[str] = None
+    faqs: List[dict] = []
+    include_default_faqs: bool = True
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     location: Optional[str] = None
     venue_name: Optional[str] = None
     country: Optional[str] = None
     organizer_name: Optional[str] = None
+    profile_settings: Optional[dict] = None
 
 
 
@@ -131,8 +141,32 @@ async def get_speaker_portal_config(
 
     # Merge: global branding_settings as base, speaker_settings.branding as override
     global_branding = event.branding_settings or {}
-    speaker_branding = (event.speaker_settings or {}).get("branding", {})
+    speaker_settings = event.speaker_settings or {}
+    speaker_branding = speaker_settings.get("branding", {})
     effective_branding = {**global_branding, **speaker_branding}
+
+    reg_settings = event.registration_settings or {}
+    terms_and_conditions = speaker_settings.get("terms_and_conditions")
+    if terms_and_conditions is None:
+        terms_and_conditions = reg_settings.get("terms_and_conditions")
+
+    faqs = speaker_settings.get("faqs")
+    if faqs is None:
+        faqs = reg_settings.get("faqs", [])
+
+    include_default_faqs = speaker_settings.get("include_default_faqs")
+    if include_default_faqs is None:
+        include_default_faqs = reg_settings.get("include_default_faqs", True)
+
+    profile_settings = speaker_settings.get("profile_settings") or {
+        "enabled_methods": {
+            "form": True,
+            "template": True,
+            "cv": True
+        },
+        "template_url": None,
+        "template_filename": None
+    }
 
     return SpeakerPortalConfigResponse(
         event_name=event.name,
@@ -140,12 +174,16 @@ async def get_speaker_portal_config(
         speaker_mode_enabled=event.speaker_mode_enabled,
         registration_mode_enabled=event.registration_mode_enabled,
         branding_settings=effective_branding,
+        terms_and_conditions=terms_and_conditions,
+        faqs=faqs,
+        include_default_faqs=include_default_faqs,
         start_date=event.start_date.isoformat() if event.start_date else None,
         end_date=event.end_date.isoformat() if event.end_date else None,
         location=event.location,
         venue_name=event.venue_name,
         country=event.country,
         organizer_name=event.organizer_name,
+        profile_settings=profile_settings,
     )
 
 
@@ -282,6 +320,35 @@ async def speaker_portal_auth(
         if has_interest:
             score += 10
 
+    reg_no = None
+    state_val = None
+    if event.registration_mode_enabled:
+        try:
+            from app.modules.registration.models.participant import Participant
+            part_stmt = select(Participant).where(
+                Participant.event_id == event.id,
+                Participant.email == speaker.email.lower()
+            ).limit(1)
+            part_res = await db.execute(part_stmt)
+            part = part_res.scalar_one_or_none()
+            if part:
+                if part.regno:
+                    reg_no = part.regno
+                if part.custom_fields:
+                    state_val = part.custom_fields.get("country_state") or part.custom_fields.get("state")
+        except Exception:
+            pass
+
+    profile_settings = (event.speaker_settings or {}).get("profile_settings") or {
+        "enabled_methods": {
+            "form": True,
+            "template": True,
+            "cv": True
+        },
+        "template_url": None,
+        "template_filename": None
+    }
+
     return SpeakerPortalAuthResponse(
         speaker_id=speaker.id,
         first_name=speaker.first_name,
@@ -310,11 +377,17 @@ async def speaker_portal_auth(
         research_interests=speaker.research_interests,
         profile_completeness=score,
         branding_settings={**(event.branding_settings or {}), **(event.speaker_settings or {}).get("branding", {})},
+        terms_and_conditions=(event.speaker_settings or {}).get("terms_and_conditions") if (event.speaker_settings or {}).get("terms_and_conditions") is not None else (event.registration_settings or {}).get("terms_and_conditions"),
+        faqs=(event.speaker_settings or {}).get("faqs") if (event.speaker_settings or {}).get("faqs") is not None else (event.registration_settings or {}).get("faqs", []),
+        include_default_faqs=(event.speaker_settings or {}).get("include_default_faqs") if (event.speaker_settings or {}).get("include_default_faqs") is not None else (event.registration_settings or {}).get("include_default_faqs", True),
         start_date=event.start_date.isoformat() if event.start_date else None,
         end_date=event.end_date.isoformat() if event.end_date else None,
         location=event.location,
         venue_name=event.venue_name,
         organizer_name=event.organizer_name,
+        profile_settings=profile_settings,
+        reg_no=reg_no,
+        state=state_val,
     )
 
 
@@ -1088,11 +1161,22 @@ async def get_profile_template(
     """
     speaker_q = select(Speaker).where(
         (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
-    ).options(selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session))
+    ).options(
+        selectinload(Speaker.event),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session)
+    )
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
+
+    # Redirect to custom template if uploaded
+    speaker_settings = speaker.event.speaker_settings or {}
+    profile_settings = speaker_settings.get("profile_settings", {})
+    custom_template_url = profile_settings.get("template_url")
+    if custom_template_url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=custom_template_url)
 
     talk_title = "Speaker Profile"
     session_code = "N/A"

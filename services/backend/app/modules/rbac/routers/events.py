@@ -425,13 +425,14 @@ async def upload_speaker_branding_image(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Authenticated speaker branding image upload.
-    - field="logo"   → stores URL in speaker_settings.branding.logo_url  (replaces)
-    - field="header" → appends URL to speaker_settings.branding.header_images list
-    Returns the new full speaker branding settings dict.
+    Authenticated speaker branding image or template upload.
+    - field="logo"          → stores URL in speaker_settings.branding.logo_url  (replaces)
+    - field="header"        → appends URL to speaker_settings.branding.header_images list
+    - field="template_file" → stores URL in speaker_settings.profile_settings.template_url
+    Returns the new full speaker settings dict.
     """
-    if field not in ("logo", "header"):
-        raise HTTPException(status_code=400, detail="field must be 'logo' or 'header'")
+    if field not in ("logo", "header", "template_file"):
+        raise HTTPException(status_code=400, detail="field must be 'logo', 'header', or 'template_file'")
 
     try:
         contents = await file.read()
@@ -466,24 +467,34 @@ async def upload_speaker_branding_image(
             expiry_seconds=31_536_000,
         )
 
-    # Persist immediately to event.speaker_settings["branding"]
+    # Persist immediately to event.speaker_settings
     speaker_settings = dict(event.speaker_settings or {})
     branding = dict(speaker_settings.get("branding", {}))
     
     if field == "logo":
         branding["logo_url"] = url
-    else:  # header
+        speaker_settings["branding"] = branding
+    elif field == "header":
         images = list(branding.get("header_images", []))
         images.append(url)
         branding["header_images"] = images
         if images:
             branding["banner_url"] = images[0]   # backward compat
+        speaker_settings["branding"] = branding
+    else:  # template_file
+        profile_settings = dict(speaker_settings.get("profile_settings", {}))
+        profile_settings["template_url"] = url
+        profile_settings["template_filename"] = file.filename
+        speaker_settings["profile_settings"] = profile_settings
 
-    speaker_settings["branding"] = branding
     event.speaker_settings = speaker_settings
     await db.commit()
     await db.refresh(event)
 
-    return {"url": url, "branding_settings": branding}
+    return {
+        "url": url,
+        "branding_settings": branding,
+        "profile_settings": speaker_settings.get("profile_settings", {})
+    }
 
 

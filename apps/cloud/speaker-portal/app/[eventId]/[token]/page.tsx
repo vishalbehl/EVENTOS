@@ -15,7 +15,6 @@ import {
   Bell, HelpCircle, Linkedin, Twitter, Tag, X, Sparkles, Check
 } from "lucide-react";
 import Link from "next/link";
-import { PortalHeader } from "@/components/PortalHeader";
 import { DeadlineBanner, DeadlineCountdownBadge } from "@/components/DeadlineBanner";
 import { cn } from "@/lib/utils";
 import { useDeadlineStatus } from "@/hooks/useDeadlineStatus";
@@ -78,6 +77,7 @@ export default function SpeakerLandingPage() {
   const [designation, setDesignation] = useState("");
   const [title, setTitle] = useState("");
   const [organisationName, setOrganisationName] = useState("");
+  const [state, setState] = useState("");
   const [department, setDepartment] = useState("");
   const [city, setCity] = useState("");
   const [country, setCountry] = useState("");
@@ -102,6 +102,12 @@ export default function SpeakerLandingPage() {
   // Sync profile details on load
   useEffect(() => {
     if (portal) {
+      if (portal.profile_settings?.enabled_methods) {
+        const em = portal.profile_settings.enabled_methods;
+        if (em.form) setProfileMode("form");
+        else if (em.template) setProfileMode("template");
+        else if (em.cv) setProfileMode("cv");
+      }
       apiClient.get(`/events/${eventId}/speakers/${portal.speaker_id}/profile?token=${token}`)
         .then(res => {
           const p = res.data;
@@ -110,6 +116,7 @@ export default function SpeakerLandingPage() {
           setOrganisationName(p.organisation_name || "");
           setDepartment(p.department || "");
           setCity(p.city || "");
+          setState(p.state || "");
           setCountry(p.country || "");
           setShortBio(p.bio || "");
           setExtendedBio(p.extended_bio || "");
@@ -125,9 +132,17 @@ export default function SpeakerLandingPage() {
         .catch(() => {
           // If profile not found, fallback to defaults from portal speaker details
           setHasProfile(false);
-          setDesignation(portal.designation || "");
+          const isPrefix = ["Dr.", "Prof.", "Mr.", "Ms.", "Mx."].includes(portal.designation || "");
+          if (isPrefix) {
+            setDesignation(portal.designation || "");
+            setTitle("");
+          } else {
+            setDesignation("Other");
+            setTitle(portal.designation || "");
+          }
           setOrganisationName(portal.affiliation || "");
           setCountry(portal.country || "");
+          setState(portal.state || "");
           setShortBio(portal.bio || "");
           setPhotoUrl(portal.photo_url || "");
           setResearchInterests(portal.research_interests || []);
@@ -276,6 +291,7 @@ export default function SpeakerLandingPage() {
         organisation_name: organisationName,
         department,
         city,
+        state,
         country,
         bio: shortBio,
         extended_bio: extendedBio,
@@ -316,6 +332,7 @@ export default function SpeakerLandingPage() {
         organisation_name: organisationName,
         department,
         city,
+        state,
         country,
         bio: shortBio,
         extended_bio: extendedBio,
@@ -458,18 +475,22 @@ export default function SpeakerLandingPage() {
   return (
     <SpeakerPortalLayout
       branding={portal.branding_settings || {}}
+      termsAndConditions={portal.terms_and_conditions}
+      faqs={portal.faqs}
       eventName={portal.event_name}
       startDate={portal.start_date}
       endDate={portal.end_date}
       location={portal.location}
       venueName={portal.venue_name}
       organizerName={portal.organizer_name}
+      email={portal.email}
+      speakerName={speakerName}
+      token={token}
+      eventId={eventId}
     >
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col w-full">
       {/* Sticky deadline banner */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
-
-      <PortalHeader speakerName={speakerName} email={portal.email} token={token} eventId={eventId} logoUrl={portal?.branding_settings?.logo_url} />
 
 
       {/* 12-Column Responsive Layout Grid */}
@@ -511,8 +532,7 @@ export default function SpeakerLandingPage() {
                     className="space-y-12 flex-1 flex flex-col justify-stretch"
                   >
                     {/* original landing layout */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-10 items-start">
-                      <div className="md:col-span-2 space-y-12">
+                    <div className="space-y-12">
                   {/* Presentations */}
                   <div className="space-y-6">
                     <div className="flex items-center justify-between border-b border-white/5 pb-4">
@@ -616,28 +636,7 @@ export default function SpeakerLandingPage() {
                   )}
                 </div>
 
-                {/* Right side pass */}
-                <div className="space-y-10 md:sticky md:top-24">
-                  {/* Access QR card */}
-                  <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 text-center space-y-6">
-                    <div>
-                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block mb-1">Your Digital Badge</span>
-                      <h3 className="text-xl font-black text-[#E8EAFF]">Entry QR Pass</h3>
-                    </div>
-                    <div className="relative mx-auto max-w-[200px] aspect-[2/3] rounded-[1.5rem] overflow-hidden border border-white/10 bg-white shadow-2xl">
-                      <img 
-                        src={`${apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api/v1'}/portal/speaker-qr/${portal.speaker_id}/download?format=jpg`} 
-                        alt="QR Pass"
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-black text-muted uppercase tracking-widest block mb-1">Access Code</span>
-                      <span className="text-lg font-black text-indigo-400">{portal.speaker_code}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+
             </motion.div>
           )}
 
@@ -653,33 +652,39 @@ export default function SpeakerLandingPage() {
               <div className="md:col-span-2 space-y-8">
                 {/* Mode Select Buttons */}
                 <div className="flex gap-4 border-b border-white/5 pb-4">
-                  <button
-                    onClick={() => setProfileMode("form")}
-                    className={cn(
-                      "pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
-                      profileMode === "form" ? "border-indigo-500 text-indigo-400" : "border-transparent text-muted hover:text-white"
-                    )}
-                  >
-                    Structured Form
-                  </button>
-                  <button
-                    onClick={() => setProfileMode("template")}
-                    className={cn(
-                      "pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
-                      profileMode === "template" ? "border-indigo-500 text-indigo-400" : "border-transparent text-muted hover:text-white"
-                    )}
-                  >
-                    Template Intake
-                  </button>
-                  <button
-                    onClick={() => setProfileMode("cv")}
-                    className={cn(
-                      "pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
-                      profileMode === "cv" ? "border-indigo-500 text-indigo-400" : "border-transparent text-muted hover:text-white"
-                    )}
-                  >
-                    Upload CV (PDF)
-                  </button>
+                  {(!portal.profile_settings || portal.profile_settings.enabled_methods?.form) && (
+                    <button
+                      onClick={() => setProfileMode("form")}
+                      className={cn(
+                        "pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
+                        profileMode === "form" ? "border-indigo-500 text-indigo-400" : "border-transparent text-muted hover:text-white"
+                      )}
+                    >
+                      Structured Form
+                    </button>
+                  )}
+                  {(!portal.profile_settings || portal.profile_settings.enabled_methods?.template) && (
+                    <button
+                      onClick={() => setProfileMode("template")}
+                      className={cn(
+                        "pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
+                        profileMode === "template" ? "border-indigo-500 text-indigo-400" : "border-transparent text-muted hover:text-white"
+                      )}
+                    >
+                      Template Intake
+                    </button>
+                  )}
+                  {(!portal.profile_settings || portal.profile_settings.enabled_methods?.cv) && (
+                    <button
+                      onClick={() => setProfileMode("cv")}
+                      className={cn(
+                        "pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
+                        profileMode === "cv" ? "border-indigo-500 text-indigo-400" : "border-transparent text-muted hover:text-white"
+                      )}
+                    >
+                      Upload CV (PDF)
+                    </button>
+                  )}
                 </div>
 
                 {/* Form Rendering */}
@@ -785,6 +790,17 @@ export default function SpeakerLandingPage() {
                           value={city}
                           onChange={(e) => setCity(e.target.value)}
                           placeholder="e.g. Stanford"
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">State / Province</label>
+                        <input
+                          type="text"
+                          value={state}
+                          onChange={(e) => setState(e.target.value)}
+                          placeholder="e.g. California"
                           className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
                         />
                       </div>
@@ -1091,6 +1107,7 @@ export default function SpeakerLandingPage() {
                                   organisation_name: extractedData.organisation_name || organisationName,
                                   department: extractedData.department || department,
                                   city: extractedData.city || city,
+                                  state: state,
                                   country: extractedData.country || country,
                                   bio: extractedData.bio || shortBio,
                                   extended_bio: extractedData.extended_bio || extendedBio,
@@ -1239,6 +1256,7 @@ export default function SpeakerLandingPage() {
                                   organisation_name: extractedData.organisation_name || organisationName,
                                   department: extractedData.department || department,
                                   city: extractedData.city || city,
+                                  state: state,
                                   country: extractedData.country || country,
                                   bio: extractedData.bio || shortBio,
                                   extended_bio: extractedData.extended_bio || extendedBio,
@@ -1358,8 +1376,8 @@ export default function SpeakerLandingPage() {
           </div> {/* End of Left Column */}
 
           {/* Right Column: Standalone Announcements (4 cols) */}
-          <div className="lg:col-span-4 flex flex-col h-full">
-            <div className="glass-3d rounded-[2rem] overflow-hidden border border-white/5 h-full flex flex-col bg-stone-900/60">
+          <div className="lg:col-span-4 flex flex-col gap-6">
+            <div className="glass-3d rounded-[2rem] overflow-hidden border border-white/5 flex flex-col bg-stone-900/60">
               <div className="flex items-center justify-between px-6 py-5 border-b border-white/5 bg-white/[0.01] shrink-0">
                 <div className="flex items-center gap-3">
                   <span className="text-indigo-400"><Bell className="h-4.5 w-4.5" /></span>
@@ -1476,6 +1494,25 @@ export default function SpeakerLandingPage() {
                 )}
               </div>
             </div>
+
+            {/* Access QR card */}
+            <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 text-center space-y-6 shrink-0">
+              <div>
+                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block mb-1">Your Digital Badge</span>
+                <h3 className="text-xl font-black text-[#E8EAFF]">Entry QR Pass</h3>
+              </div>
+              <div className="relative mx-auto max-w-[200px] aspect-[2/3] rounded-[1.5rem] overflow-hidden border border-white/10 bg-white shadow-2xl">
+                <img 
+                  src={`${apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api/v1'}/portal/speaker-qr/${portal.speaker_id}/download?format=jpg`} 
+                  alt="QR Pass"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div>
+                <span className="text-[10px] font-black text-muted uppercase tracking-widest block mb-1">Access Code</span>
+                <span className="text-lg font-black text-indigo-400">{portal.speaker_code}</span>
+              </div>
+            </div>
           </div>
         </div>
       </main>
@@ -1523,11 +1560,6 @@ export default function SpeakerLandingPage() {
         />
       )}
 
-      <footer className="mt-auto py-12 px-10 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-40">
-          © 2026 EventOS Platform Intelligence
-        </div>
-      </footer>
     </div>
     </SpeakerPortalLayout>
   );

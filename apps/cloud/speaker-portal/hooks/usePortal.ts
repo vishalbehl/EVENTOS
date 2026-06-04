@@ -66,11 +66,25 @@ export interface SpeakerPortalAuthResponse {
   research_interests?: string[] | null;
   profile_completeness: number;
   branding_settings: SpeakerBrandingSettings;
+  terms_and_conditions?: string | null;
+  faqs?: Array<{ q: string; a: string; is_default?: boolean }>;
+  include_default_faqs?: boolean;
   start_date?: string | null;
   end_date?: string | null;
   location?: string | null;
   venue_name?: string | null;
   organizer_name?: string | null;
+  state?: string;
+  reg_no?: string;
+  profile_settings?: {
+    enabled_methods?: {
+      form: boolean;
+      template: boolean;
+      cv: boolean;
+    };
+    template_url?: string | null;
+    template_filename?: string | null;
+  };
 }
 
 export interface SpeakerPortalConfigResponse {
@@ -79,6 +93,9 @@ export interface SpeakerPortalConfigResponse {
   speaker_mode_enabled: boolean;
   registration_mode_enabled: boolean;
   branding_settings: SpeakerBrandingSettings;
+  terms_and_conditions?: string | null;
+  faqs?: Array<{ q: string; a: string; is_default?: boolean }>;
+  include_default_faqs?: boolean;
   start_date?: string | null;
   end_date?: string | null;
   location?: string | null;

@@ -16,6 +16,7 @@ class SpeakerProfileCreate(BaseModel):
     organisation_name: Optional[str] = Field(None, max_length=200)
     department: Optional[str] = Field(None, max_length=200)
     city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
     country: Optional[str] = Field(None, max_length=100)
     website_url: Optional[str] = None
     linkedin_url: Optional[str] = None
@@ -36,6 +37,7 @@ class SpeakerProfileUpdate(BaseModel):
     organisation_name: Optional[str] = Field(None, max_length=200)
     department: Optional[str] = Field(None, max_length=200)
     city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
     country: Optional[str] = Field(None, max_length=100)
     website_url: Optional[str] = None
     linkedin_url: Optional[str] = None
@@ -61,6 +63,7 @@ class SpeakerProfileResponse(BaseModel):
     organisation_name: Optional[str] = None
     department: Optional[str] = None
     city: Optional[str] = None
+    state: Optional[str] = None
     country: Optional[str] = None
     website_url: Optional[str] = None
     linkedin_url: Optional[str] = None

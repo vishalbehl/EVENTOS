@@ -381,15 +381,9 @@ async def manual_register_speaker(
 
 
 
-    # 3. Generate QR if new
+    # 3. Set dynamic QR URL if new
     if not speaker.qr_code_url:
-        try:
-            qr_url = qr_service.generate_and_upload_speaker_qr(
-                speaker.id, speaker.full_name, event.name, speaker.speaker_code
-            )
-            speaker.qr_code_url = qr_url
-        except Exception:
-            pass
+        speaker.qr_code_url = f"{settings.API_BASE_URL}/api/v1/portal/speaker-qr/{speaker.id}/download?format=jpg"
 
     # 4. Handle Quick Invite
     if payload.send_invite:
@@ -520,10 +514,7 @@ async def regenerate_qr(
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
     speaker = await _get_speaker_or_404(db, speaker_id, event.id)
-    qr_url = qr_service.generate_and_upload_speaker_qr(
-        speaker.id, speaker.full_name, event.name, speaker.speaker_code
-    )
-    speaker.qr_code_url = qr_url
+    speaker.qr_code_url = f"{settings.API_BASE_URL}/api/v1/portal/speaker-qr/{speaker.id}/download?format=jpg"
     await db.commit()
     await db.refresh(speaker)
     return SpeakerResponse.model_validate(speaker)
@@ -778,15 +769,9 @@ async def fetch_speakers_from_registration(
 
     if imported_speakers:
         await db.flush()
-        # Generate QR codes
+        # Set dynamic QR codes
         for speaker in imported_speakers:
-            try:
-                qr_url = qr_service.generate_and_upload_speaker_qr(
-                    speaker.id, speaker.full_name, event.name, speaker.speaker_code
-                )
-                speaker.qr_code_url = qr_url
-            except Exception:
-                pass
+            speaker.qr_code_url = f"{settings.API_BASE_URL}/api/v1/portal/speaker-qr/{speaker.id}/download?format=jpg"
         await db.commit()
 
     return MessageResponse(message=f"Successfully imported {imported_count} speakers from registration.")
