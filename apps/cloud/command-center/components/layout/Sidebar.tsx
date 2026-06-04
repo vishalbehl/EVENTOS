@@ -10,7 +10,7 @@ import {
   Users, Calendar, MapPin, FileVideo, Mail,
   MonitorPlay, BarChart3, SlidersHorizontal,
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
-  Bell, FileText, Info, Layout, ClipboardList, Banknote
+  Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
@@ -48,6 +48,8 @@ export function Sidebar() {
     { label: "File Monitoring", icon: FileVideo,        href: `/events/${eventId}/speaker/files`,         permission: PERMISSIONS.FILES_VIEW },
     { label: "Posters",         icon: MonitorPlay,      href: `/events/${eventId}/speaker/eposters`,      permission: PERMISSIONS.POSTERS_VIEW },
     { label: "Campaigns",       icon: Mail,             href: `/events/${eventId}/speaker/emails`,        permission: PERMISSIONS.SETTINGS_EDIT },
+    { label: "Announcements",   icon: Megaphone,        href: `/events/${eventId}/speaker/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
+    { label: "Theme Designer",  icon: Palette,          href: `/events/${eventId}/speaker/theme`,         permission: PERMISSIONS.SETTINGS_EDIT },
     { label: "Notifications",   icon: Bell,             href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
   ].filter(r => !r.permission || checkPermission(r.permission));
 
@@ -60,7 +62,9 @@ export function Sidebar() {
     { label: "Participants", icon: Users, href: `/events/${eventId}/registration/participants` },
     { label: "Financials", icon: Banknote, href: `/events/${eventId}/registration/financials` },
     { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
+    { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/registration/announcements` },
     { label: "Template Designer", icon: Layout, href: `/events/${eventId}/registration/template-designer` },
+    { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/registration/theme` },
     { label: "Certificate Printer", icon: FileText, href: `/events/${eventId}/registration/certificates` },
   ];
 

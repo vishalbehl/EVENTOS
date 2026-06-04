@@ -61,7 +61,8 @@ async def run_verification():
         event.registration_settings = {**event.registration_settings, "disabled_categories": []}
         await db.commit()
 
-        form_data = await get_public_registration_form(event_id=event.id, db=db)
+        from fastapi import Response
+        form_data = await get_public_registration_form(event_id=event.id, response=Response(), db=db)
         role_field = next((f for f in form_data["fields"] if f["id"] == "role"), None)
         if not role_field:
             print("[FAIL] 'role' field not found in form configuration!")
@@ -75,13 +76,13 @@ async def run_verification():
             print("[SUCCESS] 'Organizer' is available in options!")
         else:
             print("[FAIL] 'Organizer' is missing from options.")
-
+ 
         # Verify "Speaker" (Presentation Related) is in options
         if "Speaker" in role_field["options"]:
             print("[SUCCESS] 'Speaker' is available in options!")
         else:
             print("[FAIL] 'Speaker' is missing from options.")
-
+ 
         # 3. Disable "Presentation Related" category
         print("\n--- Disabling 'Presentation Related' Category ---")
         event.registration_settings = {
@@ -89,8 +90,8 @@ async def run_verification():
             "disabled_categories": ["Presentation Related"]
         }
         await db.commit()
-
-        form_data_disabled = await get_public_registration_form(event_id=event.id, db=db)
+ 
+        form_data_disabled = await get_public_registration_form(event_id=event.id, response=Response(), db=db)
         role_field_disabled = next((f for f in form_data_disabled["fields"] if f["id"] == "role"), None)
         print("Active Roles returned on form after disabling 'Presentation Related':")
         print(role_field_disabled["options"])

@@ -9,14 +9,12 @@ import RolesTab from '@/components/registration/settings/RolesTab'
 import CapacityTab from '@/components/registration/settings/CapacityTab'
 // Access control tab component
 import AccessTab from '@/components/registration/settings/AccessTab'
-import SpeakerTab from '@/components/registration/settings/SpeakerTab'
 
 const TABS = [
   { id: 'portal',  label: 'Portal',         icon: Globe },
   { id: 'roles',   label: 'Delegate Roles',  icon: Tag },
   { id: 'capacity', label: 'Capacity',        icon: Box },
   { id: 'access',  label: 'Access Control',  icon: ShieldCheck },
-  { id: 'speaker', label: 'Speaker Portal', icon: Users },
 ]
 
 export default function RegistrationSettings() {
@@ -38,7 +36,7 @@ export default function RegistrationSettings() {
             Registration <span className="text-[var(--pri)]">Config</span>
           </h1>
           <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-muted mt-1">
-            Portal · Roles · Pricing · Access · Speaker
+            Portal · Roles · Pricing · Access
           </p>
         </div>
       </div>
@@ -83,7 +81,6 @@ export default function RegistrationSettings() {
           {activeTab === 'roles'   && <RolesTab   eventId={eid} />}
           {activeTab === 'capacity' && <CapacityTab />}
           {activeTab === 'access'  && <AccessTab   eventId={eid} />}
-          {activeTab === 'speaker' && <SpeakerTab  eventId={eid} />}
         </motion.div>
       </AnimatePresence>
     </div>

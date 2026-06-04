@@ -23,7 +23,7 @@ from app.modules.registration.models.registration_form_config import Registratio
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import (
     ParticipantCreate, ParticipantUpdate, ParticipantResponse,
-    CheckInCreate, CheckInResponse
+    CheckInCreate, CheckInResponse, ExcelImportResponse, SkippedImportRow
 )
 from app.schemas.common import MessageResponse
 from app.modules.registration.services.portal_service import (
@@ -175,7 +175,9 @@ def map_import_row(row: Dict[str, Any], fields: List[Dict[str, Any]]) -> Optiona
     if paid_status not in {"Paid", "Unpaid"}:
         paid_status = "Unpaid"
     default_payload["paid_status"] = paid_status
-    default_payload["role"] = str(default_payload.get("role") or "Delegate").strip()
+    role_val = str(default_payload.get("role") or "Delegate").strip()
+    role_val = re.sub(r"\s*\([^)]*\)", "", role_val).strip()
+    default_payload["role"] = role_val
     default_payload["source"] = str(default_payload.get("source") or "excel_import").strip()
     return ParticipantCreate(**default_payload)
 
@@ -388,6 +390,16 @@ async def list_participants(
     page_size: int = Query(250, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
 ) -> List[ParticipantResponse]:
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_obj = await db.get(Event, event.id)
+    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
+
+    active_prices = {}
+    if payment_enabled:
+        active_prices = await get_active_prices_for_event(db, event_obj)
+
     q = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id)
     
     if search:
@@ -402,13 +414,40 @@ async def list_participants(
     if role:
         q = q.where(Participant.role == role)
     if paid_status:
-        q = q.where(Participant.paid_status == paid_status)
+        if paid_status.lower() == "free":
+            if payment_enabled:
+                from app.modules.registration.models.participant_role import ParticipantRole
+                roles_res = await db.execute(select(ParticipantRole.name).where(ParticipantRole.event_id == event.id))
+                all_roles = roles_res.scalars().all()
+                free_roles = [r for r in all_roles if active_prices.get(r, 0.0) <= 0.0]
+                q = q.where(Participant.role.in_(free_roles))
+        elif paid_status.lower() == "paid":
+            q = q.where(Participant.paid_status == "Paid")
+            if payment_enabled:
+                from app.modules.registration.models.participant_role import ParticipantRole
+                roles_res = await db.execute(select(ParticipantRole.name).where(ParticipantRole.event_id == event.id))
+                all_roles = roles_res.scalars().all()
+                paid_roles = [r for r in all_roles if active_prices.get(r, 0.0) > 0.0]
+                q = q.where(Participant.role.in_(paid_roles))
+            else:
+                # If payment is disabled, no one is "Paid" (everyone is free)
+                q = q.where(1 == 0)
+        else:
+            q = q.where(Participant.paid_status == paid_status)
 
     q = q.order_by(Participant.registered_at.desc())
     q = q.offset((page - 1) * page_size).limit(page_size)
     
     result = await db.execute(q)
-    return list(result.scalars().all())
+    db_participants = list(result.scalars().all())
+
+    response_list = []
+    for p in db_participants:
+        resp = ParticipantResponse.model_validate(p)
+        resp.is_free = not payment_enabled or (active_prices.get(p.role, 0.0) <= 0.0)
+        response_list.append(resp)
+
+    return response_list
 
 
 @router.get("/stats")
@@ -458,6 +497,16 @@ async def create_participant(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    event_obj = await db.get(Event, event.id)
+    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
+
+    active_prices = {}
+    if payment_enabled:
+        active_prices = await get_active_prices_for_event(db, event_obj)
+
     # Check duplicate email and verify merging logic
     if payload.email:
         merged_participant = await verify_and_resolve_registration(
@@ -469,17 +518,11 @@ async def create_participant(
             confirm_merge=payload.confirm_merge
         )
         if merged_participant:
-            return merged_participant
+            resp = ParticipantResponse.model_validate(merged_participant)
+            resp.is_free = not payment_enabled or (active_prices.get(merged_participant.role, 0.0) <= 0.0)
+            return resp
 
-    # Ensure sequential regno is calculated under pricing rules
-    from app.modules.rbac.models.event import Event
-    from app.modules.registration.services.pricing_service import get_active_prices_for_event
-
-    event_obj = await db.get(Event, event.id)
-    role_price = 0.0
-    if event_obj and event_obj.registration_settings and event_obj.registration_settings.get("payment_enabled", False):
-        prices = await get_active_prices_for_event(db, event_obj)
-        role_price = prices.get(payload.role, 0.0)
+    role_price = active_prices.get(payload.role, 0.0) if payment_enabled else 0.0
 
     paid_status = payload.paid_status
     if role_price <= 0.0:
@@ -529,7 +572,11 @@ async def create_participant(
         .options(selectinload(Participant.role_rel))
         .where(Participant.id == participant.id)
     )
-    return res.scalar_one()
+    p = res.scalar_one()
+
+    resp = ParticipantResponse.model_validate(p)
+    resp.is_free = not payment_enabled or (role_price <= 0.0)
+    return resp
 
 
 @router.post("/bulk", response_model=MessageResponse)
@@ -617,12 +664,12 @@ async def download_import_template(
     )
 
 
-@router.post("/import-excel", response_model=MessageResponse)
+@router.post("/import-excel", response_model=ExcelImportResponse)
 async def import_participants_excel(
     event: CurrentEvent,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
+) -> ExcelImportResponse:
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Only .xlsx Excel files are accepted.")
 
@@ -636,20 +683,188 @@ async def import_participants_excel(
 
         headers = [str(value or "").strip() for value in rows[0]]
         fields = await get_registration_fields(db, event.id)
+
+        # 1. Fetch allowed categories/roles for the event
+        from app.modules.registration.models.participant_role import ParticipantRole
+        from app.modules.rbac.models.event import Event
+        
+        event_obj = await db.get(Event, event.id)
+        reg_settings = event_obj.registration_settings or {}
+        disabled_categories = reg_settings.get("disabled_categories", [])
+        
+        roles_stmt = select(ParticipantRole).where(
+            ParticipantRole.event_id == event.id
+        )
+        roles_res = await db.execute(roles_stmt)
+        roles = roles_res.scalars().all()
+        
+        if not roles:
+            from app.modules.registration.routers.participant_roles import seed_default_roles
+            await seed_default_roles(event.id, db)
+            roles_res = await db.execute(roles_stmt)
+            roles = roles_res.scalars().all()
+            
+        allowed_roles = {
+            r.name.strip().lower() for r in roles
+            if r.is_active and r.category not in disabled_categories
+        }
+
+        # 2. Fetch existing registered emails and participants for name+phone matching
+        existing_stmt = select(Participant).where(Participant.event_id == event.id)
+        existing_res = await db.execute(existing_stmt)
+        existing_participants = list(existing_res.scalars().all())
+
+        registered_emails = set()
+        for p in existing_participants:
+            if p.email:
+                registered_emails.add(p.email.strip().lower())
+            custom = p.custom_fields or {}
+            additional = custom.get("additional_emails") or []
+            for e in additional:
+                registered_emails.add(e.strip().lower())
+
+        # 3. Parse and validate row by row
         payload: List[ParticipantCreate] = []
-        for values in rows[1:]:
-            row = {
+        skipped_details: List[SkippedImportRow] = []
+        seen_emails: Set[str] = set()
+
+        for idx, values in enumerate(rows[1:], start=2):
+            # Skip completely empty rows
+            if all(cell is None or str(cell).strip() == "" for cell in values):
+                continue
+
+            row_dict = {
                 headers[index]: values[index]
                 for index in range(min(len(headers), len(values)))
-                if headers[index]
+                if index < len(values) and headers[index]
             }
-            item = map_import_row(row, fields)
+
+            header_map = build_header_field_map(fields)
+            
+            raw_name = ""
+            raw_first_name = ""
+            raw_last_name = ""
+            raw_email = ""
+            raw_phone = ""
+            raw_role = "Delegate"
+
+            for raw_h, raw_v in row_dict.items():
+                h_norm = normalise_header(str(raw_h or ""))
+                f = header_map.get(h_norm)
+                if not f:
+                    continue
+                v_str = str(raw_v).strip() if raw_v is not None else ""
+                f_id = f.get("id") or f.get("name")
+                f_name = f.get("name") or f_id
+
+                if f_id == "name" or f_name == "name":
+                    raw_name = v_str
+                elif f_id == "first_name" or f_name == "first_name":
+                    raw_first_name = v_str
+                elif f_id == "last_name" or f_name == "last_name":
+                    raw_last_name = v_str
+                elif f_id == "email" or f_name == "email":
+                    raw_email = v_str.lower()
+                elif f_id == "phone" or f_name == "phone":
+                    raw_phone = v_str
+                elif f_id == "role" or f_name == "role":
+                    raw_role = v_str
+
+            # Check missing name
+            if not raw_name and not raw_first_name:
+                skipped_details.append(SkippedImportRow(
+                    row=idx,
+                    name=None,
+                    email=raw_email or None,
+                    role=raw_role or None,
+                    reason="First Name or Full Name is required."
+                ))
+                continue
+
+            # Check missing email
+            if not raw_email:
+                skipped_details.append(SkippedImportRow(
+                    row=idx,
+                    name=raw_name or f"{raw_first_name} {raw_last_name}".strip(),
+                    email=None,
+                    role=raw_role or None,
+                    reason="Email address is required."
+                ))
+                continue
+
+            # Validate email format
+            email_regex = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+            if not re.match(email_regex, raw_email):
+                skipped_details.append(SkippedImportRow(
+                    row=idx,
+                    name=raw_name or f"{raw_first_name} {raw_last_name}".strip(),
+                    email=raw_email,
+                    role=raw_role or None,
+                    reason="Invalid email address format."
+                ))
+                continue
+
+            # Check role allowed (strip out parenthesized codes like (DEL) if present)
+            clean_role = re.sub(r"\s*\([^)]*\)", "", raw_role or "").strip()
+            role_key = clean_role.lower() if clean_role else "delegate"
+            if role_key not in allowed_roles:
+                skipped_details.append(SkippedImportRow(
+                    row=idx,
+                    name=raw_name or f"{raw_first_name} {raw_last_name}".strip(),
+                    email=raw_email,
+                    role=raw_role,
+                    reason=f"Registration category '{raw_role}' is not allowed or is disabled for this event."
+                ))
+                continue
+
+            # Check duplicate email
+            if raw_email in registered_emails:
+                skipped_details.append(SkippedImportRow(
+                    row=idx,
+                    name=raw_name or f"{raw_first_name} {raw_last_name}".strip(),
+                    email=raw_email,
+                    role=raw_role,
+                    reason="Email address is already registered."
+                ))
+                continue
+
+            if raw_email in seen_emails:
+                skipped_details.append(SkippedImportRow(
+                    row=idx,
+                    name=raw_name or f"{raw_first_name} {raw_last_name}".strip(),
+                    email=raw_email,
+                    role=raw_role,
+                    reason="Duplicate email address in Excel sheet."
+                ))
+                continue
+
+            # Check Name + Phone match for merging
+            match_found = False
+            if (raw_name or raw_first_name) and raw_phone:
+                for p in existing_participants:
+                    n1 = " ".join((raw_name or f"{raw_first_name} {raw_last_name}").strip().lower().split())
+                    n2 = " ".join((p.name or "").strip().lower().split())
+                    if n1 == n2 and phone_numbers_match(raw_phone, p.phone):
+                        match_found = True
+                        break
+
+            item = map_import_row(row_dict, fields)
             if item:
                 payload.append(item)
+                seen_emails.add(raw_email)
+                if match_found:
+                    registered_emails.add(raw_email)
 
         inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "excel_import")
-        return MessageResponse(
-            message=f"Import complete: {inserted} active participants imported, {waitlisted} waitlisted, {merged} merged."
+        skipped = len(skipped_details)
+
+        return ExcelImportResponse(
+            message=f"Import complete: {inserted} active participants imported, {waitlisted} waitlisted, {merged} merged, {skipped} skipped.",
+            inserted=inserted,
+            waitlisted=waitlisted,
+            merged=merged,
+            skipped=skipped,
+            skipped_details=skipped_details
         )
     except HTTPException:
         raise
@@ -820,7 +1035,13 @@ async def update_participant(
         .options(selectinload(Participant.role_rel))
         .where(Participant.id == p.id)
     )
-    return res.scalar_one()
+    p_updated = res.scalar_one()
+
+    role_price = active_prices.get(p_updated.role, 0.0) if payment_enabled else 0.0
+
+    resp = ParticipantResponse.model_validate(p_updated)
+    resp.is_free = not payment_enabled or (role_price <= 0.0)
+    return resp
 
 
 @router.delete("/{participant_id}", response_model=MessageResponse)

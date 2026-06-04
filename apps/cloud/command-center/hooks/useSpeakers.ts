@@ -27,6 +27,7 @@ export interface SpeakerSummary {
   files_uploaded?: number;
   files_approved?: number;
   files_total?: number;
+  profile_completeness?: number;
 }
 
 export interface SpeakerTalk {
@@ -39,6 +40,7 @@ export interface SpeakerTalk {
   end_time: string;
   talk_title?: string;
   talk_order: number;
+  speaker_type?: string;
   session_status: string;
   file_status: string; // "approved" | "uploaded" | "pending"
   files_uploaded: number;

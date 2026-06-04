@@ -166,17 +166,33 @@ async def get_dashboard_data(
     ]
 
     reg_settings = event.registration_settings or {}
+    
+    from app.modules.registration.routers.registration_portal import DEFAULT_FAQS, DEFAULT_TERMS
+    
+    terms = reg_settings.get("terms_and_conditions") or DEFAULT_TERMS
+    include_default = reg_settings.get("include_default_faqs", True)
+    custom_faqs = reg_settings.get("faqs", [])
+    
+    if include_default:
+        existing_questions = {f.get("q", "").strip().lower() for f in custom_faqs}
+        faqs = list(custom_faqs)
+        for df in DEFAULT_FAQS:
+            if df["q"].strip().lower() not in existing_questions:
+                faqs.append(df)
+    else:
+        faqs = custom_faqs
+
     event_info = EventInfo(
         name=event.name,
         start_date=event.start_date,
         end_date=event.end_date,
-        venue=event.venue_name or event.location or "",
+        venue=", ".join([v for v in [event.venue_name, event.location, event.state, event.country] if v]),
         support_email=reg_settings.get("support_email", ""),
         announcements=announcements_list,
         program_url=reg_settings.get("program_url", ""),
-        terms_and_conditions=reg_settings.get("terms_and_conditions", ""),
-        faqs=reg_settings.get("faqs", None),
-        include_default_faqs=reg_settings.get("include_default_faqs", True),
+        terms_and_conditions=terms,
+        faqs=faqs,
+        include_default_faqs=include_default,
     )
 
     # 2 — Load confirmed participant by email
@@ -283,7 +299,7 @@ async def get_dashboard_data(
                 payment=None,
                 edits_locked=True,
                 is_speaker=False,
-                speaker_portal_url=settings.SPEAKER_PORTAL_BASE_URL,
+                speaker_portal_url=f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}",
             )
 
         if not reg_row:
@@ -302,7 +318,7 @@ async def get_dashboard_data(
                 payment=None,
                 edits_locked=_check_edits_locked(event, is_live=is_live),
                 is_speaker=False,
-                speaker_portal_url=settings.SPEAKER_PORTAL_BASE_URL,
+                speaker_portal_url=f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}",
             )
 
         reg_info = RegistrationInfo(
@@ -381,9 +397,9 @@ async def get_dashboard_data(
     from app.config import settings
     speaker_portal_url = ""
     if speaker_rec:
-        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{speaker_rec.speaker_code}"
+        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{speaker_rec.speaker_code}"
     elif is_speaker_category:
-        speaker_portal_url = settings.SPEAKER_PORTAL_BASE_URL
+        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}"
 
     return DashboardData(
         event=event_info,

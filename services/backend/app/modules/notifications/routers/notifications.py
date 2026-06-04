@@ -886,3 +886,94 @@ async def resend_failed_emails(
     process_email_campaign.delay(str(campaign_id))
     await db.commit()
     return MessageResponse(message="Retry task dispatched for failed emails.")
+
+
+from pydantic import EmailStr
+
+class SendSingleEmailRequest(BaseModel):
+    recipient: EmailStr
+    template: str
+    link: str
+
+email_router = APIRouter(prefix="/events/{event_id}/emails", tags=["emails"])
+
+@email_router.post("/send-single", response_model=MessageResponse)
+async def send_single_email(
+    event_id: uuid.UUID,
+    payload: SendSingleEmailRequest,
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Sends a single email based on a template and pre-rendered variables.
+    """
+    # 1. Fetch speaker
+    speaker_res = await db.execute(
+        select(Speaker).where(
+            Speaker.event_id == event_id,
+            func.lower(Speaker.email) == str(payload.recipient).lower()
+        )
+    )
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=404, detail="Speaker not found.")
+
+    # 2. Fetch template
+    # Try finding template matching name or type for this event or global
+    tpl_res = await db.execute(
+        select(EmailTemplate)
+        .where(
+            or_(EmailTemplate.event_id == event_id, EmailTemplate.event_id.is_(None)),
+            or_(
+                EmailTemplate.template_type == payload.template,
+                EmailTemplate.name == payload.template
+            )
+        )
+        .order_by(EmailTemplate.event_id.desc(), EmailTemplate.created_at.desc())
+    )
+    template = tpl_res.scalars().first()
+
+    # Fallback to upload_invite template if not found
+    if not template:
+        tpl_res = await db.execute(
+            select(EmailTemplate)
+            .where(
+                or_(EmailTemplate.event_id == event_id, EmailTemplate.event_id.is_(None)),
+                EmailTemplate.template_type == "upload_invite"
+            )
+            .order_by(EmailTemplate.event_id.desc(), EmailTemplate.created_at.desc())
+        )
+        template = tpl_res.scalars().first()
+
+    if not template:
+        subject = "Invitation: Complete Your Speaker Profile — {{EventName}}"
+        body_html = """<p>Dear {{SpeakerName}},</p>
+<p>Please update your speaker profile details using the link below:</p>
+<p><a href="{{UploadLink}}">{{UploadLink}}</a></p>
+<p>Best regards,<br/>The Organizing Committee</p>"""
+    else:
+        subject = template.subject
+        body_html = template.body_html
+
+    # 3. Build variables and render template
+    from app.modules.notifications.services.email_service import build_speaker_variables, send_email
+    from app.modules.notifications.services.email_renderer import render_template as render_with_css
+    
+    variables = build_speaker_variables(speaker, None, event, payload.link)
+    
+    rendered_subject = render_template(subject, variables)
+    inlined_html, text_fallback = render_with_css(body_html, variables)
+
+    # 4. Dispatch email
+    await send_email(
+        to_email=payload.recipient,
+        subject=rendered_subject,
+        html_body=inlined_html,
+        text_body=text_fallback,
+        speaker_id=speaker.id,
+        event_id=event_id,
+        db=db,
+    )
+
+    return MessageResponse(message="Email dispatched successfully.")
+

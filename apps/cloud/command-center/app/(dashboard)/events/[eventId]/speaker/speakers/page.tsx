@@ -38,6 +38,7 @@ export default function SpeakersPage() {
   const [roomFilter, setRoomFilter] = useState("");
   const [sessionFilter, setSessionFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [showIncompleteOnly, setShowIncompleteOnly] = useState(false);
 
   // Selection & Email state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -109,7 +110,7 @@ export default function SpeakersPage() {
       group.push(s);
       groups.set(key, group);
     }
-    return Array.from(groups.values()).map((group) => {
+    const result = Array.from(groups.values()).map((group) => {
       const base = group.reduce((best, s) => (s.talks_count || 0) >= (best.talks_count || 0) ? s : best, group[0]);
       const totalTalks = group.reduce((sum, s) => sum + (s.talks_count || 0), 0);
       
@@ -124,12 +125,18 @@ export default function SpeakersPage() {
         talks_count: Math.max(base.talks_count || 0, totalTalks), 
         next_talk_start: earliestStart 
       };
-    }).sort((a, b) => {
+    });
+
+    const filtered = showIncompleteOnly
+      ? result.filter(s => (s.profile_completeness ?? 0) < 80)
+      : result;
+
+    return filtered.sort((a, b) => {
       const nameA = `${a.first_name} ${a.last_name}`.toLowerCase();
       const nameB = `${b.first_name} ${b.last_name}`.toLowerCase();
       return nameA.localeCompare(nameB);
     });
-  }, [speakers, posters]);
+  }, [speakers, posters, showIncompleteOnly]);
 
   // LIVE STATS
   const stats = useMemo(() => {
@@ -323,6 +330,19 @@ export default function SpeakersPage() {
               )}
            </div>
         </div>
+
+        <Button
+           onClick={() => setShowIncompleteOnly(!showIncompleteOnly)}
+           variant={showIncompleteOnly ? "primary" : "outline"}
+           className={cn(
+             "h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border border-default shrink-0",
+             showIncompleteOnly 
+               ? "bg-[var(--pri)] text-[var(--text)] hover:bg-[var(--sec)] border-transparent" 
+               : "bg-[color-mix(in_srgb,var(--text)_3%,transparent)] text-muted hover:text-[var(--text)]"
+           )}
+         >
+           Incomplete Profiles Only
+         </Button>
       </section>
 
       {/* Main Table View */}
@@ -355,8 +375,9 @@ export default function SpeakersPage() {
                     </th>
                     <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Speaker</th>
                     <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Access Code</th>
-                    <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Contact</th>
+
                     <th className="text-center p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Talks</th>
+                    <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Profile</th>
                     <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">File Status</th>
                     <th className="text-right p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Manage</th>
                   </tr>
@@ -365,11 +386,11 @@ export default function SpeakersPage() {
                   {isLoading ? (
                     [1, 2, 3, 4, 5].map((i) => (
                       <tr key={i}>
-                        <td colSpan={7} className="p-6"><Skeleton className="h-12 w-full rounded-xl bg-[color-mix(in_srgb,var(--text)_5%,transparent)]" /></td>
+                        <td colSpan={8} className="p-6"><Skeleton className="h-12 w-full rounded-xl bg-[color-mix(in_srgb,var(--text)_5%,transparent)]" /></td>
                       </tr>
                     ))
                   ) : uniqueSpeakers.length === 0 ? (
-                    <tr><td colSpan={7} className="p-20 text-center text-muted font-bold">No speakers found matching your criteria.</td></tr>
+                    <tr><td colSpan={8} className="p-20 text-center text-muted font-bold">No speakers found matching your criteria.</td></tr>
                   ) : (
                     uniqueSpeakers.map((s, idx) => {
                       const isSelected = selectedIds.includes(s.id);
@@ -403,16 +424,34 @@ export default function SpeakersPage() {
                               {s.speaker_code || "---"}
                             </code>
                           </td>
-                          <td className="p-6">
-                            <div className="space-y-1">
-                              <p className="text-[12px] font-bold text-muted flex items-center gap-1.5"><Mail className="h-3 w-3 text-[var(--pri)]" /> {s.email}</p>
-                              {s.phone && <p className="text-[12px] font-bold text-muted flex items-center gap-1.5"><Phone className="h-3 w-3 text-[var(--sec)]" /> {s.phone}</p>}
-                            </div>
-                          </td>
+
                           <td className="p-6 text-center">
                             <Badge className="bg-[var(--sec)]/10 text-[var(--sec)] border-0 font-black text-[10px] px-3 py-1">
                               {s.talks_count} TALK{s.talks_count !== 1 ? "S" : ""}
                             </Badge>
+                          </td>
+                          <td className="p-6">
+                            <div className="flex flex-col gap-1 w-28">
+                              <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                                <span className={cn(
+                                  (s.profile_completeness ?? 0) >= 80 ? "text-[var(--success)]" :
+                                  (s.profile_completeness ?? 0) >= 50 ? "text-[var(--warn)]" : "text-[var(--dan)]"
+                                )}>
+                                  {s.profile_completeness ?? 0}%
+                                </span>
+                                <span className="text-muted text-[8px] tracking-wider">Complete</span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text)_8%,transparent)] overflow-hidden">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all duration-500",
+                                    (s.profile_completeness ?? 0) >= 80 ? "bg-[var(--success)]" :
+                                    (s.profile_completeness ?? 0) >= 50 ? "bg-[var(--warn)]" : "bg-[var(--dan)]"
+                                  )}
+                                  style={{ width: `${s.profile_completeness ?? 0}%` }}
+                                />
+                              </div>
+                            </div>
                           </td>
 
                           <td className="p-6">

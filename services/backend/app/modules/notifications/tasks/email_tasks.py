@@ -16,6 +16,7 @@ from app.modules.speakers.models.speaker import Speaker
 from app.modules.presentations.models.poster import Poster
 from app.modules.speakers.models.session_speaker import SessionSpeaker
 from app.modules.speakers.models.session import Session
+from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.services import email_service
 
 def _run_async(coro):
@@ -90,6 +91,12 @@ async def _process_email_campaign_async(campaign_id: uuid.UUID) -> None:
             query = select(Speaker).where(Speaker.event_id == campaign.event_id)
             if campaign.recipient_filter == "pending_upload":
                 query = query.where(Speaker.upload_status == "pending")
+                query = query.join(SessionSpeaker, SessionSpeaker.speaker_id == Speaker.id).where(
+                    or_(
+                        SessionSpeaker.speaker_type.in_(UPLOAD_REQUIRED_CODES),
+                        SessionSpeaker.speaker_type.is_(None)
+                    )
+                ).distinct()
             elif campaign.recipient_filter == "uploaded":
                 query = query.where(Speaker.upload_status == "uploaded")
             elif campaign.recipient_filter == "approved":

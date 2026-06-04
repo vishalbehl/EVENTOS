@@ -266,9 +266,9 @@ export function eventPath(eventId: string, sub?: string): string {
   return sub ? `${base}/${sub}` : base;
 }
 
-export function speakerUploadUrl(token: string): string {
+export function speakerUploadUrl(eventId: string, token: string): string {
   const base = process.env.NEXT_PUBLIC_SPEAKER_PORTAL_URL ?? "http://localhost:3001";
-  return `${base}/upload/${token}`;
+  return `${base}/${eventId}/${token}`;
 }
 
 // ── Misc ──────────────────────────────────────────────────

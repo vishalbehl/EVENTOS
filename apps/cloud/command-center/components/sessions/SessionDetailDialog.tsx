@@ -14,6 +14,7 @@ import { cn, toDateTimeLocalString, fromDateTimeLocalString, formatTimeInTZ, for
 import { toast } from "sonner";
 import { useEvent } from "@/hooks/useEvents";
 import { useRooms } from "@/hooks/useRooms";
+import { SESSION_CATEGORIES } from "@/types/models";
 
 interface SessionDetailDialogProps {
   isOpen: boolean;
@@ -199,7 +200,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
                   </button>
                 </div>
 
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   <div className="flex items-center gap-3">
                     <div className="h-9 w-9 rounded-xl bg-[color-mix(in_srgb,var(--text)_5%,transparent)] flex items-center justify-center text-muted">
                       <Calendar className="h-4 w-4" />
@@ -258,6 +259,33 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
                         </select>
                       ) : (
                         <p className="text-[12px] font-bold text-[var(--text)]">{session.room_name || "TBD"}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-[color-mix(in_srgb,var(--text)_5%,transparent)] flex items-center justify-center text-muted">
+                      <Presentation className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-black text-muted uppercase tracking-widest">Session Type</p>
+                      {isEditing ? (
+                        <select 
+                          value={editData.session_type}
+                          onChange={e => setEditData({...editData, session_type: e.target.value as any})}
+                          className="bg-transparent text-[11px] font-bold text-[var(--text)] outline-none border-b border-default w-full py-1 cursor-pointer"
+                        >
+                          {Object.entries(SESSION_CATEGORIES).map(([category, types]) => (
+                            <optgroup key={category} label={category} className="bg-[var(--surf)] text-[9px] font-black tracking-widest text-muted uppercase">
+                              {types.map(t => (
+                                <option key={t.value} value={t.value} className="bg-[var(--base)] text-[var(--text)] font-semibold">
+                                  {t.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-[12px] font-bold text-[var(--text)] uppercase tracking-wider">{session.session_type}</p>
                       )}
                     </div>
                   </div>

@@ -69,11 +69,12 @@ def build_speaker_variables(speaker, session, event: Union[str, object], upload_
 
     if not upload_url:
         token = getattr(speaker, "upload_token", "") or ""
+        event_id = getattr(speaker, "event_id", "")
         if upload_base and token:
-            upload_url = f"{upload_base}/{token}"
+            upload_url = f"{upload_base}/{event_id}/{token}"
         else:
             # Fallback for manual uploads/invites if base is missing
-            upload_url = f"{settings.API_BASE_URL}/upload/{token}" if token else ""
+            upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{token}" if token else ""
 
     qr_url = getattr(speaker, "qr_code_url", "") or ""
     speaker_code = getattr(speaker, "speaker_code", "") or ""

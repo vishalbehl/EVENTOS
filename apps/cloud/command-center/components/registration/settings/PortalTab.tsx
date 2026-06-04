@@ -10,22 +10,12 @@ import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 
-const THEMES = [
-  { id: 'midnight', label: 'Midnight', desc: 'Deep dark with violet accents', color: '#7c3aed', bg: '#0f0a1a' },
-  { id: 'ocean',    label: 'Ocean',    desc: 'Cool blue, professional',        color: '#0ea5e9', bg: '#0c1b2e' },
-  { id: 'emerald',  label: 'Emerald',  desc: 'Green growth, fresh feel',       color: '#10b981', bg: '#0a1a14' },
-  { id: 'sunset',   label: 'Sunset',   desc: 'Warm amber, energetic',          color: '#f59e0b', bg: '#1a1200' },
-  { id: 'rose',     label: 'Rose',     desc: 'Elegant pink, modern',           color: '#f43f5e', bg: '#1a0a10' },
-  { id: 'slate',    label: 'Slate',    desc: 'Neutral, corporate clean',       color: '#94a3b8', bg: '#111827' },
-]
-
 export default function PortalTab({ eventId }: { eventId: string }) {
   const { data: event } = useEvent(eventId)
   const updateEvent = useUpdateEvent(eventId)
   const [isLive, setIsLive] = useState(false)
   const [toggling, setToggling] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [selectedTheme, setSelectedTheme] = useState('midnight')
 
   const [supportEmail, setSupportEmail] = useState('')
   const [supportPhone, setSupportPhone] = useState('')
@@ -475,55 +465,6 @@ export default function PortalTab({ eventId }: { eventId: string }) {
               )}
             </label>
           )}
-        </div>
-
-        {/* Theme Selector */}
-        <div className="glass-card rounded-[2rem] p-8 border border-white/5 space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Palette className="h-5 w-5 text-[var(--pri)]" />
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-[var(--text)]">Portal Theme</h2>
-            </div>
-            <span className="text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full bg-[var(--pri)]/10 text-[var(--pri)] border border-[var(--pri)]/20">
-              Coming Soon
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {THEMES.map(theme => (
-              <button
-                key={theme.id}
-                onClick={() => setSelectedTheme(theme.id)}
-                className={`relative p-4 rounded-2xl border transition-all text-left group overflow-hidden ${
-                  selectedTheme === theme.id
-                    ? 'border-[var(--pri)]/60 bg-[var(--pri)]/10'
-                    : 'border-white/5 bg-white/[0.02] hover:bg-white/[0.05] opacity-60'
-                }`}
-              >
-                {/* Color preview */}
-                <div
-                  className="h-16 rounded-xl mb-3 flex items-center justify-center"
-                  style={{ background: theme.bg }}
-                >
-                  <div className="h-6 w-6 rounded-full shadow-lg" style={{ background: theme.color }} />
-                </div>
-                <p className="text-xs font-black text-[var(--text)]">{theme.label}</p>
-                <p className="text-[9px] font-bold text-muted mt-0.5">{theme.desc}</p>
-                {selectedTheme === theme.id && (
-                  <div className="absolute top-2 right-2 h-5 w-5 rounded-full bg-[var(--pri)] flex items-center justify-center">
-                    <Check className="h-3 w-3 text-white" />
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-start gap-2.5 p-4 rounded-xl bg-white/[0.02] border border-white/5">
-            <Info className="h-4 w-4 text-[var(--pri)] shrink-0 mt-0.5" />
-            <p className="text-[10px] font-bold text-muted leading-relaxed">
-              Theme customization will be available in a future update. Your selection will be saved and applied when released.
-            </p>
-          </div>
         </div>
       </div>
     </div>

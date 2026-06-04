@@ -7,7 +7,7 @@ from fastapi import APIRouter
 
 from app.modules.auth.routers import auth, users, me
 from app.modules.rbac.routers import events, settings, rbac, global_settings
-from app.modules.speakers.routers import sessions, speakers, portal
+from app.modules.speakers.routers import sessions, speakers, portal, speaker_profiles
 from app.modules.presentations.routers import bundles, files, queue, posters, storage
 from app.modules.venue.routers import rooms, rooms_devices, attendance, capacity, srr, sync
 from app.modules.registration.routers import (
@@ -17,6 +17,7 @@ from app.modules.registration.routers import (
 )
 from app.modules.analytics.routers import analytics
 from app.modules.notifications.routers import notifications, webhooks, announcements
+from app.modules.notifications.routers.notifications import email_router
 
 api_router = APIRouter()
 
@@ -26,10 +27,12 @@ api_router.include_router(events.router)
 api_router.include_router(sessions.router)
 api_router.include_router(rooms.router)
 api_router.include_router(speakers.router)
+api_router.include_router(speaker_profiles.router)
 api_router.include_router(portal.router)
 api_router.include_router(files.router)
 api_router.include_router(import_jobs.router)
 api_router.include_router(notifications.router)
+api_router.include_router(email_router)
 api_router.include_router(announcements.router)
 api_router.include_router(srr.router)
 api_router.include_router(rooms_devices.router)

@@ -45,6 +45,7 @@ TABLE_SCHEMAS = {
     "speakers": "speakers",
     "sessions": "speakers",
     "session_speakers": "speakers",
+    "speaker_profiles": "speakers",
     
     # presentations schema
     "presentation_files": "presentations",

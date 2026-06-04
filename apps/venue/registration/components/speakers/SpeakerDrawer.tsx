@@ -24,6 +24,7 @@ import {
 
 import { usePosters } from "@/hooks/usePosters";
 import { MoveTalkDialog } from "./MoveTalkDialog";
+import { SPEAKER_TYPES } from "@/types/backend";
 
 interface SpeakerDrawerProps {
   speaker: SpeakerSummary;
@@ -536,13 +537,38 @@ function TalksTab({
               >
                 {/* Session header stripe */}
                 <div className="px-4 py-2.5 bg-[color-mix(in_srgb,var(--text)_4%,transparent)] border-b border-default flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <span className="text-[9px] font-black text-muted uppercase tracking-widest mr-2">
+                  <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+                    <span className="text-[9px] font-black text-muted uppercase tracking-widest shrink-0">
                       {talk.session_code}
                     </span>
-                    <span className="text-[12px] font-bold text-[var(--text)] truncate">
+                    <span className="text-[12px] font-bold text-[var(--text)] truncate max-w-[200px]">
                       {talk.session_name}
                     </span>
+                    {talk.speaker_type ? (() => {
+                      const typeConfig = SPEAKER_TYPES.find(t => t.code === talk.speaker_type);
+                      const color = typeConfig?.color || "#64748b";
+                      return (
+                        <span 
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0"
+                          style={{
+                            backgroundColor: `${color}26`, // 15% opacity
+                            color: color
+                          }}
+                        >
+                          {talk.speaker_type}
+                        </span>
+                      );
+                    })() : (
+                      <span 
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0"
+                        style={{
+                          backgroundColor: "#64748b26",
+                          color: "#64748b"
+                        }}
+                      >
+                        —
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Button

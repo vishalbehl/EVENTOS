@@ -12,6 +12,7 @@ from app.modules.venue.models.room import Room
 from app.modules.speakers.models.session import Session
 from app.modules.speakers.models.speaker import Speaker
 from app.modules.speakers.models.session_speaker import SessionSpeaker
+from app.modules.speakers.models.speaker_profile import SpeakerProfile
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.models.file_validation import FileValidation
 from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
@@ -56,7 +57,7 @@ from app.modules.notifications.models.announcement import Announcement
 
 __all__ = [
     "Organization", "User", "Event", "Room", "Session",
-    "Speaker", "SessionSpeaker", "PresentationFile", "FileValidation",
+    "Speaker", "SessionSpeaker", "SpeakerProfile", "PresentationFile", "FileValidation",
     "FileIntegrityLog", "NotificationEvent",
     "EmailTemplate", "EmailCampaign", "EmailLog", "ImportJob",
     "SRRStation", "SRRCheckin", "VenueActivityLog", "RoomDevice",

@@ -48,3 +48,16 @@ export interface DashboardStats {
   sessions_ready: number;
   sessions_total: number;
 }
+
+export const SPEAKER_TYPES = [
+  { code: 'KEY', label: 'Keynote Speaker', uploadRequired: true, defaultDuration: 45, color: '#f59e0b' },
+  { code: 'INV', label: 'Invited Speaker', uploadRequired: true, defaultDuration: 25, color: '#3b82f6' },
+  { code: 'ORL', label: 'Oral Presenter', uploadRequired: true, defaultDuration: 12, color: '#6366f1' },
+  { code: 'PST', label: 'Poster Presenter', uploadRequired: false, defaultDuration: 0, color: '#10b981' },
+  { code: 'PNL', label: 'Panel Member', uploadRequired: false, defaultDuration: 0, color: '#8b5cf6' },
+  { code: 'MOD', label: 'Moderator / Chair', uploadRequired: false, defaultDuration: 0, color: '#64748b' },
+  { code: 'WRK', label: 'Workshop Leader', uploadRequired: true, defaultDuration: 90, color: '#f97316' },
+  { code: 'ORA', label: 'Oration Awardee', uploadRequired: true, defaultDuration: 30, color: '#ec4899' },
+  { code: 'VIR', label: 'Virtual Speaker', uploadRequired: true, defaultDuration: 20, color: '#06b6d4' },
+  { code: 'IND', label: 'Industry Speaker', uploadRequired: true, defaultDuration: 20, color: '#84cc16' },
+] as const;

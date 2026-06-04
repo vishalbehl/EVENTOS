@@ -20,6 +20,30 @@ import { DeadlineBanner, DeadlineCountdownBadge } from "@/components/DeadlineBan
 import { cn } from "@/lib/utils";
 import { useDeadlineStatus } from "@/hooks/useDeadlineStatus";
 import { ImageCropper } from "@/components/ImageCropper";
+import { SpeakerPortalLayout } from "@/components/SpeakerPortalLayout";
+
+const countries = [
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria",
+  "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan",
+  "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cabo Verde",
+  "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros",
+  "Congo", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czech Republic", "Denmark", "Djibouti", "Dominica", "Dominican Republic",
+  "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland",
+  "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau",
+  "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy",
+  "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Korea, North", "Korea, South", "Kosovo", "Kuwait",
+  "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg",
+  "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico",
+  "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru",
+  "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Macedonia", "Norway", "Oman", "Pakistan",
+  "Palau", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Romania",
+  "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent", "Samoa", "San Marino", "Sao Tome and Principe",
+  "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands",
+  "Somalia", "South Africa", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan",
+  "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey",
+  "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay",
+  "Uzbekistan", "Vanuatu", "Vatican City", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
+];
 
 export default function SpeakerLandingPage() {
   const params = useParams();
@@ -52,34 +76,66 @@ export default function SpeakerLandingPage() {
 
   // Structured Form States
   const [designation, setDesignation] = useState("");
-  const [affiliation, setAffiliation] = useState("");
+  const [title, setTitle] = useState("");
+  const [organisationName, setOrganisationName] = useState("");
+  const [department, setDepartment] = useState("");
+  const [city, setCity] = useState("");
   const [country, setCountry] = useState("");
-  const [phone, setPhone] = useState("");
-  const [bio, setBio] = useState("");
-  const [linkedin, setLinkedin] = useState("");
-  const [twitter, setTwitter] = useState("");
-  const [orcid, setOrcid] = useState("");
-  const [github, setGithub] = useState("");
-  const [photoUrl, setPhotoUrl] = useState("");
+  const [shortBio, setShortBio] = useState("");
+  const [extendedBio, setExtendedBio] = useState("");
   const [researchInterests, setResearchInterests] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
+  const [languagesSpoken, setLanguagesSpoken] = useState<string[]>([]);
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [twitterUrl, setTwitterUrl] = useState("");
+  const [photoConsent, setPhotoConsent] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState("");
 
-  // Sync portal data into form states when loaded
+  // Tag inputs
+  const [tagInput, setTagInput] = useState("");
+  const [langInput, setLangInput] = useState("");
+
+  // Extracted CV/Template Data State for review
+  const [extractedData, setExtractedData] = useState<any | null>(null);
+  const [hasProfile, setHasProfile] = useState(false);
+
+  // Sync profile details on load
   useEffect(() => {
     if (portal) {
-      setDesignation(portal.designation || "");
-      setAffiliation(portal.affiliation || "");
-      setCountry(portal.country || "");
-      setPhone(portal.phone || "");
-      setBio(portal.bio || "");
-      setPhotoUrl(portal.photo_url || "");
-      setLinkedin(portal.social_links?.linkedin || "");
-      setTwitter(portal.social_links?.twitter || "");
-      setOrcid(portal.social_links?.orcid || "");
-      setGithub(portal.social_links?.github || "");
-      setResearchInterests(portal.research_interests || []);
+      apiClient.get(`/events/${eventId}/speakers/${portal.speaker_id}/profile?token=${token}`)
+        .then(res => {
+          const p = res.data;
+          setDesignation(p.designation || "");
+          setTitle(p.title || "");
+          setOrganisationName(p.organisation_name || "");
+          setDepartment(p.department || "");
+          setCity(p.city || "");
+          setCountry(p.country || "");
+          setShortBio(p.bio || "");
+          setExtendedBio(p.extended_bio || "");
+          setResearchInterests(p.research_interests || []);
+          setLanguagesSpoken(p.languages_spoken || []);
+          setWebsiteUrl(p.website_url || "");
+          setLinkedinUrl(p.linkedin_url || "");
+          setTwitterUrl(p.twitter_url || "");
+          setPhotoConsent(p.photo_consent || false);
+          setPhotoUrl(p.profile_photo_url || "");
+          setHasProfile(true);
+        })
+        .catch(() => {
+          // If profile not found, fallback to defaults from portal speaker details
+          setHasProfile(false);
+          setDesignation(portal.designation || "");
+          setOrganisationName(portal.affiliation || "");
+          setCountry(portal.country || "");
+          setShortBio(portal.bio || "");
+          setPhotoUrl(portal.photo_url || "");
+          setResearchInterests(portal.research_interests || []);
+          setLinkedinUrl(portal.social_links?.linkedin || "");
+          setTwitterUrl(portal.social_links?.twitter || "");
+        });
     }
-  }, [portal]);
+  }, [portal, eventId, token]);
 
   if (isLoading) {
     return (
@@ -129,17 +185,52 @@ export default function SpeakerLandingPage() {
   const speakerName = `${portal.first_name} ${portal.last_name}`;
   const isDeadlineLocked = deadlineInfo.isLocked;
 
-  // Bio Word Counter
-  const getBioWordCount = () => {
-    return bio ? bio.trim().split(/\s+/).filter(Boolean).length : 0;
+  // Bio Word Counters
+  const getShortBioWordCount = () => {
+    return shortBio ? shortBio.trim().split(/\s+/).filter(Boolean).length : 0;
   };
 
-  // Add tag handler
+  const getExtendedBioWordCount = () => {
+    return extendedBio ? extendedBio.trim().split(/\s+/).filter(Boolean).length : 0;
+  };
+
+  // Profile completeness calculation
+  const getCompleteness = () => {
+    let score = 0;
+    if (photoUrl && photoUrl.trim()) {
+      score += 20;
+    }
+    if (shortBio && shortBio.trim()) {
+      const words = shortBio.trim().split(/\s+/).filter(Boolean);
+      if (words.length > 20) score += 25;
+    }
+    if (designation && designation.trim() && organisationName && organisationName.trim()) {
+      score += 15;
+    }
+    if (
+      (websiteUrl && websiteUrl.trim()) ||
+      (linkedinUrl && linkedinUrl.trim()) ||
+      (twitterUrl && twitterUrl.trim())
+    ) {
+      score += 10;
+    }
+    if (extendedBio && extendedBio.trim()) {
+      const words = extendedBio.trim().split(/\s+/).filter(Boolean);
+      if (words.length > 50) score += 20;
+    }
+    if (researchInterests && researchInterests.filter(i => i.trim()).length >= 2) {
+      score += 10;
+    }
+    return score;
+  };
+
+  // Add tag handlers
   const handleAddTag = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && tagInput.trim()) {
+    if ((e.key === "Enter" || e.key === ",") && tagInput.trim()) {
       e.preventDefault();
-      if (!researchInterests.includes(tagInput.trim())) {
-        setResearchInterests([...researchInterests, tagInput.trim()]);
+      const val = tagInput.replace(/,/g, "").trim();
+      if (val && !researchInterests.includes(val) && researchInterests.length < 10) {
+        setResearchInterests([...researchInterests, val]);
       }
       setTagInput("");
     }
@@ -149,29 +240,58 @@ export default function SpeakerLandingPage() {
     setResearchInterests(researchInterests.filter((t) => t !== tag));
   };
 
+  const handleAddLang = (e: React.KeyboardEvent) => {
+    if ((e.key === "Enter" || e.key === ",") && langInput.trim()) {
+      e.preventDefault();
+      const val = langInput.replace(/,/g, "").trim();
+      if (val && !languagesSpoken.includes(val)) {
+        setLanguagesSpoken([...languagesSpoken, val]);
+      }
+      setLangInput("");
+    }
+  };
+
+  const handleRemoveLang = (lang: string) => {
+    setLanguagesSpoken(languagesSpoken.filter((l) => l !== lang));
+  };
+
   // Structured form submit
   const handleSaveProfile = async () => {
-    const wordCount = getBioWordCount();
-    if (wordCount > 400) {
-      toast.error("Biography exceeds 400 words limit.");
+    const shortWordCount = getShortBioWordCount();
+    if (shortWordCount > 150) {
+      toast.error("Short Biography exceeds 150 words limit.");
+      return;
+    }
+    const extWordCount = getExtendedBioWordCount();
+    if (extWordCount > 400) {
+      toast.error("Extended Biography exceeds 400 words limit.");
       return;
     }
 
+    const loadingId = toast.loading("Saving profile...");
     try {
-      await apiClient.patch(`/portal/profile?token=${token}`, {
+      await apiClient.put(`/events/${eventId}/speakers/${portal.speaker_id}/profile?token=${token}`, {
         designation,
-        affiliation,
+        title,
+        organisation_name: organisationName,
+        department,
+        city,
         country,
-        bio,
-        phone,
-        social_links: { linkedin, twitter, orcid, github },
+        bio: shortBio,
+        extended_bio: extendedBio,
         research_interests: researchInterests,
-        photo_url: photoUrl
+        languages_spoken: languagesSpoken,
+        website_url: websiteUrl,
+        linkedin_url: linkedinUrl,
+        twitter_url: twitterUrl,
+        photo_consent: photoConsent,
+        profile_photo_url: photoUrl
       });
-      toast.success("Profile saved successfully!");
+      toast.success("Profile saved successfully!", { id: loadingId });
+      setHasProfile(true);
       queryClient.invalidateQueries({ queryKey: ["portal-auth", eventId, token] });
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to save profile.");
+      toast.error(err.response?.data?.detail || "Failed to save profile.", { id: loadingId });
     }
   };
 
@@ -186,7 +306,28 @@ export default function SpeakerLandingPage() {
       const res = await apiClient.post(`/portal/profile/photo?token=${token}`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      setPhotoUrl(res.data.photo_url);
+      const uploadedUrl = res.data.photo_url;
+      setPhotoUrl(uploadedUrl);
+      
+      // Update profile
+      await apiClient.put(`/events/${eventId}/speakers/${portal.speaker_id}/profile?token=${token}`, {
+        designation,
+        title,
+        organisation_name: organisationName,
+        department,
+        city,
+        country,
+        bio: shortBio,
+        extended_bio: extendedBio,
+        research_interests: researchInterests,
+        languages_spoken: languagesSpoken,
+        website_url: websiteUrl,
+        linkedin_url: linkedinUrl,
+        twitter_url: twitterUrl,
+        photo_consent: photoConsent,
+        profile_photo_url: uploadedUrl
+      });
+      
       toast.success("Photo uploaded successfully!", { id: loadingId });
       queryClient.invalidateQueries({ queryKey: ["portal-auth", eventId, token] });
     } catch (err) {
@@ -195,8 +336,8 @@ export default function SpeakerLandingPage() {
   };
 
   // Mode 1 Template Download Pre-Filled
-  const handleDownloadTemplate = (format: "docx" | "pptx") => {
-    window.open(`${apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api/v1'}/portal/profile/template?token=${token}&format=${format}`, "_blank");
+  const handleDownloadTemplate = () => {
+    window.open(`${apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api/v1'}/events/${eventId}/speakers/${portal.speaker_id}/profile/template?token=${token}`, "_blank");
   };
 
   // Mode 1 Template Upload
@@ -208,11 +349,18 @@ export default function SpeakerLandingPage() {
 
       const loadingId = toast.loading("Uploading template...");
       try {
-        await apiClient.post(`/portal/profile/template/upload?token=${token}`, formData, {
+        const res = await apiClient.post(`/events/${eventId}/speakers/${portal.speaker_id}/profile/parse-template?token=${token}`, formData, {
           headers: { "Content-Type": "multipart/form-data" }
         });
-        toast.success("Template parsed and profile updated!", { id: loadingId });
-        queryClient.invalidateQueries({ queryKey: ["portal-auth", eventId, token] });
+        if (res.data) {
+          const parsed = res.data;
+          if (!parsed.designation && !parsed.organisation_name && !parsed.bio && !parsed.extended_bio) {
+            toast.error("We couldn't extract information automatically. Please fill the form manually.", { id: loadingId });
+          } else {
+            setExtractedData(parsed);
+            toast.success("Template parsed! Review and confirm details below.", { id: loadingId });
+          }
+        }
       } catch (err: any) {
         toast.error(err.response?.data?.detail || "Failed to parse template.", { id: loadingId });
       }
@@ -228,17 +376,17 @@ export default function SpeakerLandingPage() {
 
       const loadingId = toast.loading("Analyzing CV...");
       try {
-        const res = await apiClient.post(`/portal/profile/cv/upload?token=${token}`, formData, {
+        const res = await apiClient.post(`/events/${eventId}/speakers/${portal.speaker_id}/profile/parse-cv?token=${token}`, formData, {
           headers: { "Content-Type": "multipart/form-data" }
         });
-        
-        // Extract values
         if (res.data) {
-          setDesignation(res.data.designation || "");
-          setAffiliation(res.data.affiliation || "");
-          setBio(res.data.bio || "");
-          setProfileMode("form");
-          toast.success("CV parsed! Review and confirm details below.", { id: loadingId });
+          const parsed = res.data;
+          if (!parsed.designation && !parsed.organisation_name && !parsed.bio) {
+            toast.error("We couldn't extract information automatically. Please fill the form manually.", { id: loadingId });
+          } else {
+            setExtractedData(parsed);
+            toast.success("CV parsed! Review and confirm details below.", { id: loadingId });
+          }
         }
       } catch (err: any) {
         toast.error(err.response?.data?.detail || "Failed to analyze CV.", { id: loadingId });
@@ -308,71 +456,63 @@ export default function SpeakerLandingPage() {
   };
 
   return (
+    <SpeakerPortalLayout
+      branding={portal.branding_settings || {}}
+      eventName={portal.event_name}
+      startDate={portal.start_date}
+      endDate={portal.end_date}
+      location={portal.location}
+      venueName={portal.venue_name}
+      organizerName={portal.organizer_name}
+    >
     <div className="min-h-screen flex flex-col">
-      {portal.theme_color && (
-        <style dangerouslySetInnerHTML={{ __html: `
-          :root {
-            --pri: ${portal.theme_color};
-            --sec: color-mix(in srgb, ${portal.theme_color} 80%, white);
-          }
-        `}} />
-      )}
       {/* Sticky deadline banner */}
       <DeadlineBanner deadlineInfo={deadlineInfo} className="sticky top-0 z-[60]" />
 
-      <PortalHeader speakerName={speakerName} email={portal.email} token={token} eventId={eventId} />
+      <PortalHeader speakerName={speakerName} email={portal.email} token={token} eventId={eventId} logoUrl={portal?.branding_settings?.logo_url} />
 
-      {/* Premium Glassmorphic Tab Navigation */}
-      <div className="max-w-7xl mx-auto w-full px-6 md:px-10 mt-8">
-        <div className="flex gap-2 p-1.5 bg-stone-900/60 backdrop-blur-md rounded-2xl border border-white/5 max-w-md">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={cn(
-              "flex-1 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2",
-              activeTab === "dashboard" ? "bg-indigo-500 text-white shadow-lg" : "text-muted hover:text-white"
-            )}
-          >
-            <Presentation className="h-4 w-4" /> My Talks
-          </button>
-          <button
-            onClick={() => setActiveTab("profile")}
-            className={cn(
-              "flex-1 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2",
-              activeTab === "profile" ? "bg-indigo-500 text-white shadow-lg" : "text-muted hover:text-white"
-            )}
-          >
-            <User className="h-4 w-4" /> Profile
-          </button>
-          <button
-            onClick={() => setActiveTab("announcements")}
-            className={cn(
-              "flex-1 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 relative",
-              activeTab === "announcements" ? "bg-indigo-500 text-white shadow-lg" : "text-muted hover:text-white"
-            )}
-          >
-            <Bell className="h-4 w-4" /> Bulletins
-            {portal.announcements && portal.announcements.length > 0 && (
-              <span className="absolute -top-1 -right-1 h-5 w-5 bg-indigo-500 text-[10px] font-black rounded-full flex items-center justify-center border-2 border-stone-950 text-white animate-pulse">
-                {portal.announcements.length}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
 
+      {/* 12-Column Responsive Layout Grid */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 py-10">
-        <AnimatePresence mode="wait">
-          {activeTab === "dashboard" && (
-            <motion.div
-              key="dashboard"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              className="space-y-12"
-            >
-              {/* original landing layout */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
-                <div className="lg:col-span-2 space-y-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+          {/* Left Column (8 cols) */}
+          <div className="lg:col-span-8 flex flex-col h-full">
+            {/* Premium Glassmorphic Tab Navigation */}
+            <div className="flex gap-2 p-1.5 bg-stone-900/60 backdrop-blur-md rounded-2xl mb-6 max-w-md shrink-0">
+              <button
+                onClick={() => setActiveTab("dashboard")}
+                className={cn(
+                  "flex-1 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+                  activeTab === "dashboard" ? "bg-indigo-500 text-white shadow-lg" : "text-muted hover:text-white"
+                )}
+              >
+                <Presentation className="h-4 w-4" /> My Talks
+              </button>
+              <button
+                onClick={() => setActiveTab("profile")}
+                className={cn(
+                  "flex-1 py-3 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+                  activeTab === "profile" ? "bg-indigo-500 text-white shadow-lg" : "text-muted hover:text-white"
+                )}
+              >
+                <User className="h-4 w-4" /> Profile
+              </button>
+            </div>
+
+            {/* Tab Content */}
+            <div className="flex-1 flex flex-col">
+              <AnimatePresence mode="wait">
+                {activeTab === "dashboard" && (
+                  <motion.div
+                    key="dashboard"
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -15 }}
+                    className="space-y-12 flex-1 flex flex-col justify-stretch"
+                  >
+                    {/* original landing layout */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-10 items-start">
+                      <div className="md:col-span-2 space-y-12">
                   {/* Presentations */}
                   <div className="space-y-6">
                     <div className="flex items-center justify-between border-b border-white/5 pb-4">
@@ -477,7 +617,7 @@ export default function SpeakerLandingPage() {
                 </div>
 
                 {/* Right side pass */}
-                <div className="space-y-10 lg:sticky lg:top-24">
+                <div className="space-y-10 md:sticky md:top-24">
                   {/* Access QR card */}
                   <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 text-center space-y-6">
                     <div>
@@ -507,10 +647,10 @@ export default function SpeakerLandingPage() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
-              className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start"
+              className="grid grid-cols-1 md:grid-cols-3 gap-10 items-start"
             >
               {/* Form & Mode Selectors */}
-              <div className="lg:col-span-2 space-y-8">
+              <div className="md:col-span-2 space-y-8">
                 {/* Mode Select Buttons */}
                 <div className="flex gap-4 border-b border-white/5 pb-4">
                   <button
@@ -570,114 +710,247 @@ export default function SpeakerLandingPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
                         <label className="text-[10px] font-black uppercase tracking-wider text-muted">Designation</label>
-                        <input
-                          type="text"
+                        <select
                           value={designation}
                           onChange={(e) => setDesignation(e.target.value)}
-                          placeholder="e.g. Associate Professor"
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF] appearance-none"
+                        >
+                          <option value="" className="bg-stone-900">Select Designation</option>
+                          <option value="Dr." className="bg-stone-900">Dr.</option>
+                          <option value="Prof." className="bg-stone-900">Prof.</option>
+                          <option value="Mr." className="bg-stone-900">Mr.</option>
+                          <option value="Ms." className="bg-stone-900">Ms.</option>
+                          <option value="Mx." className="bg-stone-900">Mx.</option>
+                          <option value="Other" className="bg-stone-900">Other</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Job Title / Position</label>
+                        <input
+                          type="text"
+                          value={title}
+                          onChange={(e) => setTitle(e.target.value)}
+                          placeholder="e.g. Chief Scientist"
                           className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
                         />
                       </div>
+
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Affiliation / Organization</label>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">First Name (Read-only)</label>
                         <input
                           type="text"
-                          value={affiliation}
-                          onChange={(e) => setAffiliation(e.target.value)}
+                          value={portal.first_name || ""}
+                          readOnly
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold text-muted outline-none cursor-not-allowed opacity-60"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Last Name (Read-only)</label>
+                        <input
+                          type="text"
+                          value={portal.last_name || ""}
+                          readOnly
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold text-muted outline-none cursor-not-allowed opacity-60"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Organisation / Institution</label>
+                        <input
+                          type="text"
+                          value={organisationName}
+                          onChange={(e) => setOrganisationName(e.target.value)}
                           placeholder="e.g. Stanford University"
                           className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
                         />
                       </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Department</label>
+                        <input
+                          type="text"
+                          value={department}
+                          onChange={(e) => setDepartment(e.target.value)}
+                          placeholder="e.g. Department of Computer Science"
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">City</label>
+                        <input
+                          type="text"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          placeholder="e.g. Stanford"
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
+                        />
+                      </div>
+
                       <div className="space-y-2">
                         <label className="text-[10px] font-black uppercase tracking-wider text-muted">Country</label>
-                        <input
-                          type="text"
+                        <select
                           value={country}
                           onChange={(e) => setCountry(e.target.value)}
-                          placeholder="e.g. Germany"
-                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
-                        />
+                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF] appearance-none"
+                        >
+                          <option value="" className="bg-stone-900">Select Country</option>
+                          {countries.map(c => (
+                            <option key={c} value={c} className="bg-stone-900">{c}</option>
+                          ))}
+                        </select>
                       </div>
+                    </div>
+
+                    {/* Biography blocks */}
+                    <div className="space-y-6">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Contact Phone</label>
-                        <input
-                          type="text"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="e.g. +49 111 222333"
-                          className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Biography block */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Biography</label>
-                        <span className={cn(
-                          "text-[10px] font-black uppercase",
-                          getBioWordCount() > 400 ? "text-red-400" : "text-muted"
-                        )}>
-                          {getBioWordCount()} / 400 words
-                        </span>
-                      </div>
-                      <textarea
-                        rows={6}
-                        value={bio}
-                        onChange={(e) => setBio(e.target.value)}
-                        placeholder="Type your biography details here..."
-                        className="w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF] resize-none"
-                      />
-                    </div>
-
-                    {/* Social links */}
-                    <div className="space-y-4 pt-4 border-t border-white/5">
-                      <h4 className="text-[11px] font-black uppercase tracking-wider text-indigo-400">Social Connections</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="relative">
-                          <Linkedin className="absolute left-4 top-3.5 h-5 w-5 text-muted" />
-                          <input
-                            type="text"
-                            value={linkedin}
-                            onChange={(e) => setLinkedin(e.target.value)}
-                            placeholder="LinkedIn URL"
-                            className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 pl-12 pr-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
-                          />
-                        </div>
-                        <div className="relative">
-                          <Twitter className="absolute left-4 top-3.5 h-5 w-5 text-muted" />
-                          <input
-                            type="text"
-                            value={twitter}
-                            onChange={(e) => setTwitter(e.target.value)}
-                            placeholder="Twitter/X URL"
-                            className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 pl-12 pr-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Research Interests tag input */}
-                    <div className="space-y-3 pt-4 border-t border-white/5">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-muted">Research Interests (Press Enter)</label>
-                      <div className="flex flex-wrap gap-2 p-3 rounded-2xl bg-white/5 border border-white/10">
-                        {researchInterests.map((interest) => (
-                          <span key={interest} className="inline-flex items-center gap-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/25 px-2.5 py-1 rounded-lg text-xs font-bold">
-                            {interest}
-                            <button onClick={() => handleRemoveTag(interest)} className="hover:text-white transition-colors">
-                              <X className="h-3 w-3" />
-                            </button>
+                        <div className="flex justify-between">
+                          <label className="text-[10px] font-black uppercase tracking-wider text-muted">Short Biography (max 150 words)</label>
+                          <span className={cn(
+                            "text-[10px] font-black uppercase",
+                            getShortBioWordCount() > 150 ? "text-red-400" : "text-muted"
+                          )}>
+                            {getShortBioWordCount()} / 150 words
                           </span>
-                        ))}
-                        <input
-                          type="text"
-                          value={tagInput}
-                          onChange={(e) => setTagInput(e.target.value)}
-                          onKeyDown={handleAddTag}
-                          placeholder={researchInterests.length === 0 ? "e.g. Machine Learning, Neuroscience" : "Add interest..."}
-                          className="bg-transparent outline-none flex-1 text-xs font-bold text-[#E8EAFF] min-w-[120px]"
+                        </div>
+                        <textarea
+                          rows={4}
+                          value={shortBio}
+                          onChange={(e) => setShortBio(e.target.value)}
+                          placeholder="Provide a brief biography (will be used in schedule details)..."
+                          className="w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF] resize-none"
                         />
                       </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <label className="text-[10px] font-black uppercase tracking-wider text-muted">Extended Biography (max 400 words)</label>
+                          <span className={cn(
+                            "text-[10px] font-black uppercase",
+                            getExtendedBioWordCount() > 400 ? "text-red-400" : "text-muted"
+                          )}>
+                            {getExtendedBioWordCount()} / 400 words
+                          </span>
+                        </div>
+                        <textarea
+                          rows={6}
+                          value={extendedBio}
+                          onChange={(e) => setExtendedBio(e.target.value)}
+                          placeholder="Provide a full detailed biography for your public profile..."
+                          className="w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF] resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Tags section */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-white/5">
+                      {/* Research Interests */}
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Research Interests (Press Enter, max 10)</label>
+                        <div className="flex flex-wrap gap-2 p-3 rounded-2xl bg-white/5 border border-white/10 min-h-[50px] items-center">
+                          {researchInterests.map((interest) => (
+                            <span key={interest} className="inline-flex items-center gap-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/25 px-2.5 py-1 rounded-lg text-xs font-bold">
+                              {interest}
+                              <button onClick={() => handleRemoveTag(interest)} className="hover:text-white transition-colors">
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                          {researchInterests.length < 10 && (
+                            <input
+                              type="text"
+                              value={tagInput}
+                              onChange={(e) => setTagInput(e.target.value)}
+                              onKeyDown={handleAddTag}
+                              placeholder={researchInterests.length === 0 ? "e.g. AI, Bioinformatics" : "Add..."}
+                              className="bg-transparent outline-none flex-1 text-xs font-bold text-[#E8EAFF] min-w-[80px]"
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Languages Spoken */}
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-muted">Languages Spoken (Press Enter)</label>
+                        <div className="flex flex-wrap gap-2 p-3 rounded-2xl bg-white/5 border border-white/10 min-h-[50px] items-center">
+                          {languagesSpoken.map((lang) => (
+                            <span key={lang} className="inline-flex items-center gap-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/25 px-2.5 py-1 rounded-lg text-xs font-bold">
+                              {lang}
+                              <button onClick={() => handleRemoveLang(lang)} className="hover:text-white transition-colors">
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                          <input
+                            type="text"
+                            value={langInput}
+                            onChange={(e) => setLangInput(e.target.value)}
+                            onKeyDown={handleAddLang}
+                            placeholder={languagesSpoken.length === 0 ? "e.g. English, Spanish" : "Add..."}
+                            className="bg-transparent outline-none flex-1 text-xs font-bold text-[#E8EAFF] min-w-[80px]"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Website and Social links */}
+                    <div className="space-y-4 pt-4 border-t border-white/5">
+                      <h4 className="text-[11px] font-black uppercase tracking-wider text-indigo-400">Website & Social Connections</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase tracking-wider text-muted">Personal Website</label>
+                          <input
+                            type="text"
+                            value={websiteUrl}
+                            onChange={(e) => setWebsiteUrl(e.target.value)}
+                            placeholder="https://..."
+                            className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 px-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase tracking-wider text-muted">LinkedIn Profile</label>
+                          <div className="relative">
+                            <Linkedin className="absolute left-4 top-3.5 h-5 w-5 text-muted" />
+                            <input
+                              type="text"
+                              value={linkedinUrl}
+                              onChange={(e) => setLinkedinUrl(e.target.value)}
+                              placeholder="LinkedIn URL"
+                              className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 pl-12 pr-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase tracking-wider text-muted">Twitter / X Profile</label>
+                          <div className="relative">
+                            <Twitter className="absolute left-4 top-3.5 h-5 w-5 text-muted" />
+                            <input
+                              type="text"
+                              value={twitterUrl}
+                              onChange={(e) => setTwitterUrl(e.target.value)}
+                              placeholder="Twitter/X URL"
+                              className="w-full h-12 rounded-2xl bg-white/5 border border-white/10 pl-12 pr-4 text-sm font-bold focus:border-indigo-500/50 outline-none text-[#E8EAFF]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Consent checkbox */}
+                    <div className="pt-4 border-t border-white/5 flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="photoConsent"
+                        checked={photoConsent}
+                        onChange={(e) => setPhotoConsent(e.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-white/10 bg-white/5 text-indigo-500 focus:ring-indigo-500/50"
+                      />
+                      <label htmlFor="photoConsent" className="text-xs text-muted font-bold cursor-pointer select-none leading-relaxed">
+                        I hereby consent to CPMS utilizing my profile photo, name, designation, and biography for promotional event booklets, printed materials, and digital signage.
+                      </label>
                     </div>
 
                     {/* Save Action */}
@@ -693,70 +966,319 @@ export default function SpeakerLandingPage() {
                 )}
 
                 {profileMode === "template" && (
-                  <div className="glass-3d p-8 rounded-[2.5rem] space-y-8">
-                    <h3 className="text-xl font-black uppercase tracking-wider text-[#E8EAFF]">Intake Mode 1: Document Templates</h3>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Download a pre-filled template in Word or PowerPoint format containing your session, talk details and slots. Edit it inside Microsoft Office, fill in your details, paste your profile photo inside the designated areas, and re-upload the file below. Our system parses it automatically.
-                    </p>
+                  <div className="space-y-6">
+                    <div className="glass-3d p-8 rounded-[2.5rem] space-y-8">
+                      <h3 className="text-xl font-black uppercase tracking-wider text-[#E8EAFF]">Intake Mode 1: Document Templates</h3>
+                      <p className="text-xs text-muted leading-relaxed">
+                        Download a pre-filled template in Word format containing your session, talk details and slots. Edit it inside Microsoft Office, fill in your details, paste your profile photo inside the designated areas, and re-upload the file below. Our system parses it automatically.
+                      </p>
 
-                    {/* Downloads */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <button 
-                        onClick={() => handleDownloadTemplate("docx")}
-                        className="h-16 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-between px-6 group transition-all text-left"
-                      >
-                        <div>
-                          <span className="text-xs font-black uppercase tracking-wider text-[#E8EAFF] block">Word Template</span>
-                          <span className="text-[10px] font-bold text-muted uppercase">Pre-filled DOCX</span>
-                        </div>
-                        <Download className="h-5 w-5 text-indigo-400 group-hover:scale-110 transition-transform" />
-                      </button>
+                      {/* Downloads */}
+                      <div className="grid grid-cols-1 gap-4">
+                        <button 
+                          onClick={handleDownloadTemplate}
+                          className="h-16 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-between px-6 group transition-all text-left"
+                        >
+                          <div>
+                            <span className="text-xs font-black uppercase tracking-wider text-[#E8EAFF] block">Word Template</span>
+                            <span className="text-[10px] font-bold text-muted uppercase">Pre-filled DOCX</span>
+                          </div>
+                          <Download className="h-5 w-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                        </button>
+                      </div>
 
-                      <button 
-                        onClick={() => handleDownloadTemplate("pptx")}
-                        className="h-16 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-between px-6 group transition-all text-left"
-                      >
-                        <div>
-                          <span className="text-xs font-black uppercase tracking-wider text-[#E8EAFF] block">PowerPoint Slide</span>
-                          <span className="text-[10px] font-bold text-muted uppercase">Pre-filled PPTX</span>
+                      {/* Upload Template Area */}
+                      <label className="w-full h-44 rounded-[2rem] border-2 border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300">
+                        <FileUp className="h-10 w-10 text-muted" />
+                        <div className="text-center">
+                          <span className="text-xs font-black uppercase tracking-widest text-indigo-400 block mb-1">Re-upload Completed Template</span>
+                          <span className="text-[9px] font-bold text-muted uppercase">DOCX format only</span>
                         </div>
-                        <Download className="h-5 w-5 text-indigo-400 group-hover:scale-110 transition-transform" />
-                      </button>
+                        <input type="file" accept=".docx" onChange={handleUploadTemplate} className="hidden" />
+                      </label>
                     </div>
 
-                    {/* Upload Template Area */}
-                    <label className="w-full h-44 rounded-[2rem] border-2 border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300">
-                      <FileUp className="h-10 w-10 text-muted" />
-                      <div className="text-center">
-                        <span className="text-xs font-black uppercase tracking-widest text-indigo-400 block mb-1">Re-upload Completed Template</span>
-                        <span className="text-[9px] font-bold text-muted uppercase">DOCX or PPTX formats</span>
+                    {extractedData && (
+                      <div className="glass-3d p-6 rounded-[2rem] border-indigo-500/20 bg-indigo-950/10 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-black uppercase tracking-wider text-[#E8EAFF] flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 text-indigo-400 animate-pulse" /> Review Extracted Info
+                          </h4>
+                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400">
+                            AI Extracted
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                          {extractedData.designation && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Designation</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.designation}</span>
+                            </div>
+                          )}
+                          {extractedData.organisation_name && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Organisation</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.organisation_name}</span>
+                            </div>
+                          )}
+                          {extractedData.department && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Department</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.department}</span>
+                            </div>
+                          )}
+                          {extractedData.website_url && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Website</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.website_url}</span>
+                            </div>
+                          )}
+                          {extractedData.linkedin_url && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">LinkedIn</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.linkedin_url}</span>
+                            </div>
+                          )}
+                          {extractedData.research_interests && extractedData.research_interests.length > 0 && (
+                            <div className="col-span-2">
+                              <span className="text-muted font-bold block uppercase text-[9px]">Research Interests</span>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {extractedData.research_interests.map((ri: string) => (
+                                  <span key={ri} className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px] font-bold">{ri}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {extractedData.bio && (
+                            <div className="col-span-2">
+                              <span className="text-muted font-bold block uppercase text-[9px]">Short Bio</span>
+                              <p className="text-muted font-medium italic mt-1 leading-relaxed">{extractedData.bio}</p>
+                            </div>
+                          )}
+                          {extractedData.extended_bio && (
+                            <div className="col-span-2">
+                              <span className="text-muted font-bold block uppercase text-[9px]">Extended Bio</span>
+                              <p className="text-muted font-medium italic mt-1 leading-relaxed">{extractedData.extended_bio}</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-4 pt-4 border-t border-white/5">
+                          <button
+                            onClick={() => {
+                              if (extractedData.designation) setDesignation(extractedData.designation);
+                              if (extractedData.organisation_name) setOrganisationName(extractedData.organisation_name);
+                              if (extractedData.department) setDepartment(extractedData.department);
+                              if (extractedData.website_url) setWebsiteUrl(extractedData.website_url);
+                              if (extractedData.linkedin_url) setLinkedinUrl(extractedData.linkedin_url);
+                              if (extractedData.research_interests) setResearchInterests(extractedData.research_interests);
+                              if (extractedData.bio) setShortBio(extractedData.bio);
+                              if (extractedData.extended_bio) setExtendedBio(extractedData.extended_bio);
+                              setExtractedData(null);
+                              setProfileMode("form");
+                              toast.success("Details copied to form. You can now edit them!");
+                            }}
+                            className="flex-1 h-10 rounded-full border border-white/10 text-xs font-black uppercase tracking-widest text-[#E8EAFF] hover:bg-white/5 transition-all"
+                          >
+                            Edit in Form
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const loadingId = toast.loading("Saving profile...");
+                              try {
+                                await apiClient.put(`/events/${eventId}/speakers/${portal.speaker_id}/profile?token=${token}`, {
+                                  designation: extractedData.designation || designation,
+                                  title: extractedData.title || title,
+                                  organisation_name: extractedData.organisation_name || organisationName,
+                                  department: extractedData.department || department,
+                                  city: extractedData.city || city,
+                                  country: extractedData.country || country,
+                                  bio: extractedData.bio || shortBio,
+                                  extended_bio: extractedData.extended_bio || extendedBio,
+                                  research_interests: extractedData.research_interests || researchInterests,
+                                  languages_spoken: languagesSpoken,
+                                  website_url: extractedData.website_url || websiteUrl,
+                                  linkedin_url: extractedData.linkedin_url || linkedinUrl,
+                                  twitter_url: extractedData.twitter_url || twitterUrl,
+                                  photo_consent: photoConsent,
+                                  profile_photo_url: photoUrl
+                                });
+                                toast.success("Profile saved successfully!", { id: loadingId });
+                                if (extractedData.designation) setDesignation(extractedData.designation);
+                                if (extractedData.organisation_name) setOrganisationName(extractedData.organisation_name);
+                                if (extractedData.department) setDepartment(extractedData.department);
+                                if (extractedData.website_url) setWebsiteUrl(extractedData.website_url);
+                                if (extractedData.linkedin_url) setLinkedinUrl(extractedData.linkedin_url);
+                                if (extractedData.research_interests) setResearchInterests(extractedData.research_interests);
+                                if (extractedData.bio) setShortBio(extractedData.bio);
+                                if (extractedData.extended_bio) setExtendedBio(extractedData.extended_bio);
+                                setExtractedData(null);
+                                setHasProfile(true);
+                                queryClient.invalidateQueries({ queryKey: ["portal-auth", eventId, token] });
+                              } catch (err: any) {
+                                toast.error(err.response?.data?.detail || "Failed to save profile.", { id: loadingId });
+                              }
+                            }}
+                            className="flex-1 h-10 rounded-full bg-indigo-500 hover:bg-indigo-600 text-xs font-black uppercase tracking-widest text-white shadow-lg transition-all"
+                          >
+                            Confirm & Save
+                          </button>
+                        </div>
                       </div>
-                      <input type="file" accept=".docx,.pptx" onChange={handleUploadTemplate} className="hidden" />
-                    </label>
+                    )}
                   </div>
                 )}
 
                 {profileMode === "cv" && (
-                  <div className="glass-3d p-8 rounded-[2.5rem] space-y-6">
-                    <h3 className="text-xl font-black uppercase tracking-wider text-[#E8EAFF]">Intake Mode 3: CV Text Parser</h3>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Upload your existing professional Curriculum Vitae (CV) or Resume as a PDF document. EventOS's AI parsing heuristics will analyze and extract your job title, university/company affiliation, and a formatted bio snippet directly, allowing you to review them immediately.
-                    </p>
+                  <div className="space-y-6">
+                    <div className="glass-3d p-8 rounded-[2.5rem] space-y-6">
+                      <h3 className="text-xl font-black uppercase tracking-wider text-[#E8EAFF]">Intake Mode 3: CV Text Parser</h3>
+                      <p className="text-xs text-muted leading-relaxed">
+                        Upload your existing professional Curriculum Vitae (CV) or Resume as a PDF document. EventOS's AI parsing heuristics will analyze and extract your job title, university/company affiliation, and a formatted bio snippet directly, allowing you to review them immediately.
+                      </p>
 
-                    <label className="w-full h-44 rounded-[2rem] border-2 border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300">
-                      <FileText className="h-10 w-10 text-muted" />
-                      <div className="text-center">
-                        <span className="text-xs font-black uppercase tracking-widest text-indigo-400 block mb-1">Upload CV Document</span>
-                        <span className="text-[9px] font-bold text-muted uppercase">PDF format only</span>
+                      <label className="w-full h-44 rounded-[2rem] border-2 border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300">
+                        <FileText className="h-10 w-10 text-muted" />
+                        <div className="text-center">
+                          <span className="text-xs font-black uppercase tracking-widest text-indigo-400 block mb-1">Upload CV Document</span>
+                          <span className="text-[9px] font-bold text-muted uppercase">PDF format only</span>
+                        </div>
+                        <input type="file" accept=".pdf" onChange={handleUploadCV} className="hidden" />
+                      </label>
+                    </div>
+
+                    {extractedData && (
+                      <div className="glass-3d p-6 rounded-[2rem] border-indigo-500/20 bg-indigo-950/10 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-black uppercase tracking-wider text-[#E8EAFF] flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 text-indigo-400 animate-pulse" /> Review Extracted Info
+                          </h4>
+                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400">
+                            AI Extracted
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                          {extractedData.designation && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Designation</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.designation}</span>
+                            </div>
+                          )}
+                          {extractedData.organisation_name && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Organisation</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.organisation_name}</span>
+                            </div>
+                          )}
+                          {extractedData.department && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Department</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.department}</span>
+                            </div>
+                          )}
+                          {extractedData.website_url && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">Website</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.website_url}</span>
+                            </div>
+                          )}
+                          {extractedData.linkedin_url && (
+                            <div>
+                              <span className="text-muted font-bold block uppercase text-[9px]">LinkedIn</span>
+                              <span className="text-[#E8EAFF] font-bold">{extractedData.linkedin_url}</span>
+                            </div>
+                          )}
+                          {extractedData.research_interests && extractedData.research_interests.length > 0 && (
+                            <div className="col-span-2">
+                              <span className="text-muted font-bold block uppercase text-[9px]">Research Interests</span>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {extractedData.research_interests.map((ri: string) => (
+                                  <span key={ri} className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px] font-bold">{ri}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {extractedData.bio && (
+                            <div className="col-span-2">
+                              <span className="text-muted font-bold block uppercase text-[9px]">Short Bio</span>
+                              <p className="text-muted font-medium italic mt-1 leading-relaxed">{extractedData.bio}</p>
+                            </div>
+                          )}
+                          {extractedData.extended_bio && (
+                            <div className="col-span-2">
+                              <span className="text-muted font-bold block uppercase text-[9px]">Extended Bio</span>
+                              <p className="text-muted font-medium italic mt-1 leading-relaxed">{extractedData.extended_bio}</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-4 pt-4 border-t border-white/5">
+                          <button
+                            onClick={() => {
+                              if (extractedData.designation) setDesignation(extractedData.designation);
+                              if (extractedData.organisation_name) setOrganisationName(extractedData.organisation_name);
+                              if (extractedData.department) setDepartment(extractedData.department);
+                              if (extractedData.website_url) setWebsiteUrl(extractedData.website_url);
+                              if (extractedData.linkedin_url) setLinkedinUrl(extractedData.linkedin_url);
+                              if (extractedData.research_interests) setResearchInterests(extractedData.research_interests);
+                              if (extractedData.bio) setShortBio(extractedData.bio);
+                              if (extractedData.extended_bio) setExtendedBio(extractedData.extended_bio);
+                              setExtractedData(null);
+                              setProfileMode("form");
+                              toast.success("Details copied to form. You can now edit them!");
+                            }}
+                            className="flex-1 h-10 rounded-full border border-white/10 text-xs font-black uppercase tracking-widest text-[#E8EAFF] hover:bg-white/5 transition-all"
+                          >
+                            Edit in Form
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const loadingId = toast.loading("Saving profile...");
+                              try {
+                                await apiClient.put(`/events/${eventId}/speakers/${portal.speaker_id}/profile?token=${token}`, {
+                                  designation: extractedData.designation || designation,
+                                  title: extractedData.title || title,
+                                  organisation_name: extractedData.organisation_name || organisationName,
+                                  department: extractedData.department || department,
+                                  city: extractedData.city || city,
+                                  country: extractedData.country || country,
+                                  bio: extractedData.bio || shortBio,
+                                  extended_bio: extractedData.extended_bio || extendedBio,
+                                  research_interests: extractedData.research_interests || researchInterests,
+                                  languages_spoken: languagesSpoken,
+                                  website_url: extractedData.website_url || websiteUrl,
+                                  linkedin_url: extractedData.linkedin_url || linkedinUrl,
+                                  twitter_url: extractedData.twitter_url || twitterUrl,
+                                  photo_consent: photoConsent,
+                                  profile_photo_url: photoUrl
+                                });
+                                toast.success("Profile saved successfully!", { id: loadingId });
+                                if (extractedData.designation) setDesignation(extractedData.designation);
+                                if (extractedData.organisation_name) setOrganisationName(extractedData.organisation_name);
+                                if (extractedData.department) setDepartment(extractedData.department);
+                                if (extractedData.website_url) setWebsiteUrl(extractedData.website_url);
+                                if (extractedData.linkedin_url) setLinkedinUrl(extractedData.linkedin_url);
+                                if (extractedData.research_interests) setResearchInterests(extractedData.research_interests);
+                                if (extractedData.bio) setShortBio(extractedData.bio);
+                                if (extractedData.extended_bio) setExtendedBio(extractedData.extended_bio);
+                                setExtractedData(null);
+                                setHasProfile(true);
+                                queryClient.invalidateQueries({ queryKey: ["portal-auth", eventId, token] });
+                              } catch (err: any) {
+                                toast.error(err.response?.data?.detail || "Failed to save profile.", { id: loadingId });
+                              }
+                            }}
+                            className="flex-1 h-10 rounded-full bg-indigo-500 hover:bg-indigo-600 text-xs font-black uppercase tracking-widest text-white shadow-lg transition-all"
+                          >
+                            Confirm & Save
+                          </button>
+                        </div>
                       </div>
-                      <input type="file" accept=".pdf" onChange={handleUploadCV} className="hidden" />
-                    </label>
+                    )}
                   </div>
                 )}
               </div>
 
               {/* Right Side: Completeness Score Ring */}
-              <div className="space-y-6 lg:sticky lg:top-24">
+              <div className="space-y-6 md:sticky md:top-24">
                 <div className="glass-3d p-8 rounded-[2.5rem] bg-indigo-950/10 border-indigo-500/10 text-center space-y-6">
                   <div>
                     <h4 className="text-xs font-black uppercase tracking-[0.2em] text-[#E8EAFF] mb-1">Profile Completeness</h4>
@@ -764,44 +1286,66 @@ export default function SpeakerLandingPage() {
                   </div>
 
                   {/* Circular Score Ring */}
-                  <div className="relative h-40 w-40 mx-auto flex items-center justify-center">
-                    <svg className="absolute inset-0 h-full w-full transform -rotate-90">
-                      <circle cx="80" cy="80" r="70" className="stroke-white/5 fill-none" strokeWidth="12" />
-                      <circle 
-                        cx="80" 
-                        cy="80" 
-                        r="70" 
-                        className="stroke-indigo-500 fill-none transition-all duration-1000" 
-                        strokeWidth="12" 
-                        strokeDasharray={440} 
-                        strokeDashoffset={440 - (440 * (portal.profile_completeness || 0)) / 100}
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                    <div className="text-center">
-                      <span className="text-4xl font-black text-[#E8EAFF] tracking-tighter">{portal.profile_completeness || 0}%</span>
-                      <span className="text-[8px] font-black uppercase tracking-widest text-indigo-400 block mt-1">Complete</span>
-                    </div>
-                  </div>
+                  {(() => {
+                    const score = getCompleteness();
+                    let ringColor = "stroke-red-500";
+                    let textColor = "text-red-400";
+                    if (score >= 80) {
+                      ringColor = "stroke-emerald-500";
+                      textColor = "text-emerald-400";
+                    } else if (score >= 50) {
+                      ringColor = "stroke-amber-500";
+                      textColor = "text-amber-400";
+                    }
+                    return (
+                      <div className="relative h-40 w-40 mx-auto flex items-center justify-center">
+                        <svg className="absolute inset-0 h-full w-full transform -rotate-90">
+                          <circle cx="80" cy="80" r="70" className="stroke-white/5 fill-none" strokeWidth="12" />
+                          <circle 
+                            cx="80" 
+                            cy="80" 
+                            r="70" 
+                            className={cn("fill-none transition-all duration-1000", ringColor)} 
+                            strokeWidth="12" 
+                            strokeDasharray={440} 
+                            strokeDashoffset={440 - (440 * score) / 100}
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        <div className="text-center">
+                          <span className={cn("text-4xl font-black tracking-tighter", textColor)}>{score}%</span>
+                          <span className="text-[8px] font-black uppercase tracking-widest text-muted block mt-1">Complete</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="text-left space-y-3 pt-4 border-t border-white/5">
                     <h5 className="text-[9px] font-black uppercase tracking-wider text-muted">Required Milestones</h5>
                     <div className="grid grid-cols-1 gap-2 text-xs font-bold">
                       <div className="flex items-center gap-2">
-                        {portal.photo_url ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
-                        <span className={portal.photo_url ? "text-muted line-through" : "text-[#E8EAFF]"}>Profile Photo (20%)</span>
+                        {photoUrl ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
+                        <span className={photoUrl ? "text-muted line-through" : "text-[#E8EAFF]"}>Profile Photo (20%)</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {portal.bio ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
-                        <span className={portal.bio ? "text-muted line-through" : "text-[#E8EAFF]"}>Short Biography (20%)</span>
+                        {shortBio ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
+                        <span className={shortBio ? "text-muted line-through" : "text-[#E8EAFF]"}>Short Biography (25%)</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {portal.designation ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
-                        <span className={portal.designation ? "text-muted line-through" : "text-[#E8EAFF]"}>Designation (15%)</span>
+                        {(designation && organisationName) ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
+                        <span className={(designation && organisationName) ? "text-muted line-through" : "text-[#E8EAFF]"}>Designation & Organization (15%)</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {portal.affiliation ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
-                        <span className={portal.affiliation ? "text-muted line-through" : "text-[#E8EAFF]"}>Organization (15%)</span>
+                        {(websiteUrl || linkedinUrl || twitterUrl) ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
+                        <span className={(websiteUrl || linkedinUrl || twitterUrl) ? "text-muted line-through" : "text-[#E8EAFF]"}>Social Connections (10%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {extendedBio ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
+                        <span className={extendedBio ? "text-muted line-through" : "text-[#E8EAFF]"}>Extended Biography (20%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {(researchInterests && researchInterests.length >= 2) ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <div className="h-3.5 w-3.5 rounded-full border-2 border-white/10" />}
+                        <span className={(researchInterests && researchInterests.length >= 2) ? "text-muted line-through" : "text-[#E8EAFF]"}>Research Interests (10%)</span>
                       </div>
                     </div>
                   </div>
@@ -809,120 +1353,131 @@ export default function SpeakerLandingPage() {
               </div>
             </motion.div>
           )}
+        </AnimatePresence>
+            </div> {/* End of Tab Content */}
+          </div> {/* End of Left Column */}
 
-          {activeTab === "announcements" && (
-            <motion.div
-              key="announcements"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              className="space-y-6 max-w-4xl mx-auto"
-            >
-              <div className="border-b border-white/5 pb-4">
-                <h2 className="text-xs font-black text-muted uppercase tracking-[0.3em] flex items-center gap-3">
-                  <Bell className="h-4 w-4 text-indigo-400" /> Event bulletins & campaigns
-                </h2>
+          {/* Right Column: Standalone Announcements (4 cols) */}
+          <div className="lg:col-span-4 flex flex-col h-full">
+            <div className="glass-3d rounded-[2rem] overflow-hidden border border-white/5 h-full flex flex-col bg-stone-900/60">
+              <div className="flex items-center justify-between px-6 py-5 border-b border-white/5 bg-white/[0.01] shrink-0">
+                <div className="flex items-center gap-3">
+                  <span className="text-indigo-400"><Bell className="h-4.5 w-4.5" /></span>
+                  <h2 className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Announcements</h2>
+                </div>
+                {portal.announcements && portal.announcements.length > 0 && (
+                  <span className="h-5 min-w-5 px-1.5 flex items-center justify-center bg-indigo-500 text-white text-[9px] font-black rounded-full shadow-[0_0_8px_rgba(99,102,241,0.5)] shrink-0 animate-pulse">
+                    {portal.announcements.length}
+                  </span>
+                )}
               </div>
 
-              {!portal.announcements || portal.announcements.length === 0 ? (
-                <div className="glass-3d p-20 text-center text-muted font-black uppercase tracking-widest italic rounded-[2.5rem]">
-                  No bulletins or announcements posted yet
-                </div>
-              ) : (
-                <div className="grid gap-6">
-                  {portal.announcements.map((ann) => {
-                    const isExpanded = !!expandedAnnouncements[ann.id];
-                    return (
-                      <div 
-                        key={ann.id}
-                        className={cn(
-                          "glass-3d p-8 rounded-[2.5rem] relative overflow-hidden transition-all duration-300 border-l-4",
-                          ann.type === "critical" ? "border-l-rose-500 bg-rose-500/5" :
-                          ann.type === "warning" ? "border-l-amber-500 bg-amber-500/5" :
-                          "border-l-indigo-500 bg-indigo-500/5"
-                        )}
-                      >
-                        {ann.is_pinned && (
-                          <span className="absolute top-4 right-8 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest">
-                            Pinned
-                          </span>
-                        )}
-
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-3">
-                            <span className={cn(
-                              "text-[8px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full",
-                              ann.type === "critical" ? "bg-rose-500/10 text-rose-400" :
-                              ann.type === "warning" ? "bg-amber-500/10 text-amber-400" :
-                              "bg-indigo-500/10 text-indigo-400"
-                            )}>
-                              {ann.type}
-                            </span>
-                            <span className="text-[10px] font-bold text-muted">
-                              {new Date(ann.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                            </span>
+              <div className="p-6 overflow-y-auto flex-1 max-h-[600px] space-y-4">
+                {!portal.announcements || portal.announcements.length === 0 ? (
+                  <p className="text-xs text-muted text-center py-8 font-bold">No notifications or announcements at this time.</p>
+                ) : (
+                  <div className="space-y-4 text-left">
+                    {portal.announcements.map((ann: any, idx: number) => {
+                      const isExpanded = !!expandedAnnouncements[ann.id];
+                      return (
+                        <div
+                          key={ann.id || idx}
+                          className={cn(
+                            "border rounded-[1.5rem] overflow-hidden transition-all duration-300",
+                            ann.type === "critical" ? "border-rose-500/20 bg-rose-500/[0.02]" :
+                            ann.type === "warning" ? "border-amber-500/20 bg-amber-500/[0.02]" :
+                            "border-indigo-500/20 bg-indigo-500/[0.02]"
+                          )}
+                        >
+                          {/* Header: Clickable to toggle collapse */}
+                          <div
+                            onClick={() => setExpandedAnnouncements({ ...expandedAnnouncements, [ann.id]: !isExpanded })}
+                            className="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-white/[0.02] transition-colors"
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                              <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                                {ann.is_pinned && (
+                                  <span className="inline-flex items-center gap-0.5 text-[8px] font-black uppercase text-indigo-400 tracking-wide">
+                                    📌 Pinned
+                                  </span>
+                                )}
+                                <span className={cn(
+                                  "inline-flex px-1.5 py-0.5 rounded-full border text-[7px] font-black uppercase tracking-wider",
+                                  ann.type === "critical" ? "bg-rose-500/10 text-rose-400 border-rose-500/20" :
+                                  ann.type === "warning" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
+                                  "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                                )}>
+                                  {ann.type}
+                                </span>
+                                {ann.created_at && (
+                                  <span className="text-[7px] font-bold text-muted uppercase tracking-wider">
+                                    {new Date(ann.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="text-xs font-black text-[#E8EAFF] tracking-tight truncate">
+                                {ann.title}
+                              </h4>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <ChevronRight
+                                className={cn(
+                                  "h-3.5 w-3.5 text-muted transition-transform duration-300",
+                                  isExpanded && "rotate-90 text-indigo-400"
+                                )}
+                              />
+                            </div>
                           </div>
 
-                          <h3 
-                            onClick={() => setExpandedAnnouncements({ ...expandedAnnouncements, [ann.id]: !isExpanded })}
-                            className="text-xl font-black text-[#E8EAFF] tracking-tight cursor-pointer hover:text-indigo-400 transition-colors"
-                          >
-                            {ann.title}
-                          </h3>
-
-                          {/* Body - collapsible */}
-                          {(isExpanded || ann.message.length < 200) ? (
-                            <p className="text-sm font-medium text-muted leading-relaxed whitespace-pre-wrap">
-                              {ann.message}
-                            </p>
-                          ) : (
-                            <p className="text-sm font-medium text-muted leading-relaxed">
-                              {ann.message.slice(0, 200)}...
-                              <button 
-                                onClick={() => setExpandedAnnouncements({ ...expandedAnnouncements, [ann.id]: true })}
-                                className="text-indigo-400 ml-2 font-black uppercase tracking-wider text-[10px] hover:underline"
+                          {/* Expandable Body */}
+                          <AnimatePresence initial={false}>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ height: 0 }}
+                                animate={{ height: "auto" }}
+                                exit={{ height: 0 }}
+                                className="overflow-hidden"
                               >
-                                Read More
-                              </button>
-                            </p>
-                          )}
-
-                          {/* Attachments Chips */}
-                          {ann.attachments && ann.attachments.length > 0 && (
-                            <div className="flex flex-wrap gap-2 pt-4 border-t border-white/5">
-                              {ann.attachments.map((att: any, idx: number) => {
-                                const isDrive = att.type === "file" ? false : att.url.includes("drive.google.com") || att.url.includes("onedrive.live.com") || att.url.includes("sharepoint.com") || att.url.includes("dropbox.com");
-                                return (
-                                  <button
-                                    key={idx}
-                                    onClick={() => handleAttachmentClick(att)}
-                                    className="h-10 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-[#E8EAFF] transition-all flex items-center gap-2"
-                                  >
-                                    {att.type === "file" ? (
-                                      <>
-                                        <FileText className="h-4 w-4 text-indigo-400" />
-                                        <span>{att.name}</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        {getDriveIcon(att.url)}
-                                        <span>{att.name || "View Link"}</span>
-                                      </>
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
+                                <div className="px-4 pb-4 pt-1 border-t border-white/5 space-y-3">
+                                  <p className="text-xs text-muted leading-relaxed whitespace-pre-wrap">
+                                    {ann.message}
+                                  </p>
+                                  {ann.attachments && ann.attachments.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 pt-3 border-t border-white/5">
+                                      {ann.attachments.map((att: any, aIdx: number) => (
+                                        <button
+                                          key={aIdx}
+                                          onClick={() => handleAttachmentClick(att)}
+                                          className="h-8 px-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-bold text-[#E8EAFF] transition-all flex items-center gap-1.5"
+                                        >
+                                          {att.type === "file" ? (
+                                            <>
+                                              <FileText className="h-3.5 w-3.5 text-indigo-400" />
+                                              <span>{att.name}</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              {getDriveIcon(att.url)}
+                                              <span>{att.name || "View Link"}</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </main>
 
       {/* PDF Viewer Iframe Modal */}
@@ -974,5 +1529,6 @@ export default function SpeakerLandingPage() {
         </div>
       </footer>
     </div>
+    </SpeakerPortalLayout>
   );
 }

@@ -4,11 +4,14 @@ from __future__ import annotations
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form as FastAPIForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loguru import logger
+from app.modules.presentations.services import upload_service as _upload_service
+from app.config import settings as _app_settings
+import re as _re
 
 from app.dependencies import (
     get_db, get_current_user, require_active_user,
@@ -313,6 +316,7 @@ async def publish_event(
     return EventResponse.model_validate(event)
 
 
+
 @router.post("/{event_id}/archive", response_model=EventResponse)
 async def archive_event(
     event: CurrentEvent,
@@ -340,3 +344,146 @@ async def clear_event_data(
         await db.rollback()
         logger.error(f"Clear data FAILED for event {event.id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear event data: {str(e)}")
+
+
+# ── Branding Image Upload ─────────────────────────────────────────────────────
+
+@router.post("/{event_id}/branding/upload", response_model=dict)
+async def upload_branding_image(
+    event: CurrentEvent,
+    current_user: OrganizerOrAbove,
+    file: UploadFile = File(...),
+    field: str = FastAPIForm(...),   # "logo" | "header"
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Authenticated branding image upload.
+    - field="logo"   → stores URL in branding_settings.logo_url  (replaces)
+    - field="header" → appends URL to branding_settings.header_images list
+    Returns the new full branding_settings dict.
+    """
+    if field not in ("logo", "header"):
+        raise HTTPException(status_code=400, detail="field must be 'logo' or 'header'")
+
+    try:
+        contents = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    def _clean(text: str) -> str:
+        return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
+
+    event_slug = _clean(event.short_code or str(event.id))
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    filename = f"{uuid.uuid4().hex[:8]}.{ext}"
+    storage_path = f"{event_slug}/branding/{field}/{filename}"
+    bucket = "event_branding"
+
+    try:
+        _upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=storage_path,
+            data=contents,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+    if _app_settings.STORAGE_MODE == "local":
+        url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+    else:
+        url = _upload_service.create_presigned_download(
+            bucket=bucket,
+            storage_path=storage_path,
+            expiry_seconds=31_536_000,
+        )
+
+    # Persist immediately to branding_settings
+    branding = dict(event.branding_settings or {})
+    if field == "logo":
+        branding["logo_url"] = url
+    else:  # header
+        images = list(branding.get("header_images", []))
+        images.append(url)
+        branding["header_images"] = images
+        if images:
+            branding["banner_url"] = images[0]   # backward compat
+
+    event.branding_settings = branding
+    await db.commit()
+    await db.refresh(event)
+
+    return {"url": url, "branding_settings": dict(event.branding_settings)}
+
+
+@router.post("/{event_id}/speaker-branding/upload", response_model=dict)
+async def upload_speaker_branding_image(
+    event: CurrentEvent,
+    current_user: OrganizerOrAbove,
+    file: UploadFile = File(...),
+    field: str = FastAPIForm(...),   # "logo" | "header"
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Authenticated speaker branding image upload.
+    - field="logo"   → stores URL in speaker_settings.branding.logo_url  (replaces)
+    - field="header" → appends URL to speaker_settings.branding.header_images list
+    Returns the new full speaker branding settings dict.
+    """
+    if field not in ("logo", "header"):
+        raise HTTPException(status_code=400, detail="field must be 'logo' or 'header'")
+
+    try:
+        contents = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    def _clean(text: str) -> str:
+        return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
+
+    event_slug = _clean(event.short_code or str(event.id))
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    filename = f"{uuid.uuid4().hex[:8]}.{ext}"
+    storage_path = f"{event_slug}/speaker_branding/{field}/{filename}"
+    bucket = "event_branding"
+
+    try:
+        _upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=storage_path,
+            data=contents,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+    if _app_settings.STORAGE_MODE == "local":
+        url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+    else:
+        url = _upload_service.create_presigned_download(
+            bucket=bucket,
+            storage_path=storage_path,
+            expiry_seconds=31_536_000,
+        )
+
+    # Persist immediately to event.speaker_settings["branding"]
+    speaker_settings = dict(event.speaker_settings or {})
+    branding = dict(speaker_settings.get("branding", {}))
+    
+    if field == "logo":
+        branding["logo_url"] = url
+    else:  # header
+        images = list(branding.get("header_images", []))
+        images.append(url)
+        branding["header_images"] = images
+        if images:
+            branding["banner_url"] = images[0]   # backward compat
+
+    speaker_settings["branding"] = branding
+    event.speaker_settings = speaker_settings
+    await db.commit()
+    await db.refresh(event)
+
+    return {"url": url, "branding_settings": branding}
+
+

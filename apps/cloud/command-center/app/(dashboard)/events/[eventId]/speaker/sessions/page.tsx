@@ -25,8 +25,18 @@ import { CreateSessionDialog } from "@/components/sessions/CreateSessionDialog";
 import { CalendarView } from "@/components/sessions/CalendarView";
 import { TimelineView } from "@/components/sessions/TimelineView";
 import { Portal } from "@/components/ui/portal";
+import { SESSION_TYPE_CATEGORIES } from "@/types/models";
 
 type ViewMode = "list" | "calendar" | "timeline";
+
+const CATEGORY_COLORS: Record<string, string> = {
+  CONTENT: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  NETWORKING: "bg-violet-500/10 text-violet-400 border-violet-500/20",
+  EXHIBITION: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  CEREMONY: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  BREAK: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  ADMINISTRATIVE: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+};
 
 export default function SessionsPage() {
   const { eventId } = useParams();
@@ -287,8 +297,16 @@ export default function SessionsPage() {
                           {session.session_code}
                         </div>
                         <div>
-                          <h3 className="text-lg font-black tracking-tight text-[var(--text)] group-hover:text-[var(--pri)] transition-colors">
-                            {session.name}
+                          <h3 className="text-lg font-black tracking-tight text-[var(--text)] group-hover:text-[var(--pri)] transition-colors flex flex-wrap items-center gap-2">
+                            <span>{session.name}</span>
+                            {session.session_type && (
+                              <Badge className={cn(
+                                "border font-black text-[7px] tracking-widest px-2 py-0.5 rounded-md",
+                                CATEGORY_COLORS[SESSION_TYPE_CATEGORIES[session.session_type]] || "bg-slate-500/10 text-slate-400 border-slate-500/20"
+                              )}>
+                                {SESSION_TYPE_CATEGORIES[session.session_type]} · {session.session_type.replace("_", " ")}
+                              </Badge>
+                            )}
                           </h3>
                           <div className="flex items-center gap-4 mt-1">
                             <div className="flex items-center gap-1.5 text-[10px] font-bold text-muted uppercase tracking-widest">

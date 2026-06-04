@@ -11,6 +11,7 @@ import { apiPost } from "@/lib/api-client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { fromDateTimeLocalString } from "@/lib/utils";
+import { SESSION_CATEGORIES } from "@/types/models";
 
 interface CreateSessionDialogProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
     session_code: "",
     name: "",
     room_id: "",
-    session_type: "regular",
+    session_type: "KEYNOTE",
     selected_date: "",
     start_time_only: "09:00",
     end_time_only: "10:00",
@@ -82,7 +83,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
       onClose();
       // Reset
       setFormData({
-        session_code: "", name: "", room_id: "", session_type: "regular",
+        session_code: "", name: "", room_id: "", session_type: "KEYNOTE",
         selected_date: eventDates[0] || "",
         start_time_only: "09:00", end_time_only: "10:00", 
         moderator_name: "", description: ""
@@ -181,13 +182,17 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
                   <select
                     value={formData.session_type}
                     onChange={e => setFormData({ ...formData, session_type: e.target.value })}
-                    className="w-full h-12 glass-3d border-default rounded-xl px-4 text-[13px] font-bold text-[var(--text)] appearance-none focus:outline-none"
+                    className="w-full h-12 glass-3d border-default rounded-xl px-4 text-[13px] font-bold text-[var(--text)] focus:outline-none cursor-pointer"
                   >
-                    <option value="regular">Regular Session</option>
-                    <option value="keynote">Keynote</option>
-                    <option value="workshop">Workshop</option>
-                    <option value="panel">Panel Discussion</option>
-                    <option value="eposter">Eposter</option>
+                    {Object.entries(SESSION_CATEGORIES).map(([category, types]) => (
+                      <optgroup key={category} label={category} className="bg-[var(--surf)] text-[9px] font-black tracking-widest text-muted uppercase">
+                        {types.map(t => (
+                          <option key={t.value} value={t.value} className="bg-[var(--base)] text-[var(--text)] font-semibold">
+                            {t.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
                   </select>
                 </div>
               </div>

@@ -25,6 +25,19 @@ export interface PortalPoster {
   rejection_reason: string | null;
 }
 
+export interface SpeakerBrandingSettings {
+  theme?: string;
+  logo_url?: string | null;
+  header_images?: string[];
+  banner_url?: string | null;
+  footer_terms?: string | null;
+  footer_support_emails?: string[];
+  footer_support_phones?: string[];
+  footer_websites?: string[];
+  footer_locations?: string[];
+  footer_show_logo?: boolean;
+}
+
 export interface SpeakerPortalAuthResponse {
   speaker_id: string;
   first_name: string;
@@ -52,6 +65,12 @@ export interface SpeakerPortalAuthResponse {
   social_links?: Record<string, string> | null;
   research_interests?: string[] | null;
   profile_completeness: number;
+  branding_settings: SpeakerBrandingSettings;
+  start_date?: string | null;
+  end_date?: string | null;
+  location?: string | null;
+  venue_name?: string | null;
+  organizer_name?: string | null;
 }
 
 export interface SpeakerPortalConfigResponse {
@@ -59,6 +78,13 @@ export interface SpeakerPortalConfigResponse {
   theme_color: string | null;
   speaker_mode_enabled: boolean;
   registration_mode_enabled: boolean;
+  branding_settings: SpeakerBrandingSettings;
+  start_date?: string | null;
+  end_date?: string | null;
+  location?: string | null;
+  venue_name?: string | null;
+  country?: string | null;
+  organizer_name?: string | null;
 }
 
 export function usePortalConfig(eventId: string) {

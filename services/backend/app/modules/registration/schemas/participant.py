@@ -104,6 +104,7 @@ class ParticipantResponse(BaseModel):
     source: str
     qr_code_url: Optional[str] = None
     custom_fields: dict = {}
+    is_free: bool = False
     registered_at: datetime
     updated_at: datetime
 
@@ -122,3 +123,20 @@ class CheckInResponse(BaseModel):
     session_id: uuid.UUID
     check_in_time: datetime
     updated_at: datetime
+
+
+class SkippedImportRow(BaseModel):
+    row: int
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    reason: str
+
+
+class ExcelImportResponse(BaseModel):
+    message: str
+    inserted: int
+    waitlisted: int
+    merged: int
+    skipped: int
+    skipped_details: List[SkippedImportRow]

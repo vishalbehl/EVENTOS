@@ -35,6 +35,7 @@ def fix_partitions():
     )
     conn.autocommit = True
     cur = conn.cursor()
+    cur.execute("SET search_path TO public, auth, rbac, speakers, presentations, registration, notifications, venue;")
 
     tables = [
         "api_request_logs",

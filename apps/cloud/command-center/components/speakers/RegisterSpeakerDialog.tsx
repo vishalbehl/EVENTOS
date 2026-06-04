@@ -11,6 +11,7 @@ import { useEmailTemplates } from "@/hooks/useEmails";
 import { useSessions } from "@/hooks/useSessions";
 import { usePosterCategories } from "@/hooks/usePosters";
 import { apiPost } from "@/lib/api-client";
+import { SPEAKER_TYPES } from "@/types/backend";
 
 import { cn, formatDateInTZ, formatTimeInTZ } from "@/lib/utils";
 import { toast } from "sonner";
@@ -49,6 +50,7 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
     start_time: string;
     end_time: string;
     talk_duration_minutes: number;
+    speaker_type: string;
     authors?: string;
     category?: string;
     abstract?: string;
@@ -69,6 +71,7 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
       start_time: "", 
       end_time: "", 
       talk_duration_minutes: 0,
+      speaker_type: "",
       authors: `${formData.first_name} ${formData.last_name}`.trim(),
       category: "",
       abstract: ""
@@ -128,7 +131,13 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
       }
     }
 
-
+    // Auto-populate defaultDuration when speaker_type changes
+    if (field === 'speaker_type' && value) {
+      const typeConfig = SPEAKER_TYPES.find(t => t.code === value);
+      if (typeConfig && (!talk.talk_duration_minutes || talk.talk_duration_minutes === 0)) {
+        talk.talk_duration_minutes = typeConfig.defaultDuration;
+      }
+    }
 
     newTalks[index] = talk;
     setTalks(newTalks);
@@ -395,6 +404,26 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
                                       return true;
                                     }).map(s => <option key={s.id} value={s.id}>[{s.session_code}] {s.name}</option>)}
                                   </select>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Speaker Type / Role</label>
+                                  <select 
+                                    value={talk.speaker_type || ""}
+                                    onChange={e => updateTalk(idx, 'speaker_type', e.target.value)}
+                                    className="w-full h-12 glass-3d border-default rounded-xl px-4 text-[13px] font-bold text-[var(--text)] appearance-none focus:outline-none focus:border-[var(--pri)]/50"
+                                  >
+                                    <option value="">Select Speaker Type...</option>
+                                    {SPEAKER_TYPES.map(t => (
+                                      <option key={t.code} value={t.code}>{t.label}</option>
+                                    ))}
+                                  </select>
+                                  {talk.speaker_type && SPEAKER_TYPES.find(t => t.code === talk.speaker_type)?.uploadRequired === false && (
+                                    <p className="text-[10px] text-muted flex items-center gap-1.5 mt-1 font-bold">
+                                      <Info className="h-3.5 w-3.5 text-[var(--pri)]" />
+                                      This speaker type does not require a file upload.
+                                    </p>
+                                  )}
                                 </div>
 
 

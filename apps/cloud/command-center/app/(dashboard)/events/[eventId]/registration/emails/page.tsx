@@ -18,7 +18,6 @@ type TabType =
   | 'sent'
   | 'campaigns'
   | 'templates'
-  | 'announcements'
 
 export default function RegistrationEmailPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)
@@ -87,8 +86,6 @@ export default function RegistrationEmailPage({ params: paramsPromise }: { param
         )
       case 'templates':
         return <RegistrationTemplateEditor eventId={eventId} />
-      case 'announcements':
-        return <AnnouncementsTab eventId={eventId} />
       default:
         return null
     }
@@ -115,7 +112,7 @@ export default function RegistrationEmailPage({ params: paramsPromise }: { param
           </div>
 
           <nav className="flex flex-wrap items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md animate-in fade-in slide-in-from-right-4 duration-700">
-            {(['dashboard', 'inbox', 'sent', 'campaigns', 'templates', 'announcements'] as TabType[]).map((tab) => (
+            {(['dashboard', 'inbox', 'sent', 'campaigns', 'templates'] as TabType[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => { setActiveTab(tab); setSelectedCampaign(null) }}

@@ -142,6 +142,7 @@ export interface SessionSpeakerSlot {
   presentation_title: string | null;
   talk_order: number;
   talk_duration_minutes: number | null;
+  speaker_type?: string;
   is_confirmed: boolean;
   speaker_first_name?: string;
   speaker_last_name?: string;

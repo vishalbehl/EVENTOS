@@ -375,90 +375,116 @@ export default function RolesTab({ eventId }: { eventId: string }) {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-left">
-              <thead className="bg-white/[0.025] border-b border-white/5">
-                <tr className="text-[9px] font-black uppercase tracking-[0.18em] text-muted">
-                  <th className="px-5 py-3">Category</th>
-                  <th className="px-5 py-3">Role</th>
-                  <th className="px-5 py-3">Reg Code</th>
-                  <th className="px-5 py-3">Template</th>
-                  <th className="px-5 py-3 text-center">Role Active</th>
-                  <th className="px-5 py-3 text-center">Portal Category</th>
-                  <th className="px-5 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredRoles.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-10 text-center text-xs font-bold text-muted">No roles match your search.</td>
-                  </tr>
-                ) : filteredRoles.map(role => {
-                  const colorCls = CAT_COLOR[role.category] || 'text-muted border-white/10 bg-white/5'
-                  const [textCls] = colorCls.split(' ')
-                  const categoryLive = !disabledCategories.includes(role.category)
-                  return (
-                    <tr key={role.id} className="hover:bg-white/[0.025] transition-colors">
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex text-[9px] font-black px-2.5 py-1 rounded-full border ${colorCls}`}>{role.category}</span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`text-xs font-black ${role.is_active ? 'text-[var(--text)]' : 'text-muted/40 line-through'}`}>{role.name}</span>
-                          {!role.is_default && <span className="text-[8px] font-black uppercase tracking-wider text-[var(--pri)] bg-[var(--pri)]/10 border border-[var(--pri)]/20 rounded-full px-2 py-0.5">Custom</span>}
-                          {(pending[role.id] !== undefined || pendingCodes[role.id] !== undefined) && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />}
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <input
-                          value={role.role_code || ''}
-                          onChange={(e) => updateRoleCode(role.id, e.target.value)}
-                          className="h-9 w-24 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-black tracking-widest text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all"
-                          title="Registration number prefix for this role"
-                        />
-                      </td>
-                      <td className="px-5 py-4">
-                        <select
-                          value={useSameDesign ? defaultTemplateId : (roleTemplateAssignments[role.id] || '')}
-                          onChange={(e) => {
-                            const nextAssignments = { ...roleTemplateAssignments, [role.id]: e.target.value }
-                            if (!e.target.value) delete nextAssignments[role.id]
-                            setRoleTemplateAssignments(nextAssignments)
-                            saveTemplateSettings({ assignments: nextAssignments })
-                          }}
-                          disabled={useSameDesign || templateSaving || templates.length === 0}
-                          className="h-9 w-full max-w-64 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all cursor-pointer disabled:opacity-45"
-                        >
-                          <option value="" className="bg-[var(--base)] text-[var(--text)]">Use default template</option>
-                          {templates.map(template => (
-                            <option key={template.id} value={template.id} className="bg-[var(--base)] text-[var(--text)]">{template.template_name}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        <button onClick={() => toggleRoleActive(role.id, role.is_active)} className="inline-flex transition-colors" title="Toggle role availability">
-                          {role.is_active ? <ToggleRight className={`h-7 w-7 ${textCls}`} /> : <ToggleLeft className="h-7 w-7 text-muted/30" />}
-                        </button>
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        <button onClick={() => toggleCategoryVisibility(role.category, categoryLive)} className="inline-flex transition-colors" title={categoryLive ? 'Hide this category on registration portal' : 'Show this category on registration portal'}>
-                          {categoryLive ? <ToggleRight className={`h-7 w-7 ${textCls}`} /> : <ToggleLeft className="h-7 w-7 text-muted/30" />}
-                        </button>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        {!role.is_default ? (
-                          <button onClick={() => removeRoleFromEvent(role.id, role.name)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors" title="Remove role from this event">
-                            <X className="h-4 w-4" />
-                          </button>
-                        ) : (
-                          <span className="text-[9px] font-bold text-muted/45 uppercase tracking-wider">Default</span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div className="divide-y divide-white/5">
+            {filteredRoles.length === 0 ? (
+              <div className="px-5 py-12 text-center text-xs font-bold text-muted">
+                No roles match your search.
+              </div>
+            ) : (
+              CATEGORIES.map(category => {
+                const catRoles = filteredRoles.filter(r => r.category === category)
+                if (catRoles.length === 0) return null
+
+                const colorCls = CAT_COLOR[category] || 'text-muted border-white/10 bg-white/5'
+                const [textCls] = colorCls.split(' ')
+                const categoryLive = !disabledCategories.includes(category)
+
+                return (
+                  <div key={category} className="p-5 space-y-4">
+                    {/* Category Heading Banner */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/[0.015] border border-white/5 rounded-2xl p-4">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`h-2.5 w-2.5 rounded-full ${categoryLive ? 'bg-emerald-400' : 'bg-muted/40'}`} />
+                        <h4 className={`text-xs font-black uppercase tracking-wider ${textCls}`}>
+                          {category}
+                        </h4>
+                        <span className="text-[9px] font-bold text-muted">({catRoles.length} roles)</span>
+                      </div>
+                      
+                      {/* Single Category Toggle */}
+                      <button
+                        onClick={() => toggleCategoryVisibility(category, categoryLive)}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 hover:text-[var(--text)] transition-all cursor-pointer"
+                        title={categoryLive ? 'Hide category on registration portal' : 'Show category on registration portal'}
+                      >
+                        {categoryLive ? <ToggleRight className="h-6 w-6 text-emerald-400" /> : <ToggleLeft className="h-6 w-6 text-muted/30" />}
+                        <span className="text-[9px] font-black uppercase tracking-[0.12em] text-muted">Portal Category Visibility</span>
+                      </button>
+                    </div>
+
+                    {/* Category Roles Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[800px] text-left">
+                        <thead className="bg-white/[0.01] border-b border-white/5">
+                          <tr className="text-[8px] font-black uppercase tracking-[0.18em] text-muted">
+                            <th className="px-4 py-2.5">Role</th>
+                            <th className="px-4 py-2.5 w-32">Reg Code</th>
+                            <th className="px-4 py-2.5 max-w-64">Template</th>
+                            <th className="px-4 py-2.5 text-center w-32">Role Active</th>
+                            <th className="px-4 py-2.5 text-right w-24">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {catRoles.map(role => {
+                            return (
+                              <tr key={role.id} className="hover:bg-white/[0.015] transition-colors">
+                                <td className="px-4 py-3.5">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className={`text-xs font-semibold ${role.is_active ? 'text-[var(--text)]' : 'text-muted/40 line-through'}`}>{role.name}</span>
+                                    {!role.is_default && <span className="text-[8px] font-black uppercase tracking-wider text-[var(--pri)] bg-[var(--pri)]/10 border border-[var(--pri)]/20 rounded-full px-2 py-0.5">Custom</span>}
+                                    {(pending[role.id] !== undefined || pendingCodes[role.id] !== undefined) && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3.5">
+                                  <input
+                                    value={role.role_code || ''}
+                                    onChange={(e) => updateRoleCode(role.id, e.target.value)}
+                                    className="h-9 w-24 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-black tracking-widest text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all"
+                                    title="Registration number prefix for this role"
+                                  />
+                                </td>
+                                <td className="px-4 py-3.5">
+                                  <select
+                                    value={useSameDesign ? defaultTemplateId : (roleTemplateAssignments[role.id] || '')}
+                                    onChange={(e) => {
+                                      const nextAssignments = { ...roleTemplateAssignments, [role.id]: e.target.value }
+                                      if (!e.target.value) delete nextAssignments[role.id]
+                                      setRoleTemplateAssignments(nextAssignments)
+                                      saveTemplateSettings({ assignments: nextAssignments })
+                                    }}
+                                    disabled={useSameDesign || templateSaving || templates.length === 0}
+                                    className="h-9 w-full max-w-64 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all cursor-pointer disabled:opacity-45"
+                                  >
+                                    <option value="" className="bg-[var(--base)] text-[var(--text)]">Use default template</option>
+                                    {templates.map(template => (
+                                      <option key={template.id} value={template.id} className="bg-[var(--base)] text-[var(--text)]">{template.template_name}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td className="px-4 py-3.5 text-center">
+                                  <button onClick={() => toggleRoleActive(role.id, role.is_active)} className="inline-flex transition-colors cursor-pointer" title="Toggle role availability">
+                                    {role.is_active ? <ToggleRight className={`h-7 w-7 ${textCls}`} /> : <ToggleLeft className="h-7 w-7 text-muted/30" />}
+                                  </button>
+                                </td>
+                                <td className="px-4 py-3.5 text-right">
+                                  {!role.is_default ? (
+                                    <button onClick={() => removeRoleFromEvent(role.id, role.name)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer" title="Remove role from this event">
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  ) : (
+                                    <span className="text-[9px] font-bold text-muted/45 uppercase tracking-wider">Default</span>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })
+            )}
           </div>
         </div>
       )}

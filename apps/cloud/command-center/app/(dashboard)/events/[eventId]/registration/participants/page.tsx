@@ -34,6 +34,7 @@ interface Participant {
   paid_status: string;
   source: string;
   registered_at: string;
+  is_free?: boolean;
 }
 
 interface PrintTemplate {
@@ -401,6 +402,7 @@ export default function ParticipantsDirectory() {
           <option value="all" className="bg-[var(--base)]">All Payments</option>
           <option value="Paid" className="bg-[var(--base)]">Paid</option>
           <option value="Unpaid" className="bg-[var(--base)]">Unpaid</option>
+          <option value="Free" className="bg-[var(--base)]">Free</option>
         </select>
 
         <Button onClick={handleResetFilters} className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d flex items-center justify-center gap-1.5">
@@ -469,10 +471,17 @@ export default function ParticipantsDirectory() {
                     <span className="text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border bg-[var(--pri)]/10 text-[var(--pri)] border-[var(--pri)]/20">{p.role}</span>
                   </td>
                   <td className="py-5 px-6" onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => handleTogglePayment(p)} className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border transition-all ${p.paid_status === "Paid" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"}`}>
-                      {p.paid_status === "Paid" ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {p.paid_status}
-                    </button>
+                    {p.is_free ? (
+                      <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border bg-sky-500/10 text-sky-400 border-sky-500/20 select-none cursor-default">
+                        <CheckCircle className="h-3 w-3" />
+                        Free
+                      </span>
+                    ) : (
+                      <button onClick={() => handleTogglePayment(p)} className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border transition-all ${p.paid_status === "Paid" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"}`}>
+                        {p.paid_status === "Paid" ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                        {p.paid_status}
+                      </button>
+                    )}
                   </td>
                   <td className="py-5 px-6 text-[9px] font-black uppercase tracking-[0.15em] text-muted">{p.source}</td>
                   <td className="py-5 px-6" onClick={(e) => e.stopPropagation()}>
@@ -767,25 +776,27 @@ export default function ParticipantsDirectory() {
                           </div>
                           <div className="flex flex-col">
                             <span className="text-[9px] font-black uppercase tracking-wider text-muted">Payment Status</span>
-                            <span className={`text-xs font-bold ${selectedParticipantForDrawer.paid_status === "Paid" ? "text-emerald-400" : "text-red-400"}`}>
-                              {selectedParticipantForDrawer.paid_status}
+                            <span className={`text-xs font-bold ${selectedParticipantForDrawer.is_free ? "text-sky-400 font-extrabold" : selectedParticipantForDrawer.paid_status === "Paid" ? "text-emerald-400" : "text-red-400"}`}>
+                              {selectedParticipantForDrawer.is_free ? "Free" : selectedParticipantForDrawer.paid_status}
                             </span>
                           </div>
                         </div>
-                        <button
-                          onClick={async () => {
-                            const updated = { ...selectedParticipantForDrawer, paid_status: selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid" };
-                            await handleTogglePayment(selectedParticipantForDrawer);
-                            setSelectedParticipantForDrawer(updated);
-                          }}
-                          className={`text-[9px] font-black uppercase tracking-[0.12em] px-3 py-1.5 rounded-full border transition-all ${
-                            selectedParticipantForDrawer.paid_status === "Paid"
-                              ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"
-                              : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-                          }`}
-                        >
-                          Mark {selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid"}
-                        </button>
+                        {!selectedParticipantForDrawer.is_free && (
+                          <button
+                            onClick={async () => {
+                              const updated = { ...selectedParticipantForDrawer, paid_status: selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid" };
+                              await handleTogglePayment(selectedParticipantForDrawer);
+                              setSelectedParticipantForDrawer(updated);
+                            }}
+                            className={`text-[9px] font-black uppercase tracking-[0.12em] px-3 py-1.5 rounded-full border transition-all ${
+                              selectedParticipantForDrawer.paid_status === "Paid"
+                                ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"
+                                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                            }`}
+                          >
+                            Mark {selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid"}
+                          </button>
+                        )}
                       </div>
 
                       {/* Source */}

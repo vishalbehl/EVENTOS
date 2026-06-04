@@ -42,6 +42,7 @@ from app.modules.venue.models.srr_checkin import SRRCheckin
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.redis import redis_client
 import json
+from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 
 
 # ── Top-level snapshot ────────────────────────────────────────
@@ -319,14 +320,20 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
     all_sessions = set()
 
     ss_q = await db.execute(
-        select(SessionSpeaker.session_id, SessionSpeaker.id)
+        select(SessionSpeaker.session_id, SessionSpeaker.id, SessionSpeaker.speaker_type)
         .join(Session, Session.id == SessionSpeaker.session_id)
         .where(Session.event_id == event_id)
     )
     session_slots: dict[uuid.UUID, list] = {}
+    pending_talks_count = 0
     for row in ss_q.all():
         session_slots.setdefault(row.session_id, []).append(row.id)
         all_sessions.add(row.session_id)
+        
+        # New logic: only count session_speaker rows without files where speaker_type is NULL or in UPLOAD_REQUIRED_CODES
+        if row.id not in has_file:
+            if row.speaker_type is None or row.speaker_type in UPLOAD_REQUIRED_CODES:
+                pending_talks_count += 1
 
     complete = partial = missing = 0
     for sess_id, slots in session_slots.items():
@@ -339,8 +346,6 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
             missing += 1
 
     total = len(all_sessions)
-    total_talks = sum(len(slots) for slots in session_slots.values())
-    talks_with_file = sum(1 for slots in session_slots.values() for s in slots if s in has_file)
     
     # Query pending eposters and add to the pending count
     posters_count_q = await db.execute(
@@ -351,7 +356,7 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
         )
     )
     pending_eposters = posters_count_q.scalar() or 0
-    talks_pending_upload = (total_talks - talks_with_file) + pending_eposters
+    talks_pending_upload = pending_talks_count + pending_eposters
 
     # Fetch session details for the breakdown list
     from app.modules.venue.models.room import Room

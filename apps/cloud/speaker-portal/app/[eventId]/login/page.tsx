@@ -7,6 +7,7 @@ import { Shield, ArrowRight, Command, Mail, Key, Loader2, AlertCircle, RotateCcw
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
 import { usePortalConfig } from "@/hooks/usePortal";
+import { SpeakerPortalLayout } from "@/components/SpeakerPortalLayout";
 
 type LoginMode = "code" | "email";
 type Step = "email" | "otp";
@@ -250,16 +251,17 @@ export default function SpeakerPortalLoginPage() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 relative">
-      {config.theme_color && (
-        <style dangerouslySetInnerHTML={{ __html: `
-          :root {
-            --pri: ${config.theme_color};
-            --sec: color-mix(in srgb, ${config.theme_color} 80%, white);
-          }
-        `}} />
-      )}
-      
+    <SpeakerPortalLayout
+      branding={config.branding_settings || {}}
+      eventName={config.event_name}
+      startDate={config.start_date}
+      endDate={config.end_date}
+      location={config.location}
+      venueName={config.venue_name}
+      country={config.country}
+      organizerName={config.organizer_name}
+    >
+    <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 relative">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -464,5 +466,6 @@ export default function SpeakerPortalLoginPage() {
         Powered by EventOS Platform
       </div>
     </div>
+    </SpeakerPortalLayout>
   );
 }

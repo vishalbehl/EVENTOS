@@ -36,9 +36,24 @@ interface FormConfig {
   active_prices?: Record<string, number>;
   active_gateway?: string;
   terms_and_conditions?: string;
+  branding_settings?: Record<string, any>;
+  start_date?: string;
+  end_date?: string;
+  location?: string;
+  venue_name?: string;
+  organizer_name?: string;
 }
 
-export const countryCodes = [
+const THEME_PRESETS: Record<string, { bg: string, surf: string, card: string, color: string, sec: string }> = {
+  midnight: { bg: '#080410', surf: '#120924', card: '#1d0f3a', color: '#7c3aed', sec: '#a78bfa' },
+  ocean:    { bg: '#060f1e', surf: '#0a182f', card: '#112547', color: '#0ea5e9', sec: '#38bdf8' },
+  emerald:  { bg: '#040f0c', surf: '#071914', card: '#0f2a22', color: '#10b981', sec: '#34d399' },
+  sunset:   { bg: '#0f0b04', surf: '#181107', card: '#2a1d0c', color: '#f59e0b', sec: '#fbbf24' },
+  rose:     { bg: '#0f0508', surf: '#190a10', card: '#2a101b', color: '#f43f5e', sec: '#fb7185' },
+  slate:    { bg: '#0b0f17', surf: '#151e2e', card: '#202c3f', color: '#94a3b8', sec: '#cbd5e1' },
+};
+
+const countryCodes = [
   { code: "+91", iso: "IN", name: "India" },
   { code: "+1", iso: "US/CA", name: "United States / Canada" },
   { code: "+44", iso: "GB", name: "United Kingdom" },
@@ -104,6 +119,51 @@ export default function PublicRegistrationPortal() {
   const [submitting, setSubmitting] = useState(false);
   const [config, setConfig] = useState<FormConfig | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
+  
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  const selectedThemeId = config?.branding_settings?.theme || 'midnight';
+  const themeColors = THEME_PRESETS[selectedThemeId] || THEME_PRESETS.midnight;
+
+  const defaultHeaderBanners = [
+    "https://images.unsplash.com/photo-1540575467063-178a50c2df87?q=80&w=2070",
+    "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?q=80&w=2012",
+    "https://images.unsplash.com/photo-1511578314322-379afb476865?q=80&w=2069"
+  ];
+
+  useEffect(() => {
+    const banners = config?.branding_settings?.header_images;
+    if (!banners || banners.length <= 1) return;
+    const interval = setInterval(() => {
+      setActiveSlide(prev => (prev + 1) % banners.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [config]);
+
+  const getJourneySteps = () => {
+    const steps = [
+      { id: "email", label: "Verify Email", status: "completed" },
+      { id: "form", label: "Intake Form", status: formStep === "form" && !successData ? "active" : (formStep === "preview" || successData ? "completed" : "pending") },
+      { id: "review", label: "Review Details", status: formStep === "preview" && !successData ? "active" : (successData ? "completed" : "pending") }
+    ];
+
+    const isPaid = config?.payment_enabled && getTicketBasePrice() > 0;
+    if (isPaid) {
+      steps.push({
+        id: "payment",
+        label: "Payment",
+        status: successData ? "completed" : "pending"
+      });
+    }
+
+    steps.push({
+      id: "complete",
+      label: isPaid ? "Pass Issued" : "Registered",
+      status: successData ? "active" : "pending"
+    });
+
+    return steps;
+  };
 
   // Form submission state
   const [formData, setFormData] = useState<Record<string, any>>({});
@@ -436,7 +496,33 @@ export default function PublicRegistrationPortal() {
       router.push(`/${eventId}/login`);
       return;
     }
-    fetchFormConfig();
+
+    const checkRegistrationStatus = async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/v1/portal/dashboard`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.status === 401) {
+          localStorage.removeItem(`portal_token_${eventId}`);
+          router.push(`/${eventId}/login`);
+          return;
+        }
+        if (res.ok) {
+          const d = await res.json();
+          const status = d.registration?.status;
+          const isReg = ["submitted", "pending_review", "approved", "waitlisted", "rejected"].includes(status);
+          if (isReg) {
+            router.replace(`/${eventId}/dashboard`);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error("Failed to check registration status:", e);
+      }
+      fetchFormConfig();
+    };
+
+    checkRegistrationStatus();
   }, [eventId]);
 
   useEffect(() => {
@@ -899,6 +985,15 @@ export default function PublicRegistrationPortal() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --base: ${themeColors.bg};
+            --surf: ${themeColors.surf};
+            --card: ${themeColors.card};
+            --pri: ${themeColors.color};
+            --sec: ${themeColors.sec};
+          }
+        `}} />
         <div className="w-full max-w-xl space-y-6">
           <div className="h-8 bg-white/5 animate-pulse rounded-xl w-1/3 mx-auto" />
           <div className="h-32 bg-white/5 animate-pulse rounded-[2.5rem]" />
@@ -916,6 +1011,15 @@ export default function PublicRegistrationPortal() {
   if (verifyingPayment) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --base: ${themeColors.bg};
+            --surf: ${themeColors.surf};
+            --card: ${themeColors.card};
+            --pri: ${themeColors.color};
+            --sec: ${themeColors.sec};
+          }
+        `}} />
         <div className="glass-3d p-10 text-center rounded-[2.5rem] bg-[#0d0e1b]/85 border border-indigo-500/20 space-y-4">
           <Loader2 className="h-10 w-10 text-indigo-400 mx-auto animate-spin" />
           <p className="text-[#E8EAFF] font-black uppercase tracking-[0.2em] text-[10px]">Verifying payment, please wait...</p>
@@ -928,6 +1032,15 @@ export default function PublicRegistrationPortal() {
   if (!config || !config.is_live) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --base: ${themeColors.bg};
+            --surf: ${themeColors.surf};
+            --card: ${themeColors.card};
+            --pri: ${themeColors.color};
+            --sec: ${themeColors.sec};
+          }
+        `}} />
         <motion.div 
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -956,6 +1069,15 @@ export default function PublicRegistrationPortal() {
 
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --base: ${themeColors.bg};
+            --surf: ${themeColors.surf};
+            --card: ${themeColors.card};
+            --pri: ${themeColors.color};
+            --sec: ${themeColors.sec};
+          }
+        `}} />
         <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -1128,8 +1250,67 @@ export default function PublicRegistrationPortal() {
 
   // Render main form questionnaire
   return (
-    <div className="min-h-screen py-12 px-4 md:px-8 lg:px-16 flex flex-col items-center">
+    <div className="w-full py-2 flex flex-col items-center">
+      <style dangerouslySetInnerHTML={{ __html: `
+        :root {
+          --base: ${themeColors.bg};
+          --surf: ${themeColors.surf};
+          --card: ${themeColors.card};
+          --pri: ${themeColors.color};
+          --sec: ${themeColors.sec};
+        }
+      `}} />
       
+
+      {/* ── Event Journey Progress ── */}
+      <div className="w-full max-w-6xl mb-10">
+        <div className="glass-3d px-8 py-5 border border-white/5 bg-[#0f1228]/50 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="shrink-0 text-left">
+            <span className="text-[8px] font-black uppercase tracking-[0.25em] text-indigo-300">Registration Flow</span>
+            <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text)] mt-0.5">Journey Progress</h3>
+          </div>
+          <div className="flex-1 flex items-center justify-between relative max-w-3xl mx-auto w-full">
+            {(() => {
+              const steps = getJourneySteps();
+              return steps.map((step, idx) => {
+                const isActive = step.status === "active";
+                const isCompleted = step.status === "completed";
+                return (
+                  <div key={step.id} className="flex-1 flex items-center relative group">
+                    {/* Step Bubble */}
+                    <div className="flex flex-col items-center z-10 mx-auto">
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center border text-[10px] font-black transition-all ${
+                        isCompleted
+                          ? "bg-indigo-500 border-indigo-400 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]"
+                          : isActive
+                            ? "bg-[#0d0e1b] border-indigo-500 text-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.2)]"
+                            : "bg-[#0d0e1b] border-white/10 text-muted"
+                      }`}>
+                        {isCompleted ? <Check className="h-4 w-4" /> : idx + 1}
+                      </div>
+                      <span className={`text-[8px] font-black uppercase tracking-widest mt-2 whitespace-nowrap ${
+                        isActive ? "text-indigo-400" : isCompleted ? "text-[#E8EAFF]" : "text-muted"
+                      }`}>
+                        {step.label}
+                      </span>
+                    </div>
+
+                    {/* Connecting Line */}
+                    {idx < steps.length - 1 && (
+                      <div className="absolute top-[16px] left-[50%] right-[-50%] h-[1.5px] z-0 bg-white/5">
+                        <div className={`h-full bg-indigo-500 transition-all duration-500 ${
+                          isCompleted ? "w-full" : "w-0"
+                        }`} />
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      </div>
+
       {/* Back to Dashboard Link */}
       <div className="w-full max-w-6xl mb-6 flex justify-start">
         <button
@@ -2150,6 +2331,7 @@ export default function PublicRegistrationPortal() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

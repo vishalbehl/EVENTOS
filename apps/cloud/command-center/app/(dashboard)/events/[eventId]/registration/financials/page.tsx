@@ -30,6 +30,7 @@ interface Participant {
   registered_at: string;
   source: string;
   company?: string;
+  is_free?: boolean;
   [key: string]: any;
 }
 
@@ -326,27 +327,40 @@ export default function FinancialsPage() {
                               {p.registered_at ? new Date(p.registered_at).toLocaleDateString("en-US", { dateStyle: "medium" }) : "N/A"}
                             </td>
                             <td className="p-4">
-                              <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border ${
-                                p.paid_status === "Paid" 
-                                  ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" 
-                                  : "text-amber-400 bg-amber-500/10 border-amber-500/20"
-                              }`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${p.paid_status === "Paid" ? "bg-emerald-400" : "bg-amber-400"}`} />
-                                {p.paid_status === "Paid" ? "Paid" : "Unpaid / Pending"}
-                              </span>
+                              {p.is_free ? (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border text-sky-400 bg-sky-500/10 border-sky-500/20 select-none cursor-default">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                                  Free
+                                </span>
+                              ) : (
+                                <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border ${
+                                  p.paid_status === "Paid" 
+                                    ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" 
+                                    : "text-amber-400 bg-amber-500/10 border-amber-500/20"
+                                }`}>
+                                  <span className={`h-1.5 w-1.5 rounded-full ${p.paid_status === "Paid" ? "bg-emerald-400" : "bg-amber-400"}`} />
+                                  {p.paid_status === "Paid" ? "Paid" : "Unpaid / Pending"}
+                                </span>
+                              )}
                             </td>
                             <td className="p-4 text-right pr-6">
-                              <Button
-                                size="sm"
-                                onClick={() => handleTogglePaymentStatus(p)}
-                                className={`h-8 px-4 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all ${
-                                  p.paid_status === "Paid"
-                                    ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
-                                    : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/20"
-                                }`}
-                              >
-                                {p.paid_status === "Paid" ? "Simulate Refund" : "Mark Paid"}
-                              </Button>
+                              {p.is_free ? (
+                                <span className="text-[9px] font-black uppercase tracking-widest text-muted select-none cursor-default pr-4">
+                                  No Action Needed
+                                </span>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleTogglePaymentStatus(p)}
+                                  className={`h-8 px-4 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all ${
+                                    p.paid_status === "Paid"
+                                      ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
+                                      : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/20"
+                                  }`}
+                                >
+                                  {p.paid_status === "Paid" ? "Simulate Refund" : "Mark Paid"}
+                                </Button>
+                              )}
                             </td>
                           </tr>
                         ))

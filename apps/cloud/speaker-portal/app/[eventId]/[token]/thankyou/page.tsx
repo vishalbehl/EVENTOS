@@ -6,6 +6,7 @@ import { CheckCircle2, ChevronLeft, PartyPopper, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { usePortalAuth } from "@/hooks/usePortal";
 import { PortalHeader } from "@/components/PortalHeader";
+import { SpeakerPortalLayout } from "@/components/SpeakerPortalLayout";
 
 export default function ThankYouPage() {
   const params = useParams();
@@ -22,16 +23,17 @@ export default function ThankYouPage() {
   const speakerName = portal ? `${portal.first_name} ${portal.last_name}` : "";
 
   return (
+    <SpeakerPortalLayout
+      branding={portal?.branding_settings || {}}
+      eventName={portal?.event_name}
+      startDate={portal?.start_date}
+      endDate={portal?.end_date}
+      location={portal?.location}
+      venueName={portal?.venue_name}
+      organizerName={portal?.organizer_name}
+    >
     <div className="min-h-screen flex flex-col">
-      {portal?.theme_color && (
-        <style dangerouslySetInnerHTML={{ __html: `
-          :root {
-            --pri: ${portal.theme_color};
-            --sec: color-mix(in srgb, ${portal.theme_color} 80%, white);
-          }
-        `}} />
-      )}
-      <PortalHeader speakerName={speakerName} email={portal ? portal.email : ""} token={token} eventId={eventId} />
+      <PortalHeader speakerName={speakerName} email={portal ? portal.email : ""} token={token} eventId={eventId} logoUrl={portal?.branding_settings?.logo_url} />
       
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
         <motion.div 
@@ -96,5 +98,6 @@ export default function ThankYouPage() {
         </motion.div>
       </main>
     </div>
+    </SpeakerPortalLayout>
   );
 }

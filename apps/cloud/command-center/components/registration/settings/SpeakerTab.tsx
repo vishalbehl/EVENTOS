@@ -70,7 +70,7 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
   }
 
   const copyLink = () => {
-    navigator.clipboard.writeText(speakerPortalUrl)
+    navigator.clipboard.writeText(`${speakerPortalUrl}/${eventId}`)
     setCopied(true)
     toast.success('Link copied!')
     setTimeout(() => setCopied(false), 2000)
@@ -139,11 +139,11 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
 
           {/* Portal URL */}
           <div className="space-y-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted">Portal Base URL</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted">Portal URL</p>
             <div className="flex items-center gap-3">
               <div className="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/5 font-mono text-xs text-muted overflow-hidden">
                 <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[var(--pri)]" />
-                <span className="truncate">{speakerPortalUrl}</span>
+                <span className="truncate">{speakerPortalUrl}/{eventId}</span>
               </div>
               <button
                 onClick={copyLink}

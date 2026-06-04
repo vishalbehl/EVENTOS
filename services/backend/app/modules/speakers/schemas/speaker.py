@@ -56,6 +56,7 @@ class SpeakerResponse(BaseModel):
     token_expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    profile_completeness: int = 0
 
 
 class SpeakerSummary(BaseModel):
@@ -83,6 +84,7 @@ class SpeakerSummary(BaseModel):
     files_approved: int = 0
     files_total: int = 0
     event_timezone: str = "UTC"
+    profile_completeness: int = 0
 
 
 class SpeakerBulkInviteRequest(BaseModel):
@@ -120,6 +122,7 @@ class SpeakerTalkCreate(BaseModel):
     session_id: uuid.UUID
     presentation_title: Optional[str] = None
     talk_duration_minutes: Optional[int] = 20
+    speaker_type: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     # ePoster specific

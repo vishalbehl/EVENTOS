@@ -270,7 +270,7 @@ async def reject_file(
     sp = await db.get(Speaker, pf.speaker_id)
     if sp:
         sp.upload_status = "rejected"
-        upload_url = f"{settings.QR_CODE_BASE_URL}/upload/{sp.upload_token}"
+        upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event.id}/{sp.upload_token}"
         await send_file_rejected(sp, event.name, upload_url, payload.reason, db=db)
         
     # Log rejection

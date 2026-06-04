@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
  
-export function PortalHeader({ speakerName, email = "", token, eventId }: { speakerName: string, email?: string, token: string, eventId: string }) {
+export function PortalHeader({ speakerName, email = "", token, eventId, logoUrl }: { speakerName: string, email?: string, token: string, eventId: string, logoUrl?: string | null }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -34,8 +34,12 @@ export function PortalHeader({ speakerName, email = "", token, eventId }: { spea
         <Link href={`/${eventId}/${token}`} className="flex items-center gap-4 group">
           <div className="relative h-10 w-10 shrink-0">
             <div className="absolute inset-0 bg-indigo-500/20 blur-md rounded-xl" />
-            <div className="relative h-10 w-10 glass-3d border-indigo-500/30 rounded-xl flex items-center justify-center shadow-lg transform rotate-3 group-hover:rotate-0 transition-transform">
-              <Box className="h-5 w-5 text-indigo-400" />
+            <div className="relative h-10 w-10 glass-3d border-indigo-500/30 rounded-xl flex items-center justify-center shadow-lg transform rotate-3 group-hover:rotate-0 transition-transform overflow-hidden">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo" className="h-full w-full object-contain p-1" />
+              ) : (
+                <Box className="h-5 w-5 text-indigo-400" />
+              )}
             </div>
           </div>
           <div className="hidden sm:block">

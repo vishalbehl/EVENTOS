@@ -86,6 +86,13 @@ class SpeakerPortalAuthResponse(BaseModel):
     social_links: Optional[dict] = None
     research_interests: Optional[List[str]] = None
     profile_completeness: int = 0
+    # Branding & event metadata
+    branding_settings: dict = {}
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    location: Optional[str] = None
+    venue_name: Optional[str] = None
+    organizer_name: Optional[str] = None
 
 
 class SpeakerPortalConfigResponse(BaseModel):
@@ -93,6 +100,14 @@ class SpeakerPortalConfigResponse(BaseModel):
     theme_color: Optional[str] = None
     speaker_mode_enabled: bool
     registration_mode_enabled: bool
+    # Full branding blob (speaker overrides merged over global)
+    branding_settings: dict = {}
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    location: Optional[str] = None
+    venue_name: Optional[str] = None
+    country: Optional[str] = None
+    organizer_name: Optional[str] = None
 
 
 
@@ -105,6 +120,7 @@ async def get_speaker_portal_config(
 ) -> SpeakerPortalConfigResponse:
     """
     Get public branding and configuration for the speaker portal.
+    Speaker-specific branding (speaker_settings.branding) overrides global branding_settings.
     """
     event = await db.get(Event, event_id)
     if not event:
@@ -112,11 +128,24 @@ async def get_speaker_portal_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found."
         )
+
+    # Merge: global branding_settings as base, speaker_settings.branding as override
+    global_branding = event.branding_settings or {}
+    speaker_branding = (event.speaker_settings or {}).get("branding", {})
+    effective_branding = {**global_branding, **speaker_branding}
+
     return SpeakerPortalConfigResponse(
         event_name=event.name,
-        theme_color=event.theme_color,
+        theme_color=effective_branding.get("theme_color", event.theme_color),
         speaker_mode_enabled=event.speaker_mode_enabled,
-        registration_mode_enabled=event.registration_mode_enabled
+        registration_mode_enabled=event.registration_mode_enabled,
+        branding_settings=effective_branding,
+        start_date=event.start_date.isoformat() if event.start_date else None,
+        end_date=event.end_date.isoformat() if event.end_date else None,
+        location=event.location,
+        venue_name=event.venue_name,
+        country=event.country,
+        organizer_name=event.organizer_name,
     )
 
 
@@ -279,7 +308,13 @@ async def speaker_portal_auth(
         announcements=announcements_list,
         social_links=speaker.social_links,
         research_interests=speaker.research_interests,
-        profile_completeness=score
+        profile_completeness=score,
+        branding_settings={**(event.branding_settings or {}), **(event.speaker_settings or {}).get("branding", {})},
+        start_date=event.start_date.isoformat() if event.start_date else None,
+        end_date=event.end_date.isoformat() if event.end_date else None,
+        location=event.location,
+        venue_name=event.venue_name,
+        organizer_name=event.organizer_name,
     )
 
 

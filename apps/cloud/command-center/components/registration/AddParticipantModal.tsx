@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { X, Upload, Save, FileSpreadsheet, Download, RefreshCw, UserPlus } from "lucide-react";
+import { X, Upload, Save, FileSpreadsheet, Download, RefreshCw, UserPlus, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
   const [submitting, setSubmitting] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
 
   const activeFields = useMemo(() => fields.filter((field) => field.is_active), [fields]);
 
@@ -102,6 +103,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
     if (isOpen && eventId) {
       fetchConfig();
       setImportFile(null);
+      setImportResult(null);
       setActiveTab("manual");
     }
   }, [isOpen, eventId]);
@@ -212,12 +214,11 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       const result = await apiClient.post<any>(`/events/${eventId}/participants/import-excel`, data, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      toast.success(result.message || "Participants imported.");
-      setImportFile(null);
+      setImportResult(result);
+      toast.success("Spreadsheet processed successfully.");
       onSuccess();
-      onClose();
     } catch (err: any) {
-      toast.error(err.message || "Failed to import Excel file.");
+      toast.error(err.response?.data?.detail || err.message || "Failed to import Excel file.");
     } finally {
       setImporting(false);
     }
@@ -464,6 +465,84 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                     </Button>
                   </div>
                 </form>
+              ) : importResult ? (
+                <div className="space-y-6">
+                  <div className="text-center space-y-2">
+                    <div className="inline-flex h-12 w-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 items-center justify-center text-emerald-400">
+                      <Check className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-[var(--text)]">Import Process Complete</h3>
+                    <p className="text-[10px] text-muted font-bold leading-normal max-w-md mx-auto">{importResult.message}</p>
+                  </div>
+
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Approved</p>
+                      <p className="text-2xl font-black text-emerald-400">{importResult.inserted}</p>
+                    </div>
+                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Merged</p>
+                      <p className="text-2xl font-black text-blue-400">{importResult.merged}</p>
+                    </div>
+                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Waitlisted</p>
+                      <p className="text-2xl font-black text-amber-500">{importResult.waitlisted}</p>
+                    </div>
+                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Skipped</p>
+                      <p className="text-2xl font-black text-rose-500">{importResult.skipped}</p>
+                    </div>
+                  </div>
+
+                  {/* Skipped Details Table */}
+                  {importResult.skipped_details && importResult.skipped_details.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[9px] font-black uppercase tracking-widest text-rose-400">Skipped Entries / Errors</h4>
+                        <span className="text-[8px] font-black uppercase tracking-wider text-muted">{importResult.skipped_details.length} issues found</span>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.01] overflow-hidden max-h-56 overflow-y-auto no-scrollbar">
+                        <table className="w-full text-left text-[11px] font-medium border-collapse">
+                          <thead className="bg-white/5 text-[8px] font-black uppercase tracking-wider text-muted border-b border-white/5 sticky top-0 backdrop-blur">
+                            <tr>
+                              <th className="px-4 py-2 text-center w-12">Row</th>
+                              <th className="px-4 py-2">Name</th>
+                              <th className="px-4 py-2">Email</th>
+                              <th className="px-4 py-2">Category</th>
+                              <th className="px-4 py-2">Reason</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 text-muted/80">
+                            {importResult.skipped_details.map((detail: any, dIdx: number) => (
+                              <tr key={dIdx} className="hover:bg-white/[0.02] transition-colors">
+                                <td className="px-4 py-2.5 text-center font-mono font-bold text-rose-400">{detail.row}</td>
+                                <td className="px-4 py-2.5 font-bold text-[var(--text)]">{detail.name || "—"}</td>
+                                <td className="px-4 py-2.5 font-semibold">{detail.email || "—"}</td>
+                                <td className="px-4 py-2.5 font-bold uppercase tracking-wider text-[10px] text-muted">{detail.role || "—"}</td>
+                                <td className="px-4 py-2.5 text-xs text-rose-400 font-bold">{detail.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pt-4 border-t border-default flex items-center justify-end">
+                    <Button
+                      onClick={() => {
+                        setImportResult(null);
+                        setImportFile(null);
+                        onSuccess();
+                        onClose();
+                      }}
+                      className="h-11 px-8 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0"
+                    >
+                      Done
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-6 max-w-xl mx-auto py-4">
                   <div className="space-y-3">

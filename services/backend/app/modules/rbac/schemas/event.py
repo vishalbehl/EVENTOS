@@ -12,12 +12,14 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 class SpeakerSettings(BaseModel):
     """Configuration for the Speaker Presentation Desk module."""
+    model_config = ConfigDict(extra="allow")
     enabled: bool = True
     window_required: bool = True
 
 
 class RegistrationSettings(BaseModel):
     """Configuration for the On-Site Registration & Badges module."""
+    model_config = ConfigDict(extra="allow")
     enabled: bool = True
     registration_allowed: bool = True
     participants_list_allowed: bool = True
@@ -25,6 +27,7 @@ class RegistrationSettings(BaseModel):
 
 class BrandingSettings(BaseModel):
     """Branding configuration for an event (theme color, logos, banners)."""
+    model_config = ConfigDict(extra="allow")
     theme_color: str = "#1A73E8"
     logo_url: Optional[str] = None
     banner_url: Optional[str] = None

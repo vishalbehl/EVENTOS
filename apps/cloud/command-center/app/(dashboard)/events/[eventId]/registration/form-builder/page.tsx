@@ -48,25 +48,8 @@ export default function RegistrationFormBuilder() {
   const [fields, setFields] = useState<FormField[]>([]);
   const [isLive, setIsLive] = useState(false);
   const [termsAndConditions, setTermsAndConditions] = useState("");
-  const [tcViewMode, setTcViewMode] = useState<"edit" | "preview" | "split">("split");
-  const [tcPreviewOpen, setTcPreviewOpen] = useState(false);
-  const [faqs, setFaqs] = useState<{ q: string; a: string; is_default?: boolean }[]>([]);
-  const [includeDefaultFaqs, setIncludeDefaultFaqs] = useState(true);
 
-  const handleToggleDefaultFaqs = (val: boolean) => {
-    setIncludeDefaultFaqs(val);
-    if (val) {
-      setFaqs(prev => {
-        const existingQs = new Set(prev.map(f => f.q.trim().toLowerCase()));
-        const toAdd = DEFAULT_FAQS.filter(df => !existingQs.has(df.q.trim().toLowerCase()));
-        return [...prev, ...toAdd];
-      });
-      toast.info("Default FAQ templates added to the list.");
-    } else {
-      setFaqs(prev => prev.filter(f => !f.is_default));
-      toast.info("Default FAQ templates removed from the list.");
-    }
-  };
+
 
   const getEffectiveFieldType = (field: FormField) => {
     if (field.id === "email") return "email";
@@ -124,16 +107,6 @@ export default function RegistrationFormBuilder() {
       setFields(fetchedFields.map(normalizeSystemField));
       setIsLive(res.is_live || false);
       setTermsAndConditions(res.terms_and_conditions || "");
-      
-      const resFaqs = res.faqs || [];
-      const showDefaults = res.include_default_faqs !== false;
-      setIncludeDefaultFaqs(showDefaults);
-      
-      if (resFaqs.length > 0) {
-        setFaqs(resFaqs);
-      } else {
-        setFaqs(showDefaults ? DEFAULT_FAQS : []);
-      }
     } catch (err: any) {
       toast.error(err.message || "Failed to load form configuration.");
     } finally {
@@ -240,19 +213,12 @@ export default function RegistrationFormBuilder() {
       toast.error("All form fields must have a label.");
       return;
     }
-    const emptyFaq = faqs.some(f => !f.q.trim() || !f.a.trim());
-    if (emptyFaq) {
-      toast.error("All FAQ entries must have a question and an answer.");
-      return;
-    }
 
     setSaving(true);
     try {
       await apiPost(`/events/${eventId}/registration/form-config`, {
         fields,
-        terms_and_conditions: termsAndConditions,
-        faqs,
-        include_default_faqs: includeDefaultFaqs
+        terms_and_conditions: termsAndConditions
       });
       toast.success("Registration form configuration saved successfully!");
       fetchConfig();
@@ -661,274 +627,6 @@ export default function RegistrationFormBuilder() {
               </div>
             )}
           </div>
-
-          {/* Terms & Conditions Configuration — Markdown Editor */}
-          <Card className="glass-card p-8 border border-white/5 space-y-6 rounded-[2rem] mt-8">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <FileText className="h-5 w-5 text-[var(--pri)]" />
-                <div>
-                  <h2 className="text-sm font-black uppercase tracking-[0.2em] text-[var(--text)]">Terms &amp; Conditions</h2>
-                  <p className="text-[9px] font-bold text-muted mt-0.5">Supports Markdown formatting — **bold**, _italic_, ## headings, lists, etc.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {/* View mode switcher */}
-                <div className="flex items-center rounded-xl border border-white/10 bg-white/5 p-0.5 gap-0.5">
-                  {(["edit", "split", "preview"] as const).map(mode => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setTcViewMode(mode)}
-                      className={`h-7 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${
-                        tcViewMode === mode
-                          ? "bg-[var(--pri)] text-white shadow"
-                          : "text-muted hover:text-[var(--text)]"
-                      }`}
-                    >
-                      {mode === "edit" ? <Code2 className="h-3 w-3" /> : mode === "preview" ? <Eye className="h-3 w-3" /> : <SplitSquareHorizontal className="h-3 w-3" />}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTcPreviewOpen(true)}
-                  disabled={!termsAndConditions}
-                  className="h-8 px-4 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[9px] rounded-xl disabled:opacity-40 flex items-center gap-1.5 transition-all"
-                >
-                  <Eye className="h-3 w-3" />
-                  Full Preview
-                </button>
-              </div>
-            </div>
-
-            {/* Markdown Quick Reference */}
-            <div className="flex flex-wrap gap-2">
-              {[
-                { label: "**Bold**", desc: "Bold text" },
-                { label: "_Italic_", desc: "Italic text" },
-                { label: "## Heading", desc: "Section heading" },
-                { label: "- Item", desc: "Bullet list" },
-                { label: "1. Item", desc: "Numbered list" },
-                { label: "[Link](url)", desc: "Hyperlink" },
-              ].map(hint => (
-                <button
-                  key={hint.label}
-                  type="button"
-                  onClick={() => setTermsAndConditions(prev => prev + "\n" + hint.label)}
-                  title={hint.desc}
-                  className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/8 text-[9px] font-mono text-muted hover:text-[var(--text)] hover:bg-white/10 transition-all"
-                >
-                  {hint.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Editor Area */}
-            <div className={`grid gap-4 ${
-              tcViewMode === "split" ? "grid-cols-2" : "grid-cols-1"
-            }`}>
-
-              {/* Raw Markdown Editor */}
-              {(tcViewMode === "edit" || tcViewMode === "split") && (
-                <div className="space-y-1.5">
-                  {tcViewMode === "split" && (
-                    <div className="flex items-center gap-1.5">
-                      <Code2 className="h-3 w-3 text-muted" />
-                      <span className="text-[9px] font-black uppercase tracking-widest text-muted">Markdown Source</span>
-                    </div>
-                  )}
-                  <textarea
-                    placeholder={`# Terms & Conditions\n\n## 1. Registration Policy\nRegistration is non-transferable and non-refundable.\n\n## 2. Code of Conduct\nAttendees must adhere to the Event Code of Conduct.\n\n## 3. Modifications\nOrganizers reserve the right to modify the schedule without prior notice.`}
-                    value={termsAndConditions}
-                    onChange={e => setTermsAndConditions(e.target.value)}
-                    spellCheck={false}
-                    className="w-full h-[320px] bg-[#080912] border border-white/10 focus:border-[var(--pri)] focus:ring-0 rounded-2xl px-4 py-3 text-xs text-[var(--text)] font-mono leading-relaxed transition-all resize-none"
-                  />
-                </div>
-              )}
-
-              {/* Rendered Markdown Preview */}
-              {(tcViewMode === "preview" || tcViewMode === "split") && (
-                <div className="space-y-1.5">
-                  {tcViewMode === "split" && (
-                    <div className="flex items-center gap-1.5">
-                      <Eye className="h-3 w-3 text-muted" />
-                      <span className="text-[9px] font-black uppercase tracking-widest text-muted">Rendered Preview</span>
-                    </div>
-                  )}
-                  <div className="h-[320px] bg-[#080912] border border-white/10 rounded-2xl px-5 py-4 overflow-y-auto prose prose-invert prose-xs max-w-none
-                    prose-headings:text-[var(--text)] prose-headings:font-black prose-headings:tracking-tight
-                    prose-h1:text-lg prose-h2:text-sm prose-h3:text-xs
-                    prose-p:text-muted prose-p:text-xs prose-p:leading-relaxed
-                    prose-li:text-muted prose-li:text-xs
-                    prose-strong:text-[var(--text)] prose-em:text-indigo-300
-                    prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline
-                    prose-hr:border-white/10">
-                    {termsAndConditions ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{termsAndConditions}</ReactMarkdown>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-full min-h-[160px] text-center space-y-2 opacity-40">
-                        <FileText className="h-8 w-8 text-muted" />
-                        <p className="text-[10px] font-bold text-muted uppercase tracking-widest">Start typing markdown on the left</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <p className="text-[9px] font-bold text-muted leading-relaxed">
-              These terms will be rendered as formatted text with a mandatory checkbox on the registration preview page before payment. Supports full Markdown syntax. If left blank, default terms will be shown.
-            </p>
-          </Card>
-
-          {/* FAQ Configuration — FAQ Editor */}
-          <Card className="glass-card p-8 border border-white/5 space-y-6 rounded-[2rem] mt-8">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <HelpCircle className="h-5 w-5 text-[var(--pri)]" />
-                <div>
-                  <h2 className="text-sm font-black uppercase tracking-[0.2em] text-[var(--text)]">Frequently Asked Questions</h2>
-                  <p className="text-[9px] font-bold text-muted mt-0.5">Configure FAQs shown in the Attendee Dashboard Support Center.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {/* Include Defaults Toggle */}
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/10 bg-white/5">
-                  <input
-                    type="checkbox"
-                    id="include-default-faqs-toggle"
-                    checked={includeDefaultFaqs}
-                    onChange={(e) => handleToggleDefaultFaqs(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 bg-white/5 text-[var(--pri)] focus:ring-[var(--pri)] cursor-pointer"
-                  />
-                  <label htmlFor="include-default-faqs-toggle" className="text-[9px] font-black uppercase tracking-wider text-muted cursor-pointer select-none">
-                    Include Defaults
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFaqs(prev => [...prev, { q: "", a: "", is_default: false }]);
-                    toast.success("Added new FAQ. Fill in the question and answer below.");
-                  }}
-                  className="h-8 px-4 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[9px] rounded-xl flex items-center gap-1.5 transition-all"
-                >
-                  <Plus className="h-3 w-3" />
-                  Add FAQ
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {faqs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-center space-y-2 opacity-60">
-                  <HelpCircle className="h-8 w-8 text-muted" />
-                  <p className="text-[10px] font-bold text-muted uppercase tracking-widest">No FAQs configured</p>
-                  <p className="text-[9px] text-muted">Click "Add FAQ" to create your first question, or check "Include Defaults" to load template FAQs.</p>
-                </div>
-              ) : (
-                faqs.map((faq, index) => (
-                  <div key={index} className="p-5 bg-[#080912] border border-white/5 rounded-2xl space-y-4 relative group hover:border-white/10 transition-all">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[var(--pri)]">FAQ #{index + 1}</span>
-                        {faq.is_default && (
-                          <span className="text-[7px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-                            System Default
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFaqs(prev => prev.filter((_, idx) => idx !== index));
-                          toast.info(`FAQ #${index + 1} removed.`);
-                        }}
-                        className="h-7 w-7 rounded-lg bg-red-500/10 hover:bg-red-500/25 border border-red-500/20 text-red-400 flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        title="Delete FAQ"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black uppercase tracking-widest text-muted">Question</label>
-                        <Input
-                          placeholder="e.g. What is the cancellation policy?"
-                          value={faq.q}
-                          onChange={e => {
-                            const newFaqs = [...faqs];
-                            newFaqs[index] = { ...newFaqs[index], q: e.target.value };
-                            setFaqs(newFaqs);
-                          }}
-                          className="h-10 bg-black/40 border-white/10 text-xs text-[var(--text)] rounded-xl"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black uppercase tracking-widest text-muted">Answer</label>
-                        <textarea
-                          placeholder="e.g. You can cancel your registration up to 7 days before the event..."
-                          value={faq.a}
-                          onChange={e => {
-                            const newFaqs = [...faqs];
-                            newFaqs[index] = { ...newFaqs[index], a: e.target.value };
-                            setFaqs(newFaqs);
-                          }}
-                          className="w-full h-20 bg-black/40 border border-white/10 focus:border-[var(--pri)] focus:ring-0 rounded-xl px-4 py-2.5 text-xs text-[var(--text)] leading-relaxed transition-all resize-none"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
-
-          {/* T&C Full Preview Modal */}
-          {tcPreviewOpen && (
-            <Portal>
-              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-                <div className="relative w-full max-w-2xl bg-[var(--base)] border border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                  <div className="px-8 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01] shrink-0">
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-[var(--pri)]" />
-                      <h3 className="text-sm font-black uppercase tracking-[0.25em] text-[var(--text)]">Terms &amp; Conditions Preview</h3>
-                    </div>
-                    <button
-                      onClick={() => setTcPreviewOpen(false)}
-                      className="h-8 w-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-muted hover:text-[var(--text)] transition-all"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="p-8 overflow-y-auto flex-1 custom-scrollbar prose prose-invert max-w-none
-                    prose-headings:text-[var(--text)] prose-headings:font-black prose-headings:tracking-tight
-                    prose-h1:text-xl prose-h2:text-base prose-h3:text-sm
-                    prose-p:text-muted prose-p:text-sm prose-p:leading-relaxed
-                    prose-li:text-muted prose-li:text-sm
-                    prose-strong:text-[var(--text)] prose-em:text-indigo-300
-                    prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline
-                    prose-hr:border-white/10">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{termsAndConditions}</ReactMarkdown>
-                  </div>
-                  <div className="px-8 py-4 border-t border-white/5 bg-white/[0.01] shrink-0">
-                    <div className="flex items-start gap-3 p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/15">
-                      <input type="checkbox" disabled className="h-4 w-4 mt-0.5 rounded border-white/20 bg-white/5 text-indigo-500 cursor-not-allowed" />
-                      <span className="text-[10px] font-bold text-muted uppercase tracking-wider leading-relaxed">
-                        I have read and agree to the Terms &amp; Conditions above. <span className="text-indigo-400">*</span>
-                        <span className="block text-indigo-400/60 mt-0.5 normal-case font-medium tracking-normal">This checkbox will be required on the registration form.</span>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Portal>
-          )}
         </div>
       )}
 

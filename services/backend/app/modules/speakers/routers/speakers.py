@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -46,6 +47,7 @@ class SpeakerTalkResponse(BaseModel):
     end_time: datetime
     talk_title: Optional[str]
     talk_order: int
+    speaker_type: Optional[str] = None
     session_status: str
     file_status: str  # "uploaded" | "pending" | "none"
     files_uploaded: int
@@ -184,7 +186,8 @@ async def list_speakers(
     q = q.options(
         selectinload(Speaker.presentation_files),
         selectinload(Speaker.posters),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session)
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
+        selectinload(Speaker.profile)
     )
     
     # 4. Sorting and Pagination
@@ -264,6 +267,12 @@ async def list_speakers(
         
         s.files_approved = sum(1 for f in current_files if f.upload_status == "approved")
         s.files_approved += sum(1 for p in visible_posters if p.status == "approved")
+
+        if speaker.profile:
+            from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
+            s.profile_completeness = SpeakerProfileResponse.model_validate(speaker.profile).profile_completeness
+        else:
+            s.profile_completeness = 0
 
         summaries.append(s)
 
@@ -364,6 +373,7 @@ async def manual_register_speaker(
                     presentation_title=talk.presentation_title,
                     talk_order=0,
                     talk_duration_minutes=talk.talk_duration_minutes or 0,
+                    speaker_type=talk.speaker_type,
                     start_time=talk.start_time,
                     end_time=talk.end_time,
                 )
@@ -383,15 +393,26 @@ async def manual_register_speaker(
 
     # 4. Handle Quick Invite
     if payload.send_invite:
-        upload_url = f"{settings.QR_CODE_BASE_URL}/upload/{speaker.upload_token}"
+        upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{speaker.event_id}/{speaker.upload_token}"
         await email_service.send_upload_invitation(
             speaker, event.name, upload_url, 
             template_id=payload.template_id, db=db
         )
 
     await db.commit()
-    await db.refresh(speaker)
-    return SpeakerResponse.model_validate(speaker)
+    # Eager load profile for response schema
+    result = await db.execute(
+        select(Speaker).where(Speaker.id == speaker.id).options(selectinload(Speaker.profile))
+    )
+    speaker = result.scalar_one()
+    
+    s = SpeakerResponse.model_validate(speaker)
+    if speaker.profile:
+        from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
+        s.profile_completeness = SpeakerProfileResponse.model_validate(speaker.profile).profile_completeness
+    else:
+        s.profile_completeness = 0
+    return s
 
 
 @router.get("/{speaker_id}", response_model=SpeakerResponse)
@@ -400,9 +421,22 @@ async def get_speaker(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
-    return SpeakerResponse.model_validate(
-        await _get_speaker_or_404(db, speaker_id, event.id)
+    result = await db.execute(
+        select(Speaker)
+        .where(Speaker.id == speaker_id, Speaker.event_id == event.id)
+        .options(selectinload(Speaker.profile))
     )
+    sp = result.scalar_one_or_none()
+    if sp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
+        
+    s = SpeakerResponse.model_validate(sp)
+    if sp.profile:
+        from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
+        s.profile_completeness = SpeakerProfileResponse.model_validate(sp.profile).profile_completeness
+    else:
+        s.profile_completeness = 0
+    return s
 
 
 @router.patch("/{speaker_id}", response_model=SpeakerResponse)
@@ -418,8 +452,19 @@ async def update_speaker(
             value = str(value).lower()
         setattr(speaker, field, value)
     await db.commit()
-    await db.refresh(speaker)
-    return SpeakerResponse.model_validate(speaker)
+    
+    result = await db.execute(
+        select(Speaker).where(Speaker.id == speaker_id).options(selectinload(Speaker.profile))
+    )
+    speaker = result.scalar_one()
+    
+    s = SpeakerResponse.model_validate(speaker)
+    if speaker.profile:
+        from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
+        s.profile_completeness = SpeakerProfileResponse.model_validate(speaker.profile).profile_completeness
+    else:
+        s.profile_completeness = 0
+    return s
 
 
 @router.delete("/{speaker_id}", response_model=MessageResponse)
@@ -442,7 +487,7 @@ async def send_invite(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     speaker = await _get_speaker_or_404(db, speaker_id, event.id)
-    upload_url = f"{settings.QR_CODE_BASE_URL}/upload/{speaker.upload_token}"
+    upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{speaker.event_id}/{speaker.upload_token}"
     await email_service.send_upload_invitation(speaker, event.name, upload_url, db=db)
     await db.commit()
     return MessageResponse(message="Invitation sent.")
@@ -461,7 +506,7 @@ async def bulk_invite(
         )
         sp = result.scalar_one_or_none()
         if sp:
-            upload_url = f"{settings.QR_CODE_BASE_URL}/upload/{sp.upload_token}"
+            upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{sp.event_id}/{sp.upload_token}"
             await email_service.send_upload_invitation(sp, event.name, upload_url, db=db)
             sent += 1
     await db.commit()
@@ -604,6 +649,7 @@ async def get_speaker_sessions(
             end_time=ss.end_time or session.end_time,
             talk_title=ss.presentation_title,
             talk_order=ss.talk_order,
+            speaker_type=ss.speaker_type,
             session_status=session.status,
             file_status=file_status,
             files_uploaded=files_uploaded,

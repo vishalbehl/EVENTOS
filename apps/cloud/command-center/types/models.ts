@@ -147,7 +147,127 @@ export interface Room {
 }
 
 // ── Session ───────────────────────────────────────────────
-export type SessionType = "regular" | "keynote" | "workshop" | "panel" | "poster";
+export type SessionCategory = "CONTENT" | "NETWORKING" | "EXHIBITION" | "CEREMONY" | "BREAK" | "ADMINISTRATIVE";
+
+export type SessionType =
+  | "regular"
+  | "keynote"
+  | "workshop"
+  | "panel"
+  | "poster"
+  | "eposter"
+  | "KEYNOTE"
+  | "EXECUTIVE_KEYNOTE"
+  | "TECHNICAL_SESSION"
+  | "INVITED_TALK"
+  | "CASE_STUDY"
+  | "PANEL_DISCUSSION"
+  | "FIRESIDE_CHAT"
+  | "ROUNDTABLE"
+  | "WORKSHOP"
+  | "TUTORIAL"
+  | "POSTER_SESSION"
+  | "DEMO_SESSION"
+  | "PRODUCT_SHOWCASE"
+  | "INDUSTRY_FORUM"
+  | "LEADERSHIP_FORUM"
+  | "LIGHTNING_TALKS"
+  | "BREAKOUT_SESSION"
+  | "REGISTRATION"
+  | "OPENING_CEREMONY"
+  | "WELCOME_ADDRESS"
+  | "COFFEE_BREAK"
+  | "LUNCH_BREAK"
+  | "NETWORKING_BREAK"
+  | "SPONSOR_SHOWCASE"
+  | "EXHIBITION_VISIT"
+  | "AWARDS_CEREMONY"
+  | "CLOSING_CEREMONY"
+  | "GALA_DINNER"
+  | "RECEPTION";
+
+export const SESSION_TYPE_CATEGORIES: Record<string, SessionCategory> = {
+  regular: "CONTENT",
+  keynote: "CONTENT",
+  workshop: "CONTENT",
+  panel: "CONTENT",
+  poster: "EXHIBITION",
+  eposter: "EXHIBITION",
+  KEYNOTE: "CONTENT",
+  EXECUTIVE_KEYNOTE: "CONTENT",
+  TECHNICAL_SESSION: "CONTENT",
+  INVITED_TALK: "CONTENT",
+  CASE_STUDY: "CONTENT",
+  PANEL_DISCUSSION: "CONTENT",
+  FIRESIDE_CHAT: "CONTENT",
+  ROUNDTABLE: "CONTENT",
+  WORKSHOP: "CONTENT",
+  TUTORIAL: "CONTENT",
+  INDUSTRY_FORUM: "CONTENT",
+  LEADERSHIP_FORUM: "CONTENT",
+  LIGHTNING_TALKS: "CONTENT",
+  BREAKOUT_SESSION: "CONTENT",
+  GALA_DINNER: "NETWORKING",
+  RECEPTION: "NETWORKING",
+  POSTER_SESSION: "EXHIBITION",
+  DEMO_SESSION: "EXHIBITION",
+  PRODUCT_SHOWCASE: "EXHIBITION",
+  SPONSOR_SHOWCASE: "EXHIBITION",
+  EXHIBITION_VISIT: "EXHIBITION",
+  OPENING_CEREMONY: "CEREMONY",
+  WELCOME_ADDRESS: "CEREMONY",
+  AWARDS_CEREMONY: "CEREMONY",
+  CLOSING_CEREMONY: "CEREMONY",
+  COFFEE_BREAK: "BREAK",
+  LUNCH_BREAK: "BREAK",
+  NETWORKING_BREAK: "BREAK",
+  REGISTRATION: "ADMINISTRATIVE",
+};
+
+export const SESSION_CATEGORIES: Record<SessionCategory, { value: SessionType; label: string }[]> = {
+  CONTENT: [
+    { value: "KEYNOTE", label: "Keynote" },
+    { value: "EXECUTIVE_KEYNOTE", label: "Executive Keynote" },
+    { value: "TECHNICAL_SESSION", label: "Technical Session" },
+    { value: "INVITED_TALK", label: "Invited Talk" },
+    { value: "CASE_STUDY", label: "Case Study" },
+    { value: "PANEL_DISCUSSION", label: "Panel Discussion" },
+    { value: "FIRESIDE_CHAT", label: "Fireside Chat" },
+    { value: "ROUNDTABLE", label: "Roundtable" },
+    { value: "WORKSHOP", label: "Workshop" },
+    { value: "TUTORIAL", label: "Tutorial" },
+    { value: "INDUSTRY_FORUM", label: "Industry Forum" },
+    { value: "LEADERSHIP_FORUM", label: "Leadership Forum" },
+    { value: "LIGHTNING_TALKS", label: "Lightning Talks" },
+    { value: "BREAKOUT_SESSION", label: "Breakout Session" },
+  ],
+  NETWORKING: [
+    { value: "GALA_DINNER", label: "Gala Dinner" },
+    { value: "RECEPTION", label: "Reception" },
+  ],
+  EXHIBITION: [
+    { value: "POSTER_SESSION", label: "Poster Session" },
+    { value: "DEMO_SESSION", label: "Demo Session" },
+    { value: "PRODUCT_SHOWCASE", label: "Product Showcase" },
+    { value: "SPONSOR_SHOWCASE", label: "Sponsor Showcase" },
+    { value: "EXHIBITION_VISIT", label: "Exhibition Visit" },
+  ],
+  CEREMONY: [
+    { value: "OPENING_CEREMONY", label: "Opening Ceremony" },
+    { value: "WELCOME_ADDRESS", label: "Welcome Address" },
+    { value: "AWARDS_CEREMONY", label: "Awards Ceremony" },
+    { value: "CLOSING_CEREMONY", label: "Closing Ceremony" },
+  ],
+  BREAK: [
+    { value: "COFFEE_BREAK", label: "Coffee Break" },
+    { value: "LUNCH_BREAK", label: "Lunch Break" },
+    { value: "NETWORKING_BREAK", label: "Networking Break" },
+  ],
+  ADMINISTRATIVE: [
+    { value: "REGISTRATION", label: "Registration" },
+  ],
+};
+
 export type SessionStatus = "scheduled" | "in_progress" | "completed" | "cancelled";
 
 export interface SessionSpeakerSlot {
@@ -156,6 +276,7 @@ export interface SessionSpeakerSlot {
   presentation_title: string | null;
   talk_order: number;
   talk_duration_minutes: number | null;
+  speaker_type?: string;
   is_confirmed: boolean;
   speaker_first_name?: string;
   speaker_last_name?: string;

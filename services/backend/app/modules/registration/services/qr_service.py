@@ -39,12 +39,14 @@ def build_srr_checkin_url(speaker_id: uuid.UUID) -> str:
     return f"{settings.QR_CODE_BASE_URL}/srr/checkin/{speaker_id}"
 
 
-def build_upload_portal_url(upload_token: str) -> str:
+def build_upload_portal_url(upload_token: str, event_id: Optional[uuid.UUID] = None) -> str:
     """
     URL for speaker's personal upload portal link (also in their email).
-    Format: {base}/upload/{token}
+    Format: {base}/{event_id}/{token}
     """
-    return f"{settings.QR_CODE_BASE_URL}/upload/{upload_token}"
+    if event_id:
+        return f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{upload_token}"
+    return f"{settings.SPEAKER_PORTAL_BASE_URL}/{upload_token}"
 
 
 # ── Core QR generation ────────────────────────────────────────
@@ -221,12 +223,12 @@ def generate_and_upload_speaker_qr(
     return qr_url
 
 
-def generate_upload_link_qr(upload_token: str) -> bytes:
+def generate_upload_link_qr(upload_token: str, event_id: Optional[uuid.UUID] = None) -> bytes:
     """
     Generate a QR code for the speaker's upload portal URL.
     Used in the upload invitation email as an embedded image.
 
     Returns raw PNG bytes (not uploaded to storage).
     """
-    url = build_upload_portal_url(upload_token)
+    url = build_upload_portal_url(upload_token, event_id=event_id)
     return generate_qr_code(url, box_size=8, border=2)

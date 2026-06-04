@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
     from app.modules.notifications.models.email_log import EmailLog
     from app.modules.presentations.models.poster import Poster
+    from app.modules.speakers.models.speaker_profile import SpeakerProfile
 
 
 class Speaker(Base):
@@ -106,6 +107,12 @@ class Speaker(Base):
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="speakers")
     user: Mapped[Optional["User"]] = relationship("User")
+    profile: Mapped[Optional["SpeakerProfile"]] = relationship(
+        "SpeakerProfile",
+        back_populates="speaker",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
     session_speakers: Mapped[List["SessionSpeaker"]] = relationship(
         "SessionSpeaker",
         back_populates="speaker",

@@ -18,6 +18,7 @@ class SessionSpeakerCreate(BaseModel):
     presentation_title: Optional[str] = Field(None, max_length=500)
     talk_order: int = Field(default=0, ge=0)
     talk_duration_minutes: Optional[int] = Field(None, ge=1, le=480)
+    speaker_type: Optional[str] = None
     is_confirmed: bool = False
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -42,6 +43,7 @@ class SessionSpeakerResponse(BaseModel):
     presentation_title: Optional[str] = None
     talk_order: int
     talk_duration_minutes: Optional[int] = None
+    speaker_type: Optional[str] = None
     is_confirmed: bool
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -202,5 +204,6 @@ class SessionSpeakerUpdate(BaseModel):
     presentation_title: Optional[str] = Field(None, max_length=500)
     talk_order: Optional[int] = Field(None, ge=0)
     talk_duration_minutes: Optional[int] = Field(None, ge=1)
+    speaker_type: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None

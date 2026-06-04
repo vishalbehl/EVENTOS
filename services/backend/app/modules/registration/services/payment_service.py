@@ -181,7 +181,7 @@ class PaymentService:
     # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def verify_payment(
+    async def verify_payment(
         event: Event,
         gateway: str,
         payload: Dict[str, Any],
@@ -224,12 +224,14 @@ class PaymentService:
                     "gateway_payment_id": session.payment_intent,
                     "amount": session.amount_total / 100.0,
                     "currency": session.currency,
+                    "details": dict(session)
                 }
-            return {"success": False}
+            return {"success": False, "details": dict(session) if session else {}}
 
         # ── Razorpay ─────────────────────────────────────────────────────
         elif gateway == "razorpay":
             creds = settings.get("razorpay_credentials") or {}
+            key_id = creds.get("key_id", "")
             encrypted_secret = creds.get("key_secret", "")
 
             razorpay_order_id   = payload.get("razorpay_order_id")
@@ -261,13 +263,40 @@ class PaymentService:
                 },
             )
 
-            if generated_signature == razorpay_signature:
+            if generated_signature != razorpay_signature:
+                return {"success": False, "error": "Signature mismatch"}
+
+            # Fetch payment status and details from Razorpay's API
+            async with httpx.AsyncClient() as client:
+                auth_str = base64.b64encode(
+                    f"{key_id}:{cipher.decrypt(encrypted_secret)}".encode()
+                ).decode()
+                headers = {"Authorization": f"Basic {auth_str}"}
+                res = await client.get(
+                    f"https://api.razorpay.com/v1/payments/{razorpay_payment_id}",
+                    headers=headers
+                )
+
+            if res.status_code != 200:
+                return {"success": False, "error": f"Razorpay API error: {res.text}"}
+
+            payment_details = res.json()
+            status = payment_details.get("status")
+            if status in ["captured", "authorized"]:
                 return {
                     "success": True,
                     "gateway_order_id": razorpay_order_id,
                     "gateway_payment_id": razorpay_payment_id,
+                    "amount": payment_details.get("amount", 0) / 100.0,
+                    "currency": payment_details.get("currency", "INR"),
+                    "details": payment_details
                 }
-            return {"success": False}
+            else:
+                return {
+                    "success": False,
+                    "error": f"Razorpay payment status: {status}",
+                    "details": payment_details
+                }
 
         # ── Simulated sandbox ─────────────────────────────────────────────
         elif gateway == "simulated":
@@ -278,6 +307,7 @@ class PaymentService:
                 "success": True,
                 "gateway_order_id": session_id,
                 "gateway_payment_id": f"pay_{uuid.uuid4().hex}",
+                "details": {"method": "simulated", "status": "captured"}
             }
 
         else:

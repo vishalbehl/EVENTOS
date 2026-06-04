@@ -124,6 +124,22 @@ DEFAULT_FAQS = [
     { "q": "Can I transfer my ticket?", "a": "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", "is_default": True }
 ]
 
+DEFAULT_TERMS = """# Terms & Conditions
+
+Welcome to our event! Please read these terms carefully before registering.
+
+## 1. Registration & Payment
+- All registrations are subject to approval by the organizers.
+- Tickets are non-refundable unless specified otherwise by the event policy.
+
+## 2. Event Code of Conduct
+- We are committed to providing a safe, inclusive, and harassment-free experience for everyone.
+
+## 3. Privacy Policy & Media Release
+- By registering, you agree that photos or videos taken during the event may be used for promotional purposes.
+- Your personal details will be stored securely and will not be shared with third parties.
+"""
+
 # ── Organizer Endpoints ───────────────────────────────────────────
 
 @router.get("/events/{event_id}/registration/form-config", response_model=RegistrationFormConfigResponse)
@@ -299,6 +315,19 @@ async def get_public_registration_form(
     active_tier = get_active_tier(event)
     active_prices = await get_active_prices_for_event(db, event)
 
+    terms = reg_settings.get("terms_and_conditions") or DEFAULT_TERMS
+    include_default = reg_settings.get("include_default_faqs", True)
+    custom_faqs = reg_settings.get("faqs", [])
+    
+    if include_default:
+        existing_questions = {f.get("q", "").strip().lower() for f in custom_faqs}
+        faqs = list(custom_faqs)
+        for df in DEFAULT_FAQS:
+            if df["q"].strip().lower() not in existing_questions:
+                faqs.append(df)
+    else:
+        faqs = custom_faqs
+
     return {
         "event_name": event.name,
         "theme_color": event.theme_color or "#1A73E8",
@@ -312,7 +341,17 @@ async def get_public_registration_form(
         "active_tier": active_tier,
         "active_prices": active_prices,
         "tier_cutoffs": reg_settings.get("tier_cutoffs", {}),
-        "terms_and_conditions": reg_settings.get("terms_and_conditions", "")
+        "terms_and_conditions": terms,
+        "faqs": faqs,
+        "include_default_faqs": include_default,
+        "branding_settings": event.branding_settings,
+        "start_date": event.start_date,
+        "end_date": event.end_date,
+        "location": event.location,
+        "venue_name": event.venue_name,
+        "state": event.state,
+        "country": event.country,
+        "organizer_name": event.organizer_name
     }
 
 
@@ -1078,15 +1117,38 @@ async def verify_public_payment(
         }
         
     try:
-        verification = PaymentService.verify_payment(
+        verification = await PaymentService.verify_payment(
             event=event,
             gateway=gateway,
             payload=payload.model_dump()
         )
     except Exception as e:
+        tx.status = "failed"
+        reg_stmt = select(ParticipantRegistration).where(ParticipantRegistration.id == tx.registration_id)
+        reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+        if reg:
+            reg.registration_status = "failed"
+            reg.registration_data = {
+                **reg.registration_data,
+                "paid_status": "Failed",
+                "payment_error": str(e)
+            }
+        await db.commit()
         raise HTTPException(status_code=400, detail=f"Payment verification failed: {str(e)}")
         
     if not verification.get("success"):
+        tx.status = "failed"
+        reg_stmt = select(ParticipantRegistration).where(ParticipantRegistration.id == tx.registration_id)
+        reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+        if reg:
+            reg.registration_status = "failed"
+            reg.registration_data = {
+                **reg.registration_data,
+                "paid_status": "Failed",
+                "payment_error": verification.get("error", "Payment verification not successful"),
+                "payment_details": verification.get("details", {})
+            }
+        await db.commit()
         raise HTTPException(status_code=400, detail="Payment has not been completed.")
         
     tx.status = "completed"
@@ -1103,7 +1165,11 @@ async def verify_public_payment(
     if not reg:
         raise HTTPException(status_code=404, detail="Registration record not found.")
         
-    reg.registration_data = {**reg.registration_data, "paid_status": "Paid"}
+    reg.registration_data = {
+        **reg.registration_data,
+        "paid_status": "Paid",
+        "payment_details": verification.get("details", {})
+    }
     
     auto_approve = reg_settings.get("auto_approve_paid", True)
     regno = ""
@@ -1115,6 +1181,10 @@ async def verify_public_payment(
             part = (await db.execute(part_stmt)).scalar_one_or_none()
             if part:
                 part.paid_status = "Paid"
+                part.custom_fields = {
+                    **(part.custom_fields or {}),
+                    "payment_details": verification.get("details", {})
+                }
                 if not part.regno:
                     from app.modules.registration.routers.registrations import generate_next_regno
                     part.regno = await generate_next_regno(db, event_id, part.role)
@@ -1131,7 +1201,12 @@ async def verify_public_payment(
             await db.flush()
             part_stmt = select(Participant).where(Participant.id == reg.participant_id)
             part = (await db.execute(part_stmt)).scalar_one_or_none()
-            regno = part.regno if part else ""
+            if part:
+                part.custom_fields = {
+                    **(part.custom_fields or {}),
+                    "payment_details": verification.get("details", {})
+                }
+                regno = part.regno
             
         status_result = "approved"
         message_result = "Registration successful! Welcome aboard."
