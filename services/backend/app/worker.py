@@ -36,15 +36,20 @@ def on_task_publish(headers=None, body=None, **kwargs):
 @task_prerun.connect
 def on_task_prerun(task_id, task, args, kwargs, **signature):
     request = task.request
-    # Celery request headers can be in task.request or task.request.headers
-    headers = getattr(request, "headers", None) or request.get("headers", {})
-    org_id_str = headers.get("tenant_org_id")
-    if org_id_str:
-        try:
-            org_id = uuid.UUID(org_id_str)
-            task._tenant_token = tenant_org_id.set(org_id)
-        except ValueError:
-            pass
+    headers = None
+    if request:
+        headers = getattr(request, "headers", None)
+        if headers is None and hasattr(request, "get"):
+            headers = request.get("headers", None)
+
+    if headers and isinstance(headers, dict):
+        org_id_str = headers.get("tenant_org_id")
+        if org_id_str:
+            try:
+                org_id = uuid.UUID(org_id_str)
+                task._tenant_token = tenant_org_id.set(org_id)
+            except ValueError:
+                pass
 
 @task_postrun.connect
 def on_task_postrun(task_id, task, args, kwargs, retval, state, **signature):

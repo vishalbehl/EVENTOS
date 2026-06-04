@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     from app.modules.registration.models.import_job import ImportJob
     from app.modules.notifications.models.email_campaign import EmailCampaign
     from app.modules.notifications.models.email_template import EmailTemplate
+    from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+    from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
     from app.modules.venue.models.srr_station import SRRStation
     from app.modules.venue.models.srr_checkin import SRRCheckin
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -116,26 +118,12 @@ class Event(Base):
 
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="INR")
 
-    # ── Module Settings (JSONB) ───────────────────────────────
-    # speaker_settings holds: enabled, window_required, and other speaker-portal config
-    # e.g. {"enabled": true, "window_required": true}
-    speaker_settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False,
-        default=lambda: {"enabled": True, "window_required": True}
+    # ── Theme and portal settings relationships ──────────────────
+    registration_theme_setting: Mapped[Optional["RegistrationThemeSetting"]] = relationship(
+        "RegistrationThemeSetting", back_populates="event", uselist=False, lazy="joined", cascade="all, delete-orphan"
     )
-    # registration_settings holds: enabled, registration_allowed, participants_list_allowed
-    # e.g. {"enabled": true, "registration_allowed": true, "participants_list_allowed": true}
-    registration_settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False,
-        default=lambda: {"enabled": True, "registration_allowed": True, "participants_list_allowed": True}
-    )
-
-    # ── Branding Settings (JSONB) ─────────────────────────────
-    # Consolidates theme_color, logo_url, banner_url into one column.
-    # e.g. {"theme_color": "#1A73E8", "logo_url": null, "banner_url": null}
-    branding_settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False,
-        default=lambda: {"theme_color": "#1A73E8", "logo_url": None, "banner_url": None}
+    speaker_theme_setting: Mapped[Optional["SpeakerThemeSetting"]] = relationship(
+        "SpeakerThemeSetting", back_populates="event", uselist=False, lazy="joined", cascade="all, delete-orphan"
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -151,9 +139,188 @@ class Event(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if "registration_theme_setting" not in self.__dict__:
+            from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+            self.registration_theme_setting = RegistrationThemeSetting()
+        if "speaker_theme_setting" not in self.__dict__:
+            from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
+            self.speaker_theme_setting = SpeakerThemeSetting()
+
+    # ── Theme & Settings Properties ───────────────────────────
+
+    @property
+    def speaker_settings(self) -> dict:
+        if not self.speaker_theme_setting:
+            return {
+                "enabled": True,
+                "window_required": True,
+                "profile_settings": {
+                    "enabled_methods": {"form": True, "template": True, "cv": True},
+                    "template_url": None,
+                    "template_filename": None
+                },
+                "terms_and_conditions": "",
+                "faqs": [],
+                "include_default_faqs": True,
+                "branding": {
+                    "theme_color": "#1A73E8",
+                    "logo_url": None,
+                    "banner_url": None,
+                    "theme": "midnight",
+                    "header_images": []
+                }
+            }
+        base = {
+            "enabled": self.speaker_theme_setting.enabled,
+            "window_required": self.speaker_theme_setting.window_required,
+            "profile_settings": self.speaker_theme_setting.profile_settings or {
+                "enabled_methods": {"form": True, "template": True, "cv": True},
+                "template_url": None,
+                "template_filename": None
+            },
+            "terms_and_conditions": self.speaker_theme_setting.terms_and_conditions,
+            "faqs": self.speaker_theme_setting.faqs,
+            "include_default_faqs": self.speaker_theme_setting.include_default_faqs,
+            "branding": {
+                "theme_color": self.speaker_theme_setting.theme_color,
+                "logo_url": self.speaker_theme_setting.logo_url,
+                "banner_url": self.speaker_theme_setting.banner_url,
+                "theme": self.speaker_theme_setting.theme,
+                "header_images": self.speaker_theme_setting.header_images,
+            }
+        }
+        if self.speaker_theme_setting.extra_settings:
+            base.update(self.speaker_theme_setting.extra_settings)
+        return base
+
+    @speaker_settings.setter
+    def speaker_settings(self, value: dict) -> None:
+        if not self.speaker_theme_setting:
+            from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
+            self.speaker_theme_setting = SpeakerThemeSetting()
+        
+        explicit_columns = {
+            "enabled", "window_required", "profile_settings",
+            "terms_and_conditions", "faqs", "include_default_faqs"
+        }
+        
+        if self.speaker_theme_setting.extra_settings is None:
+            self.speaker_theme_setting.extra_settings = {}
+        extra = dict(self.speaker_theme_setting.extra_settings)
+        
+        for k, v in value.items():
+            if k in explicit_columns:
+                setattr(self.speaker_theme_setting, k, v)
+            elif k == "branding" and isinstance(v, dict):
+                branding = v or {}
+                if "theme_color" in branding:
+                    self.speaker_theme_setting.theme_color = branding["theme_color"]
+                if "logo_url" in branding:
+                    self.speaker_theme_setting.logo_url = branding["logo_url"]
+                if "banner_url" in branding:
+                    self.speaker_theme_setting.banner_url = branding["banner_url"]
+                if "theme" in branding:
+                    self.speaker_theme_setting.theme = branding["theme"]
+                if "header_images" in branding:
+                    self.speaker_theme_setting.header_images = branding["header_images"]
+            elif k not in ("id", "event_id", "created_at", "updated_at"):
+                extra[k] = v
+        self.speaker_theme_setting.extra_settings = extra
+
+    @property
+    def registration_settings(self) -> dict:
+        if not self.registration_theme_setting:
+            return {
+                "enabled": True,
+                "registration_allowed": True,
+                "participants_list_allowed": True,
+                "payment_enabled": False,
+                "active_gateway": "simulated",
+                "stripe_credentials": {},
+                "tier_cutoffs": {},
+                "disabled_categories": [],
+                "terms_and_conditions": "",
+                "faqs": [],
+                "include_default_faqs": True,
+            }
+        base = {
+            "enabled": self.registration_theme_setting.enabled,
+            "registration_allowed": self.registration_theme_setting.registration_allowed,
+            "participants_list_allowed": self.registration_theme_setting.participants_list_allowed,
+            "payment_enabled": self.registration_theme_setting.payment_enabled,
+            "active_gateway": self.registration_theme_setting.active_gateway,
+            "stripe_credentials": self.registration_theme_setting.stripe_credentials,
+            "tier_cutoffs": self.registration_theme_setting.tier_cutoffs,
+            "disabled_categories": self.registration_theme_setting.disabled_categories,
+            "terms_and_conditions": self.registration_theme_setting.terms_and_conditions,
+            "faqs": self.registration_theme_setting.faqs,
+            "include_default_faqs": self.registration_theme_setting.include_default_faqs,
+        }
+        if self.registration_theme_setting.extra_settings:
+            base.update(self.registration_theme_setting.extra_settings)
+        return base
+
+    @registration_settings.setter
+    def registration_settings(self, value: dict) -> None:
+        if not self.registration_theme_setting:
+            from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+            self.registration_theme_setting = RegistrationThemeSetting()
+        
+        explicit_columns = {
+            "enabled", "registration_allowed", "participants_list_allowed",
+            "payment_enabled", "active_gateway", "stripe_credentials",
+            "tier_cutoffs", "disabled_categories", "terms_and_conditions",
+            "faqs", "include_default_faqs"
+        }
+        
+        if self.registration_theme_setting.extra_settings is None:
+            self.registration_theme_setting.extra_settings = {}
+        extra = dict(self.registration_theme_setting.extra_settings)
+        
+        for k, v in value.items():
+            if k in explicit_columns:
+                setattr(self.registration_theme_setting, k, v)
+            elif k not in ("id", "event_id", "created_at", "updated_at"):
+                extra[k] = v
+        self.registration_theme_setting.extra_settings = extra
+
+    @property
+    def branding_settings(self) -> dict:
+        if not self.registration_theme_setting:
+            return {
+                "theme_color": "#1A73E8",
+                "logo_url": None,
+                "banner_url": None,
+                "theme": "midnight",
+                "header_images": [],
+            }
+        return {
+            "theme_color": self.registration_theme_setting.theme_color,
+            "logo_url": self.registration_theme_setting.logo_url,
+            "banner_url": self.registration_theme_setting.banner_url,
+            "theme": self.registration_theme_setting.theme,
+            "header_images": self.registration_theme_setting.header_images,
+        }
+
+    @branding_settings.setter
+    def branding_settings(self, value: dict) -> None:
+        if not self.registration_theme_setting:
+            from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+            self.registration_theme_setting = RegistrationThemeSetting()
+        if "theme_color" in value:
+            self.registration_theme_setting.theme_color = value["theme_color"]
+        if "logo_url" in value:
+            self.registration_theme_setting.logo_url = value["logo_url"]
+        if "banner_url" in value:
+            self.registration_theme_setting.banner_url = value["banner_url"]
+        if "theme" in value:
+            self.registration_theme_setting.theme = value["theme"]
+        if "header_images" in value:
+            self.registration_theme_setting.header_images = value["header_images"]
+
     # ── Backward-compatibility properties ─────────────────────
-    # These allow existing code to keep using the flat attribute names
-    # while the data now lives in JSONB sub-documents.
 
     @property
     def speaker_mode_enabled(self) -> bool:

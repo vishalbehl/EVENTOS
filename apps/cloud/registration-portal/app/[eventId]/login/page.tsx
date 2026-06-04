@@ -211,7 +211,7 @@ export default function OTPLoginPage() {
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-indigo-400" />
                 <input
                   type="email" required value={email} onChange={e => setEmail(e.target.value)}
-                  placeholder="your@email.com" autoFocus disabled={loading}
+                  placeholder="your@email.com" disabled={loading}
                   className="input !pl-12"
                 />
               </div>

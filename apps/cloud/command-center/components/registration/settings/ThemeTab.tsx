@@ -13,27 +13,108 @@ import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-const DEFAULT_TERMS = `# Terms & Conditions
+const DEFAULT_TERMS = `# Registration Portal Terms & Conditions
 
-Welcome to our event! Please read these terms carefully before registering.
+By registering for this event, you acknowledge that you have read, understood, and agree to these Terms & Conditions.
 
-## 1. Registration & Payment
-- All registrations are subject to approval by the organizers.
-- Tickets are non-refundable unless specified otherwise by the event policy.
+---
 
-## 2. Event Code of Conduct
-- We are committed to providing a safe, inclusive, and harassment-free experience for everyone.
+# 1. Registration
 
-## 3. Privacy Policy & Media Release
-- By registering, you agree that photos or videos taken during the event may be used for promotional purposes.
-- Your personal details will be stored securely and will not be shared with third parties.
+* Registration is valid only after successful submission of the registration form and receipt of payment confirmation (if applicable).
+* The Organizer reserves the right to approve, reject, or cancel any registration at its sole discretion.
+* Providing false or misleading information may result in cancellation without refund.
+
+---
+
+# 2. Payment & Refund Policy
+
+* Registration fees, if applicable, must be paid through the official payment gateway.
+* Refund eligibility and cancellation deadlines are determined by the Organizer.
+* Transaction charges imposed by banks or payment gateways may be non-refundable.
+* In the event of force majeure, event postponement, or circumstances beyond the Organizer's control, refunds shall be subject to Organizer policy.
+
+---
+
+# 3. Personal Information
+
+* Information provided during registration will be used solely for event management, communication, badge generation, and related operational activities.
+* The Organizer may send important notifications regarding schedules, venue changes, or emergency announcements.
+* Your information will not be sold to third parties.
+
+---
+
+# 4. Event Admission
+
+* Registration confirmation does not guarantee admission if security or venue regulations require additional verification.
+* Participants may be required to present a valid government-issued photo ID.
+* The Organizer reserves the right to refuse entry for misconduct or violation of event policies.
+
+---
+
+# 5. Badge Usage
+
+* Event badges are personal and non-transferable.
+* Lost badges may require identity verification before reissuance.
+* Sharing badges with unauthorized individuals is strictly prohibited.
+
+---
+
+# 6. Photography & Recording
+
+* Official event photographers and videographers may capture images and recordings during the event.
+* By attending, participants grant permission for reasonable use of such materials for event documentation and promotional purposes.
+
+---
+
+# 7. Code of Conduct
+
+Participants are expected to behave professionally and respectfully.
+
+The Organizer reserves the right to remove any participant who:
+
+* Harasses attendees, speakers, or staff.
+* Disrupts event operations.
+* Violates venue policies.
+* Engages in illegal or unsafe activities.
+
+---
+
+# 8. Limitation of Liability
+
+The Organizer shall not be responsible for:
+
+* Loss or theft of personal belongings.
+* Travel disruptions.
+* Technical failures beyond reasonable control.
+* Indirect or consequential damages arising from participation.
+
+---
+
+# 9. Schedule Changes
+
+The Organizer may modify:
+
+* Speakers,
+* Sessions,
+* Venue locations,
+* Event timings,
+* Agenda items,
+
+without prior notice whenever operationally necessary.
 `
 
 const DEFAULT_FAQS = [
-  { q: "What should I bring to the event?", a: "Please bring a copy of your entry pass QR code (on your phone or printed) along with a valid photo ID for quick check-in.", is_default: true },
-  { q: "Is there parking available?", a: "Yes, there is complimentary attendee parking available on-site at the main venue deck. Follow event signage.", is_default: true },
-  { q: "Can I transfer my ticket?", a: "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", is_default: true }
+  { q: "How do I register?", a: "Complete the registration form and submit the required information. Payment (if applicable) must be completed before registration is confirmed.", is_default: true },
+  { q: "I did not receive my confirmation email.", a: "Please:\n\n1. Check your Spam/Junk folder.\n2. Verify that you entered the correct email address.\n3. Wait a few minutes for email delivery.\n\nIf you still have not received it, contact the event support team.", is_default: true },
+  { q: "Can I update my registration details?", a: "Yes, depending on Organizer settings. Some information may be editable before the registration deadline.", is_default: true },
+  { q: "Can I transfer my registration to someone else?", a: "Unless specifically permitted by the Organizer, registrations are non-transferable.", is_default: true },
+  { q: "How do I access the Speaker Portal?", a: "Please use your registered email address or the access code provided by the Organizer via email.", is_default: true },
+  { q: "What if I forget my access code?", a: "Use the registered email recovery option or contact the Organizer for assistance.", is_default: true },
+  { q: "Can I cancel my registration?", a: "Cancellation and refund policies vary by event. Please refer to the event-specific cancellation policy.", is_default: true },
+  { q: "Who should I contact for technical support?", a: "Please contact the event support desk using the contact information provided in your confirmation email.", is_default: true }
 ]
+
 
 const THEMES = [
   { id: 'midnight', label: 'Midnight',  desc: 'Deep dark with violet accents', color: '#7c3aed', bg: '#080410', surf: '#120924', card: '#1d0f3a', sec: '#a78bfa' },
@@ -90,16 +171,28 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
     if (event?.branding_settings) {
       const bs = event.branding_settings as Record<string, any>
       setLogoUrl(bs.logo_url || '')
-      setHeaderImages(bs.header_images || (bs.banner_url ? [bs.banner_url] : []))
+      
+      const loadedBanners = bs.header_images || (bs.banner_url ? [bs.banner_url] : [])
+      setHeaderImages(loadedBanners.length > 0 ? loadedBanners : ["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
+      
       setFooterTerms(bs.footer_terms || '')
       setFooterSupportEmail(bs.footer_support_email || '')
       setFooterSupportPhone(bs.footer_support_phone || '')
-      setFooterSupportEmails(bs.footer_support_emails || [])
-      setFooterSupportPhones(bs.footer_support_phones || [])
+      
+      const loadedEmails = bs.footer_support_emails || []
+      setFooterSupportEmails(loadedEmails.length > 0 ? loadedEmails : ["support@eventos.com"])
+      
+      const loadedPhones = bs.footer_support_phones || []
+      setFooterSupportPhones(loadedPhones.length > 0 ? loadedPhones : ["011-123456789"])
+      
       setFooterWebsites(bs.footer_websites || [])
       setFooterLocations(bs.footer_locations || [])
       setFooterShowLogo(bs.footer_show_logo !== false)
       setSelectedTheme(bs.theme || 'midnight')
+    } else {
+      setHeaderImages(["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
+      setFooterSupportEmails(["support@eventos.com"])
+      setFooterSupportPhones(["011-123456789"])
     }
     if (event?.registration_settings) {
       const rs = event.registration_settings as Record<string, any>
@@ -904,7 +997,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
                     <span className="text-[9px] font-black uppercase tracking-widest text-muted">Rendered Preview</span>
                   </div>
                 )}
-                <div className="h-[360px] bg-[#080912] border border-white/10 rounded-2xl px-5 py-4 overflow-y-auto prose prose-invert prose-xs max-w-none
+                <div className="h-[360px] bg-[#080912] border border-white/10 rounded-2xl px-5 py-4 overflow-y-auto prose prose-invert prose-xs max-w-none tnc-markdown
                   prose-headings:text-[var(--text)] prose-headings:font-black prose-headings:tracking-tight
                   prose-h1:text-lg prose-h2:text-sm prose-h3:text-xs
                   prose-p:text-muted prose-p:text-xs prose-p:leading-relaxed

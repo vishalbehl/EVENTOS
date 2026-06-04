@@ -425,3 +425,29 @@ async def test_checkout_excel_imported_participant_synthesis(
     assert data_checkout["checkout_required"] is False  # Defaults to Free checkout since payment is disabled or total_price is 0
     assert data_checkout["status"] == "Paid"
 
+
+def test_dynamic_template_defaults_loading():
+    from app.services.template_defaults import (
+        get_default_registration_terms,
+        get_default_registration_faqs,
+        get_default_speaker_terms,
+        get_default_speaker_faqs
+    )
+    reg_terms = get_default_registration_terms()
+    assert "Registration Portal Terms & Conditions" in reg_terms
+    assert "1. Registration" in reg_terms
+
+    reg_faqs = get_default_registration_faqs()
+    assert len(reg_faqs) > 0
+    assert reg_faqs[0]["q"] == "How do I register?"
+    assert "Complete the registration form" in reg_faqs[0]["a"]
+
+    spk_terms = get_default_speaker_terms()
+    assert "Speaker Portal Terms & Conditions" in spk_terms
+    assert "1. Ownership" in spk_terms
+
+    spk_faqs = get_default_speaker_faqs()
+    assert len(spk_faqs) > 0
+    assert spk_faqs[0]["q"] == "How do I access the Speaker Portal?"
+
+

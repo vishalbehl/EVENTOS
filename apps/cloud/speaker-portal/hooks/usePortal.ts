@@ -12,6 +12,10 @@ export interface PortalTalk {
   upload_status: "pending" | "uploaded" | "pending_validation" | "valid" | "warning" | "invalid" | "approved" | "rejected";
   is_locked: boolean;
   rejection_reason: string | null;
+  filename?: string | null;
+  download_url?: string | null;
+  preview_url?: string | null;
+  thumbnail_url?: string | null;
 }
 
 export interface PortalPoster {
@@ -23,6 +27,9 @@ export interface PortalPoster {
   original_filename: string | null;
   submitted_at: string | null;
   rejection_reason: string | null;
+  download_url?: string | null;
+  preview_url?: string | null;
+  thumbnail_url?: string | null;
 }
 
 export interface SpeakerBrandingSettings {
@@ -75,6 +82,8 @@ export interface SpeakerPortalAuthResponse {
   venue_name?: string | null;
   organizer_name?: string | null;
   state?: string;
+  event_state?: string | null;
+  event_country?: string | null;
   reg_no?: string;
   profile_settings?: {
     enabled_methods?: {
@@ -85,6 +94,8 @@ export interface SpeakerPortalAuthResponse {
     template_url?: string | null;
     template_filename?: string | null;
   };
+  srr_checked_in?: boolean;
+  registration_mode_enabled?: boolean;
 }
 
 export interface SpeakerPortalConfigResponse {
@@ -101,6 +112,8 @@ export interface SpeakerPortalConfigResponse {
   location?: string | null;
   venue_name?: string | null;
   country?: string | null;
+  event_state?: string | null;
+  event_country?: string | null;
   organizer_name?: string | null;
 }
 

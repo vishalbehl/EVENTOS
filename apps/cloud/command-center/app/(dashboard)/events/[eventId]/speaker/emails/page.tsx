@@ -126,7 +126,7 @@ export default function EmailPage({ params: paramsPromise }: { params: Promise<{
 
           {/* ===== Premium Tabs ===== */}
           <nav className="flex flex-wrap items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md animate-in fade-in slide-in-from-right-4 duration-700">
-            {(['dashboard', 'inbox', 'sent', 'campaigns', 'templates'] as TabType[]).map((tab) => (
+            {(['dashboard', 'inbox', 'sent', 'campaigns'] as TabType[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => {

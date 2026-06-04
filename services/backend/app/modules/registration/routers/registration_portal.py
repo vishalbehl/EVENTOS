@@ -118,27 +118,11 @@ DEFAULT_FIELDS = [
     }
 ]
 
-DEFAULT_FAQS = [
-    { "q": "What should I bring to the event?", "a": "Please bring a copy of your entry pass QR code (on your phone or printed) along with a valid photo ID for quick check-in.", "is_default": True },
-    { "q": "Is there parking available?", "a": "Yes, there is complimentary attendee parking available on-site at the main venue deck. Follow event signage.", "is_default": True },
-    { "q": "Can I transfer my ticket?", "a": "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", "is_default": True }
-]
+from app.services.template_defaults import get_default_registration_terms, get_default_registration_faqs
 
-DEFAULT_TERMS = """# Terms & Conditions
+DEFAULT_TERMS = get_default_registration_terms()
+DEFAULT_FAQS = get_default_registration_faqs()
 
-Welcome to our event! Please read these terms carefully before registering.
-
-## 1. Registration & Payment
-- All registrations are subject to approval by the organizers.
-- Tickets are non-refundable unless specified otherwise by the event policy.
-
-## 2. Event Code of Conduct
-- We are committed to providing a safe, inclusive, and harassment-free experience for everyone.
-
-## 3. Privacy Policy & Media Release
-- By registering, you agree that photos or videos taken during the event may be used for promotional purposes.
-- Your personal details will be stored securely and will not be shared with third parties.
-"""
 
 # ── Organizer Endpoints ───────────────────────────────────────────
 

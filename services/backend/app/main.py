@@ -1,4 +1,4 @@
-import sys  # reload trigger
+import sys  # reload trigger - DB restarted
 import asyncio
 from contextlib import asynccontextmanager 
 

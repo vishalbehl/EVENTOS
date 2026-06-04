@@ -227,6 +227,8 @@ export default function UploadPage() {
       endDate={portal?.end_date}
       location={portal?.location}
       venueName={portal?.venue_name}
+      country={portal?.event_country}
+      state={portal?.event_state}
       organizerName={portal?.organizer_name}
       email={portal?.email}
       speakerName={speakerName}
@@ -264,7 +266,7 @@ export default function UploadPage() {
           </div>
 
           <div className="p-10 md:p-14">
-            <header className="mb-12">
+            <header className="mb-12 text-left">
               <h1 className="text-4xl font-black tracking-tighter mb-2">
                 Sync <span className="text-indigo-400">{isPoster ? "Digital Poster" : "Presentation"}</span>
               </h1>
@@ -272,6 +274,28 @@ export default function UploadPage() {
                 Target Item: <span className="text-[#E8EAFF]">{targetName}</span>
               </p>
             </header>
+
+            {/* ── Rejection Notice ── */}
+            {((talk && talk.upload_status === "rejected") || (poster && poster.status === "rejected")) && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-8 flex items-start gap-4 p-5 rounded-[1.5rem] bg-red-500/10 border border-red-500/20"
+              >
+                <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div className="text-left">
+                  <p className="text-[12px] font-black text-red-400 uppercase tracking-widest mb-1">
+                    Previous Submission Rejected
+                  </p>
+                  <p className="text-[11px] font-bold text-muted leading-relaxed">
+                    Reason: <span className="text-red-300">{talk?.rejection_reason || poster?.rejection_reason || "No reason specified."}</span>
+                  </p>
+                  <p className="text-[11px] font-bold text-muted leading-relaxed mt-1">
+                    Please make the necessary corrections and upload a revised file below.
+                  </p>
+                </div>
+              </motion.div>
+            )}
 
             {/* ── Late submission warning ── */}
             {isLateOverride && (

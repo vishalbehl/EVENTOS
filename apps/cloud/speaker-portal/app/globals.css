@@ -1,8 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;900&display=swap');
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
 
 :root {
   /* void-indigo theme */
@@ -141,4 +141,73 @@ body {
 .hover-lift-3d:hover {
   transform: translateY(-8px) rotateX(4deg) rotateY(-2deg);
   box-shadow: 0 20px 40px color-mix(in srgb, black 40%, transparent);
+}
+
+/* Custom Markdown Rendering Styles */
+.tnc-markdown {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+.tnc-markdown p {
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+  display: block !important;
+}
+.tnc-markdown ul {
+  list-style-type: disc !important;
+  padding-left: 1.75rem !important;
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+  display: block !important;
+}
+.tnc-markdown ol {
+  list-style-type: decimal !important;
+  padding-left: 1.75rem !important;
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+  display: block !important;
+}
+.tnc-markdown li {
+  margin-top: 0.5rem !important;
+  margin-bottom: 0.5rem !important;
+  list-style-position: outside !important;
+  display: list-item !important;
+  color: rgba(232, 234, 255, 0.7) !important;
+}
+.tnc-markdown h1 {
+  font-size: 1.25rem !important;
+  font-weight: 900 !important;
+  margin-top: 1.75rem !important;
+  margin-bottom: 0.75rem !important;
+  color: #E8EAFF !important;
+  display: block !important;
+}
+.tnc-markdown h2 {
+  font-size: 1.1rem !important;
+  font-weight: 800 !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 0.5rem !important;
+  color: #E8EAFF !important;
+  display: block !important;
+}
+.tnc-markdown h3 {
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  margin-top: 1.25rem !important;
+  margin-bottom: 0.5rem !important;
+  color: #E8EAFF !important;
+  display: block !important;
+}
+.tnc-markdown hr {
+  border: 0 !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+  margin: 1.75rem 0 !important;
+  display: block !important;
+}
+.tnc-markdown strong {
+  color: #E8EAFF !important;
+  font-weight: 700 !important;
+}
+.tnc-markdown em {
+  color: #818CF8 !important;
 }

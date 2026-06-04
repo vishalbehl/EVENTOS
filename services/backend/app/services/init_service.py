@@ -272,6 +272,53 @@ async def ensure_rbac_defaults():
             logger.error(f"Failed to seed RBAC defaults: {e}")
             await db.rollback()
 
+async def ensure_event_settings_defaults(db: AsyncSession):
+    """Scan all events and ensure they have registration and speaker theme settings seeded with defaults."""
+    from app.modules.rbac.models.event import Event
+    from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+    from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting, DEFAULT_SPEAKER_TERMS, DEFAULT_SPEAKER_FAQS
+    from app.modules.registration.routers.registration_portal import DEFAULT_TERMS, DEFAULT_FAQS
+
+    result = await db.execute(select(Event))
+    events = result.scalars().all()
+    
+    updated = False
+    for event in events:
+        if not event.registration_theme_setting:
+            event.registration_theme_setting = RegistrationThemeSetting(
+                terms_and_conditions=DEFAULT_TERMS,
+                faqs=DEFAULT_FAQS
+            )
+            db.add(event.registration_theme_setting)
+            updated = True
+        else:
+            if not event.registration_theme_setting.terms_and_conditions:
+                event.registration_theme_setting.terms_and_conditions = DEFAULT_TERMS
+                updated = True
+            if not event.registration_theme_setting.faqs:
+                event.registration_theme_setting.faqs = DEFAULT_FAQS
+                updated = True
+
+        if not event.speaker_theme_setting:
+            event.speaker_theme_setting = SpeakerThemeSetting(
+                terms_and_conditions=DEFAULT_SPEAKER_TERMS,
+                faqs=DEFAULT_SPEAKER_FAQS
+            )
+            db.add(event.speaker_theme_setting)
+            updated = True
+        else:
+            if not event.speaker_theme_setting.terms_and_conditions:
+                event.speaker_theme_setting.terms_and_conditions = DEFAULT_SPEAKER_TERMS
+                updated = True
+            if not event.speaker_theme_setting.faqs:
+                event.speaker_theme_setting.faqs = DEFAULT_SPEAKER_FAQS
+                updated = True
+                
+    if updated:
+        await db.commit()
+        logger.info("Database default templates and FAQ/Terms settings auto-seeded/synced.")
+
+
 async def ensure_admin_user():
     """
     Ensures that at least one organization and one admin user exist in the database.
@@ -289,6 +336,9 @@ async def ensure_admin_user():
     
     async with AsyncSessionLocal() as db:
         try:
+            # Seed event default settings if missing
+            await ensure_event_settings_defaults(db)
+
             # 1. Check if any organization exists
             result = await db.execute(select(Organization))
             org = result.scalars().first()

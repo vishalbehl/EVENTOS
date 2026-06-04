@@ -1444,7 +1444,7 @@ export default function PublicRegistrationPortal() {
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="p-8 overflow-y-auto flex-1 prose prose-invert max-w-none
+                  <div className="p-8 overflow-y-auto flex-1 prose prose-invert max-w-none tnc-markdown
                     prose-headings:text-[#E8EAFF] prose-headings:font-black prose-headings:tracking-tight
                     prose-h1:text-xl prose-h2:text-base prose-h3:text-sm prose-h4:text-xs
                     prose-p:text-muted prose-p:text-sm prose-p:leading-relaxed

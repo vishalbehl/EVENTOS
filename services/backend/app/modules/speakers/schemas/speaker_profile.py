@@ -11,6 +11,7 @@ class SpeakerProfileCreate(BaseModel):
     extended_bio: Optional[str] = None
     profile_photo_url: Optional[str] = None
     cv_url: Optional[str] = None
+    template_url: Optional[str] = None
     designation: Optional[str] = Field(None, max_length=50)
     title: Optional[str] = Field(None, max_length=200)
     organisation_name: Optional[str] = Field(None, max_length=200)
@@ -32,6 +33,7 @@ class SpeakerProfileUpdate(BaseModel):
     extended_bio: Optional[str] = None
     profile_photo_url: Optional[str] = None
     cv_url: Optional[str] = None
+    template_url: Optional[str] = None
     designation: Optional[str] = Field(None, max_length=50)
     title: Optional[str] = Field(None, max_length=200)
     organisation_name: Optional[str] = Field(None, max_length=200)
@@ -58,6 +60,7 @@ class SpeakerProfileResponse(BaseModel):
     extended_bio: Optional[str] = None
     profile_photo_url: Optional[str] = None
     cv_url: Optional[str] = None
+    template_url: Optional[str] = None
     designation: Optional[str] = None
     title: Optional[str] = None
     organisation_name: Optional[str] = None

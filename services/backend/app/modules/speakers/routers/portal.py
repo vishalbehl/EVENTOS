@@ -45,6 +45,10 @@ class PortalTalk(BaseModel):
     upload_status: str  # "pending" | "uploaded" | "approved" | "rejected"
     is_locked: bool = False
     rejection_reason: Optional[str] = None
+    filename: Optional[str] = None
+    download_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 
 class PortalPoster(BaseModel):
@@ -57,6 +61,9 @@ class PortalPoster(BaseModel):
     original_filename: Optional[str]
     submitted_at: Optional[datetime]
     rejection_reason: Optional[str]
+    download_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 
 class SpeakerPortalAuthResponse(BaseModel):
@@ -99,6 +106,10 @@ class SpeakerPortalAuthResponse(BaseModel):
     profile_settings: Optional[dict] = None
     reg_no: Optional[str] = None
     state: Optional[str] = None
+    event_state: Optional[str] = None
+    event_country: Optional[str] = None
+    srr_checked_in: bool = False
+    registration_mode_enabled: bool = True
 
 
 class SpeakerPortalConfigResponse(BaseModel):
@@ -116,6 +127,8 @@ class SpeakerPortalConfigResponse(BaseModel):
     location: Optional[str] = None
     venue_name: Optional[str] = None
     country: Optional[str] = None
+    event_state: Optional[str] = None
+    event_country: Optional[str] = None
     organizer_name: Optional[str] = None
     profile_settings: Optional[dict] = None
 
@@ -182,8 +195,123 @@ async def get_speaker_portal_config(
         location=event.location,
         venue_name=event.venue_name,
         country=event.country,
+        event_state=event.state,
+        event_country=event.country,
         organizer_name=event.organizer_name,
         profile_settings=profile_settings,
+    )
+
+
+def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
+    session = ss.session
+    current_file = ss.current_file
+    upload_status = current_file.upload_status if current_file else "pending"
+    is_locked = current_file.is_locked if current_file else False
+    
+    filename = None
+    download_url = None
+    preview_url = None
+    thumbnail_url = None
+    if current_file:
+        filename = current_file.original_filename
+        try:
+            download_url = upload_service.create_presigned_download(
+                bucket=settings.S3_BUCKET_PRESENTATIONS,
+                storage_path=current_file.storage_path,
+                filename=current_file.original_filename
+            )
+            preview_url = upload_service.create_presigned_download(
+                bucket=settings.S3_BUCKET_PRESENTATIONS,
+                storage_path=current_file.storage_path,
+                filename=current_file.original_filename,
+                inline=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URLs for talk file {current_file.id}: {e}")
+
+        # Check if thumbnail_url is on the validation object or directly on the file object
+        thumb_path = None
+        if current_file.validation and current_file.validation.thumbnail_url:
+            thumb_path = current_file.validation.thumbnail_url
+        elif hasattr(current_file, "thumbnail_url") and current_file.thumbnail_url:
+            thumb_path = current_file.thumbnail_url
+
+        if thumb_path:
+            try:
+                thumbnail_url = upload_service.create_presigned_download(
+                    bucket=settings.S3_BUCKET_THUMBNAILS,
+                    storage_path=thumb_path
+                )
+            except Exception as e:
+                logger.error(f"Failed to generate presigned download URL for thumbnail: {e}")
+
+    # Check if room is loaded
+    room_name = None
+    try:
+        if session.room:
+            room_name = session.room.name
+    except Exception:
+        pass
+
+    return PortalTalk(
+        session_speaker_id=ss.id,
+        session_name=session.name,
+        session_code=session.session_code,
+        start_time=ss.start_time or session.start_time,
+        end_time=ss.end_time or session.end_time,
+        talk_title=ss.presentation_title,
+        room_name=room_name,
+        upload_status=upload_status,
+        is_locked=is_locked,
+        rejection_reason=current_file.rejection_reason if current_file else None,
+        filename=filename,
+        download_url=download_url,
+        preview_url=preview_url,
+        thumbnail_url=thumbnail_url
+    )
+
+
+def _build_portal_poster(p: Poster, event: Event) -> PortalPoster:
+    download_url = None
+    preview_url = None
+    thumbnail_url = None
+    if p.storage_path:
+        try:
+            download_url = upload_service.create_presigned_download(
+                bucket=settings.S3_BUCKET_POSTERS,
+                storage_path=p.storage_path,
+                filename=p.original_filename
+            )
+            preview_url = upload_service.create_presigned_download(
+                bucket=settings.S3_BUCKET_POSTERS,
+                storage_path=p.storage_path,
+                filename=p.original_filename,
+                inline=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URLs for poster file {p.id}: {e}")
+
+    if p.thumbnail_url:
+        try:
+            thumbnail_url = upload_service.create_presigned_download(
+                bucket=settings.S3_BUCKET_THUMBNAILS,
+                storage_path=p.thumbnail_url
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate presigned download URL for poster thumbnail {p.id}: {e}")
+
+    return PortalPoster(
+        id=p.id,
+        title=p.title,
+        authors=p.authors,
+        category=p.category,
+        status=p.status,
+        original_filename=p.original_filename,
+        submitted_at=p.submitted_at,
+        rejection_reason=p.rejection_reason,
+        download_url=download_url,
+        preview_url=preview_url,
+        thumbnail_url=thumbnail_url
     )
 
 
@@ -203,8 +331,9 @@ async def speaker_portal_auth(
         (Speaker.upload_token == token_or_code) | (Speaker.speaker_code == token_or_code.upper())
     ).options(
         selectinload(Speaker.event),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.srr_checkins),
         selectinload(Speaker.posters)
     )
     
@@ -227,37 +356,11 @@ async def speaker_portal_auth(
         
     talks = []
     for ss in speaker.session_speakers:
-        session = ss.session
-        # Get current file status
-        current_file = ss.current_file
-        upload_status = current_file.upload_status if current_file else "pending"
-        is_locked = current_file.is_locked if current_file else False
-        
-        talks.append(PortalTalk(
-            session_speaker_id=ss.id,
-            session_name=session.name,
-            session_code=session.session_code,
-            start_time=ss.start_time or session.start_time,
-            end_time=ss.end_time or session.end_time,
-            talk_title=ss.presentation_title,
-            room_name=None, # we could join room if needed
-            upload_status=upload_status,
-            is_locked=is_locked,
-            rejection_reason=current_file.rejection_reason if current_file else None
-        ))
+        talks.append(_build_portal_talk(ss, event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(PortalPoster(
-            id=p.id,
-            title=p.title,
-            authors=p.authors,
-            category=p.category,
-            status=p.status,
-            original_filename=p.original_filename,
-            submitted_at=p.submitted_at,
-            rejection_reason=p.rejection_reason
-        ))
+        posters.append(_build_portal_poster(p, event))
 
     # Fetch active announcements
     from app.modules.notifications.models.announcement import Announcement
@@ -388,6 +491,10 @@ async def speaker_portal_auth(
         profile_settings=profile_settings,
         reg_no=reg_no,
         state=state_val,
+        event_state=event.state,
+        event_country=event.country,
+        srr_checked_in=len(speaker.srr_checkins) > 0,
+        registration_mode_enabled=event.registration_mode_enabled,
     )
 
 
@@ -1305,8 +1412,9 @@ async def upload_profile_template(
     # Reload speaker with selectinload options to prevent lazy loading
     speaker_q = select(Speaker).where(Speaker.id == speaker.id).options(
         selectinload(Speaker.event),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.srr_checkins),
         selectinload(Speaker.posters)
     )
     speaker_res = await db.execute(speaker_q)
@@ -1315,35 +1423,11 @@ async def upload_profile_template(
     # Reconstruct the auth response structure
     talks = []
     for ss in speaker.session_speakers:
-        session = ss.session
-        current_file = ss.current_file
-        upload_status = current_file.upload_status if current_file else "pending"
-        is_locked = current_file.is_locked if current_file else False
-        talks.append(PortalTalk(
-            session_speaker_id=ss.id,
-            session_name=session.name,
-            session_code=session.session_code,
-            start_time=ss.start_time or session.start_time,
-            end_time=ss.end_time or session.end_time,
-            talk_title=ss.presentation_title,
-            room_name=None,
-            upload_status=upload_status,
-            is_locked=is_locked,
-            rejection_reason=current_file.rejection_reason if current_file else None
-        ))
+        talks.append(_build_portal_talk(ss, speaker.event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(PortalPoster(
-            id=p.id,
-            title=p.title,
-            authors=p.authors,
-            category=p.category,
-            status=p.status,
-            original_filename=p.original_filename,
-            submitted_at=p.submitted_at,
-            rejection_reason=p.rejection_reason
-        ))
+        posters.append(_build_portal_poster(p, speaker.event))
 
     # Fetch active announcements
     from app.modules.notifications.models.announcement import Announcement
@@ -1399,7 +1483,8 @@ async def upload_profile_template(
         announcements=announcements_list,
         social_links=speaker.social_links,
         research_interests=speaker.research_interests,
-        profile_completeness=calculate_profile_completeness(speaker)
+        profile_completeness=calculate_profile_completeness(speaker),
+        registration_mode_enabled=speaker.event.registration_mode_enabled,
     )
 
 
@@ -1489,8 +1574,9 @@ async def update_speaker_profile(
         (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
     ).options(
         selectinload(Speaker.event),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.srr_checkins),
         selectinload(Speaker.posters)
     )
     speaker_res = await db.execute(speaker_q)
@@ -1526,8 +1612,9 @@ async def update_speaker_profile(
     # Reload speaker with selectinload options to prevent lazy loading
     speaker_q = select(Speaker).where(Speaker.id == speaker.id).options(
         selectinload(Speaker.event),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.srr_checkins),
         selectinload(Speaker.posters)
     )
     speaker_res = await db.execute(speaker_q)
@@ -1536,35 +1623,11 @@ async def update_speaker_profile(
     # Reconstruct the auth response structure
     talks = []
     for ss in speaker.session_speakers:
-        session = ss.session
-        current_file = ss.current_file
-        upload_status = current_file.upload_status if current_file else "pending"
-        is_locked = current_file.is_locked if current_file else False
-        talks.append(PortalTalk(
-            session_speaker_id=ss.id,
-            session_name=session.name,
-            session_code=session.session_code,
-            start_time=ss.start_time or session.start_time,
-            end_time=ss.end_time or session.end_time,
-            talk_title=ss.presentation_title,
-            room_name=None,
-            upload_status=upload_status,
-            is_locked=is_locked,
-            rejection_reason=current_file.rejection_reason if current_file else None
-        ))
+        talks.append(_build_portal_talk(ss, speaker.event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(PortalPoster(
-            id=p.id,
-            title=p.title,
-            authors=p.authors,
-            category=p.category,
-            status=p.status,
-            original_filename=p.original_filename,
-            submitted_at=p.submitted_at,
-            rejection_reason=p.rejection_reason
-        ))
+        posters.append(_build_portal_poster(p, speaker.event))
 
     from app.modules.notifications.models.announcement import Announcement
     now_time = datetime.now(timezone.utc)
@@ -1619,6 +1682,7 @@ async def update_speaker_profile(
         announcements=announcements_list,
         social_links=speaker.social_links,
         research_interests=speaker.research_interests,
-        profile_completeness=calculate_profile_completeness(speaker)
+        profile_completeness=calculate_profile_completeness(speaker),
+        registration_mode_enabled=speaker.event.registration_mode_enabled,
     )
 

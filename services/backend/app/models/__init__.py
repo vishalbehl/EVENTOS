@@ -46,6 +46,8 @@ from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.participant_registration import ParticipantRegistration
+from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
 from app.modules.venue.models.capacity_rule import CapacityRule
 from app.modules.registration.models.badge_models import Printer, Badge, BadgeHistory, BadgePrintJob, BadgeScan
 from app.modules.venue.models.attendance_log import AttendanceLog
@@ -69,7 +71,7 @@ __all__ = [
     "WebsocketEvent", "VenueNetworkEvent", "VenueSecurityEvent", "SyncTransferLog",
     "Role", "Permission", "RolePermission", "UserRoleAssignment", "UserAccessNode", "ScopedPermission", "PermissionAuditLog", "RoleInheritanceMap",
     "Participant", "CheckIn", "PrintTemplate", "TicketType", "RegistrationFormConfig",
-    "ParticipantRole", "ParticipantRegistration", "CapacityRule",
+    "ParticipantRole", "ParticipantRegistration", "RegistrationThemeSetting", "SpeakerThemeSetting", "CapacityRule",
     "Printer", "Badge", "BadgeHistory", "BadgePrintJob", "BadgeScan", "AttendanceLog",
     "PromoCode", "PaymentTransaction", "PortalOtpToken", "SystemSetting", "Announcement"
 ]

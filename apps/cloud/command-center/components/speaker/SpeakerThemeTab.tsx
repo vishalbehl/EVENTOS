@@ -13,27 +13,109 @@ import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-const DEFAULT_TERMS = `# Terms & Conditions
+const DEFAULT_TERMS = `# Speaker Portal Terms & Conditions
 
-Welcome to our event! Please read these terms carefully before registering.
+By uploading presentation materials through this portal, you agree to the following conditions.
 
-## 1. Registration & Payment
-- All registrations are subject to approval by the organizers.
-- Tickets are non-refundable unless specified otherwise by the event policy.
+---
 
-## 2. Event Code of Conduct
-- We are committed to providing a safe, inclusive, and harassment-free experience for everyone.
+# 1. Ownership
 
-## 3. Privacy Policy & Media Release
-- By registering, you agree that photos or videos taken during the event may be used for promotional purposes.
-- Your personal details will be stored securely and will not be shared with third parties.
+You confirm that you have the legal right to upload and present all submitted materials.
+
+---
+
+# 2. File Submission
+
+* Only approved file formats are accepted.
+* Multiple versions may be uploaded before the submission deadline.
+* The latest approved version will normally be treated as the active presentation.
+
+---
+
+# 3. File Validation
+
+All uploaded files undergo automated validation checks, including but not limited to:
+
+* File integrity,
+* Presentation structure,
+* Embedded media compatibility,
+* Font availability,
+* Video compatibility.
+
+Validation warnings should be reviewed carefully before the event.
+
+---
+
+# 4. Speaker Ready Room (SRR)
+
+All speakers are strongly encouraged to visit the **Speaker Ready Room (SRR)**.
+
+Recommended guidelines:
+
+* Visit the SRR at least **45 minutes before your scheduled presentation**.
+* Review and validate your uploaded file.
+* Verify fonts, videos, animations, and formatting.
+* Perform any required last-minute replacements before your presentation is locked for room deployment.
+
+Failure to complete SRR validation may increase the risk of presentation issues during the live session.
+
+---
+
+# 5. Late File Changes
+
+The Organizer may restrict presentation modifications close to the scheduled session time.
+
+Emergency replacements remain subject to technical approval and operational feasibility.
+
+---
+
+# 6. Presentation Compatibility
+
+Although every effort is made to preserve formatting, differences between operating systems, fonts, codecs, and presentation software versions may occur.
+
+Speakers are responsible for reviewing their files during SRR validation.
+
+---
+
+# 7. Backup Responsibility
+
+Speakers are advised to carry a backup copy of their presentation on a USB drive.
+
+---
+
+# 8. Content Responsibility
+
+Speakers are solely responsible for the content of their presentations.
+
+The Organizer assumes no responsibility for copyright violations or unauthorized use of third-party material.
+
+---
+
+# 9. Recording & Distribution
+
+Sessions may be recorded, photographed, or streamed as determined by the Organizer.
+
+---
+
+# 10. Acceptance
+
+By uploading a presentation, you acknowledge and accept these Terms & Conditions.
 `
 
 const DEFAULT_FAQS = [
-  { q: "What should I bring to the event?", a: "Please bring a copy of your entry pass QR code (on your phone or printed) along with a valid photo ID for quick check-in.", is_default: true },
-  { q: "Is there parking available?", a: "Yes, there is complimentary attendee parking available on-site at the main venue deck. Follow event signage.", is_default: true },
-  { q: "Can I transfer my ticket?", a: "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", is_default: true }
+  { q: "How do I access the Speaker Portal?", a: "Please use your registered email address or the secure access code provided by the Organizer via email.", is_default: true },
+  { q: "What file formats are supported?", a: "Supported formats are determined by the Organizer and will be displayed during upload.", is_default: true },
+  { q: "Can I replace my presentation?", a: "Yes. You may upload a newer version before the submission deadline or before your presentation is locked.", is_default: true },
+  { q: "What is the Speaker Ready Room (SRR)?", a: "The SRR is the official location at the venue for speakers to preview and validate their presentations before the live session.", is_default: true },
+  { q: "When should I visit the SRR?", a: "You should arrive at the SRR at least 45 minutes before your scheduled presentation time.\n\nFor keynote sessions or presentations containing videos or complex animations, arriving 60–90 minutes early is recommended.", is_default: true },
+  { q: "What should I check in the SRR?", a: "Please verify:\n\n* Slides display correctly.\n* Fonts are rendered properly.\n* Videos and audio play successfully.\n* Animations behave as expected.\n* The correct presentation version is loaded.\n\nAlways perform a final validation before leaving the SRR.", is_default: true },
+  { q: "What if I need to make a last-minute change?", a: "A replacement may be possible, subject to Organizer approval and technical constraints.", is_default: true },
+  { q: "Should I bring a USB backup?", a: "Yes. Carrying a USB backup copy of your final presentation is strongly recommended.", is_default: true },
+  { q: "What happens after I complete SRR validation?", a: "Once validated and approved, your presentation will be synchronized to the presentation room and prepared for live delivery.", is_default: true },
+  { q: "Who can help me on-site?", a: "Technical staff and SRR operators will be available to assist with uploads, validation, and presentation checks.", is_default: true }
 ]
+
 
 const THEMES = [
   { id: 'midnight', label: 'Midnight',  desc: 'Deep dark with violet accents', color: '#7c3aed', bg: '#080410', surf: '#120924', card: '#1d0f3a', sec: '#a78bfa' },
@@ -135,13 +217,25 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
   // Load speaker branding on event load
   useEffect(() => {
-    if (!event) return
+    if (!event) {
+      setHeaderImages(["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
+      setFooterSupportEmails(["support@eventos.com"])
+      setFooterSupportPhones(["011-123456789"])
+      return
+    }
     const ss = (event as any).speaker_settings as Record<string, any> | null
     const bs: Record<string, any> = ss?.branding || {}
     setLogoUrl(bs.logo_url || '')
-    setHeaderImages(bs.header_images || (bs.banner_url ? [bs.banner_url] : []))
-    setFooterSupportEmails(bs.footer_support_emails || [])
-    setFooterSupportPhones(bs.footer_support_phones || [])
+    
+    const loadedBanners = bs.header_images || (bs.banner_url ? [bs.banner_url] : [])
+    setHeaderImages(loadedBanners.length > 0 ? loadedBanners : ["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
+    
+    const loadedEmails = bs.footer_support_emails || []
+    setFooterSupportEmails(loadedEmails.length > 0 ? loadedEmails : ["support@eventos.com"])
+    
+    const loadedPhones = bs.footer_support_phones || []
+    setFooterSupportPhones(loadedPhones.length > 0 ? loadedPhones : ["011-123456789"])
+    
     setFooterWebsites(bs.footer_websites || [])
     setFooterLocations(bs.footer_locations || [])
     setFooterShowLogo(bs.footer_show_logo !== false)
@@ -186,14 +280,13 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
   const handleFetchFromRegistration = () => {
     if (!event) return
     const regBranding = (event as any).branding_settings as Record<string, any> | null
-    const regSettings = (event as any).registration_settings as Record<string, any> | null
     if (!regBranding) {
       toast.error('No registration branding configured yet.')
       return
     }
     setFetching(true)
     setTimeout(() => {
-      // Import branding settings
+      // Import branding settings only (layout and theme presets)
       setLogoUrl(regBranding.logo_url || '')
       setHeaderImages(regBranding.header_images || (regBranding.banner_url ? [regBranding.banner_url] : []))
       setFooterSupportEmails(regBranding.footer_support_emails || [])
@@ -204,16 +297,9 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
       setSelectedTheme(regBranding.theme || 'midnight')
       setFooterTerms(regBranding.footer_terms || '')
 
-      // Import terms and FAQs
-      if (regSettings) {
-        setTermsAndConditions(regSettings.terms_and_conditions || DEFAULT_TERMS)
-        setFaqs(regSettings.faqs || [])
-        setIncludeDefaultFaqs(regSettings.include_default_faqs !== false)
-      }
-
       setFetching(false)
       setDirtyMeta(true)
-      toast.success('Registration settings imported! Review and save to apply.')
+      toast.success('Registration layout & theme settings imported! Review and save to apply.')
     }, 600)
   }
 
@@ -1015,7 +1101,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
                     <span className="text-[9px] font-black uppercase tracking-widest text-muted">Rendered Preview</span>
                   </div>
                 )}
-                <div className="h-[360px] bg-[#080912] border border-white/10 rounded-2xl px-5 py-4 overflow-y-auto prose prose-invert prose-xs max-w-none
+                <div className="h-[360px] bg-[#080912] border border-white/10 rounded-2xl px-5 py-4 overflow-y-auto prose prose-invert prose-xs max-w-none tnc-markdown
                   prose-headings:text-[var(--text)] prose-headings:font-black prose-headings:tracking-tight
                   prose-h1:text-lg prose-h2:text-sm prose-h3:text-xs
                   prose-p:text-muted prose-p:text-xs prose-p:leading-relaxed

@@ -254,6 +254,7 @@ def create_presigned_download(
     storage_path: str,
     filename: Optional[str] = None,
     expiry_seconds: int = settings.S3_PRESIGNED_EXPIRY_SECONDS,
+    inline: bool = False,
 ) -> str:
     """
     Generate a pre-signed GET URL for secure file download.
@@ -263,10 +264,26 @@ def create_presigned_download(
 
     Returns the pre-signed URL string.
     """
+    if settings.STORAGE_MODE == "local":
+        url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+        params = []
+        if filename:
+            params.append(f"filename={filename}")
+        if inline:
+            params.append("disposition=inline")
+        else:
+            params.append("disposition=attachment")
+        if params:
+            url += "?" + "&".join(params)
+        return url
+
     s3 = _get_s3_client()
     params: dict = {"Bucket": bucket, "Key": storage_path}
     if filename:
-        params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        disposition_type = "inline" if inline else "attachment"
+        params["ResponseContentDisposition"] = f'{disposition_type}; filename="{filename}"'
+    elif inline:
+        params["ResponseContentDisposition"] = "inline"
 
     try:
         url = s3.generate_presigned_url(

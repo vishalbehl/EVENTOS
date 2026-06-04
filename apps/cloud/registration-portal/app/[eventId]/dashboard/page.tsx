@@ -2931,7 +2931,7 @@ export default function PortalDashboardPage() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="p-8 overflow-y-auto flex-1 prose prose-invert max-w-none text-left
+            <div className="p-8 overflow-y-auto flex-1 prose prose-invert max-w-none text-left tnc-markdown
               prose-headings:text-[#E8EAFF] prose-headings:font-black prose-headings:tracking-tight
               prose-h1:text-xl prose-h2:text-base prose-h3:text-sm prose-h4:text-xs
               prose-p:text-[var(--muted)] prose-p:text-sm prose-p:leading-relaxed

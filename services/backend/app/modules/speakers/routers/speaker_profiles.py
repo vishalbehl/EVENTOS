@@ -196,6 +196,77 @@ async def upsert_speaker_profile(
     return profile
 
 
+def extract_text_from_file(filename: str, content: bytes) -> str:
+    ext = filename.lower().split('.')[-1]
+    if ext == 'pdf':
+        try:
+            import pdfplumber
+        except ImportError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="CV/Template PDF parsing not available"
+            )
+        try:
+            text = ""
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+            return text
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to process PDF content: {str(e)}"
+            )
+    elif ext == 'docx':
+        try:
+            import docx
+        except ImportError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="python-docx not installed"
+            )
+        try:
+            doc = docx.Document(io.BytesIO(content))
+            return "\n".join([p.text for p in doc.paragraphs])
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to read DOCX template: {str(e)}"
+            )
+    elif ext == 'pptx':
+        try:
+            import zipfile
+            import xml.etree.ElementTree as ET
+            text_runs = []
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                slide_files = [name for name in z.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
+                def get_slide_num(name):
+                    match = re.search(r'slide(\d+)\.xml', name)
+                    return int(match.group(1)) if match else 0
+                slide_files.sort(key=get_slide_num)
+                
+                for slide_file in slide_files:
+                    slide_xml = z.read(slide_file)
+                    root = ET.fromstring(slide_xml)
+                    for elem in root.iter():
+                        if elem.tag.endswith('}t'):
+                            if elem.text:
+                                text_runs.append(elem.text)
+            return "\n".join(text_runs)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to process PPTX content: {str(e)}"
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file format. Please upload PDF, DOCX, or PPTX."
+        )
+
+
 @router.post("/parse-cv", response_model=SpeakerProfileUpdate)
 async def parse_cv(
     event_id: uuid.UUID,
@@ -204,14 +275,13 @@ async def parse_cv(
     access_type: str = Depends(check_profile_access),
 ) -> SpeakerProfileUpdate:
     """
-    PDF only, max 5MB. Uses pdfplumber to extract text.
-    Returns: SpeakerProfileUpdate (partial — only fields we could extract, rest None)
+    Directly upload the CV to storage without parsing and save cv_url.
     """
     # Check format
-    if not file.filename.lower().endswith(".pdf"):
+    if not file.filename.lower().endswith((".pdf", ".docx", ".pptx")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF CV uploads are supported."
+            detail="Only PDF, DOCX, and PPTX CV uploads are supported."
         )
 
     # Check size (max 5MB)
@@ -222,78 +292,60 @@ async def parse_cv(
             detail="File size exceeds 5MB limit."
         )
 
-    try:
-        import pdfplumber
-    except ImportError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="CV parsing not available"
-        )
+    speaker_res = await db.execute(
+        select(Speaker).where(Speaker.id == speaker_id, Speaker.event_id == event_id).options(selectinload(Speaker.event))
+    )
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=404, detail="Speaker not found.")
+
+    ext = file.filename.split('.')[-1].lower()
+    from app.services import upload_service
+    from app.config import settings
+
+    storage_path = f"{speaker.event.organization_id}/{speaker.event_id}/speakers/{speaker.id}/cv.{ext}"
+    bucket = settings.S3_BUCKET_ASSETS
 
     try:
-        # Read text
-        text = ""
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
+        upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=storage_path,
+            data=content,
+            content_type=file.content_type
+        )
+        if settings.STORAGE_MODE == "local":
+            url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+        else:
+            url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{storage_path}"
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to process PDF content: {str(e)}"
+            detail=f"Failed to upload CV to storage: {str(e)}"
         )
 
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
-    if not lines:
-        return SpeakerProfileUpdate()
-
-    designation = None
-    organisation_name = None
-    bio = None
-
-    # Heuristic 1: designation (start of lines Dr./Prof./Mr./Ms.)
-    desig_regex = re.compile(r'^(Dr\.|Prof\.|Mr\.|Ms\.)\b', re.IGNORECASE)
-    for line in lines:
-        match = desig_regex.match(line)
-        if match:
-            designation = match.group(1).strip().capitalize()
-            if designation in ["Mr", "Ms", "Dr", "Prof"]:
-                designation = designation + "."
-            break
-
-    # Heuristic 2: organisation_name (lines containing University/Hospital/Institute/College)
-    keywords = ["university", "hospital", "institute", "college"]
-    for i, line in enumerate(lines):
-        if any(kw in line.lower() for kw in keywords):
-            # Check if next line contains more details or just use current
-            if i + 1 < len(lines) and len(lines[i+1]) > 3 and not any(kw in lines[i+1].lower() for kw in keywords):
-                organisation_name = lines[i+1]
-            else:
-                organisation_name = line
-            # Clean organisation_name if it has address parts
-            organisation_name = organisation_name.split(',')[0].strip()
-            break
-
-    # Heuristic 3: bio (first paragraph that is 20+ words and doesn't look like an address)
-    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
-    for p in paragraphs:
-        # Remove internal linebreaks for counting/cleaning
-        clean_p = " ".join(p.split())
-        words = clean_p.split()
-        if len(words) >= 20:
-            p_lower = clean_p.lower()
-            # If it looks like contact info or address, skip
-            if any(term in p_lower for term in ["street", "road", "zip", "email:", "phone:", "fax:", "tel:"]):
-                continue
-            bio = clean_p[:500]  # limit to reasonable snippet
-            break
-
-    return SpeakerProfileUpdate(
-        designation=designation,
-        organisation_name=organisation_name,
-        bio=bio,
+    profile_res = await db.execute(
+        select(SpeakerProfile).where(
+            SpeakerProfile.speaker_id == speaker_id,
+            SpeakerProfile.event_id == event_id
+        )
     )
+    profile = profile_res.scalar_one_or_none()
+    if not profile:
+        profile = SpeakerProfile(
+            speaker_id=speaker_id,
+            event_id=event_id,
+            organization_id=speaker.event.organization_id,
+            cv_url=url,
+            last_updated_by=access_type
+        )
+        db.add(profile)
+    else:
+        profile.cv_url = url
+        profile.last_updated_by = access_type
+
+    await db.commit()
+    await db.refresh(profile)
+    return SpeakerProfileUpdate(cv_url=url)
 
 
 @router.get("/template")
@@ -397,72 +449,74 @@ async def parse_profile_template(
     access_type: str = Depends(check_profile_access),
 ) -> SpeakerProfileUpdate:
     """
-    Accepts completed DOCX template, extracts content between section labels.
+    Directly upload the completed template to storage without parsing and save template_url.
     """
-    if not file.filename.lower().endswith(".docx"):
+    # Check format
+    if not file.filename.lower().endswith((".pdf", ".docx", ".pptx")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only DOCX template uploads are supported."
+            detail="Only PDF, DOCX, and PPTX template uploads are supported."
         )
 
-    try:
-        import docx
-    except ImportError:
+    # Check size (max 5MB)
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="python-docx not installed"
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File size exceeds 5MB limit."
         )
 
+    speaker_res = await db.execute(
+        select(Speaker).where(Speaker.id == speaker_id, Speaker.event_id == event_id).options(selectinload(Speaker.event))
+    )
+    speaker = speaker_res.scalar_one_or_none()
+    if not speaker:
+        raise HTTPException(status_code=404, detail="Speaker not found.")
+
+    ext = file.filename.split('.')[-1].lower()
+    from app.services import upload_service
+    from app.config import settings
+
+    storage_path = f"{speaker.event.organization_id}/{speaker.event_id}/speakers/{speaker.id}/template.{ext}"
+    bucket = settings.S3_BUCKET_ASSETS
+
     try:
-        content = await file.read()
-        doc = docx.Document(io.BytesIO(content))
+        upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=storage_path,
+            data=content,
+            content_type=file.content_type
+        )
+        if settings.STORAGE_MODE == "local":
+            url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+        else:
+            url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{storage_path}"
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to read DOCX template: {str(e)}"
+            detail=f"Failed to upload template to storage: {str(e)}"
         )
 
-    labels_map = {
-        "[DESIGNATION]": "designation",
-        "[SHORT BIO]": "bio",
-        "[FULL BIO]": "extended_bio",
-        "[ORGANISATION]": "organisation_name",
-        "[DEPARTMENT]": "department",
-        "[RESEARCH INTERESTS — comma separated]": "research_interests",
-        "[WEBSITE]": "website_url",
-        "[LINKEDIN]": "linkedin_url"
-    }
+    profile_res = await db.execute(
+        select(SpeakerProfile).where(
+            SpeakerProfile.speaker_id == speaker_id,
+            SpeakerProfile.event_id == event_id
+        )
+    )
+    profile = profile_res.scalar_one_or_none()
+    if not profile:
+        profile = SpeakerProfile(
+            speaker_id=speaker_id,
+            event_id=event_id,
+            organization_id=speaker.event.organization_id,
+            template_url=url,
+            last_updated_by=access_type
+        )
+        db.add(profile)
+    else:
+        profile.template_url = url
+        profile.last_updated_by = access_type
 
-    current_field = None
-    field_lines = {}
-
-    for paragraph in doc.paragraphs:
-        trimmed = paragraph.text.strip()
-        if not trimmed:
-            continue
-
-        matched_label = None
-        for label in labels_map:
-            if label in trimmed:
-                matched_label = label
-                break
-
-        if matched_label:
-            current_field = labels_map[matched_label]
-            field_lines[current_field] = []
-        elif current_field is not None:
-            # Skip placeholders
-            if trimmed.startswith("e.g.") or trimmed.startswith("A short") or trimmed.startswith("A full") or trimmed.startswith("Your university") or trimmed.startswith("Your department"):
-                continue
-            field_lines[current_field].append(paragraph.text)
-
-    extracted = {}
-    for field, lines in field_lines.items():
-        val = "\n".join(lines).strip()
-        if val:
-            if field == "research_interests":
-                extracted[field] = [item.strip() for item in val.split(",") if item.strip()]
-            else:
-                extracted[field] = val
-
-    return SpeakerProfileUpdate(**extracted)
+    await db.commit()
+    await db.refresh(profile)
+    return SpeakerProfileUpdate(template_url=url)

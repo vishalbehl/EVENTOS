@@ -31,6 +31,8 @@ export default function ThankYouPage() {
       endDate={portal?.end_date}
       location={portal?.location}
       venueName={portal?.venue_name}
+      country={portal?.event_country}
+      state={portal?.event_state}
       organizerName={portal?.organizer_name}
       email={portal ? portal.email : ""}
       speakerName={speakerName}

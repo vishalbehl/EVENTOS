@@ -46,6 +46,7 @@ class SpeakerProfile(Base):
     extended_bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     profile_photo_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cv_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    template_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     designation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

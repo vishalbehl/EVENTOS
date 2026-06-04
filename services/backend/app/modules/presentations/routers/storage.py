@@ -41,7 +41,12 @@ async def local_upload(
     return {"status": "success", "path": f"{bucket}/{key}"}
 
 @router.get("/{bucket}/{path:path}")
-async def serve_bucket_file(bucket: str, path: str):
+async def serve_bucket_file(
+    bucket: str,
+    path: str,
+    filename: str = Query(None),
+    disposition: str = Query(None),
+):
     """
     Serves files from any local bucket (presentations, posters, etc).
     """
@@ -53,5 +58,12 @@ async def serve_bucket_file(bucket: str, path: str):
         logger.warning(f"File not found: {file_path}")
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Simple mime type detection or let FileResponse handle it
-    return FileResponse(file_path)
+    content_disposition_type = "attachment"
+    if disposition == "inline":
+        content_disposition_type = "inline"
+        
+    return FileResponse(
+        file_path,
+        filename=filename,
+        content_disposition_type=content_disposition_type if (filename or disposition) else "inline"
+    )

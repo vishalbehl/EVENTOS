@@ -212,6 +212,11 @@ def generate_file_thumbnail(self, file_id: str) -> dict:
 
         if fmt in ("pptx", "ppt"):
             thumb_bytes = generate_pptx_thumbnail(data)
+        elif fmt == "key":
+            # Convert Keynote to PDF first, then generate thumbnail from PDF
+            pdf_data = convert_to_pdf(data, source_ext="key")
+            if pdf_data:
+                thumb_bytes = generate_pdf_thumbnail(pdf_data)
         elif fmt == "pdf":
             thumb_bytes = generate_pdf_thumbnail(data)
         elif fmt in ("mp4", "mov"):

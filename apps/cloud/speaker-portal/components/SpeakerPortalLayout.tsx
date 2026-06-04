@@ -28,6 +28,7 @@ interface SpeakerPortalLayoutProps {
   location?: string | null;
   venueName?: string | null;
   country?: string | null;
+  state?: string | null;
   organizerName?: string | null;
   email?: string;
   speakerName?: string;
@@ -75,10 +76,16 @@ const formatHeaderDateRange = (startStr: string | null, endStr: string | null) =
   }
 };
 
-const formatHeaderVenue = (venueName?: string | null, location?: string | null, country?: string | null) => {
+const formatHeaderVenue = (
+  venueName?: string | null,
+  location?: string | null,
+  state?: string | null,
+  country?: string | null
+) => {
   const parts: string[] = [];
   if (venueName) parts.push(venueName);
   if (location) parts.push(location);
+  if (state) parts.push(state);
   if (country) parts.push(country);
   return parts.join(", ");
 };
@@ -92,6 +99,7 @@ export function SpeakerPortalLayout({
   location,
   venueName,
   country,
+  state,
   organizerName,
   email = "",
   speakerName = "",
@@ -115,7 +123,7 @@ export function SpeakerPortalLayout({
 
   const logoUrl = branding?.logo_url || "/logo/1.png";
   const dateRange = formatHeaderDateRange(startDate || null, endDate || null);
-  const venue = formatHeaderVenue(venueName, location, country);
+  const venue = formatHeaderVenue(venueName, location, state, country);
 
   // Slideshow interval
   useEffect(() => {
@@ -259,9 +267,6 @@ export function SpeakerPortalLayout({
                   <h1 className="text-2xl md:text-4xl font-black text-white tracking-tighter leading-tight uppercase mt-2">
                     {eventName}
                   </h1>
-                  <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300/80 mt-1 pl-1">
-                    Powered by EventOS
-                  </p>
                 </div>
               </div>
 
@@ -321,9 +326,6 @@ export function SpeakerPortalLayout({
               <p className="leading-relaxed text-[11px] text-muted/80">
                 Secure, premium speaker portal. Manage your assigned sessions, presentation files, digital badge, and profile details in real-time.
               </p>
-              <p className="text-[10px] text-muted/50 font-bold uppercase tracking-wider">
-                © {new Date().getFullYear()} EventOS Inc. All rights reserved.
-              </p>
             </div>
 
             {/* Column 3: Information Category */}
@@ -355,20 +357,41 @@ export function SpeakerPortalLayout({
                 Contact Details
               </span>
               <div className="space-y-2.5 text-[11px]">
-                {footerEmails.map((email: string, idx: number) => (
-                  <div key={`email-${idx}`} className="flex items-center gap-2">
+                {/* Support Emails */}
+                {footerEmails.length > 0 ? (
+                  footerEmails.map((email: string, idx: number) => (
+                    <div key={`email-${idx}`} className="flex items-center gap-2">
+                      <Mail className="h-4 w-4 text-indigo-400 shrink-0" />
+                      <a href={`mailto:${email}`} className="text-muted hover:text-[#E8EAFF] transition-colors">
+                        {email}
+                      </a>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex items-center gap-2">
                     <Mail className="h-4 w-4 text-indigo-400 shrink-0" />
-                    <a href={`mailto:${email}`} className="text-muted hover:text-[#E8EAFF] transition-colors">
-                      {email}
+                    <a href="mailto:support@eventos.com" className="text-muted hover:text-[#E8EAFF] transition-colors">
+                      support@eventos.com
                     </a>
                   </div>
-                ))}
-                {footerPhones.map((phone: string, idx: number) => (
-                  <div key={`phone-${idx}`} className="flex items-center gap-2">
+                )}
+
+                {/* Support Phones */}
+                {footerPhones.length > 0 ? (
+                  footerPhones.map((phone: string, idx: number) => (
+                    <div key={`phone-${idx}`} className="flex items-center gap-2">
+                      <Phone className="h-4 w-4 text-indigo-400 shrink-0" />
+                      <span className="text-muted">{phone}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex items-center gap-2">
                     <Phone className="h-4 w-4 text-indigo-400 shrink-0" />
-                    <span className="text-muted">{phone}</span>
+                    <span className="text-muted">011-123456789</span>
                   </div>
-                ))}
+                )}
+
+                {/* Websites */}
                 {footerWebsites.map((web: string, idx: number) => {
                   const displayWeb = web.replace(/^https?:\/\//i, '');
                   return (
@@ -380,6 +403,8 @@ export function SpeakerPortalLayout({
                     </div>
                   );
                 })}
+
+                {/* Locations */}
                 {footerLocations.map((loc: string, idx: number) => (
                   <div key={`loc-${idx}`} className="flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-indigo-400 shrink-0" />
@@ -390,6 +415,24 @@ export function SpeakerPortalLayout({
             </div>
 
           </div>
+
+          {/* Company Branding Divider & Powered By */}
+          <div className="max-w-[95%] lg:max-w-[98%] mx-auto mt-8 pt-8 border-t border-white/10 relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-[10px] text-muted/50 font-bold uppercase tracking-wider">
+              © {new Date().getFullYear()} {eventName || "Conference"}. All rights reserved.
+            </p>
+            <div className="flex items-center gap-2.5 text-muted/60">
+              <span className="text-[10px] font-extrabold uppercase tracking-[0.2em]">Powered by</span>
+              <div className="flex items-center gap-1.5 bg-white/5 px-3 py-1.5 rounded-full border border-white/5 hover:border-indigo-500/30 hover:bg-white/10 transition-all cursor-default select-none shadow-[0_0_10px_rgba(99,102,241,0.05)]">
+                <svg className="h-4 w-4 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                  <polyline points="2 17 12 22 22 17" />
+                  <polyline points="2 12 12 17 22 12" />
+                </svg>
+                <span className="text-xs font-black text-[#E8EAFF] tracking-tight uppercase">Event<span className="text-indigo-400">OS</span></span>
+              </div>
+            </div>
+          </div>
         </footer>
 
         {/* ── Terms and Conditions Modal ── */}
@@ -399,29 +442,42 @@ export function SpeakerPortalLayout({
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 onClick={() => setTermsModalOpen(false)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
               <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-                className="relative w-full max-w-2xl bg-[#0F1228] border border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                className="relative w-full max-w-2xl bg-[#0d0e1b] border border-indigo-500/20 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
                 <div className="flex justify-between items-center px-8 py-5 border-b border-white/5 shrink-0 bg-white/[0.01]">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4 text-indigo-400" />
-                    <h3 className="text-sm font-black uppercase tracking-wider text-[#E8EAFF]">Terms & Conditions</h3>
+                    <h3 className="text-sm font-black uppercase tracking-[0.25em] text-[#E8EAFF]">Terms &amp; Conditions</h3>
                   </div>
-                  <button onClick={() => setTermsModalOpen(false)} className="text-muted hover:text-white transition-colors">
-                    <X className="h-5 w-5" />
+                  <button onClick={() => setTermsModalOpen(false)} className="h-8 w-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-muted hover:text-[#E8EAFF] transition-all">
+                    <X className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="p-8 overflow-y-auto custom-scrollbar text-left text-[11px] leading-relaxed text-muted font-bold space-y-4">
+                <div className="p-8 overflow-y-auto custom-scrollbar text-left flex-1">
                   {termsAndConditions || branding?.footer_terms ? (
-                    <div className="prose prose-invert prose-xs max-w-none text-[11px] leading-relaxed
-                      prose-headings:font-black prose-headings:uppercase prose-headings:tracking-wider prose-headings:text-[#E8EAFF]
-                      prose-h1:text-[13px] prose-h2:text-[12px] prose-h3:text-[11px] prose-p:text-[11px] prose-li:text-[11px]
-                      prose-strong:text-[#E8EAFF] prose-em:text-indigo-300 prose-a:text-indigo-400">
+                    <div className="prose prose-invert max-w-none text-left tnc-markdown
+                      prose-headings:text-[#E8EAFF] prose-headings:font-black prose-headings:tracking-tight
+                      prose-h1:text-xl prose-h2:text-base prose-h3:text-sm prose-h4:text-xs
+                      prose-p:text-muted prose-p:text-sm prose-p:leading-relaxed
+                      prose-li:text-muted prose-li:text-sm
+                      prose-strong:text-[#E8EAFF] prose-em:text-indigo-300
+                      prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline
+                      prose-hr:border-white/10 prose-ul:space-y-1 prose-ol:space-y-1">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {termsAndConditions || branding.footer_terms || ""}
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <p>No special guidelines configured for this event. Regular event terms apply.</p>
+                    <p className="text-xs text-muted font-semibold">No special guidelines configured for this event. Regular event terms apply.</p>
                   )}
+                </div>
+                <div className="px-8 py-5 border-t border-white/5 bg-white/[0.01] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setTermsModalOpen(false)}
+                    className="w-full h-11 rounded-full btn-primary text-xs font-black uppercase tracking-widest"
+                  >
+                    Close
+                  </button>
                 </div>
               </motion.div>
             </div>

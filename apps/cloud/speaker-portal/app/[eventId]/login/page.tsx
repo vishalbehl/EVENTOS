@@ -329,7 +329,6 @@ export default function SpeakerPortalLoginPage() {
                     onChange={(e) => setCode(e.target.value)}
                     className="input text-center text-2xl tracking-[0.3em] uppercase font-mono h-16"
                     maxLength={20}
-                    autoFocus
                     disabled={loading}
                   />
                   <Shield className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted/30 group-focus-within:text-[var(--pri)] transition-colors" />
@@ -379,7 +378,6 @@ export default function SpeakerPortalLoginPage() {
                           placeholder="your@email.com"
                           className="input !pl-12 h-14"
                           disabled={loading}
-                          autoFocus
                         />
                       </div>
                     </div>

@@ -122,6 +122,28 @@ async def create_event(
         created_by=current_user.id,
         **db_data,
     )
+    
+    # Seed default templates for speaker and registration portals
+    from app.modules.registration.routers.registration_portal import DEFAULT_TERMS, DEFAULT_FAQS
+    from app.modules.speakers.models.speaker_theme_setting import DEFAULT_SPEAKER_TERMS, DEFAULT_SPEAKER_FAQS
+
+    if not event.registration_theme_setting:
+        from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+        event.registration_theme_setting = RegistrationThemeSetting()
+    if not event.speaker_theme_setting:
+        from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
+        event.speaker_theme_setting = SpeakerThemeSetting()
+
+    if not event.registration_theme_setting.terms_and_conditions:
+        event.registration_theme_setting.terms_and_conditions = DEFAULT_TERMS
+    if not event.registration_theme_setting.faqs:
+        event.registration_theme_setting.faqs = DEFAULT_FAQS
+
+    if not event.speaker_theme_setting.terms_and_conditions:
+        event.speaker_theme_setting.terms_and_conditions = DEFAULT_SPEAKER_TERMS
+    if not event.speaker_theme_setting.faqs:
+        event.speaker_theme_setting.faqs = DEFAULT_SPEAKER_FAQS
+
     db.add(event)
     await db.commit()
     await db.refresh(event)
