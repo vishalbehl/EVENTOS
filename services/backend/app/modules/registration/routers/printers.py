@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
-from app.modules.registration.models.badge_models import Printer
+from app.modules.venue.models.printer import Printer
 from app.modules.registration.schemas.badge import PrinterRegister, PrinterResponse
 
 router = APIRouter(prefix="/events/{event_id}/printers", tags=["printers"])

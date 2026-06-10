@@ -57,7 +57,11 @@ def include_object(object, name, type_, reflected, compare_to):
     if type_ == "schema":
         return name in {
             "auth", "rbac", "speakers", "presentations", 
-            "registration", "notifications", "venue", "public"
+            "registration", "notifications", "venue", "public",
+            "applications", "billing", "developer", "events",
+            "identity", "platform", "analytics", "communications",
+            "crm", "support", "marketplace", "mobile", "ai", "audit",
+            "workflow", "files", "jobs", "search", "sponsors"
         }
 
     if type_ == "table" and name in (

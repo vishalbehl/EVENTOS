@@ -13,6 +13,9 @@ export interface User {
   phone?: string;
   avatar_url?: string;
   is_2fa_enabled?: boolean;
+  is_platform_admin?: boolean;
+  platform_role?: string;
+  org_role?: 'owner' | 'admin' | 'member' | 'billing_only';
   assignments?: any[];
   allowed_ips?: string[];
   notification_preferences?: Record<string, any>;

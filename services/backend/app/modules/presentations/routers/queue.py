@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.presentations.models.presentation_queue import PresentationQueue
-from app.modules.venue.models.room import Room
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.auth.models.user import User
+from app.modules.venue.models.presentation_queue import PresentationQueue
+from app.modules.events.models.room import Room
+from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.identity.models.user import User
 from app.modules.presentations.schemas.queue import (
     QueueEntryCreate, QueueStatusUpdate, QueueReorderRequest,
     QueueOverrideRequest, QueueEntryResponse, SessionQueueResponse,

@@ -3,7 +3,7 @@ from typing import List, Set, Optional
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, ScopedPermission, UserAccessNode, RoleInheritanceMap
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 
 async def get_user_permissions(
     db: AsyncSession, 

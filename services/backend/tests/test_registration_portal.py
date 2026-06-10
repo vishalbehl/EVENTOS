@@ -6,8 +6,8 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, Response
 
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from app.modules.registration.schemas.registration_form_config import RegistrationFormConfigUpdate, FormFieldConfig
 from app.modules.registration.routers.registration_portal import (
     get_registration_form_config,

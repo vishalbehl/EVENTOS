@@ -1,7 +1,7 @@
 'use client'
 
 import { use } from 'react'
-import SpeakerThemeTab from '@/components/speaker/SpeakerThemeTab'
+import SpeakerThemeTab from '@/components/organizer/speaker/SpeakerThemeTab'
 
 export default function SpeakerThemePage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)

@@ -13,22 +13,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 if TYPE_CHECKING:
     from app.modules.registration.models.participant import Participant
     from app.modules.registration.models.print_template import PrintTemplate
-    from app.modules.auth.models.user import User
-
-
-class Printer(Base):
-    """
-    Registry of network or local printers available for printing badges or certificates.
-    """
-    __tablename__ = "printers"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    ip_address: Mapped[str] = mapped_column(String(50), nullable=False)
-    location: Mapped[str] = mapped_column(String(150), nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="offline")  # online, offline, error
+    from app.modules.identity.models.user import User
 
 
 class Badge(Base):
@@ -42,7 +27,7 @@ class Badge(Base):
     )
     participant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("participants.id", ondelete="CASCADE"),
+        ForeignKey("registration.participants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -52,7 +37,7 @@ class Badge(Base):
     nfc_uid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     template_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("print_templates.id", ondelete="SET NULL"),
+        ForeignKey("registration.print_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
     status: Mapped[str] = mapped_column(
@@ -92,14 +77,14 @@ class BadgeHistory(Base):
     )
     badge_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("badges.id", ondelete="CASCADE"),
+        ForeignKey("registration.badges.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     action: Mapped[str] = mapped_column(String(50), nullable=False)  # created, printed, issued, lost, deactivated
     performed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
         nullable=True,
     )
     action_metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
@@ -131,13 +116,13 @@ class BadgePrintJob(Base):
     )
     badge_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("badges.id", ondelete="CASCADE"),
+        ForeignKey("registration.badges.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     printer_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("printers.id", ondelete="CASCADE"),
+        ForeignKey("venue.printers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -169,7 +154,7 @@ class BadgeScan(Base):
     )
     badge_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("badges.id", ondelete="CASCADE"),
+        ForeignKey("registration.badges.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

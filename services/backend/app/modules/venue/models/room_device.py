@@ -9,10 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
-    from app.modules.venue.models.room import Room
-    from app.modules.presentations.models.presentation_queue import PresentationQueue
-    from app.modules.presentations.models.playback_event import PlaybackEvent
+    from app.modules.events.models.event import Event
+    from app.modules.events.models.room import Room
+    from app.modules.venue.models.presentation_queue import PresentationQueue
+    from app.modules.venue.models.playback_event import PlaybackEvent
 
 
 class RoomDevice(Base):
@@ -38,20 +38,20 @@ class RoomDevice(Base):
         error        → App reported an error condition
         maintenance  → Manually taken offline
     """
-    __tablename__ = "room_devices"
+    __tablename__ = "devices"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     room_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rooms.id", ondelete="CASCADE"),
+        ForeignKey("events.rooms.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

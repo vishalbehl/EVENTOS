@@ -10,9 +10,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.session_speaker import SessionSpeaker
 
 
 class ChainMode(str, enum.Enum):
@@ -23,20 +23,20 @@ class ChainMode(str, enum.Enum):
 class PresentationBundle(Base):
     """Ordered multi-deck package for one speaker slot."""
 
-    __tablename__ = "presentation_bundles"
+    __tablename__ = "bundles"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("session_speakers.id", ondelete="CASCADE"),
+        ForeignKey("events.session_speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -85,13 +85,13 @@ class BundleFile(Base):
     )
     bundle_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_bundles.id", ondelete="CASCADE"),
+        ForeignKey("presentations.bundles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="CASCADE"),
+        ForeignKey("presentations.files.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

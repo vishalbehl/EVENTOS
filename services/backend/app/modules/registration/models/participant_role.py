@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Optional
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
 
 
 class ParticipantRole(Base):
@@ -18,14 +18,14 @@ class ParticipantRole(Base):
     Configurable participant role / delegate type for each event.
     Seeded with platform-wide defaults when an event is created.
     """
-    __tablename__ = "participant_roles"
+    __tablename__ = "roles"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

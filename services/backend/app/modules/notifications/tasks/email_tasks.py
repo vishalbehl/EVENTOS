@@ -10,12 +10,12 @@ from sqlalchemy.orm import selectinload
 from app.worker import celery_app
 from app.database import AsyncSessionLocal
 from app.config import settings
-from app.modules.notifications.models.email_campaign import EmailCampaign
-from app.modules.notifications.models.email_log import EmailLog
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.email_log import EmailLog
+from app.modules.events.models.speaker import Speaker
 from app.modules.presentations.models.poster import Poster
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.speakers.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.events.models.session import Session
 from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.services import email_service
 

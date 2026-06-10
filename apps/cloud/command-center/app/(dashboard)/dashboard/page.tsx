@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
 import { useEffect } from "react";
-import { CreateEventDialog } from "@/components/CreateEventDialog";
+import { CreateEventDialog } from "@/components/organizer/CreateEventDialog";
 import { Portal } from "@/components/ui/portal";
 import { useNotificationStore } from "@/store/useNotificationStore";
 import * as Icons from "lucide-react";

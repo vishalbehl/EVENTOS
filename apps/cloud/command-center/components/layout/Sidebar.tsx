@@ -10,7 +10,8 @@ import {
   Users, Calendar, MapPin, FileVideo, Mail,
   MonitorPlay, BarChart3, SlidersHorizontal,
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
-  Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown
+  Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
+  Code, ShieldCheck
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
@@ -39,6 +40,8 @@ export function Sidebar() {
     { label: "Events", icon: Calendar, href: "/events", permission: PERMISSIONS.EVENTS_VIEW },
     { label: "Analytics", icon: BarChart3, href: "/analytics", permission: PERMISSIONS.ANALYTICS_VIEW },
     { label: "User Management", icon: Users, href: "/users", permission: PERMISSIONS.USERS_VIEW },
+    { label: "Developer", icon: Code, href: "/developer", permission: PERMISSIONS.SETTINGS_EDIT },
+    { label: "File Vault", icon: Box, href: "/files" },
   ];
 
   const { checkPermission } = usePermissions(eventId as string);
@@ -94,6 +97,13 @@ export function Sidebar() {
       subItems: [
         { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/speaker/theme`, permission: PERMISSIONS.SETTINGS_EDIT },
         { label: "Email Designer", icon: Mail, href: `/events/${eventId}/speaker/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
+      ]
+    },
+    {
+      label: "AUTOMATION",
+      icon: ClipboardList,
+      subItems: [
+        { label: "Workflows", icon: ClipboardList, href: `/events/${eventId}/speaker/workflows` },
       ]
     }
   ];

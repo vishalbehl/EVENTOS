@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api-client";
 import { hasPermission, PermissionCode } from "@/lib/permissions";
 import { useMemo } from "react";
+import { useAuthStore } from "@/store/use-auth-store";
 
 /**
  * Conference Platform — Permission Hook
@@ -12,12 +13,14 @@ import { useMemo } from "react";
  */
 
 export function usePermissions(eventId?: string) {
+  const { isAuthenticated, accessToken } = useAuthStore();
   const { data, isLoading, error } = useQuery({
     queryKey: ["permissions", eventId],
     queryFn: () => {
       const url = eventId ? `/me/permissions?event_id=${eventId}` : '/me/permissions';
       return apiGet<{ permissions: string[] }>(url);
     },
+    enabled: isAuthenticated && !!accessToken,
     // Context-sensitive permissions don't change often, but we want them ready
     staleTime: 1000 * 60, // 1 minute
   });

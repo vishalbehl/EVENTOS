@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
-from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, Printer
+from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob
+from app.modules.venue.models.printer import Printer
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.registration.schemas.badge import (

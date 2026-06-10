@@ -3,10 +3,10 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.organization import Organization
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
-from app.modules.auth.models.user_organization_membership import UserOrganizationMembership
+from app.modules.platform.models.organization import Organization
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
+from app.modules.rbac.models.organization_member import OrganizationMember as UserOrganizationMembership
 from app.modules.rbac.models.rbac import UserAccessNode
 from tests.conftest import auth_headers, hash_password
 
@@ -41,7 +41,7 @@ async def organizer_b(db: AsyncSession, second_organization: Organization) -> Us
     membership = UserOrganizationMembership(
         user_id=user.id,
         organization_id=second_organization.id,
-        role="organiser"
+        org_role="organiser"
     )
     db.add(membership)
     await db.flush()

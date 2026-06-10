@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, HttpUrl, field_validator
 
-from app.modules.notifications.models.webhook import WEBHOOK_EVENT_TYPES
+from app.modules.integrations.models.webhook import WEBHOOK_EVENT_TYPES
 
 
 class WebhookCreate(BaseModel):

@@ -9,13 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from app.database import Base
+from app.database import SoftDeleteMixin
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.models.participant_role import ParticipantRole
 
 
-class Participant(Base):
+class Participant(Base, SoftDeleteMixin):
     """
     Conference delegates / participants registered for on-site execution.
     """
@@ -26,7 +27,7 @@ class Participant(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -38,7 +39,7 @@ class Participant(Base):
     
     role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("participant_roles.id", ondelete="SET NULL"),
+        ForeignKey("registration.roles.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -137,7 +138,7 @@ from sqlalchemy import event, text
 def before_insert_participant(mapper, connection, target: Participant):
     if target.role_id is None and hasattr(target, "_role_str") and target._role_str:
         res = connection.execute(
-            text("SELECT id FROM registration.participant_roles WHERE event_id = :event_id AND name = :name"),
+            text("SELECT id FROM registration.roles WHERE event_id = :event_id AND name = :name"),
             {"event_id": target.event_id, "name": target._role_str}
         ).fetchone()
         if res:
@@ -145,7 +146,7 @@ def before_insert_participant(mapper, connection, target: Participant):
         else:
             # Fallback to the first default/active role for the event
             res = connection.execute(
-                text("SELECT id FROM registration.participant_roles WHERE event_id = :event_id AND is_default = true LIMIT 1"),
+                text("SELECT id FROM registration.roles WHERE event_id = :event_id AND is_default = true LIMIT 1"),
                 {"event_id": target.event_id}
             ).fetchone()
             if res:
@@ -155,7 +156,7 @@ def before_insert_participant(mapper, connection, target: Participant):
 def before_update_participant(mapper, connection, target: Participant):
     if hasattr(target, "_role_str") and target._role_str:
         res = connection.execute(
-            text("SELECT id FROM registration.participant_roles WHERE event_id = :event_id AND name = :name"),
+            text("SELECT id FROM registration.roles WHERE event_id = :event_id AND name = :name"),
             {"event_id": target.event_id, "name": target._role_str}
         ).fetchone()
         if res:

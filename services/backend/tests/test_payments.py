@@ -8,8 +8,8 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.registration.models.ticket_type import TicketType

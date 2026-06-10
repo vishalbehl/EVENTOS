@@ -11,8 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import CurrentEvent, get_db, get_current_user
 from app.modules.presentations.models.presentation_bundle import BundleFile, ChainMode, PresentationBundle
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.auth.models.user import User
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.identity.models.user import User
 from app.modules.presentations.schemas.bundle import BundleCreate, BundleResponse
 
 router = APIRouter(prefix="/events/{event_id}/bundles", tags=["bundles"])

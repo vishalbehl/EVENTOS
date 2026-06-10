@@ -7,31 +7,32 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.database import SoftDeleteMixin
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.models.participant import Participant
-    from app.modules.auth.models.user import User
+    from app.modules.identity.models.user import User
 
 
-class ParticipantRegistration(Base):
+class ParticipantRegistration(Base, SoftDeleteMixin):
     """
     Tracks online registration submissions, approvals, waitlist, and reviews.
     """
-    __tablename__ = "participant_registrations"
+    __tablename__ = "registrations"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     participant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("participants.id", ondelete="SET NULL"),
+        ForeignKey("registration.participants.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -48,7 +49,7 @@ class ParticipantRegistration(Base):
     )
     reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
         nullable=True,
     )
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(
@@ -71,7 +72,7 @@ class ParticipantRegistration(Base):
     # Relationships
     event: Mapped["Event"] = relationship("Event")
     participant: Mapped[Optional["Participant"]] = relationship("Participant")
-    reviewer: Mapped[Optional["User"]] = relationship("User")
+    reviewer: Mapped[Optional["User"]] = relationship("User", foreign_keys=[reviewed_by])
 
     def __repr__(self) -> str:
         return f"<ParticipantRegistration id={self.id} status={self.registration_status}>"

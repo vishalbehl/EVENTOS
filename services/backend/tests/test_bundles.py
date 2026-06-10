@@ -5,10 +5,10 @@ import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.auth.models.user import User
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.identity.models.user import User
 from tests.conftest import auth_headers
 
 

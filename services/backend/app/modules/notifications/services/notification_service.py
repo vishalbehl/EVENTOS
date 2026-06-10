@@ -23,7 +23,7 @@ from typing import Any, Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.speaker import Speaker
 
 
 # ── Notification types ────────────────────────────────────────

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.schemas.common import MessageResponse
@@ -112,7 +112,24 @@ async def get_payment_config(event: CurrentEvent):
     razorpay_creds = settings.get("razorpay_credentials", {}) or {}
 
     # Mask the secrets — raw values must NEVER be returned over HTTP.
-    stripe_secret_masked   = cipher.mask(stripe_creds.get("secret_key", ""))
+    def mask_stripe_secret(token: str) -> str:
+        if not token:
+            return ""
+        from app.core.encryption import decrypt as new_decrypt
+        try:
+            plaintext = new_decrypt(token)
+        except Exception:
+            try:
+                from app.services.credential_cipher import cipher
+                plaintext = cipher.decrypt(token)
+            except Exception:
+                plaintext = ""
+        if not plaintext:
+            return ""
+        suffix = plaintext[-4:] if len(plaintext) >= 4 else plaintext
+        return f"••••••••{suffix}"
+
+    stripe_secret_masked   = mask_stripe_secret(stripe_creds.get("secret_key", ""))
     razorpay_secret_masked = cipher.mask(razorpay_creds.get("key_secret", ""))
 
     logger.info(
@@ -175,7 +192,8 @@ async def update_payment_config(
         # keep the existing encrypted value unchanged.
         raw_secret = payload.stripe_credentials.secret_key
         if raw_secret and not raw_secret.startswith("••••••••"):
-            existing_stripe["secret_key"] = cipher.encrypt(raw_secret)
+            from app.core.encryption import encrypt as new_encrypt
+            existing_stripe["secret_key"] = new_encrypt(raw_secret)
             logger.info(
                 "payment_credentials_accessed",
                 extra={

@@ -4,11 +4,11 @@ import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Globe, Tag, ShieldCheck, Palette, Box, Users } from 'lucide-react'
-import PortalTab from '@/components/registration/settings/PortalTab'
-import RolesTab from '@/components/registration/settings/RolesTab'
-import CapacityTab from '@/components/registration/settings/CapacityTab'
+import PortalTab from '@/components/organizer/registration/settings/PortalTab'
+import RolesTab from '@/components/organizer/registration/settings/RolesTab'
+import CapacityTab from '@/components/organizer/registration/settings/CapacityTab'
 // Access control tab component
-import AccessTab from '@/components/registration/settings/AccessTab'
+import AccessTab from '@/components/organizer/registration/settings/AccessTab'
 
 const TABS = [
   { id: 'portal',  label: 'Portal',         icon: Globe },

@@ -14,10 +14,10 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.dependencies import get_db
 from app.schemas.common import MessageResponse
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.rbac.models.event import Event
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.session_speaker import SessionSpeaker
+from app.modules.events.models.speaker import Speaker
+from app.modules.events.models.event import Event
+from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.models.poster import Poster
 from app.modules.presentations.schemas.file import (
@@ -363,7 +363,7 @@ async def speaker_portal_auth(
         posters.append(_build_portal_poster(p, event))
 
     # Fetch active announcements
-    from app.modules.notifications.models.announcement import Announcement
+    from app.modules.communications.models.announcement import Announcement
     now_time = datetime.now(timezone.utc)
     ann_stmt = (
         select(Announcement)
@@ -1052,7 +1052,7 @@ async def speaker_request_otp(
     import bcrypt
     import random
     from datetime import datetime, timezone, timedelta
-    from app.modules.registration.models.portal_otp_token import PortalOtpToken
+    from app.modules.identity.models.portal_otp_token import PortalOtpToken
     from app.modules.notifications.services.email_service import send_email
     from app.modules.registration.routers.portal_auth import _throttle_check
     
@@ -1172,7 +1172,7 @@ async def speaker_verify_otp(
     event_id = target_speaker.event_id
     
     # 2. Verify OTP
-    from app.modules.registration.models.portal_otp_token import PortalOtpToken
+    from app.modules.identity.models.portal_otp_token import PortalOtpToken
     now = datetime.now(timezone.utc)
     
     stmt = (
@@ -1430,7 +1430,7 @@ async def upload_profile_template(
         posters.append(_build_portal_poster(p, speaker.event))
 
     # Fetch active announcements
-    from app.modules.notifications.models.announcement import Announcement
+    from app.modules.communications.models.announcement import Announcement
     now_time = datetime.now(timezone.utc)
     ann_stmt = (
         select(Announcement)
@@ -1629,7 +1629,7 @@ async def update_speaker_profile(
     for p in speaker.posters:
         posters.append(_build_portal_poster(p, speaker.event))
 
-    from app.modules.notifications.models.announcement import Announcement
+    from app.modules.communications.models.announcement import Announcement
     now_time = datetime.now(timezone.utc)
     ann_stmt = (
         select(Announcement)

@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
-from app.modules.auth.models.user import User
-from app.modules.notifications.models.announcement import Announcement
+from app.modules.identity.models.user import User
+from app.modules.communications.models.announcement import Announcement
 from app.modules.notifications.schemas.announcement import (
     AnnouncementCreate, AnnouncementUpdate, AnnouncementResponse,
     LinkVerificationRequest, LinkVerificationResponse

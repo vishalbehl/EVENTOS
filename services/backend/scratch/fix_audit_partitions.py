@@ -17,7 +17,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DATABASE_URL_SYNC = os.environ.get(
     "DATABASE_URL_SYNC",
-    "postgresql+psycopg2://postgres:847425@localhost:5432/conf_platform",
+    "postgresql+psycopg2://postgres:847425@localhost:5432/eventos_db",
 )
 
 # Parse connection info

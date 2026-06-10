@@ -2,7 +2,7 @@ import asyncio
 import re
 from sqlalchemy import select
 from app.database import AsyncSessionLocal
-from app.modules.notifications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_template import EmailTemplate
 
 async def main():
     async with AsyncSessionLocal() as db:

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.presentations.models.presentation_file import PresentationFile
 
 
@@ -38,20 +38,20 @@ class VenueSyncJob(Base):
         failed      → Error occurred (see error_message)
         skipped     → File no longer needed (session cancelled etc.)
     """
-    __tablename__ = "venue_sync_jobs"
+    __tablename__ = "sync_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="CASCADE"),
+        ForeignKey("presentations.files.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

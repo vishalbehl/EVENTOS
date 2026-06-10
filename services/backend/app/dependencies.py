@@ -34,11 +34,11 @@ from app.config import settings
 from app.database import AsyncSessionLocal, tenant_org_id
 
 # ── Model imports ─────────────────────────────────────────
-from app.modules.rbac.models.event import Event
-from app.modules.rbac.models.organization import Organization
-from app.modules.auth.models.refresh_token import RefreshToken
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.platform.models.organization import Organization
+from app.modules.identity.models.refresh_token import RefreshToken
+from app.modules.events.models.speaker import Speaker
+from app.modules.identity.models.user import User
 
 
 # =============================================================
@@ -109,20 +109,29 @@ class TokenData:
 
 
 async def get_token_data(
+    request: Request,
     credentials: Annotated[
         Optional[HTTPAuthorizationCredentials],
         Depends(_bearer_scheme),
-    ],
+    ] = None,
 ) -> TokenData:
     """
     Extracts and validates the JWT access token from the
-    Authorization header. Performs NO database queries.
-
-    Raises 401 if:
-      - No Authorization header present
-      - Token is malformed / expired / wrong algorithm
-      - Required claims (sub, role, org) are missing
+    Authorization header, or resolves Developer credentials.
     """
+    # 0. Check if authenticated via Developer API Gateway middleware
+    user_role = getattr(request.state, "user_role", None)
+    org_id = getattr(request.state, "org_id", None)
+    token_valid = getattr(request.state, "token_valid", False)
+
+    if user_role == "developer" and token_valid and org_id:
+        return TokenData(
+            user_id=getattr(request.state, "user_id", None),
+            role="developer",
+            organization_id=org_id,
+            jti="developer"
+        )
+
     _unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required. Provide a valid Bearer token.",
@@ -196,13 +205,29 @@ async def get_current_user(
     """
     Loads the full User ORM object from the database using
     the user_id extracted from the JWT.
-
-    Raises 401 if user no longer exists in DB.
-    Does NOT check is_active — use require_active_user for that.
-
-    Usage:
-        async def endpoint(user: CurrentUser): ...
     """
+    if token_data.role == "developer":
+        # Resolve user if present (OAuth2 flow)
+        if token_data.user_id:
+            result = await db.execute(
+                select(User).where(User.id == token_data.user_id)
+            )
+            user = result.scalar_one_or_none()
+            if user:
+                return user
+
+        # Construct virtual developer user representing the organization
+        return User(
+            id=token_data.user_id or uuid.uuid4(),
+            organization_id=token_data.organization_id,
+            email="developer@eventx.os",
+            first_name="Developer",
+            last_name="Service Account",
+            role="organiser",  # Treat developer keys with organizer role access
+            is_active=True,
+            is_platform_admin=False
+        )
+
     print(f"DEBUG: get_current_user user_id={token_data.user_id} org_id={token_data.organization_id}")
     result = await db.execute(
         select(User).where(User.id == token_data.user_id)
@@ -453,8 +478,8 @@ async def get_current_event(
         # Enforce assignments for restricted roles (Organisers and below, but NOT Admins)
         if user.role in ["organiser", "session_manager", "technician", "volunteer"]:
             from app.modules.rbac.models.rbac import UserAccessNode
-            from app.modules.venue.models.room import Room
-            from app.modules.speakers.models.session import Session
+            from app.modules.events.models.room import Room
+            from app.modules.events.models.session import Session
             from sqlalchemy import and_, or_
             # Check if assigned to the event itself, OR any room/session within this event
             assignment_check = await db.execute(

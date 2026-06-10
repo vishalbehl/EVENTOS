@@ -30,14 +30,14 @@ from loguru import logger
 from sqlalchemy import case, func, select, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.notifications.models.email_campaign import EmailCampaign
-from app.modules.notifications.models.email_log import EmailLog
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.email_log import EmailLog
 from app.modules.presentations.models.poster import Poster
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.venue.models.room import Room
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.room import Room
+from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.events.models.speaker import Speaker
 from app.modules.venue.models.srr_checkin import SRRCheckin
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.redis import redis_client
@@ -359,7 +359,7 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
     talks_pending_upload = pending_talks_count + pending_eposters
 
     # Fetch session details for the breakdown list
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.room import Room
     session_details_q = await db.execute(
         select(Session, Room.name.label("room_name"))
         .outerjoin(Room, Room.id == Session.room_id)
@@ -694,9 +694,9 @@ async def get_approval_times(db: AsyncSession, event_id: uuid.UUID) -> list[dict
     grouped by room.
     """
     from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
-    from app.modules.speakers.models.session import Session
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.session import Session
+    from app.modules.events.models.room import Room
     from sqlalchemy import func, select
 
     result = await db.execute(
@@ -757,9 +757,9 @@ async def get_per_room_breakdown(db: AsyncSession, event_id: uuid.UUID) -> list[
     Validated = upload_status in (valid, approved, pending_validation)
     """
     from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
-    from app.modules.speakers.models.session import Session
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.session import Session
+    from app.modules.events.models.room import Room
     from sqlalchemy import func, case, select
 
     rooms_q = await db.execute(
@@ -830,11 +830,11 @@ async def get_per_room_breakdown(db: AsyncSession, event_id: uuid.UUID) -> list[
 async def export_event_data_csv(db: AsyncSession, event_id: uuid.UUID) -> str:
     """Export speaker + session + file data as a CSV string."""
     import csv, io
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.speakers.models.session import Session
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.events.models.session import Session
+    from app.modules.events.models.room import Room
     from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.session_speaker import SessionSpeaker
     from sqlalchemy.orm import selectinload
 
     output = io.StringIO()
@@ -894,11 +894,11 @@ async def export_event_data_xlsx(db: AsyncSession, event_id: uuid.UUID) -> bytes
     import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.speakers.models.session import Session
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.events.models.session import Session
+    from app.modules.events.models.room import Room
     from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.session_speaker import SessionSpeaker
 
     wb = openpyxl.Workbook()
     header_font = Font(bold=True, color="FFFFFF")
@@ -967,9 +967,9 @@ async def export_event_data_pdf(db: AsyncSession, event_id: uuid.UUID) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.speakers.models.session import Session
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.events.models.session import Session
+    from app.modules.events.models.room import Room
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4)
@@ -1044,7 +1044,7 @@ async def build_main_event_dashboard_data(
     from app.modules.venue.models.room_device import RoomDevice
     from app.modules.registration.models.check_in import CheckIn
     from app.modules.rbac.models.user_assignment import UserEventAssignment
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.analytics.schemas.analytics import (
         MainEventDashboardData, ChartDataPoint, DemographicPoint,
         DeviceStatusCount, UpcomingSession, UpcomingDeadline, AlertItem,

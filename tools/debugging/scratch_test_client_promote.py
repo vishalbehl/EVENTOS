@@ -4,8 +4,8 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.dependencies import get_db
 from app.database import AsyncSessionLocal
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from sqlalchemy import select
 import uuid
 import json

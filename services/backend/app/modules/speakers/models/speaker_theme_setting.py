@@ -12,13 +12,14 @@ class SpeakerThemeSetting(Base):
     for the Event Speaker Portal.
     """
     __tablename__ = "speaker_theme_settings"
+    __table_args__ = {"schema": "speakers"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
         index=True,

@@ -5,7 +5,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form as FastAPIForm
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loguru import logger
@@ -17,8 +17,9 @@ from app.dependencies import (
     get_db, get_current_user, require_active_user,
     get_current_event, CurrentEvent, OrganizerOrAbove, AdminOrAbove
 )
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.platform.models.organization import Organization
+from app.modules.identity.models.user import User
 from app.modules.rbac.schemas.event import EventCreate, EventUpdate, EventResponse, EventSummary
 from app.schemas.common import MessageResponse
 
@@ -54,7 +55,7 @@ async def list_events(
         )
 
         # Get event IDs for assigned rooms
-        from app.modules.venue.models.room import Room
+        from app.modules.events.models.room import Room
         room_event_ids = select(Room.event_id).where(
             Room.id.in_(
                 select(UserAccessNode.node_id).where(
@@ -65,7 +66,7 @@ async def list_events(
         )
 
         # Get event IDs for assigned sessions
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         session_event_ids = select(Session.event_id).where(
             Session.id.in_(
                 select(UserAccessNode.node_id).where(
@@ -106,6 +107,17 @@ async def create_event(
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
     """Create a new event for this organisation."""
+    org = await db.get(Organization, current_user.organization_id)
+    if org is not None:
+        current_count = await db.scalar(
+            select(func.count(Event.id)).where(Event.organization_id == current_user.organization_id)
+        )
+        if int(current_count or 0) >= org.max_events:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Event limit reached for your plan. Upgrade to create more events.",
+            )
+
     existing = await db.execute(
         select(Event).where(
             Event.organization_id == current_user.organization_id,
@@ -149,7 +161,7 @@ async def create_event(
     await db.refresh(event)
 
     # Automatically clone global default email templates for the new event
-    from app.modules.notifications.models.email_template import EmailTemplate
+    from app.modules.communications.models.email_template import EmailTemplate
     global_templates = await db.execute(
         select(EmailTemplate).where(
             EmailTemplate.event_id.is_(None),
@@ -233,30 +245,30 @@ async def _perform_nuclear_wipe(event_id: uuid.UUID, db: AsyncSession):
     Internal logic for the nuclear wipe. Does NOT commit.
     """
     from sqlalchemy import delete, text, select
-    from app.modules.speakers.models.session import Session
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.venue.models.room import Room
+    from app.modules.events.models.session import Session
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.events.models.room import Room
     from app.modules.registration.models.import_job import ImportJob
     from app.modules.presentations.models.poster import Poster
     from app.modules.presentations.models.presentation_file import PresentationFile
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
-    from app.modules.notifications.models.email_campaign import EmailCampaign
-    from app.modules.notifications.models.email_template import EmailTemplate
+    from app.modules.communications.models.email_campaign import EmailCampaign
+    from app.modules.communications.models.email_template import EmailTemplate
     from app.modules.venue.models.room_device import RoomDevice
-    from app.modules.auth.models.security_event import SecurityEvent
+    from app.modules.identity.models.security_event import SecurityEvent
     from app.modules.venue.models.srr_station import SRRStation
     from app.modules.venue.models.srr_checkin import SRRCheckin
     from app.modules.venue.models.venue_sync_job import VenueSyncJob
-    from app.modules.notifications.models.webhook import Webhook
+    from app.modules.integrations.models.webhook import Webhook
     from app.modules.presentations.models.presentation_bundle import PresentationBundle
-    from app.models.audit_log import AuditLog
+    from app.modules.audit.models.audit_log import AuditLog
     
     # Imports for deep dependent logs
     from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
     from app.modules.presentations.models.file_validation import FileValidation
-    from app.modules.presentations.models.playback_event import PlaybackEvent
+    from app.modules.venue.models.playback_event import PlaybackEvent
     from app.modules.venue.models.venue_telemetry import DeviceHeartbeat, WebsocketEvent
-    from app.modules.notifications.models.email_log import EmailLog
+    from app.modules.communications.models.email_log import EmailLog
     
     # 1. Temporarily disable triggers
     await db.execute(text("SET LOCAL session_replication_role = 'replica'"))
@@ -276,7 +288,7 @@ async def _perform_nuclear_wipe(event_id: uuid.UUID, db: AsyncSession):
     await db.execute(delete(EmailLog).where(EmailLog.speaker_id.in_(speaker_ids)))
     
     # Many-to-Many and Tables without direct CASCADE relationships in code
-    await db.execute(text("DELETE FROM presentations.bundle_files WHERE bundle_id IN (SELECT id FROM presentations.presentation_bundles WHERE event_id = :eid)").bindparams(eid=event_id))
+    await db.execute(text("DELETE FROM presentations.bundle_files WHERE bundle_id IN (SELECT id FROM presentations.bundles WHERE event_id = :eid)").bindparams(eid=event_id))
     await db.execute(text("DELETE FROM speakers.session_speakers WHERE session_id IN (SELECT id FROM speakers.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
     await db.execute(text("DELETE FROM presentations.presentation_queue WHERE session_id IN (SELECT id FROM speakers.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
     
@@ -297,7 +309,7 @@ async def _perform_nuclear_wipe(event_id: uuid.UUID, db: AsyncSession):
     await db.execute(delete(SRRCheckin).where(SRRCheckin.event_id == event_id))
     await db.execute(delete(VenueActivityLog).where(VenueActivityLog.event_id == event_id))
     await db.execute(delete(SecurityEvent).where(SecurityEvent.event_id == event_id))
-    await db.execute(delete(AuditLog).where(AuditLog.event_id == event_id))
+    await db.execute(delete(AuditLog).where(AuditLog.resource_id == event_id, AuditLog.resource_type == 'event'))
 
 @router.delete("/{event_id}", response_model=MessageResponse)
 async def delete_event(

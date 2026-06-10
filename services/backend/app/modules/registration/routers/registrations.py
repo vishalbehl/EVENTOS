@@ -14,7 +14,7 @@ from app.modules.registration.models.participant_registration import Participant
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.badge_models import Badge, BadgeHistory
 from app.modules.registration.models.print_template import PrintTemplate
-from app.modules.venue.models.capacity_rule import CapacityRule
+from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.schemas.registration import (
     ParticipantRegistrationCreate,
     ParticipantRegistrationUpdate,
@@ -138,7 +138,7 @@ async def helper_approve_registration(
     paid_status = (reg_data.get("paid_status") or "Unpaid").strip()
 
     # Create participant regno based on ticket pricing rules
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
     event_stmt = select(Event).where(Event.id == reg.event_id)
@@ -417,7 +417,7 @@ async def reset_registration_data(
     from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
     from app.modules.registration.models.payment_transaction import PaymentTransaction
     from app.modules.registration.models.check_in import CheckIn
-    from app.modules.registration.models.portal_otp_token import PortalOtpToken
+    from app.modules.identity.models.portal_otp_token import PortalOtpToken
     from app.modules.registration.models.import_job import ImportJob
 
     # Delete in order of dependency

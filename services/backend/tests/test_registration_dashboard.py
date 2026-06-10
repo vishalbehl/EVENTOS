@@ -5,10 +5,10 @@ import pytest
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.check_in import CheckIn
-from app.modules.speakers.models.session import Session
+from app.modules.events.models.session import Session
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.routers.participants import get_registration_analytics
 
@@ -131,7 +131,7 @@ async def test_reset_registration_data_endpoint(
     organizer: User,
 ):
     from httpx import AsyncClient
-    from app.modules.auth.models.user import User
+    from app.modules.identity.models.user import User
     from app.modules.registration.models.participant import Participant
     from sqlalchemy import select, func
     from tests.conftest import auth_headers

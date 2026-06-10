@@ -20,9 +20,9 @@ async def run_test():
         try:
             from sqlalchemy import select
             from app.database import AsyncSessionLocal
-            from app.modules.rbac.models.event import Event
+            from app.modules.events.models.event import Event
             from app.modules.registration.models.participant_registration import ParticipantRegistration
-            from app.modules.auth.models.user import User
+            from app.modules.identity.models.user import User
             from app.modules.venue.routers.capacity import trigger_waitlist_promotions
 
             print("Imports successful, connecting to DB...")

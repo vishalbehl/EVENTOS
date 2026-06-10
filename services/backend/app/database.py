@@ -9,95 +9,322 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-
+from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
 
 from app.config import settings
 
+class SoftDeleteMixin:
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    deleted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True
+    )
 
 # ── Declarative base with Dynamic Schema mapping ──────────────────
 from sqlalchemy.orm.decl_api import DeclarativeAttributeIntercept
 from sqlalchemy.orm.properties import MappedColumn
 
 TABLE_SCHEMAS = {
-    # auth schema
-    "users": "auth",
-    "refresh_tokens": "auth",
-    "security_events": "auth",
-    "system_error_logs": "auth",
-    "user_organization_memberships": "auth",
-    
-    # rbac schema
-    "organizations": "rbac",
-    "events": "rbac",
-    "user_assignments": "rbac",
-    "system_settings": "rbac",
+    # platform
+    "organizations": "platform",
+    "organization_domains": "platform",
+    "organization_settings": "platform",
+    "organization_health": "platform",
+    "system_settings": "platform",
+    "feature_catalog": "platform",
+    "feature_flags": "platform",
+    "global_announcements": "platform",
+    "tenant_limits": "platform",
+    "tenant_usage": "platform",
+
+    # identity
+    "users": "identity",
+    "refresh_tokens": "identity",
+    "security_events": "identity",
+    "otp_tokens": "identity",
+    "mfa_devices": "identity",
+    "user_sessions": "identity",
+    "password_history": "identity",
+    "login_attempts": "identity",
+    "api_keys": "identity",  # identity personal access tokens
+    "password_reset_tokens": "identity",
+    "trusted_devices": "identity",
+    "user_preferences": "identity",
+    "sso_identities": "identity",
+
+    # rbac
     "roles": "rbac",
     "permissions": "rbac",
     "role_permissions": "rbac",
     "user_role_assignments": "rbac",
     "scoped_permissions": "rbac",
-    "permission_audit_logs": "rbac",
-    "user_access_nodes": "rbac",
-    "access_templates": "rbac",
-    "role_inheritance_maps": "rbac",
-    
-    # speakers schema
+    "organization_members": "rbac",
+    "permission_groups": "rbac",
+    "permission_sets": "rbac",
+    "application_permissions": "rbac",
+    "feature_permissions": "rbac",
+
+    # crm
+    "accounts": "crm",
+    "contacts": "crm",
+    "leads": "crm",
+    "opportunities": "crm",
+    "pipeline_stages": "crm",
+    "tasks": "crm",
+    "activities": "crm",
+    "notes": "crm",
+    "contracts": "crm",
+    "proposals": "crm",
+    "customer_health": "crm",
+    "renewals": "crm",
+    "interactions": "crm",
+
+    # support
+    "support_tickets": "support",
+    "ticket_comments": "support",
+    "ticket_attachments": "support",
+    "escalations": "support",
+    "sla_policies": "support",
+    "support_agents": "support",
+    "knowledge_articles": "support",
+
+    # billing
+    "subscription_plans": "billing",
+    "organization_subscriptions": "billing",
+    "plan_features": "billing",
+    "organization_feature_overrides": "billing",
+    "addons": "billing",
+    "addon_features": "billing",
+    "organization_addons": "billing",
+    "invoices": "billing",
+    "invoice_items": "billing",
+    "payment_methods": "billing",
+    "payment_events": "billing",
+    "revenue_metrics": "billing",
+    "marketplace_subscriptions": "billing",
+    "marketplace_transactions": "billing",
+
+    # events
+    "events": "events",
+    "sessions": "events",
+    "rooms": "events",
+    "tracks": "events",
+    "agendas": "events",
+    "agenda_items": "events",
+    "session_templates": "events",
+    "room_allocations": "events",
+    "event_settings": "events",
+    "event_assets": "events",
+    "capacity_rules": "events",
+
+    # speakers
     "speakers": "speakers",
-    "sessions": "speakers",
-    "session_speakers": "speakers",
-    "speaker_profiles": "speakers",
-    
-    # presentations schema
-    "presentation_files": "presentations",
-    "posters": "presentations",
-    "presentation_bundles": "presentations",
-    "bundle_files": "presentations",
-    "presentation_queue": "presentations",
-    "playback_events": "presentations",
-    "file_validations": "presentations",
-    "file_integrity_logs": "presentations",
-    
-    # registration schema
+    "profiles": "speakers",
+    "invitations": "speakers",
+    "event_assignments": "speakers",
+    "session_assignments": "speakers",
+    "upload_tokens": "speakers",
+    "preferences": "speakers",
+    "travel_requests": "speakers",
+    "accommodation_requests": "speakers",
+    "honorariums": "speakers",
+    "communication_history": "speakers",
+    "profile_versions": "speakers",
+
+    # registration
     "participants": "registration",
-    "payment_transactions": "registration",
-    "print_templates": "registration",
+    "registrations": "registration",
+    "roles": "registration",
     "ticket_types": "registration",
-    "registration_form_configs": "registration",
+    "registration_forms": "registration",
+    "form_fields": "registration",
+    "form_submissions": "registration",
+    "payment_transactions": "registration",
     "promo_codes": "registration",
-    "portal_otp_tokens": "registration",
-    "participant_roles": "registration",
-    "participant_registrations": "registration",
-    "import_jobs": "registration",
-    "check_ins": "registration",
-    "printers": "registration",
     "badges": "registration",
-    "badge_histories": "registration",
-    "badge_print_jobs": "registration",
+    "badge_history": "registration",
     "badge_scans": "registration",
-    
-    # notifications schema
-    "announcements": "notifications",
-    "email_logs": "notifications",
-    "email_templates": "notifications",
-    "webhooks": "notifications",
-    "email_campaigns": "notifications",
-    "notification_events": "notifications",
-    
-    # venue schema
-    "venue_activity_logs": "venue",
-    "venue_sync_jobs": "venue",
+    "badge_print_jobs": "registration",
+    "waitlists": "registration",
+    "attendance": "registration",
+
+    # presentations
+    "files": "presentations",
+    "validations": "presentations",
+    "integrity_logs": "presentations",
+    "bundles": "presentations",
+    "bundle_files": "presentations",
+    "posters": "presentations",
+    "file_versions": "presentations",
+    "review_comments": "presentations",
+    "approvals": "presentations",
+    "processing_jobs": "presentations",
+
+    # venue
+    "devices": "venue",
     "device_heartbeats": "venue",
-    "room_runtime_events": "venue",
-    "websocket_events": "venue",
-    "venue_network_events": "venue",
-    "venue_security_events": "venue",
-    "sync_transfer_logs": "venue",
+    "device_security": "venue",
     "srr_stations": "venue",
     "srr_checkins": "venue",
-    "room_devices": "venue",
-    "rooms": "venue",
-    "capacity_rules": "venue",
-    "attendance_logs": "venue",
+    "presentation_queue": "venue",
+    "playback_events": "venue",
+    "sync_jobs": "venue",
+    "sync_history": "venue",
+    "network_events": "venue",
+    "runtime_events": "venue",
+    "activity_logs": "venue",
+    "printers": "venue",
+
+    # communications
+    "email_templates": "communications",
+    "email_campaigns": "communications",
+    "email_logs": "communications",
+    "announcements": "communications",
+    "push_notifications": "communications",
+    "device_tokens": "communications",
+    "sms_messages": "communications",
+    "notification_preferences": "communications",
+    "notification_queue": "communications",
+    "notification_delivery_logs": "communications",
+
+    # analytics
+    "organization_usage": "analytics",
+    "usage_events": "analytics",
+    "usage_snapshots": "analytics",
+    "attendance_logs": "analytics",
+    "dashboard_metrics": "analytics",
+    "feature_usage": "analytics",
+    "application_usage": "analytics",
+    "api_usage": "analytics",
+    "event_metrics": "analytics",
+    "adoption_metrics": "analytics",
+
+    # audit
+    "logs": "audit",
+    "api_logs": "audit",
+    "worker_logs": "audit",
+    "impersonation_logs": "audit",
+    "permission_changes": "audit",
+    "security_logs": "audit",
+    "data_exports": "audit",
+    "system_changes": "audit",
+    "access_reviews": "audit",
+
+    # applications
+    "apps": "applications",
+    "app_versions": "applications",
+    "app_features": "applications",
+    "app_permissions": "applications",
+    "organization_apps": "applications",
+    "device_apps": "applications",
+    "app_releases": "applications",
+    "app_configurations": "applications",
+    "mobile_configurations": "applications",
+    "push_notification_configs": "applications",
+    "app_audit_logs": "applications",
+
+    # marketplace
+    "marketplace_apps": "marketplace",  # differentiate developer/platform apps from marketplace apps
+    "categories": "marketplace",
+    "reviews": "marketplace",
+    "installations": "marketplace",
+    "permissions": "marketplace",
+    "subscriptions": "marketplace",
+    "transactions": "marketplace",
+    "version_history": "marketplace",
+    "packages": "marketplace",
+
+    # developer
+    "developer_api_keys": "developer",  # differentiate developer api keys from user api keys
+    "api_scopes": "developer",
+    "api_usage": "developer",
+    "api_products": "developer",
+    "api_subscriptions": "developer",
+    "oauth_clients": "developer",
+    "oauth_authorizations": "developer",
+    "oauth_tokens": "developer",
+    "rate_limits": "developer",
+    "sdk_versions": "developer",
+    "api_audit_logs": "developer",
+
+    # integrations
+    "providers": "integrations",
+    "connections": "integrations",
+    "oauth_connections": "integrations",
+    "sync_jobs": "integrations",
+    "sync_history": "integrations",
+    "webhooks": "integrations",
+    "webhook_deliveries": "integrations",
+    "external_resources": "integrations",
+    "integration_logs": "integrations",
+    "integration_settings": "integrations",
+    "marketplace_apps": "integrations",
+
+    # mobile
+    "mobile_devices": "mobile",
+    "mobile_sessions": "mobile",
+    "mobile_device_tokens": "mobile",
+    "mobile_app_versions": "mobile",
+    "mobile_crash_logs": "mobile",
+    "mobile_push_queue": "mobile",
+    "mobile_sync_queue": "mobile",
+    "mobile_offline_changes": "mobile",
+
+    # ai
+    "assistants": "ai",
+    "prompts": "ai",
+    "prompt_versions": "ai",
+    "conversations": "ai",
+    "messages": "ai",
+    "ai_actions": "ai",
+    "ai_usage": "ai",
+    "cost_tracking": "ai",
+    "feedback": "ai",
+    "embeddings": "ai",
+
+    # workflow
+    "workflows": "workflow",
+    "workflow_steps": "workflow",
+    "workflow_instances": "workflow",
+    "workflow_tasks": "workflow",
+    "workflow_assignments": "workflow",
+    "workflow_history": "workflow",
+
+    # files
+    "assets": "files",
+    "asset_versions": "files",
+    "asset_tags": "files",
+    "asset_permissions": "files",
+    "storage_locations": "files",
+    "upload_sessions": "files",
+    "virus_scans": "files",
+
+    # jobs
+    "background_jobs": "jobs",
+    "job_executions": "jobs",
+    "job_failures": "jobs",
+    "job_schedules": "jobs",
+    "job_locks": "jobs",
+
+    # search
+    "search_indexes": "search",
+    "search_documents": "search",
+    "search_jobs": "search",
+
+    # sponsors
+    "sponsors": "sponsors",
+    "contacts": "sponsors",
+    "packages": "sponsors",
+    "booths": "sponsors",
+    "deliverables": "sponsors",
+    "invoices": "sponsors",
+    "assets": "sponsors",
 }
 
 class SchemaDeclarativeMeta(DeclarativeAttributeIntercept):
@@ -189,8 +416,16 @@ def _after_begin(session, transaction, connection):
 
 
 # ── Async engine (FastAPI / dependencies.py) ──────────────────
+_async_db_url = settings.async_database_url
+if settings.environment == "testing":
+    from urllib.parse import urlparse, urlunparse
+    _parsed = urlparse(_async_db_url)
+    _db_name = _parsed.path.lstrip("/")
+    _test_db_name = f"{_db_name}_test" if _db_name else "eventos_db_test"
+    _async_db_url = urlunparse(_parsed._replace(path=f"/{_test_db_name}"))
+
 async_engine = create_async_engine(
-    settings.async_database_url,
+    _async_db_url,
     echo=settings.debug,
     pool_pre_ping=True,         # validate connection before checkout
     pool_size=10,
@@ -207,8 +442,16 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 # ── Sync engine (Alembic migrations, CLI scripts) ─────────────
+_sync_db_url = settings.DATABASE_URL_SYNC
+if settings.environment == "testing":
+    from urllib.parse import urlparse, urlunparse
+    _parsed = urlparse(_sync_db_url)
+    _db_name = _parsed.path.lstrip("/")
+    _test_db_name = f"{_db_name}_test" if _db_name else "eventos_db_test"
+    _sync_db_url = urlunparse(_parsed._replace(path=f"/{_test_db_name}"))
+
 engine = create_engine(
-    settings.DATABASE_URL_SYNC,
+    _sync_db_url,
     future=True,
     pool_pre_ping=True,
 )

@@ -1,7 +1,7 @@
 'use client'
 
 import { use } from 'react'
-import AnnouncementsTab from '@/components/emails/AnnouncementsTab'
+import AnnouncementsTab from '@/components/organizer/emails/AnnouncementsTab'
 
 export default function RegistrationAnnouncementsPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)

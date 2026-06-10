@@ -5,7 +5,7 @@ import pytest
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import ParticipantUpdate

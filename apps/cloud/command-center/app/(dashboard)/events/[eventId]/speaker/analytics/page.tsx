@@ -31,9 +31,9 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 
-import { DailyUploadsChart } from "@/components/dashboard/DailyUploadsChart";
-import { RoomReadinessChart } from "@/components/dashboard/RoomReadinessChart";
-import { ReadinessHeatmap } from "@/components/dashboard/ReadinessHeatmap";
+import { DailyUploadsChart } from "@/components/organizer/dashboard/DailyUploadsChart";
+import { RoomReadinessChart } from "@/components/organizer/dashboard/RoomReadinessChart";
+import { ReadinessHeatmap } from "@/components/organizer/dashboard/ReadinessHeatmap";
 
 // ── Colour palette for charts ──────────────────────────────────
 const CHART_COLORS = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#ec4899"];

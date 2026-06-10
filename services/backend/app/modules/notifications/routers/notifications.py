@@ -14,11 +14,11 @@ from sqlalchemy import select, update, delete, or_, func, nullslast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
-from app.modules.notifications.models.email_campaign import EmailCampaign
-from app.modules.notifications.models.email_template import EmailTemplate
-from app.modules.notifications.models.email_log import EmailLog
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.auth.models.user import User
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_log import EmailLog
+from app.modules.events.models.speaker import Speaker
+from app.modules.identity.models.user import User
 from app.modules.notifications.schemas.notification import (
     EmailTemplateCreate, EmailTemplateUpdate, EmailTemplateResponse,
     CampaignCreate, CampaignResponse, InviteSpeakersRequest,
@@ -413,9 +413,9 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
         res = await db.execute(query)
         return res.scalar_one()
 
-    from app.modules.speakers.models.speaker import Speaker
+    from app.modules.events.models.speaker import Speaker
     from app.modules.presentations.models.poster import Poster
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.session_speaker import SessionSpeaker
     
     query = select(func.count(Speaker.id)).where(Speaker.event_id == campaign.event_id)
     
@@ -446,7 +446,7 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
             )
         )
     elif campaign.recipient_filter == "specific_room" and campaign.room_id_filter:
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         room_sessions = select(Session.id).where(Session.room_id == campaign.room_id_filter)
         query = query.where(
             or_(
@@ -539,7 +539,7 @@ async def create_campaign(
             if valid_count == 0:
                 raise HTTPException(status_code=400, detail="No valid participants found for this event.")
         else:
-            from app.modules.speakers.models.speaker import Speaker
+            from app.modules.events.models.speaker import Speaker
             recipient_count_result = await db.execute(
                 select(func.count(Speaker.id)).where(
                     Speaker.event_id == event.id,

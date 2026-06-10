@@ -24,9 +24,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.modules.auth.models.refresh_token import RefreshToken
-from app.modules.auth.models.user import User
-from app.modules.auth.services.auth_service import (
+from app.modules.identity.models.refresh_token import RefreshToken
+from app.modules.identity.models.user import User
+from app.modules.identity.services.auth_service import (
     create_access_token,
     create_refresh_token_string,
     hash_password,

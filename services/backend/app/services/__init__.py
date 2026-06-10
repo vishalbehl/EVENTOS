@@ -2,7 +2,7 @@
 # Conference Platform — Services Package (Re-exporters)
 # =============================================================
 
-from app.modules.auth.services import auth_service
+from app.modules.identity.services import auth_service
 from app.modules.rbac.services import permission_service, rbac_service
 from app.modules.presentations.services import upload_service, validation_service
 from app.modules.venue.services import websocket_service

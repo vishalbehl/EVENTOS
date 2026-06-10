@@ -1,6 +1,6 @@
 import psycopg2
 
-conn = psycopg2.connect("postgresql://postgres:847425@localhost:5432/conf_platform")
+conn = psycopg2.connect("postgresql://postgres:847425@localhost:5432/eventos_db")
 cur = conn.cursor()
 
 # Get some events and speakers

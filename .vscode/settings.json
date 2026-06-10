@@ -1,0 +1,6 @@
+{
+  "python.defaultInterpreterPath": "d:\\DEV\\conf-platform\\services\\backend\\.venv\\Scripts\\python.exe",
+  "python.analysis.extraPaths": [
+    "d:\\DEV\\conf-platform\\services\\backend"
+  ]
+}

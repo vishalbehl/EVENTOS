@@ -10,8 +10,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, OrganizerOrAbove, get_current_user
-from app.modules.venue.models.room import Room
-from app.modules.auth.models.user import User
+from app.modules.events.models.room import Room
+from app.modules.identity.models.user import User
 from app.modules.venue.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 from app.schemas.common import MessageResponse
 

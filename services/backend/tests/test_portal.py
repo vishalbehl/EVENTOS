@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.speaker import Speaker
 from app.modules.speakers.routers.portal import speaker_portal_auth, download_speaker_qr
 
 

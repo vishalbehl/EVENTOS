@@ -20,10 +20,10 @@ import { useSessions, SessionSummary, useDeleteSession } from "@/hooks/useSessio
 import { useRooms } from "@/hooks/useRooms";
 import { useSpeakers } from "@/hooks/useSpeakers";
 import { useEvent } from "@/hooks/useEvents";
-import { SessionDetailDialog } from "@/components/sessions/SessionDetailDialog";
-import { CreateSessionDialog } from "@/components/sessions/CreateSessionDialog";
-import { CalendarView } from "@/components/sessions/CalendarView";
-import { TimelineView } from "@/components/sessions/TimelineView";
+import { SessionDetailDialog } from "@/components/organizer/sessions/SessionDetailDialog";
+import { CreateSessionDialog } from "@/components/organizer/sessions/CreateSessionDialog";
+import { CalendarView } from "@/components/organizer/sessions/CalendarView";
+import { TimelineView } from "@/components/organizer/sessions/TimelineView";
 import { Portal } from "@/components/ui/portal";
 import { SESSION_TYPE_CATEGORIES } from "@/types/models";
 

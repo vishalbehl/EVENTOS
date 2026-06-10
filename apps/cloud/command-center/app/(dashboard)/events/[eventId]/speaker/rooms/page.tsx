@@ -21,7 +21,7 @@ import { useEffect, useMemo } from "react";
 
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
 import { useModalStore } from "@/store/useModalStore";
-import { CreateRoomDialog } from "@/components/rooms/CreateRoomDialog";
+import { CreateRoomDialog } from "@/components/organizer/rooms/CreateRoomDialog";
 
 import { Portal } from "@/components/ui/portal";
 

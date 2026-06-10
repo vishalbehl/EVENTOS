@@ -9,10 +9,10 @@ from sqlalchemy import func, select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
-from app.modules.venue.models.capacity_rule import CapacityRule
-from app.modules.rbac.models.event import Event
-from app.modules.speakers.models.session import Session
-from app.modules.venue.models.room import Room
+from app.modules.events.models.capacity_rule import CapacityRule
+from app.modules.events.models.event import Event
+from app.modules.events.models.session import Session
+from app.modules.events.models.room import Room
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.check_in import CheckIn
 from app.modules.registration.models.participant_registration import ParticipantRegistration

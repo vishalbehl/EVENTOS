@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.dependencies import get_db, get_current_event, CurrentEvent
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
-from app.modules.venue.models.capacity_rule import CapacityRule
+from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.schemas.registration_form_config import (
     RegistrationFormConfigResponse,
     RegistrationFormConfigUpdate
@@ -978,7 +978,7 @@ async def public_checkout_payment(
             
             reviewer_id = event.created_by
             if not reviewer_id:
-                from app.modules.auth.models.user import User
+                from app.modules.identity.models.user import User
                 stmt_user = select(User.id).limit(1)
                 reviewer_id = (await db.execute(stmt_user)).scalar()
                 
@@ -1176,7 +1176,7 @@ async def verify_public_payment(
         else:
             reviewer_id = event.created_by
             if not reviewer_id:
-                from app.modules.auth.models.user import User
+                from app.modules.identity.models.user import User
                 stmt_user = select(User.id).limit(1)
                 reviewer_id = (await db.execute(stmt_user)).scalar()
                 

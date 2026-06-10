@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import ForeignKey, String, Text, Boolean, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from app.database import Base
 
 class RegistrationThemeSetting(Base):
@@ -12,13 +12,14 @@ class RegistrationThemeSetting(Base):
     for the Event Registration Portal.
     """
     __tablename__ = "registration_theme_settings"
+    __table_args__ = {"schema": "registration"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
         index=True,
@@ -65,6 +66,14 @@ class RegistrationThemeSetting(Base):
 
     # Relationship to Event
     event = relationship("Event", back_populates="registration_theme_setting")
+
+    @validates("stripe_credentials")
+    def validate_stripe_credentials(self, key: str, value: Any) -> Any:
+        if isinstance(value, dict):
+            secret_key = value.get("secret_key")
+            if secret_key and secret_key.startswith("sk_"):
+                raise ValueError("Plaintext secret keys (sk_) are not allowed to be stored in the database.")
+        return value
 
     def __repr__(self) -> str:
         return f"<RegistrationThemeSetting id={self.id} event_id={self.event_id}>"

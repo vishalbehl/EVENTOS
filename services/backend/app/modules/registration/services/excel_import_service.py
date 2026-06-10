@@ -28,10 +28,10 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.registration.models.import_job import ImportJob
-from app.modules.venue.models.room import Room
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.room import Room
+from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.events.models.speaker import Speaker
 from app.services.timezone_service import get_cached_timezone
 
 
@@ -412,7 +412,7 @@ async def run_import(
     logger.info(f"Starting import for job {job.id}, event {event_id}")
 
     # ── Fetch Event Timezone ──────────────────────────────────
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     event_res = await db.execute(select(Event).where(Event.id == event_id))
     event_obj = event_res.scalar_one_or_none()
     tz_name = (event_obj.timezone if event_obj else None) or get_cached_timezone()

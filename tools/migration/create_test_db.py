@@ -6,10 +6,10 @@ conn = psycopg2.connect(
 )
 conn.autocommit = True
 cur = conn.cursor()
-cur.execute("SELECT 1 FROM pg_database WHERE datname='conf_platform_test'")
+cur.execute("SELECT 1 FROM pg_database WHERE datname='eventos_db_test'")
 if not cur.fetchone():
-    cur.execute("CREATE DATABASE conf_platform_test OWNER postgres")
-    print("Created: conf_platform_test")
+    cur.execute("CREATE DATABASE eventos_db_test OWNER postgres")
+    print("Created: eventos_db_test")
 else:
-    print("Already exists: conf_platform_test")
+    print("Already exists: eventos_db_test")
 conn.close()

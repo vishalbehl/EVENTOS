@@ -9,9 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.auth.models.user import User
+    from app.modules.events.models.event import Event
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.identity.models.user import User
 
 
 class Poster(Base):
@@ -42,27 +42,27 @@ class Poster(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     # The speaker/author who submitted the poster
     speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="SET NULL"),
+        ForeignKey("events.speakers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     # The session this poster belongs to (optional, but used for scheduling)
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("sessions.id", ondelete="SET NULL"),
+        ForeignKey("events.sessions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
         nullable=True,
     )
 

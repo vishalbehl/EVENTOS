@@ -1,7 +1,7 @@
 import asyncio
 from sqlalchemy import select
 from app.database import AsyncSessionLocal
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 
 async def check():
     async with AsyncSessionLocal() as db:

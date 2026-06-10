@@ -23,9 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.events.models.speaker import Speaker
+from app.modules.events.models.event import Event
 from app.modules.presentations.services.upload_service import (
     build_import_path,
     build_poster_path,

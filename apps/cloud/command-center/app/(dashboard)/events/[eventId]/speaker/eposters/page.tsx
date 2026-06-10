@@ -30,7 +30,7 @@ import { useRooms } from "@/hooks/useRooms";
 import { useSpeakers } from "@/hooks/useSpeakers";
 import { useSessions } from "@/hooks/useSessions";
 import { Portal } from "@/components/ui/portal";
-import { ManageScreensDialog } from "@/components/eposters/ManageScreensDialog";
+import { ManageScreensDialog } from "@/components/organizer/eposters/ManageScreensDialog";
 
 export default function EPostersPage() {
   const { eventId } = useParams();

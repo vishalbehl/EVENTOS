@@ -16,9 +16,20 @@ with engine.connect() as conn:
     conn.execute(text("GRANT ALL ON SCHEMA public TO public;"))
     
     # Also drop other schemas if they exist to start fresh
-    for schema in ["auth", "rbac", "speakers", "presentations", "registration", "notifications", "venue"]:
+    schemas = [
+        "auth", "notifications",  # legacy cleanup
+        "platform", "identity", "rbac", "crm", "support", "billing", "events", "speakers",
+        "registration", "presentations", "venue", "communications", "analytics", "audit",
+        "applications", "marketplace", "developer", "integrations", "mobile", "ai",
+        "workflow", "files", "jobs", "search", "sponsors"
+    ]
+    for schema in schemas:
         print(f"Dropping schema {schema} (cascade)...")
         conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE;"))
+        print(f"Creating schema {schema}...")
+        conn.execute(text(f"CREATE SCHEMA {schema};"))
+        conn.execute(text(f"GRANT ALL ON SCHEMA {schema} TO postgres;"))
+        conn.execute(text(f"GRANT ALL ON SCHEMA {schema} TO public;"))
         
     conn.commit()
 print("Database schemas reset successfully!")

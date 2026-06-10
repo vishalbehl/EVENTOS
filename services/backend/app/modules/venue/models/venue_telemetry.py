@@ -51,7 +51,7 @@ class RoomRuntimeEvent(Base):
     Diagnostics for the actual presentation execution in session rooms.
     Tracks technical failures during live playback.
     """
-    __tablename__ = "room_runtime_events"
+    __tablename__ = "runtime_events"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)

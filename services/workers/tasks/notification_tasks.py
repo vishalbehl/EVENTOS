@@ -220,8 +220,8 @@ def send_upload_reminder(speaker_id: str) -> dict:
     speaker_uuid = uuid.UUID(speaker_id)
     with get_db_session() as db:
         try:
-            from app.modules.speakers.models.speaker import Speaker
-            from app.modules.rbac.models.event import Event
+            from app.modules.events.models.speaker import Speaker
+            from app.modules.events.models.event import Event
         except ImportError as e:
             logger.error(f"Cannot import models: {e}")
             return {"sent": False}
@@ -288,8 +288,8 @@ def send_import_completion_notification(
     with get_db_session() as db:
         try:
             from app.modules.registration.models.import_job import ImportJob
-            from app.modules.rbac.models.event import Event
-            from app.modules.auth.models.user import User
+            from app.modules.events.models.event import Event
+            from app.modules.identity.models.user import User
         except ImportError as e:
             logger.error(f"Cannot import models: {e}")
             return {"sent": False}

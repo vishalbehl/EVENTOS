@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.analytics.schemas.analytics import (
     DashboardStats, UploadFunnelStats, SessionReadinessRow,
@@ -159,7 +159,7 @@ async def room_breakdown(
     
     allowed = await get_allowed_sessions(current_user, event.id, db)
     if allowed is not None:
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         res = await db.execute(select(Session.room_id).where(Session.id.in_(allowed)))
         allowed_rooms = {str(r) for r in res.scalars().all() if r}
         rows = [r for r in rows if str(r["room_id"]) in allowed_rooms]
@@ -271,7 +271,7 @@ async def global_summary(
 ) -> DashboardStats:
     """Aggregated metrics across all events the user has access to."""
     # For now, let's just get all events if super_admin, or assigned events otherwise
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.rbac.models.user_assignment import UserEventAssignment
     
     if current_user.role in ["super_admin", "admin"]:

@@ -2,7 +2,7 @@ import asyncio
 import asyncpg
 
 async def main():
-    conn = await asyncpg.connect('postgres://postgres:847425@localhost:5432/conf_platform')
+    conn = await asyncpg.connect('postgres://postgres:847425@localhost:5432/eventos_db')
     try:
         await conn.execute('ALTER TABLE email_templates DROP CONSTRAINT ck_et_type;')
         print("Dropped constraint ck_et_type")

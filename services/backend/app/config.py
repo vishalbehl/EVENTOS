@@ -98,12 +98,19 @@ class Settings(BaseSettings):
     UPLOAD_TOKEN_EXPIRE_DAYS: int = 30
     CLOUD_API_KEY: str = "dev_internal_secret_do_not_use_in_prod"
 
+    # ── Gemini AI ─────────────────────────────────────────
+    GEMINI_API_KEY: str = ""
+
     # ── Payment Gateway Encryption ────────────────────────
     # AES-256 (Fernet) master key used to encrypt payment gateway
     # secrets stored in events.registration_settings JSONB.
     # Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     PAYMENT_SECRET_KEY: str = ""
+
+    # ── TOTP Encryption ──────────────────────────────────
+    # Fernet key used to encrypt TOTP secrets.
+    FERNET_KEY: str = ""
 
     # ── Portal JWT (attendee self-service) ────────────────
     # Signs portal session JWTs — completely separate from JWT_SECRET_KEY.

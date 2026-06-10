@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 
 import stripe
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.services.credential_cipher import cipher
@@ -53,7 +53,15 @@ class PaymentService:
                 raise ValueError("Stripe secret key is not configured for this event.")
 
             # Decrypt immediately before SDK use — do not store in a variable.
-            stripe.api_key = cipher.decrypt(encrypted_secret)
+            def decrypt_stripe_secret(token: str) -> str:
+                from app.core.encryption import decrypt as new_decrypt
+                try:
+                    return new_decrypt(token)
+                except Exception:
+                    from app.services.credential_cipher import cipher
+                    return cipher.decrypt(token)
+
+            stripe.api_key = decrypt_stripe_secret(encrypted_secret)
             logger.info(
                 "payment_credentials_accessed",
                 extra={
@@ -203,7 +211,15 @@ class PaymentService:
                 raise ValueError("session_id is required for Stripe verification.")
 
             # Decrypt immediately before SDK use.
-            stripe.api_key = cipher.decrypt(encrypted_secret)
+            def decrypt_stripe_secret(token: str) -> str:
+                from app.core.encryption import decrypt as new_decrypt
+                try:
+                    return new_decrypt(token)
+                except Exception:
+                    from app.services.credential_cipher import cipher
+                    return cipher.decrypt(token)
+
+            stripe.api_key = decrypt_stripe_secret(encrypted_secret)
             logger.info(
                 "payment_credentials_accessed",
                 extra={

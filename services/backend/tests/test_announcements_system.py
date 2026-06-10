@@ -8,9 +8,9 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
-from app.modules.notifications.models.announcement import Announcement
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
+from app.modules.communications.models.announcement import Announcement
 
 
 from tests.conftest import auth_headers

@@ -20,12 +20,12 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
-from app.modules.rbac.models.organization import Organization
-from app.modules.venue.models.room import Room
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.platform.models.organization import Organization
+from app.modules.events.models.room import Room
+from app.modules.events.models.session import Session
+from app.modules.events.models.speaker import Speaker
+from app.modules.identity.models.user import User
 
 
 # ── Event model tests ─────────────────────────────────────────

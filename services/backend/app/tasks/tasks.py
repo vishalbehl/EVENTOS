@@ -10,7 +10,7 @@ from app.database import AsyncSessionLocal
 from app.services import upload_service
 from app.modules.registration.services.excel_import_service import run_import
 from app.modules.registration.models.import_job import ImportJob
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.config import settings
 
 

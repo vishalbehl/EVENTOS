@@ -7,20 +7,21 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.database import SoftDeleteMixin
 
 if TYPE_CHECKING:
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.speakers.models.session_speaker import SessionSpeaker
-    from app.modules.rbac.models.event import Event
-    from app.modules.auth.models.user import User
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.events.models.event import Event
+    from app.modules.identity.models.user import User
     from app.modules.presentations.models.file_validation import FileValidation
     from app.modules.venue.models.venue_sync_job import VenueSyncJob
-    from app.modules.presentations.models.presentation_queue import PresentationQueue
+    from app.modules.venue.models.presentation_queue import PresentationQueue
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
     from app.modules.presentations.models.presentation_bundle import BundleFile
 
 
-class PresentationFile(Base):
+class PresentationFile(Base, SoftDeleteMixin):
     """
     Every file version uploaded by a speaker.
     Only ONE record per speaker-session has is_current_version=True.
@@ -29,7 +30,7 @@ class PresentationFile(Base):
 
     Files are stored in Cloudflare R2 / MinIO — never on the app server.
     """
-    __tablename__ = "presentation_files"
+    __tablename__ = "files"
     __table_args__ = (
         CheckConstraint(
             "upload_status IN ('processing','valid','invalid','approved','rejected','locked','pending_validation')",
@@ -46,19 +47,19 @@ class PresentationFile(Base):
     )
     speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="CASCADE"),
+        ForeignKey("events.speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     session_speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("session_speakers.id", ondelete="CASCADE"),
+        ForeignKey("events.session_speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -97,7 +98,7 @@ class PresentationFile(Base):
     )
     approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
         nullable=True,
     )
     approved_at: Mapped[Optional[datetime]] = mapped_column(

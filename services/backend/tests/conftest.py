@@ -6,7 +6,7 @@
 # them automatically via pytest fixture discovery.
 #
 # Test database strategy:
-#   - Uses a SEPARATE test database (conf_platform_test) so tests
+#   - Uses a SEPARATE test database (eventos_db_test) so tests
 #     never touch production data.
 #   - Each test function gets a clean, rolled-back transaction
 #     (no leftover rows between tests).
@@ -58,17 +58,20 @@ from app.models import (  # ensures all models are registered with Base
     Room, RoomDevice, Session, SessionSpeaker, Speaker,
     SRRCheckin, SRRStation, User, VenueSyncJob, UserOrganizationMembership,
 )
-from app.modules.auth.services.auth_service import hash_password
+from app.modules.identity.services.auth_service import hash_password
 
 
 # ── Test database URL ─────────────────────────────────────────
 # Derives async test DB URL from the configured sync URL,
 # pointing to a separate "test" database.
 
-_TEST_DB_URL = (
-    settings.async_database_url
-    .replace("/conf_platform", "/conf_platform_test")
-)
+from urllib.parse import urlparse, urlunparse
+
+_parsed_url = urlparse(settings.async_database_url)
+_db_name = _parsed_url.path.lstrip("/")
+_test_db_name = f"{_db_name}_test" if _db_name else "eventos_db_test"
+_TEST_DB_URL = urlunparse(_parsed_url._replace(path=f"/{_test_db_name}"))
+
 
 # ── Async engine for tests ────────────────────────────────────
 # NullPool disables connection pooling — essential for per-test
@@ -97,22 +100,30 @@ _TestSessionLocal = async_sessionmaker(
 async def setup_test_database():
     """
     Create all tables in the test database once before tests run.
-    Drop and recreate to ensure a clean schema.
+    Use CASCADE to ensure clean teardown of complex cross-schema foreign keys.
     """
     from sqlalchemy import text
+    schemas = [
+        "platform", "identity", "rbac", "crm", "support", "billing", "events", "speakers",
+        "registration", "presentations", "venue", "communications", "analytics", "audit",
+        "applications", "marketplace", "developer", "integrations", "mobile", "ai",
+        "workflow", "files", "jobs", "search", "sponsors", "auth", "notifications"
+    ]
+    
     async with _test_engine.begin() as conn:
-        for schema in ["auth", "rbac", "speakers", "presentations", "registration", "notifications", "venue"]:
+        for schema in schemas:
             await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    await _test_engine.dispose()
+    
     yield
-    # Teardown: drop everything after the session
+    
+    # Teardown: drop schemas with CASCADE to handle foreign key dependencies
     async with _test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        from sqlalchemy import text
-        for schema in ["auth", "rbac", "speakers", "presentations", "registration", "notifications", "venue"]:
+        for schema in schemas:
             await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        # Drop public just in case
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
     await _test_engine.dispose()
 
 
@@ -161,13 +172,28 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     fastapi_app.dependency_overrides[get_db] = _override_get_db
 
-    async with AsyncClient(
-        transport=ASGITransport(app=fastapi_app),
-        base_url="http://testserver",
-    ) as ac:
-        yield ac
+    import app.database
+    
+    class TestSessionWrapper:
+        def __init__(self, session):
+            self.session = session
+        async def __aenter__(self):
+            return self.session
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
 
-    fastapi_app.dependency_overrides.clear()
+    original_sessionmaker = app.database.AsyncSessionLocal
+    app.database.AsyncSessionLocal = lambda: TestSessionWrapper(db)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=fastapi_app),
+            base_url="http://testserver",
+        ) as ac:
+            yield ac
+    finally:
+        app.database.AsyncSessionLocal = original_sessionmaker
+        fastapi_app.dependency_overrides.clear()
 
 
 # ── Domain fixture factories ──────────────────────────────────
@@ -203,7 +229,7 @@ async def organizer(db: AsyncSession, organization: Organization) -> User:
     membership = UserOrganizationMembership(
         user_id=user.id,
         organization_id=organization.id,
-        role="organiser"
+        org_role="organiser"
     )
     db.add(membership)
     await db.flush()
@@ -228,7 +254,7 @@ async def super_admin(db: AsyncSession, organization: Organization) -> User:
     membership = UserOrganizationMembership(
         user_id=user.id,
         organization_id=organization.id,
-        role="super_admin"
+        org_role="super_admin"
     )
     db.add(membership)
     await db.flush()
@@ -350,7 +376,7 @@ async def session_speaker(
 
 def make_access_token(user: User) -> str:
     """Generate a real JWT for a user — used in Authorization headers."""
-    from app.modules.auth.services.auth_service import create_access_token
+    from app.modules.identity.services.auth_service import create_access_token
     return create_access_token(user)
 
 

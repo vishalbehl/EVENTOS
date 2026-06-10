@@ -24,9 +24,29 @@ conf-platform/
 ├── storage/                     # Shared files storage (Assets, PDFs, etc.)
 ├── tools/                       # Organized helper & audit scripts
 └── infrastructure/              # Kubernetes, Docker, and Nginx configs
-```
 
 ---
+
+## 💡 System Documentation & Architecture
+
+For a comprehensive understanding of the EventOS ecosystem, please refer to the following guides:
+
+* **[MASTER ARCHITECTURE](MASTER_ARCHITECTURE.md)** — **Start here.** High-level system overview, C4 diagrams, and core design principles.
+* **[Application Inventory](APPLICATION_INVENTORY.md)** — Exhaustive list of all portals, services, and shared packages.
+* **[Repository Structure](REPO_STRUCTURE.md)** — Monorepo folder responsibilities and architectural patterns.
+* **[Database Architecture](DATABASE_ARCHITECTURE.md)** — Schema deep-dive, ER diagrams, and multi-tenancy model.
+* **[API Inventory](API_INVENTORY.md)** — Complete list of endpoints, auth methods, and data models.
+* **[Auth Architecture](AUTH_ARCHITECTURE.md)** — Security implementation, roles, and tenant isolation.
+* **[File Processing Pipeline](FILE_PIPELINE.md)** — Technical lifecycle of uploaded materials from ingest to venue sync.
+* **[User Journeys](USER_JOURNEYS.md)** — Sequence diagrams for major business and operational processes.
+* **[Venue Architecture](VENUE_ARCHITECTURE.md)** — On-site edge-sync logic and offline resilience strategies.
+* **[User Roles](USER_ROLES.md)** — System and participant roles with associated permission matrices.
+* **[Trust Boundaries](TRUST_BOUNDARIES.md)** — Formal security architecture, trust zones, and communication channel mapping.
+* **[External Integrations](EXTERNAL_INTEGRATIONS.md)** — Third-party services, payment gateways, and cloud storage providers.
+* **[Architecture Gaps Analysis](ARCHITECTURE_GAPS.md)** — Identification of missing technical info, technical risks, and partially implemented features.
+
+---
+
 
 ## 2. Prerequisites
 

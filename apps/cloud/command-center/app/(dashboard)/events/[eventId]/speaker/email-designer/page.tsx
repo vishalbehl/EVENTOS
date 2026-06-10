@@ -1,7 +1,7 @@
 'use client'
 
 import { use } from 'react'
-import TemplateEditor from '@/components/emails/templates/TemplateEditor'
+import TemplateEditor from '@/components/organizer/emails/templates/TemplateEditor'
 
 export default function SpeakerEmailDesignerPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)

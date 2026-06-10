@@ -24,10 +24,10 @@ from app.modules.registration.services.portal_service import (
     update_attendee_details,
     _check_edits_locked,
 )
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
-from app.modules.registration.models.portal_otp_token import PortalOtpToken
+from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.routers.portal_auth import (
     _generate_otp,

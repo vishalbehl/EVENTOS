@@ -22,14 +22,14 @@ class FileIntegrityLog(Base):
     
     This table is IMMUTABLE (SQL trigger prevents UPDATE/DELETE).
     """
-    __tablename__ = "file_integrity_logs"
+    __tablename__ = "integrity_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="CASCADE"),
+        ForeignKey("presentations.files.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

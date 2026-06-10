@@ -39,8 +39,8 @@ from starlette.types import ASGIApp
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.models.audit_log import AuditLog
-from app.models.api_request_log import APIRequestLog
+from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.models.api_request_log import APIRequestLog
 
 
 # ── Route → entity type mapping ───────────────────────────────
@@ -231,7 +231,7 @@ class AuditLogMiddleware:
         async with AsyncSessionLocal() as db:
             # Verify user exists in the DB to avoid foreign key violations (e.g. on stale tokens)
             if user_id:
-                from app.modules.auth.models.user import User
+                from app.modules.identity.models.user import User
                 user_exists = await db.get(User, user_id)
                 if not user_exists:
                     user_id = None

@@ -8,8 +8,8 @@ from loguru import logger
 
 from app.database import AsyncSessionLocal
 from app.modules.rbac.services.rbac_service import RBACService
-from app.models.audit_log import AuditLog
-from app.modules.rbac.models.rbac import PermissionAuditLog
+from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.models.audit_domain_tables import PermissionAuditLog
 from datetime import datetime, timezone
 
 PERMISSION_MAPPING = [
@@ -115,7 +115,7 @@ class RBACMiddleware:
         method = request.method
 
         # Skip public paths
-        if path.startswith(("/auth/login", "/auth/refresh", "/health", "/docs", "/redoc", "/openapi.json")):
+        if path.startswith(("/auth/login", "/auth/signup", "/auth/check-slug", "/auth/accept-invite", "/auth/refresh", "/health", "/docs", "/redoc", "/openapi.json")):
             await self.app(scope, receive, send)
             return
 
@@ -146,7 +146,7 @@ class RBACMiddleware:
 
         async with AsyncSessionLocal() as db:
             # Check if user exists in DB first to handle stale tokens/JWTs (e.g. after DB wipe/reset)
-            from app.modules.auth.models.user import User
+            from app.modules.identity.models.user import User
             user = await db.get(User, user_id)
             if not user:
                 # User does not exist, let route-level auth dependencies return a proper 401
@@ -159,13 +159,13 @@ class RBACMiddleware:
                 logger.warning(f"RBAC Denied: user={user_id} perm={required_perm} scope={scope_id} path={path}")
                 # Audit the failure
                 fail_log = AuditLog(
-                    acting_user_id=user_id,
-                    action="PERMISSION_DENIED",
-                    entity_type="rbac",
-                    entity_id=user_id,
-                    new_values={"required_permission": required_perm, "path": path},
-                    severity="WARNING",
-                    ip_address=self._get_ip(request),
+                    actor_user_id=user_id,
+                    action_type="PERMISSION_DENIED",
+                    resource_type="rbac",
+                    resource_id=user_id,
+                    new_state={"required_permission": required_perm, "path": path},
+                    actor_ip=self._get_ip(request),
+                    is_sensitive=True,
                     occurred_at=datetime.now(timezone.utc)
                 )
                 db.add(fail_log)

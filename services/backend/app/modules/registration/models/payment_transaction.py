@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.models.participant_registration import ParticipantRegistration
     from app.modules.registration.models.promo_code import PromoCode
 
@@ -25,13 +25,13 @@ class PaymentTransaction(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     registration_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("participant_registrations.id", ondelete="SET NULL"),
+        ForeignKey("registration.registrations.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -51,7 +51,7 @@ class PaymentTransaction(Base):
     )
     promo_code_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("promo_codes.id", ondelete="SET NULL"),
+        ForeignKey("registration.promo_codes.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

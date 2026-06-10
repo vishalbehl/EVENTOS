@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
 from app.modules.registration.models.import_job import ImportJob
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.modules.registration.schemas.import_job import (
     ImportJobResponse, ImportPreviewResponse, ImportPreviewRow,
 )

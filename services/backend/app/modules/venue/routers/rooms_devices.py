@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
 from app.modules.venue.models.room_device import RoomDevice
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/events/{event_id}/rooms/{room_id}/devices", tags=["room-devices"])

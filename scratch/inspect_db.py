@@ -21,7 +21,7 @@ from docx.enum.text import WD_BREAK
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-DB_URL = os.getenv("DB_URL", "postgresql://postgres:847425@localhost:5432/conf_platform")
+DB_URL = os.getenv("DB_URL", "postgresql://postgres:847425@localhost:5432/eventos_db")
 
 CLR_HDR_BG = "1F3864"
 CLR_HDR_FG = "FFFFFF"

@@ -8,8 +8,8 @@ from openpyxl import Workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 from httpx import AsyncClient
 
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from tests.conftest import auth_headers
@@ -152,7 +152,7 @@ async def test_excel_import_disabled_category(
     organizer: User,
 ):
     # Set general category as disabled in event registration settings
-    from app.modules.rbac.models.event import Event as DBEvent
+    from app.modules.events.models.event import Event as DBEvent
     db_event = await db.get(DBEvent, event.id)
     db_event.registration_settings = {
         "disabled_categories": ["General Attendees"]

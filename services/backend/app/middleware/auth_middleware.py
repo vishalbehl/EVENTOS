@@ -43,6 +43,9 @@ _PUBLIC_PATH_PREFIXES = (
     "/openapi.json",
     "/ws",
     "/auth/login",
+    "/auth/signup",
+    "/auth/check-slug",
+    "/auth/accept-invite",
     "/auth/refresh",
     "/upload/",           # speaker upload portal token paths
     "/srr/checkin/",      # kiosk QR scan endpoint
@@ -86,7 +89,7 @@ class AuthMiddleware:
 
         # Request-level state initialization
         request = Request(scope)
-        self._attach_token_state(request)
+        await self._attach_token_state(request)
 
         async def send_wrapper(message: dict) -> None:
             if message["type"] == "http.response.start":
@@ -114,9 +117,9 @@ class AuthMiddleware:
 
         await self.app(scope, receive, send_wrapper)
 
-    def _attach_token_state(self, request: Request) -> None:
+    async def _attach_token_state(self, request: Request) -> None:
         """
-        Attempt to decode the Bearer token and attach claims to request.state.
+        Attempt to decode the Bearer token or API key and attach claims to request.state.
 
         Sets:
             request.state.user_id       → UUID | None
@@ -129,29 +132,74 @@ class AuthMiddleware:
         request.state.org_id = None
         request.state.token_valid = False
 
-        auth_header: Optional[str] = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return
+        # 1. API Key authentication via custom header
+        api_key = request.headers.get("X-API-Key")
 
-        token = auth_header[7:]
-        try:
-            payload = jwt.decode(
-                token,
-                settings.JWT_SECRET_KEY,
-                algorithms=[settings.JWT_ALGORITHM],
-                options={"verify_exp": True},
-            )
-            import uuid as _uuid
-            sub = payload.get("sub")
-            org = payload.get("org")
-            request.state.user_id = _uuid.UUID(sub) if sub else None
-            request.state.user_role = payload.get("role")
-            request.state.org_id = _uuid.UUID(org) if org else None
-            request.state.token_valid = True
-        except (JWTError, ValueError):
-            # Token invalid/expired — leave state as None
-            # The route-level dependency will return the proper 401
-            pass
+        # 2. Bearer token check
+        auth_header: Optional[str] = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            if token.startswith("evx_live_"):
+                api_key = token
+            else:
+                # Regular Bearer token, attempt JWT decoding first
+                try:
+                    payload = jwt.decode(
+                        token,
+                        settings.JWT_SECRET_KEY,
+                        algorithms=[settings.JWT_ALGORITHM],
+                        options={"verify_exp": True},
+                    )
+                    import uuid as _uuid
+                    sub = payload.get("sub")
+                    org = payload.get("org")
+                    request.state.user_id = _uuid.UUID(sub) if sub else None
+                    request.state.user_role = payload.get("role")
+                    request.state.org_id = _uuid.UUID(org) if org else None
+                    request.state.token_valid = True
+                    return
+                except (JWTError, ValueError):
+                    # If JWT fails, check if it's a developer OAuth2 access token in the database
+                    from app.database import AsyncSessionLocal
+                    from sqlalchemy import select, and_
+                    from app.modules.developer.models.developer_domain_tables import DeveloperOAuthToken
+                    from app.modules.identity.models.user import User
+
+                    async with AsyncSessionLocal() as db:
+                        stmt = (
+                            select(DeveloperOAuthToken, User.organization_id)
+                            .join(User, User.id == DeveloperOAuthToken.user_id)
+                            .where(
+                                and_(
+                                    DeveloperOAuthToken.access_token == token,
+                                    DeveloperOAuthToken.expires_at > datetime.now(timezone.utc)
+                                )
+                            )
+                        )
+                        res = await db.execute(stmt)
+                        row = res.first()
+                        if row:
+                            oauth_token, org_id = row
+                            request.state.org_id = org_id
+                            request.state.user_id = oauth_token.user_id
+                            request.state.user_role = "developer"
+                            request.state.token_valid = True
+                            return
+
+        # 3. Handle API Key validation if one was specified
+        if api_key:
+            from app.database import AsyncSessionLocal
+            from app.modules.developer.services.developer_service import DeveloperService
+            async with AsyncSessionLocal() as db:
+                resolved_org_id = await DeveloperService.validate_api_key(
+                    db, api_key, endpoint=request.url.path
+                )
+                if resolved_org_id:
+                    request.state.org_id = resolved_org_id
+                    request.state.user_id = None
+                    request.state.user_role = "developer"
+                    request.state.token_valid = True
+                    return
 
     @staticmethod
     def _get_ip(request: Request) -> str:

@@ -4,12 +4,12 @@ import { useEffect, useState, use } from 'react'
 import { getCampaigns, Campaign } from '@/services/email-service'
 import { apiClient } from '@/lib/api-client'
 
-import CampaignDashboard from '@/components/emails/dashboard/CampaignDashboard'
-import CampaignList from '@/components/emails/campaign/CampaignList'
-import CampaignDetail from '@/components/emails/campaign/CampaignDetail'
-import LogsTable from '@/components/emails/logs/LogsTable'
-import RegistrationCampaignBuilder from '@/components/emails/campaign/RegistrationCampaignBuilder'
-import AnnouncementsTab from '@/components/emails/AnnouncementsTab'
+import CampaignDashboard from '@/components/organizer/emails/dashboard/CampaignDashboard'
+import CampaignList from '@/components/organizer/emails/campaign/CampaignList'
+import CampaignDetail from '@/components/organizer/emails/campaign/CampaignDetail'
+import LogsTable from '@/components/organizer/emails/logs/LogsTable'
+import RegistrationCampaignBuilder from '@/components/organizer/emails/campaign/RegistrationCampaignBuilder'
+import AnnouncementsTab from '@/components/organizer/emails/AnnouncementsTab'
 
 type TabType =
   | 'dashboard'

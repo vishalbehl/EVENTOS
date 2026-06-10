@@ -15,7 +15,7 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
-import AddParticipantModal from "@/components/registration/AddParticipantModal";
+import AddParticipantModal from "@/components/organizer/registration/AddParticipantModal";
 
 interface Participant {
   id: string;

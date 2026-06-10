@@ -10,12 +10,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
-from app.modules.venue.models.attendance_log import AttendanceLog
+from app.modules.analytics.models.attendance_log import AttendanceLog
 from app.modules.registration.models.check_in import CheckIn
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.badge_models import Badge
-from app.modules.speakers.models.session import Session
-from app.modules.venue.models.capacity_rule import CapacityRule
+from app.modules.events.models.session import Session
+from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.venue.schemas.attendance import (
     CheckInRequest,
     CheckOutRequest,

@@ -12,14 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.config import settings
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.session_speaker import SessionSpeaker
+from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.badge_models import Badge, BadgeScan, BadgePrintJob
 from app.modules.registration.models.print_template import PrintTemplate
-from app.modules.venue.models.capacity_rule import CapacityRule
+from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.participant_role import ParticipantRole
-from app.modules.venue.models.attendance_log import AttendanceLog
+from app.modules.analytics.models.attendance_log import AttendanceLog
 from app.modules.registration.models.check_in import CheckIn
 from pydantic import BaseModel
 

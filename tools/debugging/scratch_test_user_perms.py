@@ -2,8 +2,8 @@
 import asyncio
 from sqlalchemy import select
 from app.database import AsyncSessionLocal
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from app.modules.rbac.services.rbac_service import RBACService
 
 async def main():

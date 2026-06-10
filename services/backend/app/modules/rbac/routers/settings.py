@@ -8,7 +8,7 @@ from app.dependencies import (
     get_db, get_current_user, get_current_event, CurrentEvent,
     require_roles, OrganizerOrAbove
 )
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.modules.rbac.schemas.settings import SettingsResponse, SettingsUpdate, LicenseInfo
 from app.schemas.common import MessageResponse
 

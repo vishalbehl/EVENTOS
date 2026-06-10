@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import get_db, get_current_event, CurrentEvent
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.check_in import CheckIn
-from app.modules.speakers.models.session import Session
+from app.modules.events.models.session import Session
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import (
@@ -189,7 +189,7 @@ async def insert_participants(
     default_source: str,
 ) -> tuple[int, int, int]:
     from sqlalchemy import select, func
-    from app.modules.venue.models.capacity_rule import CapacityRule
+    from app.modules.events.models.capacity_rule import CapacityRule
     from app.modules.registration.models.participant_registration import ParticipantRegistration
 
     inserted_count = 0
@@ -280,7 +280,7 @@ async def insert_participants(
 
     role_state: Dict[str, tuple[str, set[int], Optional[uuid.UUID], Optional[ParticipantRole]]] = {}
 
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
     event_obj = await db.get(Event, event_id)
@@ -390,7 +390,7 @@ async def list_participants(
     page_size: int = Query(250, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
 ) -> List[ParticipantResponse]:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
     event_obj = await db.get(Event, event.id)
@@ -497,7 +497,7 @@ async def create_participant(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
     event_obj = await db.get(Event, event.id)
@@ -686,7 +686,7 @@ async def import_participants_excel(
 
         # 1. Fetch allowed categories/roles for the event
         from app.modules.registration.models.participant_role import ParticipantRole
-        from app.modules.rbac.models.event import Event
+        from app.modules.events.models.event import Event
         
         event_obj = await db.get(Event, event.id)
         reg_settings = event_obj.registration_settings or {}
@@ -1004,7 +1004,7 @@ async def update_participant(
             setattr(p, field, value)
 
     # Check ticket pricing rules to set paid_status automatically if role is free
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
     event_obj = await db.get(Event, event.id)
@@ -1290,7 +1290,7 @@ async def fetch_participants_from_speakers(
     Fetch all speakers and add them as participants with 'Unpaid' paid_status and 'Speaker' role
     if their email or name is not already registered as a participant, and update the speaker's regno.
     """
-    from app.modules.speakers.models.speaker import Speaker
+    from app.modules.events.models.speaker import Speaker
 
     # 1. Get all speakers for the event
     speakers_stmt = select(Speaker).where(Speaker.event_id == event.id)
@@ -1316,7 +1316,7 @@ async def fetch_participants_from_speakers(
     role_id = role_obj.id if role_obj else None
 
     # Get active pricing to determine paid_status for imported speakers
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
     event_obj = await db.get(Event, event.id)

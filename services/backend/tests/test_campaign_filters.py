@@ -3,10 +3,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from app.modules.notifications.models.email_campaign import EmailCampaign
-from app.modules.notifications.models.email_template import EmailTemplate
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.email_template import EmailTemplate
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 
 @pytest.fixture
 async def email_template(db: AsyncSession, event: Event) -> EmailTemplate:

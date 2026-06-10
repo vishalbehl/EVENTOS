@@ -9,10 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.venue.models.srr_station import SRRStation
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.auth.models.user import User
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.identity.models.user import User
     from app.modules.presentations.models.presentation_file import PresentationFile
 
 
@@ -21,10 +21,10 @@ class VenueActivityLog(Base):
     Renamed and extended from SRRActivityLog.
     Covers the full venue intake/presentation workflow with device/session correlation.
     """
-    __tablename__ = "venue_activity_logs"
+    __tablename__ = "activity_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # ── Correlation ──────────────────────────────────────
     correlation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
@@ -32,10 +32,10 @@ class VenueActivityLog(Base):
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
     
     # ── Context ──────────────────────────────────────────
-    station_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("srr_stations.id", ondelete="SET NULL"), nullable=True, index=True)
-    speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True)
-    performed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    file_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("presentation_files.id", ondelete="SET NULL"), nullable=True)
+    station_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("venue.srr_stations.id", ondelete="SET NULL"), nullable=True, index=True)
+    speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.speakers.id", ondelete="SET NULL"), nullable=True, index=True)
+    performed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
+    file_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("presentations.files.id", ondelete="SET NULL"), nullable=True)
 
     # ── Actions ──────────────────────────────────────────
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

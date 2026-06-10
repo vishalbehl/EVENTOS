@@ -30,7 +30,7 @@ class FileValidation(Base):
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="CASCADE"),
+        ForeignKey("presentations.files.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,        # Enforces one-to-one with presentation_files
         index=True,

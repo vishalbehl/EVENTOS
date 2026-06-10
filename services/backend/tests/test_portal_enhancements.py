@@ -8,11 +8,11 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.payment_transaction import PaymentTransaction
-from app.modules.registration.models.portal_otp_token import PortalOtpToken
+from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.registration.routers.portal_auth import _issue_portal_jwt
 
 
@@ -30,7 +30,7 @@ async def test_get_dashboard_data_unapproved(
     db.add(event)
     await db.flush()
 
-    from app.modules.notifications.models.announcement import Announcement
+    from app.modules.communications.models.announcement import Announcement
     ann1 = Announcement(
         id=uuid.uuid4(),
         event_id=event.id,

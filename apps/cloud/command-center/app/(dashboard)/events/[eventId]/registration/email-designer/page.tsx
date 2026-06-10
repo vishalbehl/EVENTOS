@@ -1,7 +1,7 @@
 'use client'
 
 import { use } from 'react'
-import RegistrationTemplateEditor from '@/components/emails/templates/RegistrationTemplateEditor'
+import RegistrationTemplateEditor from '@/components/organizer/emails/templates/RegistrationTemplateEditor'
 
 export default function EmailDesignerPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)

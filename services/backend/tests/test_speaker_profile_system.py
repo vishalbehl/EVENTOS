@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.speaker import Speaker
 from app.modules.speakers.routers.portal import calculate_profile_completeness
 from app.modules.speakers.services import profile_parser
 

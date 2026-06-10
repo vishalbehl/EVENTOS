@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from app.modules.rbac.models.event import Event
-from app.modules.auth.models.user import User
+from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from tests.conftest import auth_headers
 
 

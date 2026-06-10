@@ -2,7 +2,7 @@ import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 def reset_database():
-    db_name = "conf_platform"
+    db_name = "eventos_db"
     # Connect to the default 'postgres' database to perform administrative tasks
     conn = psycopg2.connect(
         dbname="postgres",

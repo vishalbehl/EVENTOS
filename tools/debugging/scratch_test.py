@@ -1,4 +1,4 @@
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.speaker import Speaker
 import uuid
 
 sp = Speaker(

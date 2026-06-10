@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, require_roles
-from app.modules.auth.models.user import User
-from app.modules.rbac.models.system_setting import SystemSetting
+from app.modules.identity.models.user import User
+from app.modules.platform.models.system_setting import SystemSetting
 from app.modules.rbac.schemas.settings import GlobalSettingsResponse, GlobalSettingsUpdate
 from app.services.timezone_service import set_cached_timezone, get_cached_timezone
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { use } from 'react'
-import ThemeTab from '@/components/registration/settings/ThemeTab'
+import ThemeTab from '@/components/organizer/registration/settings/ThemeTab'
 
 export default function ThemePage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise)

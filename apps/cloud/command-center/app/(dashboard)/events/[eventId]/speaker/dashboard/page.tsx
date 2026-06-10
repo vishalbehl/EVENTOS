@@ -25,13 +25,13 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/Tooltip";
 import { cn, getFallbackTimezone, getTimezoneAbbrev } from "@/lib/utils";
-import { PermissionGate } from "@/components/auth/PermissionGate";
+import { PermissionGate } from "@/components/organizer/auth/PermissionGate";
 import { PERMISSIONS } from "@/lib/permissions";
 
-import { DailyUploadsChart } from "@/components/dashboard/DailyUploadsChart";
-import { RoomReadinessChart } from "@/components/dashboard/RoomReadinessChart";
-import { ReadinessHeatmap } from "@/components/dashboard/ReadinessHeatmap";
-import { ScheduleImportModal } from "@/components/events/ScheduleImportModal";
+import { DailyUploadsChart } from "@/components/organizer/dashboard/DailyUploadsChart";
+import { RoomReadinessChart } from "@/components/organizer/dashboard/RoomReadinessChart";
+import { ReadinessHeatmap } from "@/components/organizer/dashboard/ReadinessHeatmap";
+import { ScheduleImportModal } from "@/components/organizer/events/ScheduleImportModal";
 
 // Recharts imports
 import {

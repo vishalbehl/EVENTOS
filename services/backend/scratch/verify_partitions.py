@@ -1,5 +1,5 @@
 import psycopg2
-conn = psycopg2.connect(dbname='conf_platform', user='postgres', password='847425', host='localhost', port=5432)
+conn = psycopg2.connect(dbname='eventos_db', user='postgres', password='847425', host='localhost', port=5432)
 cur = conn.cursor()
 cur.execute("SELECT schemaname, tablename FROM pg_tables WHERE tablename LIKE 'audit_logs%' ORDER BY tablename")
 rows = cur.fetchall()

@@ -10,14 +10,14 @@ class RegistrationFormConfig(Base):
     Configuration for public registration forms per event.
     Stores toggles for default fields and configurations for custom fields.
     """
-    __tablename__ = "registration_form_configs"
+    __tablename__ = "registration_forms"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
         index=True,

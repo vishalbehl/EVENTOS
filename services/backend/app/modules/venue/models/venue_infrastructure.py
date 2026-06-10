@@ -13,7 +13,7 @@ class VenueNetworkEvent(Base):
     Monitoring for local venue infrastructure stability.
     Detects packet loss, bandwidth spikes, and connectivity drops.
     """
-    __tablename__ = "venue_network_events"
+    __tablename__ = "network_events"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     venue_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
@@ -39,7 +39,7 @@ class VenueSecurityEvent(Base):
     Physical and OS-level security monitoring for venue hardware.
     Detects unauthorized access, USB tampering, and kiosk escapes.
     """
-    __tablename__ = "venue_security_events"
+    __tablename__ = "device_security"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
@@ -61,7 +61,7 @@ class SyncTransferLog(Base):
     Detailed analytics for every file synchronized between Cloud and Venue.
     Used for bandwidth optimization and corruption detection.
     """
-    __tablename__ = "sync_transfer_logs"
+    __tablename__ = "sync_history"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)

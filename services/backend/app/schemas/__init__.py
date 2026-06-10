@@ -3,7 +3,7 @@
 # Pydantic v2 schemas — re-exports from all schema modules.
 # =============================================================
 
-from app.modules.auth.schemas.auth import (
+from app.modules.identity.schemas.auth import (
     LoginRequest, TokenResponse, RefreshRequest,
     ChangePasswordRequest, UserMeResponse,
 )

@@ -476,35 +476,35 @@ def generate_re_exporters(dry):
 # before alembic or create_all is called.
 # =============================================================
 
-from app.modules.rbac.models.organization import Organization
-from app.modules.auth.models.user import User
+from app.modules.platform.models.organization import Organization
+from app.modules.identity.models.user import User
 from app.modules.rbac.models.user_assignment import UserEventAssignment
-from app.modules.rbac.models.event import Event
-from app.modules.venue.models.room import Room
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.speakers.models.session_speaker import SessionSpeaker
+from app.modules.events.models.event import Event
+from app.modules.events.models.room import Room
+from app.modules.events.models.session import Session
+from app.modules.events.models.speaker import Speaker
+from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.models.file_validation import FileValidation
 from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
 from app.modules.notifications.models.notification_event import NotificationEvent
-from app.modules.notifications.models.email_template import EmailTemplate
-from app.modules.notifications.models.email_campaign import EmailCampaign
-from app.modules.notifications.models.email_log import EmailLog
+from app.modules.communications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.communications.models.email_log import EmailLog
 from app.modules.registration.models.import_job import ImportJob
 from app.modules.venue.models.srr_station import SRRStation
 from app.modules.venue.models.srr_checkin import SRRCheckin
 from app.modules.venue.models.venue_activity_log import VenueActivityLog
-from app.modules.venue.models.room_device import RoomDevice
-from app.modules.presentations.models.presentation_queue import PresentationQueue
-from app.modules.presentations.models.playback_event import PlaybackEvent
+from app.modules.events.models.room_device import RoomDevice
+from app.modules.venue.models.presentation_queue import PresentationQueue
+from app.modules.venue.models.playback_event import PlaybackEvent
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.models.audit_log import AuditLog
 from app.modules.presentations.models.poster import Poster
-from app.modules.auth.models.refresh_token import RefreshToken
+from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.notifications.models.webhook import Webhook
 from app.modules.presentations.models.presentation_bundle import BundleFile, PresentationBundle
-from app.modules.auth.models.security_event import SecurityEvent, SystemErrorLog
+from app.modules.identity.models.security_event import SecurityEvent, SystemErrorLog
 from app.models.api_request_log import APIRequestLog, WorkerJobLog
 from app.modules.venue.models.venue_telemetry import DeviceHeartbeat, RoomRuntimeEvent, WebsocketEvent
 from app.modules.venue.models.venue_infrastructure import VenueNetworkEvent, VenueSecurityEvent, SyncTransferLog
@@ -516,9 +516,9 @@ from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.participant_registration import ParticipantRegistration
-from app.modules.venue.models.capacity_rule import CapacityRule
+from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.badge_models import Printer, Badge, BadgeHistory, BadgePrintJob, BadgeScan
-from app.modules.venue.models.attendance_log import AttendanceLog
+from app.modules.analytics.models.attendance_log import AttendanceLog
 
 __all__ = [
     "Organization", "User", "Event", "Room", "Session",
@@ -787,8 +787,8 @@ def update_python_imports(dry):
                 
                 # Replace imports
                 for old_imp, new_imp in sorted_map:
-                    # Replace e.g., 'from app.modules.auth.models.user import' -> 'from app.modules.auth.models.user import'
-                    # Replace 'import app.modules.auth.models.user' -> 'import app.modules.auth.models.user'
+                    # Replace e.g., 'from app.modules.identity.models.user import' -> 'from app.modules.identity.models.user import'
+                    # Replace 'import app.modules.identity.models.user' -> 'import app.modules.identity.models.user'
                     content = content.replace(old_imp, new_imp)
                     
                 if content != original:
@@ -856,7 +856,7 @@ FastAPI backend packages were moved under `app/modules/<domain>/` with subdirect
 * **rbac**: user assignments and settings
 
 ## Import & Config Re-wiring
-* Python imports were automatically updated from `app.modules.auth.models.user` to `app.modules.auth.models.user`, etc.
+* Python imports were automatically updated from `app.modules.identity.models.user` to `app.modules.identity.models.user`, etc.
 * Root `package.json` workspaces were updated to reflect the new structure.
 * Alembic environment and migrations remain intact and compatible.
 

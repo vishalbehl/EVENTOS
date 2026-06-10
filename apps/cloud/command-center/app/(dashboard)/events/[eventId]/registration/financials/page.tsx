@@ -16,9 +16,9 @@ import { toast } from "sonner";
 import { apiGet, apiPatch } from "@/lib/api-client";
 
 // Import financial tab sub-components
-import PricingTab from "@/components/registration/financials/PricingTab";
-import PaymentsTab from "@/components/registration/financials/PaymentsTab";
-import PromosTab from "@/components/registration/financials/PromosTab";
+import PricingTab from "@/components/organizer/registration/financials/PricingTab";
+import PaymentsTab from "@/components/organizer/registration/financials/PaymentsTab";
+import PromosTab from "@/components/organizer/registration/financials/PromosTab";
 
 interface Participant {
   id: string;

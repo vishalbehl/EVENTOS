@@ -59,11 +59,11 @@ def generate_event_summary_report(self, event_id: str, requested_by_user_id: str
 
     with get_db_session() as db:
         try:
-            from app.modules.rbac.models.event import Event
-            from app.modules.speakers.models.session import Session
-            from app.modules.speakers.models.speaker import Speaker
+            from app.modules.events.models.event import Event
+            from app.modules.events.models.session import Session
+            from app.modules.events.models.speaker import Speaker
             from app.modules.presentations.models.presentation_file import PresentationFile
-            from app.modules.speakers.models.session_speaker import SessionSpeaker
+            from app.modules.events.models.session_speaker import SessionSpeaker
         except ImportError as e:
             return {"generated": False, "error": str(e)}
 
@@ -160,7 +160,7 @@ def generate_event_summary_report(self, event_id: str, requested_by_user_id: str
     # Notify requester
     with get_db_session() as db:
         try:
-            from app.modules.auth.models.user import User
+            from app.modules.identity.models.user import User
             user = db.get(User, uuid.UUID(requested_by_user_id))
             if user and user.email:
                 send_email.delay(
@@ -201,9 +201,9 @@ def generate_session_readiness_csv(event_id: str) -> dict:
 
     with get_db_session() as db:
         try:
-            from app.modules.speakers.models.session import Session
-            from app.modules.speakers.models.session_speaker import SessionSpeaker
-            from app.modules.speakers.models.speaker import Speaker
+            from app.modules.events.models.session import Session
+            from app.modules.events.models.session_speaker import SessionSpeaker
+            from app.modules.events.models.speaker import Speaker
             from app.modules.presentations.models.presentation_file import PresentationFile
         except ImportError as e:
             return {"generated": False, "error": str(e)}

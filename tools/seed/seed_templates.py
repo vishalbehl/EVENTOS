@@ -2,7 +2,7 @@ import os
 import uuid
 from sqlalchemy import select
 from app.database import SessionLocal, engine
-from app.modules.notifications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_template import EmailTemplate
 
 # Load premium templates
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

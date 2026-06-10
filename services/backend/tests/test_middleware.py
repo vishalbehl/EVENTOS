@@ -100,7 +100,7 @@ class TestAuditLogActionDerivation:
 class TestJWTExtraction:
 
     def test_extract_user_from_valid_jwt(self, organizer):
-        from app.modules.auth.services.auth_service import create_access_token
+        from app.modules.identity.services.auth_service import create_access_token
         token = create_access_token(organizer)
         user_id = _extract_user_from_jwt(f"Bearer {token}")
         assert user_id == organizer.id

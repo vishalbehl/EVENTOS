@@ -18,11 +18,11 @@ from typing import Any, Optional
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.payment_transaction import PaymentTransaction
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.speaker import Speaker
 
 
 @dataclass
@@ -135,7 +135,7 @@ async def get_dashboard_data(
     config = (await db.execute(config_stmt)).scalar_one_or_none()
     is_live = config.is_live if config else True
 
-    from app.modules.notifications.models.announcement import Announcement
+    from app.modules.communications.models.announcement import Announcement
     from sqlalchemy import or_
 
     now_time = datetime.now(timezone.utc)

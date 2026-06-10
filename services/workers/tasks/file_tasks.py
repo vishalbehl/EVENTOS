@@ -350,3 +350,69 @@ def _mark_failed(db: Session, pf: PresentationFile, reason: str) -> None:
     )
     db.add(fv)
     db.commit()
+
+
+@app.task(
+    bind=True,
+    name="workers.tasks.file_tasks.scan_file_for_viruses",
+    max_retries=3,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def scan_file_for_viruses(self, asset_id: str) -> dict:
+    """
+    Downloads the file from storage and simulates a ClamAV scan.
+    Flags standard eicar threat files.
+    """
+    asset_uuid = uuid.UUID(asset_id)
+    logger.info(f"[virus-scan] Starting scan for asset {asset_id}")
+
+    from app.modules.files.models.file import Asset, VirusScan
+    from workers.db import get_db_session
+    from workers.lib.r2_client import r2
+
+    with get_db_session() as db:
+        asset: Asset | None = db.get(Asset, asset_uuid)
+        if asset is None:
+            logger.error(f"[virus-scan] Asset {asset_id} not found.")
+            return {"error": "Asset not found."}
+
+        # Create VirusScan record as pending
+        scan = VirusScan(
+            id=uuid.uuid4(),
+            asset_id=asset_uuid,
+            status="pending",
+            scanned_at=datetime.now(timezone.utc),
+        )
+        db.add(scan)
+        db.commit()
+
+        try:
+            # Download file bytes
+            data = r2.download_bytes(settings.S3_BUCKET_ASSETS, asset.file_path)
+        except Exception as exc:
+            scan.status = "error"
+            scan.scan_result = f"Download failed: {exc}"
+            db.commit()
+            raise self.retry(exc=exc)
+
+        # Look for standard eicar signature
+        eicar_signature = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+        if eicar_signature in data or b"eicar" in asset.name.lower().encode() or b"virus" in asset.name.lower().encode():
+            scan.status = "infected"
+            scan.scan_result = "Threat detected: EICAR Standard Antivirus Test Signature"
+            logger.warning(f"[virus-scan] Asset {asset_id} is INFECTED!")
+        else:
+            scan.status = "clean"
+            scan.scan_result = "Scan complete. No threats detected."
+            logger.info(f"[virus-scan] Asset {asset_id} is clean.")
+
+        scan.scanned_at = datetime.now(timezone.utc)
+        db.commit()
+
+        return {
+            "asset_id": asset_id,
+            "status": scan.status,
+            "result": scan.scan_result,
+        }
+

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent, OrganizerOrAbove
 from app.modules.presentations.models.poster import Poster
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.modules.presentations.schemas.poster import (
     PosterCreate, PosterUpdate, PosterResponse,
     PosterReviewRequest, PosterScheduleRequest,
@@ -56,8 +56,8 @@ async def list_posters(
     page_size: int = Query(50, ge=1, le=200),
 ) -> List[PosterResponse]:
     """List ePosters for this event. Supports filtering by status and screen."""
-    from app.modules.speakers.models.speaker import Speaker
-    from app.modules.speakers.models.session import Session
+    from app.modules.events.models.speaker import Speaker
+    from app.modules.events.models.session import Session
     from sqlalchemy import or_
 
     q = select(Poster, Speaker.first_name, Speaker.last_name, Speaker.email).outerjoin(Speaker, Poster.speaker_id == Speaker.id).where(Poster.event_id == event.id)
@@ -186,7 +186,7 @@ async def get_poster(
 ) -> PosterResponse:
     poster = await _get_poster_or_404(db, poster_id, event.id, user=current_user)
     
-    from app.modules.speakers.models.speaker import Speaker
+    from app.modules.events.models.speaker import Speaker
     # We still need the speaker name and email for the response
     q = select(Speaker.first_name, Speaker.last_name, Speaker.email).where(Speaker.id == poster.speaker_id)
     result = await db.execute(q)
@@ -513,7 +513,7 @@ async def batch_approve_posters(
     # Enforce assignments for restricted roles
     if current_user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         from app.modules.rbac.models.user_assignment import UserEventAssignment
         from sqlalchemy import or_, and_
 
@@ -627,7 +627,7 @@ async def batch_update_posters_status(
     # Enforce assignments for restricted roles
     if current_user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         from app.modules.rbac.models.user_assignment import UserEventAssignment
         from sqlalchemy import or_, and_
 
@@ -692,7 +692,7 @@ async def batch_delete_posters(
     # Enforce assignments for restricted roles
     if user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         from app.modules.rbac.models.user_assignment import UserEventAssignment
         from sqlalchemy import or_, and_
 
@@ -754,7 +754,7 @@ async def _get_poster_or_404(
     # Enforce assignments for restricted roles
     if user and user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.speakers.models.session import Session
+        from app.modules.events.models.session import Session
         from sqlalchemy import or_, and_
 
         # Check if assigned to the event, or the specific session/room of this poster

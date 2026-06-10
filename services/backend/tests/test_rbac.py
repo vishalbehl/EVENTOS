@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from httpx import AsyncClient
 
 from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, ScopedPermission
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.modules.rbac.services.rbac_service import RBACService
 
 @pytest.mark.asyncio
@@ -113,8 +113,8 @@ async def test_scoped_permission_override(db: AsyncSession, organization):
 @pytest.mark.asyncio
 async def test_rbac_middleware_enforcement(client: AsyncClient, db: AsyncSession, organization):
     # 1. Create a JWT token for a user that does not exist in the database (stale token)
-    from app.modules.auth.services.auth_service import create_access_token
-    from app.modules.auth.models.user import User
+    from app.modules.identity.services.auth_service import create_access_token
+    from app.modules.identity.models.user import User
     
     stale_user = User(
         id=uuid.uuid4(),

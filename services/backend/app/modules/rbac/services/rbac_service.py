@@ -9,7 +9,7 @@ from app.modules.rbac.models.rbac import (
     Role, Permission, RolePermission, UserRoleAssignment, 
     ScopedPermission, RoleInheritanceMap, UserAccessNode
 )
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 
 class RBACService:
     @staticmethod
@@ -86,8 +86,8 @@ class RBACService:
         
         if event_id:
             # Check for direct event assignment OR child node assignments (Room/Session)
-            from app.modules.venue.models.room import Room
-            from app.modules.speakers.models.session import Session
+            from app.modules.events.models.room import Room
+            from app.modules.events.models.session import Session
 
             room_subquery = select(Room.id).where(Room.event_id == event_id)
             session_subquery = select(Session.id).where(Session.event_id == event_id)

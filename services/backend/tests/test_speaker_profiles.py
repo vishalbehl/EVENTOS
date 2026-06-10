@@ -7,8 +7,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.speakers.models.speaker_profile import SpeakerProfile
+from app.modules.events.models.speaker import Speaker
+from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
 
 

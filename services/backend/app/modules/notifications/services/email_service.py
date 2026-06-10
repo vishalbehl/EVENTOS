@@ -17,9 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.modules.notifications.models.email_log import EmailLog
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.notifications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_log import EmailLog
+from app.modules.events.models.speaker import Speaker
+from app.modules.communications.models.email_template import EmailTemplate
 
 # Initialise the Resend client once at import time
 resend.api_key = settings.RESEND_API_KEY
@@ -586,8 +586,8 @@ async def send_file_approved(
         return
 
     from sqlalchemy import or_, select
-    from app.modules.notifications.models.email_template import EmailTemplate
-    from app.modules.notifications.models.email_campaign import EmailCampaign
+    from app.modules.communications.models.email_template import EmailTemplate
+    from app.modules.communications.models.email_campaign import EmailCampaign
 
     # Find the visual template of type "approval"
     res_tpl = await db.execute(
@@ -640,8 +640,8 @@ async def send_file_rejected(
         return
 
     from sqlalchemy import or_, select
-    from app.modules.notifications.models.email_template import EmailTemplate
-    from app.modules.notifications.models.email_campaign import EmailCampaign
+    from app.modules.communications.models.email_template import EmailTemplate
+    from app.modules.communications.models.email_campaign import EmailCampaign
 
     # Find the visual template of type "rejection"
     res_tpl = await db.execute(

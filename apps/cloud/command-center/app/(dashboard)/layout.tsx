@@ -11,6 +11,7 @@ import { Header } from "@/components/layout/Header";
 import { cn } from "@/lib/utils";
 import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiFloatingAssistant } from "@/components/ui/AiFloatingAssistant";
 
 export default function DashboardLayout({
   children,
@@ -26,12 +27,14 @@ export default function DashboardLayout({
   const { isAuthenticated, accessToken, user, setAuth, logout, hasHydrated } = useAuthStore();
   const isSidebarCollapsed = useUIStore((state) => state.isSidebarCollapsed);
   const [hydrated, setHydrated] = useState(false);
+  const [impersonatingOrg, setImpersonatingOrg] = useState<string | null>(null);
 
   // Initialize WebSockets
   useSocket();
 
   useEffect(() => {
     setHydrated(true);
+    setImpersonatingOrg(localStorage.getItem("eventos_impersonating_org"));
     const fetchGlobalSettings = async () => {
       try {
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/global-settings`);
@@ -49,6 +52,16 @@ export default function DashboardLayout({
     };
     fetchGlobalSettings();
   }, []);
+
+  const exitImpersonation = () => {
+    const originalToken = localStorage.getItem("eventos_original_token");
+    localStorage.removeItem("eventos_original_token");
+    localStorage.removeItem("eventos_impersonating_org");
+    if (originalToken && user) {
+      setAuth(user, originalToken, useAuthStore.getState().refreshToken || undefined, useAuthStore.getState().rememberMe);
+    }
+    window.location.reload();
+  };
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -210,12 +223,19 @@ export default function DashboardLayout({
         )}
       >
         <Header />
+        {impersonatingOrg && (
+          <div className="mx-4 mt-4 md:mx-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-100 flex items-center justify-between">
+            <span>Viewing as {impersonatingOrg}</span>
+            <button onClick={exitImpersonation} className="text-[10px] font-black uppercase tracking-widest text-amber-200 hover:text-white">Exit impersonation</button>
+          </div>
+        )}
         <div className="flex-1 min-h-0 px-4 py-5 md:px-6 flex flex-col">
           <div className="flex-1 rounded-[14px] border border-default bg-[color-mix(in_srgb,var(--base)_80%,transparent)] p-5 shadow-[0_24px_80px_color-mix(in_srgb,var(--base)_28%,transparent)] backdrop-blur-md md:p-6 flex flex-col min-h-0 overflow-y-auto custom-scrollbar">
             {content}
           </div>
         </div>
       </main>
+      <AiFloatingAssistant />
     </div>
   );
 }

@@ -19,7 +19,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
-from app.modules.notifications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_template import EmailTemplate
 
 # ── Absolute path to the templates folder ─────────────────────────────────────
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "templates"

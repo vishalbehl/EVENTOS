@@ -19,7 +19,7 @@ def set_cached_timezone(tz: str) -> None:
 async def fetch_system_timezone_async(db: AsyncSession) -> str:
     """Query system settings for timezone asynchronously and update cache."""
     try:
-        from app.modules.rbac.models.system_setting import SystemSetting
+        from app.modules.platform.models.system_setting import SystemSetting
         result = await db.execute(select(SystemSetting).where(SystemSetting.key == "timezone"))
         setting = result.scalar_one_or_none()
         if setting:
@@ -32,7 +32,7 @@ async def fetch_system_timezone_async(db: AsyncSession) -> str:
 def fetch_system_timezone_sync(db: Session) -> str:
     """Query system settings for timezone synchronously and update cache."""
     try:
-        from app.modules.rbac.models.system_setting import SystemSetting
+        from app.modules.platform.models.system_setting import SystemSetting
         setting = db.query(SystemSetting).filter(SystemSetting.key == "timezone").first()
         if setting:
             set_cached_timezone(setting.value)

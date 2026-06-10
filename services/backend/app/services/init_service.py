@@ -4,9 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.database import AsyncSessionLocal
-from app.modules.auth.models.user import User
-from app.modules.rbac.models.organization import Organization
-from app.modules.auth.services.auth_service import hash_password
+from app.modules.identity.models.user import User
+from app.modules.platform.models.organization import Organization
+from app.modules.identity.services.auth_service import hash_password
 
 from app.modules.rbac.models.rbac import Role, Permission, RolePermission
 
@@ -274,7 +274,7 @@ async def ensure_rbac_defaults():
 
 async def ensure_event_settings_defaults(db: AsyncSession):
     """Scan all events and ensure they have registration and speaker theme settings seeded with defaults."""
-    from app.modules.rbac.models.event import Event
+    from app.modules.events.models.event import Event
     from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
     from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting, DEFAULT_SPEAKER_TERMS, DEFAULT_SPEAKER_FAQS
     from app.modules.registration.routers.registration_portal import DEFAULT_TERMS, DEFAULT_FAQS
@@ -319,6 +319,123 @@ async def ensure_event_settings_defaults(db: AsyncSession):
         logger.info("Database default templates and FAQ/Terms settings auto-seeded/synced.")
 
 
+async def ensure_plans_and_features():
+    """Seed the database with default subscription plans and features."""
+    from app.modules.platform.models.feature import FeatureCatalog
+    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature
+    
+    async with AsyncSessionLocal() as db:
+        try:
+            # 1. Seed Feature Catalog
+            features = [
+                # Registration
+                {"key": "ADV_REG_APPROVALS", "name": "Advanced Registrations Approvals", "category": "Registration", "description": "Manage approval queues, waitlists, and registration queue status."},
+                {"key": "ADV_BADGE_PRINTING", "name": "Advanced Badge Printing", "category": "Registration", "description": "Generate, manage, print and reprint participant badges onsite."},
+                {"key": "ADV_REPORTING", "name": "Advanced Reports & Financials", "category": "Registration", "description": "Access financial transactions, custom Excel exports and analytics dashboards."},
+                # Speaker Management
+                {"key": "ADV_PRESENTATION_WORKFLOW", "name": "Advanced Speaker Presentation Workflow", "category": "Speaker Management", "description": "Enable speaker profile portals, uploading talk slides/videos, and administrative file approval queues."},
+                {"key": "ADV_POSTERS", "name": "E-Poster & Digital Posters Management", "category": "Speaker Management", "description": "Manage digital poster uploads, categories, and interactive terminal display formats."},
+                {"key": "ADV_SCIENTIFIC_PROGRAM", "name": "Scientific Session Schedule & Rooms Builder", "category": "Speaker Management", "description": "Build multi-track schedules, room configurations, and sync speaker allocations."},
+                # Enterprise
+                {"key": "ENT_API_ACCESS", "name": "Enterprise API Keys", "category": "Enterprise", "description": "Provision developer API keys and configure custom rate limits for external integrations."},
+                {"key": "ENT_SSO", "name": "Single Sign-On (SSO) Integrations", "category": "Enterprise", "description": "Integrate third-party SAML/OIDC identity providers for single sign-on security."},
+                {"key": "ENT_SPONSOR_MGMT", "name": "Sponsor Management Module", "category": "Enterprise", "description": "Manage sponsors, delegate deliverables, build interactive booths, and invoice packages."},
+                {"key": "ENT_AI_TOOLS", "name": "AI Assistant & Auto-scheduling tools", "category": "Enterprise", "description": "Leverage generative AI for prompt builders, message drafts, and scheduling assistants."},
+                # Addon
+                {"key": "ADDON_VENUE_OPERATIONS", "name": "Onsite Venue Edge Sync & SRR Kiosks", "category": "Add-ons", "description": "Sync offline room playback devices and SRR kiosks with the platform edge database."},
+            ]
+            
+            existing_feats_res = await db.execute(select(FeatureCatalog.key))
+            existing_feats = set(existing_feats_res.scalars().all())
+            
+            for f_data in features:
+                if f_data["key"] not in existing_feats:
+                    feat = FeatureCatalog(
+                        key=f_data["key"],
+                        name=f_data["name"],
+                        category=f_data["category"],
+                        description=f_data["description"]
+                    )
+                    db.add(feat)
+            
+            await db.flush()
+            
+            # Fetch all features to get their IDs
+            feat_res = await db.execute(select(FeatureCatalog))
+            all_feats = {f.key: f for f in feat_res.scalars().all()}
+            
+            # 2. Seed Default Plans
+            plans = [
+                {
+                    "name": "Starter",
+                    "description": "Perfect for small events and basic registration.",
+                    "max_events": 3,
+                    "max_users": 3,
+                    "max_registrations": 200,
+                    "max_rooms": 3,
+                    "storage_quota_mb": 2048, # 2 GB
+                    "features": []
+                },
+                {
+                    "name": "Professional",
+                    "description": "For scaling events needing advanced workflows and badge printing.",
+                    "max_events": 10,
+                    "max_users": 10,
+                    "max_registrations": 2000,
+                    "max_rooms": 15,
+                    "storage_quota_mb": 10240, # 10 GB
+                    "features": [
+                        "ADV_REG_APPROVALS", "ADV_BADGE_PRINTING", "ADV_REPORTING",
+                        "ADV_PRESENTATION_WORKFLOW", "ADV_POSTERS", "ADV_SCIENTIFIC_PROGRAM"
+                    ]
+                },
+                {
+                    "name": "Enterprise",
+                    "description": "Full control, advanced security, API access, and integrations.",
+                    "max_events": 100,
+                    "max_users": 50,
+                    "max_registrations": 100000,
+                    "max_rooms": 100,
+                    "storage_quota_mb": 102400, # 100 GB
+                    "features": [
+                        "ADV_REG_APPROVALS", "ADV_BADGE_PRINTING", "ADV_REPORTING",
+                        "ADV_PRESENTATION_WORKFLOW", "ADV_POSTERS", "ADV_SCIENTIFIC_PROGRAM",
+                        "ENT_API_ACCESS", "ENT_SSO", "ENT_SPONSOR_MGMT", "ENT_AI_TOOLS"
+                    ]
+                }
+            ]
+            
+            existing_plans_res = await db.execute(select(SubscriptionPlan.name))
+            existing_plans = set(existing_plans_res.scalars().all())
+            
+            for p_data in plans:
+                if p_data["name"] not in existing_plans:
+                    plan = SubscriptionPlan(
+                        name=p_data["name"],
+                        description=p_data["description"],
+                        max_events=p_data["max_events"],
+                        max_users=p_data["max_users"],
+                        max_registrations=p_data["max_registrations"],
+                        max_rooms=p_data["max_rooms"],
+                        storage_quota_mb=p_data["storage_quota_mb"],
+                        is_active=True
+                    )
+                    db.add(plan)
+                    await db.flush() # get plan.id
+                    
+                    # Link features
+                    for f_key in p_data["features"]:
+                        feat = all_feats.get(f_key)
+                        if feat:
+                            db.add(PlanFeature(plan_id=plan.id, feature_id=feat.id, enabled=True))
+            
+            await db.commit()
+            logger.info("Subscription plans and features seeded.")
+        except Exception as e:
+            logger.error(f"Failed to seed plans and features: {e}")
+            await db.rollback()
+
+
 async def ensure_admin_user():
     """
     Ensures that at least one organization and one admin user exist in the database.
@@ -326,6 +443,9 @@ async def ensure_admin_user():
     """
     # Seed RBAC first
     await ensure_rbac_defaults()
+    
+    # Seed plans and features
+    await ensure_plans_and_features()
     
     # Seed Email Templates
     try:

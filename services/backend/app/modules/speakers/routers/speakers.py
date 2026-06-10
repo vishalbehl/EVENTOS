@@ -18,13 +18,13 @@ from app.dependencies import (
     get_db, get_current_user, require_active_user,
     get_current_event, CurrentEvent, OrganizerOrAbove
 )
-from app.modules.rbac.models.event import Event
-from app.modules.venue.models.room import Room
-from app.modules.speakers.models.session import Session
-from app.modules.speakers.models.session_speaker import SessionSpeaker
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.event import Event
+from app.modules.events.models.room import Room
+from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.events.models.speaker import Speaker
 from app.modules.presentations.models.poster import Poster
-from app.modules.auth.models.user import User
+from app.modules.identity.models.user import User
 from app.modules.speakers.schemas.speaker import (
     SpeakerCreate, SpeakerUpdate, SpeakerResponse, SpeakerSummary,
     SpeakerBulkInviteRequest,

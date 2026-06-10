@@ -1,9 +1,9 @@
 "use client";
 
-import { UserManagement } from "@/components/rbac/UserManagement";
+import { UserManagement } from "@/components/organizer/rbac/UserManagement";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Users } from "lucide-react";
-import { PermissionGate } from "@/components/auth/PermissionGate";
+import { PermissionGate } from "@/components/organizer/auth/PermissionGate";
 import { PERMISSIONS } from "@/lib/permissions";
 
 export default function UsersPage() {

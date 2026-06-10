@@ -2,8 +2,8 @@
 import asyncio
 import uuid
 from app.database import AsyncSessionLocal
-from app.modules.speakers.models.speaker import Speaker
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.speaker import Speaker
+from app.modules.events.models.event import Event
 from sqlalchemy import select, update
 from app.services import qr_service
 from loguru import logger

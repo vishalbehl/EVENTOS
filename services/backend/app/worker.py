@@ -16,6 +16,12 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_time_limit=3600,  # 1 hour
+    beat_schedule={
+        "flush-api-usage-every-5-minutes": {
+            "task": "app.tasks.platform_tasks.flush_api_usage",
+            "schedule": 300.0,  # every 5 minutes
+        }
+    }
 )
 
 # Autodiscover tasks in app.tasks package

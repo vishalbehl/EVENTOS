@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, getFallbackTimezone, getTimezoneAbbrev } from "@/lib/utils";
 import { toast } from "sonner";
-import { PermissionGate } from "@/components/auth/PermissionGate";
+import { PermissionGate } from "@/components/organizer/auth/PermissionGate";
 import { PERMISSIONS } from "@/lib/permissions";
 
 // ── Reusable stat card helper ────────────────────────────────

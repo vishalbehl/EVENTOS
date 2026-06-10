@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.modules.rbac.models.event import Event
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.participant_registration import ParticipantRegistration
@@ -17,7 +17,7 @@ from app.modules.registration.routers.participants import (
 )
 from app.modules.registration.routers.registrations import helper_approve_registration
 from app.modules.registration.schemas.participant import ParticipantCreate, ParticipantUpdate
-from app.modules.speakers.models.speaker import Speaker
+from app.modules.events.models.speaker import Speaker
 
 @pytest.mark.asyncio
 async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):

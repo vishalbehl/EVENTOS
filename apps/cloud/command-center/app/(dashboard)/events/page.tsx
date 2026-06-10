@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { EventSummary } from "@/types/backend";
-import { CreateEventDialog } from "@/components/CreateEventDialog";
+import { CreateEventDialog } from "@/components/organizer/CreateEventDialog";
 
 export default function EventsPage() {
   const router = useRouter();

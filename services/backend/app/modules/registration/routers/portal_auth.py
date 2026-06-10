@@ -26,8 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.modules.rbac.models.event import Event
-from app.modules.registration.models.portal_otp_token import PortalOtpToken
+from app.modules.events.models.event import Event
+from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.notifications.services.email_service import send_email
 
 logger = logging.getLogger(__name__)

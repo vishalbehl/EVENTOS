@@ -7,13 +7,13 @@ import {
 } from '@/services/email-service'
 
 // ===== Components =====
-import CampaignDashboard from '@/components/emails/dashboard/CampaignDashboard'
-import CampaignList from '@/components/emails/campaign/CampaignList'
-import CampaignBuilder from '@/components/emails/campaign/CampaignBuilder'
-import CampaignDetail from '@/components/emails/campaign/CampaignDetail'
-import TemplateEditor from '@/components/emails/templates/TemplateEditor'
-import LogsTable from '@/components/emails/logs/LogsTable'
-import AnnouncementsTab from '@/components/emails/AnnouncementsTab'
+import CampaignDashboard from '@/components/organizer/emails/dashboard/CampaignDashboard'
+import CampaignList from '@/components/organizer/emails/campaign/CampaignList'
+import CampaignBuilder from '@/components/organizer/emails/campaign/CampaignBuilder'
+import CampaignDetail from '@/components/organizer/emails/campaign/CampaignDetail'
+import TemplateEditor from '@/components/organizer/emails/templates/TemplateEditor'
+import LogsTable from '@/components/organizer/emails/logs/LogsTable'
+import AnnouncementsTab from '@/components/organizer/emails/AnnouncementsTab'
 
 // ===== UI Helpers =====
 type TabType =

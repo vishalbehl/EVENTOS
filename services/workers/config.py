@@ -19,7 +19,7 @@ _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 class WorkerSettings(BaseSettings):
     # ── Database (sync psycopg2 — workers use sync SQLAlchemy) ─
-    DATABASE_URL_SYNC: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/conf_platform"
+    DATABASE_URL_SYNC: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/eventos_db"
 
     # ── Redis / Celery ─────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
