@@ -100,7 +100,7 @@ class Event(Base, SoftDeleteMixin):
     # ── Licensing & feature flags ─────────────────────────────
     # starter | pro | enterprise
     license_tier: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="starter"
+        String(30), nullable=False, default="basic"
     )
     # JSONB map of feature toggles. e.g.:
     # {"enable_whatsapp": true, "enable_posters": false}

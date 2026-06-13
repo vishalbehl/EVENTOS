@@ -149,3 +149,61 @@ export function useExportDownload(eventId: string) {
     URL.revokeObjectURL(blobUrl);
   };
 }
+
+export function useDashboardSummary(eventId?: string, liveMode: boolean = false) {
+  return useQuery({
+    queryKey: ["dashboard-summary", eventId, liveMode],
+    queryFn: () => apiGet<any>("/dashboard/summary", { params: { event_id: eventId } }),
+    enabled: !!eventId,
+    staleTime: liveMode ? 0 : 5 * 60 * 1000,
+    refetchInterval: liveMode ? 15000 : false,
+  });
+}
+
+export function useRegistrationsTimeline(eventId?: string) {
+  return useQuery({
+    queryKey: ["dashboard-timeline", eventId],
+    queryFn: () => apiGet<any[]>("/dashboard/registrations/timeline", { params: { event_id: eventId } }),
+    enabled: !!eventId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useRolesBreakdown(eventId?: string) {
+  return useQuery({
+    queryKey: ["dashboard-roles-breakdown", eventId],
+    queryFn: () => apiGet<any[]>("/dashboard/roles-breakdown", { params: { event_id: eventId } }),
+    enabled: !!eventId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function usePendingActions(eventId?: string, liveMode: boolean = false) {
+  return useQuery({
+    queryKey: ["dashboard-pending-actions", eventId, liveMode],
+    queryFn: () => apiGet<any[]>("/dashboard/pending-actions", { params: { event_id: eventId } }),
+    enabled: !!eventId,
+    staleTime: liveMode ? 0 : 5 * 60 * 1000,
+    refetchInterval: liveMode ? 15000 : false,
+  });
+}
+
+export function useRecentActivity(eventId?: string, liveMode: boolean = false) {
+  return useQuery({
+    queryKey: ["dashboard-recent-activity", eventId, liveMode],
+    queryFn: () => apiGet<any[]>("/dashboard/recent-activity", { params: { event_id: eventId } }),
+    enabled: !!eventId,
+    staleTime: liveMode ? 0 : 5 * 60 * 1000,
+    refetchInterval: liveMode ? 15000 : false,
+  });
+}
+
+export function useUpcomingDeadlines(eventId?: string) {
+  return useQuery({
+    queryKey: ["dashboard-deadlines", eventId],
+    queryFn: () => apiGet<any[]>("/dashboard/deadlines", { params: { event_id: eventId } }),
+    enabled: !!eventId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+

@@ -62,6 +62,10 @@ async def create_room(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> RoomResponse:
+    # Check room limit
+    from app.modules.billing.services.limit_guard import LimitGuard
+    await LimitGuard.check_rooms(db, event.organization_id, event.id)
+
     room = Room(event_id=event.id, **payload.model_dump())
     db.add(room)
     await db.commit()

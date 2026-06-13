@@ -178,7 +178,6 @@ def upgrade() -> None:
     sa.Column('max_registrations', sa.Integer(), nullable=False),
     sa.Column('max_rooms', sa.Integer(), nullable=False),
     sa.Column('storage_quota_mb', sa.BigInteger(), nullable=False),
-    sa.Column('stripe_product_id', sa.String(length=255), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),

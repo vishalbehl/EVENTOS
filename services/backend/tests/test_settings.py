@@ -152,7 +152,7 @@ class TestSettingsUpdate:
 
 
 class TestLicenseInfo:
-    async def test_license_info_starter(
+    async def test_license_info_basic(
         self, client: AsyncClient, event: Event, organizer: User
     ):
         resp = await client.get(
@@ -161,7 +161,7 @@ class TestLicenseInfo:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["tier"] in ("starter", "pro", "enterprise")
+        assert data["tier"] in ("basic", "pro", "enterprise")
         assert "max_events" in data
         assert "webhooks_enabled" in data
 

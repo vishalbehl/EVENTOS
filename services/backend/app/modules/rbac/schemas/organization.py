@@ -2,6 +2,10 @@
 # Organization schemas
 # =============================================================
 import uuid
+# =============================================================
+# Organization schemas
+# =============================================================
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -11,7 +15,7 @@ from pydantic import BaseModel, Field, ConfigDict
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=255)
     slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
-    plan: str = Field(default="starter")
+    plan: str = Field(default="basic")
 
 
 class OrganizationUpdate(BaseModel):
@@ -40,8 +44,8 @@ class OrganizationResponse(BaseModel):
     billing_email: Optional[str] = None
     country: str = "IN"
     timezone: str = "Asia/Kolkata"
-    max_events: int = 3
-    max_users: int = 5
+    max_events: int = 1
+    max_users: int = 2
     max_storage_gb: int = 10
     is_active: bool = True
     onboarding_completed: bool = False

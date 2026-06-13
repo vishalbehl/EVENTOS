@@ -3,7 +3,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { useState, useEffect } from "react";
-import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { Toaster } from "sonner";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -58,15 +57,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <NextThemesProvider
-        attribute="class"
-        defaultTheme="system"
-        enableSystem
-        disableTransitionOnChange
-      >
-        {children}
-        <Toaster position="top-right" richColors />
-      </NextThemesProvider>
+      {children}
+      <Toaster position="top-right" richColors />
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>
   );

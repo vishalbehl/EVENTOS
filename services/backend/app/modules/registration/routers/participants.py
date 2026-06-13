@@ -522,6 +522,10 @@ async def create_participant(
             resp.is_free = not payment_enabled or (active_prices.get(merged_participant.role, 0.0) <= 0.0)
             return resp
 
+    # Check registration limit
+    from app.modules.billing.services.limit_guard import LimitGuard
+    await LimitGuard.check_registrations(db, event.organization_id, event.id)
+
     role_price = active_prices.get(payload.role, 0.0) if payment_enabled else 0.0
 
     paid_status = payload.paid_status

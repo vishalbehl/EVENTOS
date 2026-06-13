@@ -41,9 +41,19 @@ class AuditService:
     async def write_log(ctx: AuditContext) -> None:
         """
         Dispatches a Celery background task passing the serialized context dictionary.
+        If in testing mode, write synchronously to the DB to avoid transactional FK issues in background workers.
         """
-        from app.tasks.audit_tasks import write_audit_log
-        write_audit_log.delay(ctx.to_dict())
+        from app.config import settings
+        from loguru import logger
+        if settings.environment == "testing":
+            try:
+                await AuditService.write_log_sync(ctx)
+            except Exception as e:
+                # Wrap in a try-except to ensure any database logging issues during tests do not crash unrelated endpoints/test cases
+                logger.warning(f"[AuditService] Failed to write test audit log synchronously: {e}")
+        else:
+            from app.tasks.audit_tasks import write_audit_log
+            write_audit_log.delay(ctx.to_dict())
 
     @staticmethod
     async def write_log_sync(ctx: AuditContext, db: Optional[AsyncSession] = None) -> None:

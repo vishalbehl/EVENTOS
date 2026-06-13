@@ -13,7 +13,10 @@ class Invoice(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="USD", server_default="USD")
     status: Mapped[str] = mapped_column(String(50), default="UNPAID") # PAID, UNPAID, VOID, REFUNDED
+    due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     stripe_invoice_id: Mapped[Optional[str]] = mapped_column(String(255))
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -24,6 +27,7 @@ class InvoiceItem(Base):
     invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.invoices.id", ondelete="CASCADE"), index=True)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 class PaymentMethod(Base):
     __tablename__ = "payment_methods"

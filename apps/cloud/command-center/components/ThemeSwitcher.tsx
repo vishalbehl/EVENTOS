@@ -20,45 +20,39 @@ export function ThemeSwitcher({ className }: { className?: string }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         {themes.map((t) => (
           <button
             key={t.name}
             onClick={() => setTheme(t.name)}
-            className="group relative flex flex-col items-center gap-2 outline-none"
+            className={cn(
+              "h-10 flex items-center justify-center gap-2 px-3 rounded-2xl border text-[13px] font-bold transition-all outline-none",
+              theme === t.name 
+                ? "bg-[var(--pri)]/10 text-[var(--pri)] border-[var(--pri)]/30 scale-105 shadow-[0_0_15px_rgba(139,92,246,0.1)]" 
+                : "border-default text-muted hover:text-[var(--text)] hover:border-muted"
+            )}
             aria-label={`Switch to ${t.label}`}
             aria-pressed={theme === t.name}
             title={t.label}
           >
             <div 
-              className={cn(
-                "theme-swatch relative flex h-8 w-8 items-center justify-center rounded-full border-2 border-default transition-all duration-300",
-                theme === t.name ? "scale-110 border-[var(--pri)] shadow-[0_0_15px_var(--pri)]" : "hover:border-muted"
-              )}
+              className="h-4.5 w-4.5 rounded-full border border-black/10 shrink-0 flex items-center justify-center"
               style={{ 
-                background: t.name === 'void-indigo' ? '#6366F1' : 
-                            t.name === 'obsidian-rose' ? '#C084FC' : 
-                            t.name === 'carbon-teal' ? '#14B8A6' : 
-                            t.name === 'amber-noir' ? '#F59E0B' : 
-                            t.name === 'slate-aurora' ? '#38BDF8' : 
-                            t.name === 'forest-ink' ? '#22C55E' : 
-                            t.name === 'copper-oxide' ? '#D97706' : 
-                            t.name === 'plasma-violet' ? '#8B5CF6' : 
-                            t.name === 'light' ? '#6366F1' : 
-                            '#1a1a1a' 
+                background: t.name === 'plasma-violet' ? '#8B5CF6' : '#FFFFFF'
               }}
             >
               {theme === t.name && (
                 <motion.div
-                  layoutId="theme-check"
+                  layoutId="theme-check-swatch"
                   initial={{ opacity: 0, scale: 0.5 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="absolute inset-0 flex items-center justify-center"
+                  className="flex items-center justify-center"
                 >
-                  <Check className="h-3 w-3 text-[var(--text)] mix-blend-difference" />
+                  <Check className="h-2.5 w-2.5 text-white mix-blend-difference" />
                 </motion.div>
               )}
             </div>
+            <span>{t.label}</span>
           </button>
         ))}
       </div>

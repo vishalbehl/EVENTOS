@@ -19,7 +19,7 @@ VALID_TOGGLES = {
 }
 
 # License tier hierarchy
-LICENSE_TIERS = ("starter", "pro", "enterprise")
+LICENSE_TIERS = ("basic", "pro", "enterprise")
 
 
 class FeatureToggles(BaseModel):
@@ -136,31 +136,65 @@ class LicenseInfo(BaseModel):
     @classmethod
     def for_tier(cls, tier: str) -> "LicenseInfo":
         tiers = {
-            "starter": cls(
-                tier="starter", max_events=3, max_speakers_per_event=100,
-                max_storage_gb=50, whatsapp_enabled=False, posters_enabled=False,
+            "basic": cls(
+                tier="basic", max_events=1, max_speakers_per_event=30,
+                max_storage_gb=10, whatsapp_enabled=False, posters_enabled=False,
                 webhooks_enabled=False, dedicated_support=False,
             ),
             "pro": cls(
-                tier="pro", max_events=20, max_speakers_per_event=500,
-                max_storage_gb=500, whatsapp_enabled=True, posters_enabled=True,
+                tier="pro", max_events=1, max_speakers_per_event=100,
+                max_storage_gb=50, whatsapp_enabled=True, posters_enabled=True,
                 webhooks_enabled=True, dedicated_support=False,
             ),
             "enterprise": cls(
-                tier="enterprise", max_events=999, max_speakers_per_event=99999,
-                max_storage_gb=5000, whatsapp_enabled=True, posters_enabled=True,
+                tier="enterprise", max_events=1, max_speakers_per_event=500,
+                max_storage_gb=200, whatsapp_enabled=True, posters_enabled=True,
                 webhooks_enabled=True, dedicated_support=True,
             ),
         }
-        return tiers.get(tier, tiers["starter"])
+        return tiers.get(tier, tiers["basic"])
 
 
 class GlobalSettingsResponse(BaseModel):
     timezone: str
+    maintenance_mode: bool = False
+    broadcast_enabled: bool = False
+    broadcast_message: str = ""
+    currency: str = "USD"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    support_email: str = "support@eventos.com"
+    slack_webhook_url: str = ""
+    security_max_lockout_attempts: int = 5
+    security_idle_timeout_min: int = 30
+    security_enforce_2fa_super_admin: bool = False
+    security_enforce_2fa_org_admin: bool = False
+    security_enforce_2fa_speaker: bool = False
+    security_enforce_2fa_attendee: bool = False
+    security_ip_allowlist: str = ""
 
 
 class GlobalSettingsUpdate(BaseModel):
     timezone: str
+    maintenance_mode: Optional[bool] = None
+    broadcast_enabled: Optional[bool] = None
+    broadcast_message: Optional[str] = None
+    currency: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    support_email: Optional[str] = None
+    slack_webhook_url: Optional[str] = None
+    security_max_lockout_attempts: Optional[int] = None
+    security_idle_timeout_min: Optional[int] = None
+    security_enforce_2fa_super_admin: Optional[bool] = None
+    security_enforce_2fa_org_admin: Optional[bool] = None
+    security_enforce_2fa_speaker: Optional[bool] = None
+    security_enforce_2fa_attendee: Optional[bool] = None
+    security_ip_allowlist: Optional[str] = None
 
     @field_validator("timezone")
     @classmethod
@@ -171,3 +205,4 @@ class GlobalSettingsUpdate(BaseModel):
         except Exception:
             raise ValueError(f"Invalid timezone: {v}. Must be a valid IANA timezone (e.g. 'Asia/Kolkata').")
         return v
+

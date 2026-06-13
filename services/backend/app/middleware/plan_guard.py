@@ -11,21 +11,18 @@ from app.modules.billing.models.subscription import OrganizationSubscription
 from app.modules.rbac.services.entitlement_service import EntitlementService
 from sqlalchemy import select
 
-# DEPRECATED: This URL prefix mapping is deprecated.
-# New routes must use the `@require_feature` dependency decorator directly.
-FEATURE_MAP = {
-    "ADV_REG_APPROVALS": ["/registrations"],
-    "ADV_BADGE_PRINTING": ["/badges"],
-    "ADV_PRESENTATION_WORKFLOW": ["/files"],
-    "ADV_POSTERS": ["/posters"],
-    "ADV_SCIENTIFIC_PROGRAM": ["/sessions"],
-    "ADV_REPORTING": ["/reporting"],
-    "ENT_API_ACCESS": ["/platform/api"],
-    "ENT_SSO": ["/auth/sso"],
-    "ENT_SPONSOR_MGMT": ["/sponsors"],
-    "ENT_INCIDENT_MGMT": ["/incidents"],
-    "ENT_AI_TOOLS": ["/ai-tools"],
-    "ADDON_VENUE_OPERATIONS": ["/venue", "/edge-servers", "/technician", "/signage", "/kiosks", "/sync/push"],
+# Regex-based URL path matching mapped to feature keys.
+FEATURE_URL_MAP = {
+    "FEAT_REGISTRATION_PORTAL": [r"^/registrations"],
+    "FEAT_QR_BADGE": [r"^/badges"],
+    "FEAT_FILE_UPLOADS": [r"^/files"],
+    "FEAT_EPOSTER_MGMT": [r"^/posters"],
+    "FEAT_SESSION_QUEUE": [r"^/sessions"],
+    "FEAT_REGISTRATION_ANALYTICS": [r"^/reporting"],
+    "FEAT_API_ACCESS": [r"^/platform/api"],
+    "FEAT_CUSTOM_LOGIN_PAGE": [r"^/auth/sso"],
+    "FEAT_THIRD_PARTY_INTEGRATIONS": [r"^/sponsors", r"^/ai-tools"],
+    "FEAT_VENUE_SYNC": [r"^/venue", r"^/edge-servers", r"^/technician", r"^/signage", r"^/kiosks", r"^/sync/push"],
 }
 
 class PlanGuardMiddleware:
@@ -53,11 +50,11 @@ class PlanGuardMiddleware:
 
         # 2. Determine Required Entitlement
         required_entitlement = None
-        for entitlement, prefixes in FEATURE_MAP.items():
-            if any(path.startswith(prefix) for prefix in prefixes):
-                if entitlement == "ADV_SCIENTIFIC_PROGRAM" and method == "GET":
+        for entitlement, patterns in FEATURE_URL_MAP.items():
+            if any(re.search(pattern, path) for pattern in patterns):
+                if entitlement == "FEAT_SESSION_QUEUE" and method == "GET":
                     continue
-                if entitlement == "ADV_REG_APPROVALS":
+                if entitlement == "FEAT_REGISTRATION_PORTAL":
                     if "/submit" in path or not any(x in path for x in ["approve", "reject", "waitlist", "promote"]):
                         continue
                 required_entitlement = entitlement

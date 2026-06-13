@@ -345,8 +345,8 @@ class RateLimitMiddleware:
                 if limits:
                     return limits[0], limits[1]
             
-            # Default fallback: Starter
-            print("DEBUG RATE LIMITS Step 4: fallback to Starter (60, 10000)")
+            # Default fallback: Basic
+            print("DEBUG RATE LIMITS Step 4: fallback to Basic (60, 10000)")
             return 60, 10000
 
     @staticmethod

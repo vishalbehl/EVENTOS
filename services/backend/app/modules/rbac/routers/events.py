@@ -106,17 +106,10 @@ async def create_event(
     current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
-    """Create a new event for this organisation."""
-    org = await db.get(Organization, current_user.organization_id)
-    if org is not None:
-        current_count = await db.scalar(
-            select(func.count(Event.id)).where(Event.organization_id == current_user.organization_id)
-        )
-        if int(current_count or 0) >= org.max_events:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Event limit reached for your plan. Upgrade to create more events.",
-            )
+    # Check event limit
+    if current_user.organization_id:
+        from app.modules.billing.services.limit_guard import LimitGuard
+        await LimitGuard.check_events(db, current_user.organization_id)
 
     existing = await db.execute(
         select(Event).where(

@@ -1,6 +1,7 @@
 # backend/app/worker.py
 from celery import Celery
 from app.config import settings
+import app.models
 
 celery_app = Celery(
     "worker",

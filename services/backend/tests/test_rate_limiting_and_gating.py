@@ -187,9 +187,9 @@ async def test_rate_limiter_middleware_sliding_window_ok(client: AsyncClient, db
     """
     Verify requests are allowed under limit, and rate limit headers are injected.
     """
-    # Create or update RateLimit for Starter plan
+    # Create or update RateLimit for Basic plan
     plan_limit = RateLimit(
-        plan_tier="Starter",
+        plan_tier="Basic",
         requests_per_minute=60,
         requests_per_day=10000,
         organization_id=None
@@ -230,9 +230,9 @@ async def test_rate_limiter_middleware_sliding_window_exceeded(client: AsyncClie
     """
     Verify HTTP 429 is returned with correct headers when the rate limit is exceeded.
     """
-    # Starter plan limit
+    # Basic plan limit
     plan_limit = RateLimit(
-        plan_tier="Starter",
+        plan_tier="Basic",
         requests_per_minute=60,
         requests_per_day=10000,
         organization_id=None

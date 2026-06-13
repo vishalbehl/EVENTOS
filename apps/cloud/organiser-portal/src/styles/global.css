@@ -1,0 +1,173 @@
+*, *::before, *::after {
+  transition: background-color 200ms ease, border-color 200ms ease, color 100ms ease;
+}
+
+.no-transition,
+.no-transition *,
+.no-transition *::before,
+.no-transition *::after {
+  transition: none !important;
+}
+
+body { background: var(--base); color: var(--text); }
+.sidebar { background: var(--surf); border-right: 0.5px solid var(--border); }
+.card, .modal, .drawer { background: var(--card); border: 0.5px solid var(--border); }
+.btn-primary { background: var(--pri); color: white; }
+.btn-secondary { border: 0.5px solid var(--border); color: var(--text); }
+.btn-ghost { color: var(--pri); }
+.btn-danger { background: color-mix(in srgb, var(--dan) 12%, transparent); color: var(--dan); }
+.input { border: 0.5px solid var(--border); color: var(--text); background: transparent; }
+.input:focus { border-color: var(--pri); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent); }
+.badge-approved { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+.badge-pending { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.badge-rejected { background: color-mix(in srgb, var(--dan) 15%, transparent); color: var(--dan); }
+.badge-processing { background: color-mix(in srgb, var(--pri) 15%, transparent); color: var(--pri); }
+.text-muted { color: var(--muted); }
+.border-default { border-color: var(--border); }
+.accent-bar { background: var(--pri); }
+.progress-fill { background: var(--pri); }
+.toggle-on { background: var(--pri); }
+.nav-active { color: var(--pri); border-left: 2px solid var(--pri); }
+.stat-primary { color: var(--pri); background: color-mix(in srgb, var(--pri) 10%, transparent); }
+.stat-secondary { color: var(--sec); background: color-mix(in srgb, var(--sec) 10%, transparent); }
+.stat-accent { color: var(--acc); background: color-mix(in srgb, var(--acc) 10%, transparent); }
+.stat-danger { color: var(--dan); background: color-mix(in srgb, var(--dan) 10%, transparent); }
+
+.glass-3d,
+.glass-card {
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  border: 0.5px solid var(--border);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    0 10px 30px color-mix(in srgb, var(--base) 68%, transparent),
+    inset 0 1px 1px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.theme-swatch {
+  background: var(--swatch-base);
+}
+
+.theme-swatch::after {
+  background: var(--swatch-pri);
+}
+
+.theme-swatch[data-active="true"] {
+  border-color: var(--pri);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent);
+}
+
+.theme-swatch-void-indigo { --swatch-base: var(--theme-void-indigo-base); --swatch-pri: var(--theme-void-indigo-pri); }
+.theme-swatch-obsidian-rose { --swatch-base: var(--theme-obsidian-rose-base); --swatch-pri: var(--theme-obsidian-rose-pri); }
+.theme-swatch-carbon-teal { --swatch-base: var(--theme-carbon-teal-base); --swatch-pri: var(--theme-carbon-teal-pri); }
+.theme-swatch-amber-noir { --swatch-base: var(--theme-amber-noir-base); --swatch-pri: var(--theme-amber-noir-pri); }
+.theme-swatch-slate-aurora { --swatch-base: var(--theme-slate-aurora-base); --swatch-pri: var(--theme-slate-aurora-pri); }
+.theme-swatch-forest-ink { --swatch-base: var(--theme-forest-ink-base); --swatch-pri: var(--theme-forest-ink-pri); }
+.theme-swatch-copper-oxide { --swatch-base: var(--theme-copper-oxide-base); --swatch-pri: var(--theme-copper-oxide-pri); }
+.theme-swatch-plasma-violet { --swatch-base: var(--theme-plasma-violet-base); --swatch-pri: var(--theme-plasma-violet-pri); }
+.theme-swatch-light { --swatch-base: var(--theme-light-base); --swatch-pri: var(--theme-light-pri); }
+
+.neomorphic-inset {
+  box-shadow: 
+    inset 4px 4px 8px color-mix(in srgb, black 30%, transparent),
+    inset -4px -4px 8px color-mix(in srgb, white 5%, transparent);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
+}
+
+/* Global native select dropdown styling to follow theme design */
+select {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 12px !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+  outline: none !important;
+  transition: all 200ms ease !important;
+  cursor: pointer !important;
+}
+
+select:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+select:focus {
+  border-color: var(--pri) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent) !important;
+}
+
+select option, select optgroup {
+  background-color: var(--base) !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+}
+
+/* Custom Markdown Rendering Styles */
+.tnc-markdown {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+.tnc-markdown p {
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+  display: block !important;
+}
+.tnc-markdown ul {
+  list-style-type: disc !important;
+  padding-left: 1.75rem !important;
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+  display: block !important;
+}
+.tnc-markdown ol {
+  list-style-type: decimal !important;
+  padding-left: 1.75rem !important;
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+  display: block !important;
+}
+.tnc-markdown li {
+  margin-top: 0.5rem !important;
+  margin-bottom: 0.5rem !important;
+  list-style-position: outside !important;
+  display: list-item !important;
+  color: rgba(232, 234, 255, 0.7) !important;
+}
+.tnc-markdown h1 {
+  font-size: 1.25rem !important;
+  font-weight: 900 !important;
+  margin-top: 1.75rem !important;
+  margin-bottom: 0.75rem !important;
+  color: #E8EAFF !important;
+  display: block !important;
+}
+.tnc-markdown h2 {
+  font-size: 1.1rem !important;
+  font-weight: 800 !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 0.5rem !important;
+  color: #E8EAFF !important;
+  display: block !important;
+}
+.tnc-markdown h3 {
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  margin-top: 1.25rem !important;
+  margin-bottom: 0.5rem !important;
+  color: #E8EAFF !important;
+  display: block !important;
+}
+.tnc-markdown hr {
+  border: 0 !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+  margin: 1.75rem 0 !important;
+  display: block !important;
+}
+.tnc-markdown strong {
+  color: #E8EAFF !important;
+  font-weight: 700 !important;
+}
+.tnc-markdown em {
+  color: #818CF8 !important;
+}
+
+

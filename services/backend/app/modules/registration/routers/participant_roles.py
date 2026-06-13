@@ -189,7 +189,10 @@ async def add_role(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantRoleOut:
-    """Add a custom participant role to this event."""
+    # Check ticket category limit
+    from app.modules.billing.services.limit_guard import LimitGuard
+    await LimitGuard.check_ticket_categories(db, event.organization_id, event.id)
+
     role = ParticipantRole(
         event_id=event.id,
         category=payload.category,

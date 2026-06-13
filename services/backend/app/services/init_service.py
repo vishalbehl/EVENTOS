@@ -322,28 +322,101 @@ async def ensure_event_settings_defaults(db: AsyncSession):
 async def ensure_plans_and_features():
     """Seed the database with default subscription plans and features."""
     from app.modules.platform.models.feature import FeatureCatalog
-    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature
+    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature, Addon, AddonFeature, OrganizationFeature
     
     async with AsyncSessionLocal() as db:
         try:
             # 1. Seed Feature Catalog
             features = [
-                # Registration
-                {"key": "ADV_REG_APPROVALS", "name": "Advanced Registrations Approvals", "category": "Registration", "description": "Manage approval queues, waitlists, and registration queue status."},
-                {"key": "ADV_BADGE_PRINTING", "name": "Advanced Badge Printing", "category": "Registration", "description": "Generate, manage, print and reprint participant badges onsite."},
-                {"key": "ADV_REPORTING", "name": "Advanced Reports & Financials", "category": "Registration", "description": "Access financial transactions, custom Excel exports and analytics dashboards."},
-                # Speaker Management
-                {"key": "ADV_PRESENTATION_WORKFLOW", "name": "Advanced Speaker Presentation Workflow", "category": "Speaker Management", "description": "Enable speaker profile portals, uploading talk slides/videos, and administrative file approval queues."},
-                {"key": "ADV_POSTERS", "name": "E-Poster & Digital Posters Management", "category": "Speaker Management", "description": "Manage digital poster uploads, categories, and interactive terminal display formats."},
-                {"key": "ADV_SCIENTIFIC_PROGRAM", "name": "Scientific Session Schedule & Rooms Builder", "category": "Speaker Management", "description": "Build multi-track schedules, room configurations, and sync speaker allocations."},
-                # Enterprise
-                {"key": "ENT_API_ACCESS", "name": "Enterprise API Keys", "category": "Enterprise", "description": "Provision developer API keys and configure custom rate limits for external integrations."},
-                {"key": "ENT_SSO", "name": "Single Sign-On (SSO) Integrations", "category": "Enterprise", "description": "Integrate third-party SAML/OIDC identity providers for single sign-on security."},
-                {"key": "ENT_SPONSOR_MGMT", "name": "Sponsor Management Module", "category": "Enterprise", "description": "Manage sponsors, delegate deliverables, build interactive booths, and invoice packages."},
-                {"key": "ENT_AI_TOOLS", "name": "AI Assistant & Auto-scheduling tools", "category": "Enterprise", "description": "Leverage generative AI for prompt builders, message drafts, and scheduling assistants."},
-                # Addon
-                {"key": "ADDON_VENUE_OPERATIONS", "name": "Onsite Venue Edge Sync & SRR Kiosks", "category": "Add-ons", "description": "Sync offline room playback devices and SRR kiosks with the platform edge database."},
+                {"key": "LIMIT_ORGANIZER_USERS", "name": "Organizer Users", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 1, "description": "Maximum organizer/staff users allowed", "display_value_basic": "2", "display_value_professional": "10", "display_value_enterprise": "50"},
+                {"key": "LIMIT_REGISTRATIONS", "name": "Registrations", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 2, "description": "Maximum attendee registrations per event", "display_value_basic": "Up to 150", "display_value_professional": "Up to 1,000", "display_value_enterprise": "Unlimited"},
+                {"key": "LIMIT_SPEAKERS", "name": "Speakers", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 3, "description": "Maximum speakers per event", "display_value_basic": "Up to 30", "display_value_professional": "Up to 100", "display_value_enterprise": "Up to 500"},
+                {"key": "LIMIT_SESSIONS", "name": "Sessions", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 4, "description": "Maximum sessions per event", "display_value_basic": "Up to 25", "display_value_professional": "Up to 100", "display_value_enterprise": "Unlimited"},
+                {"key": "LIMIT_ROOMS", "name": "Rooms", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 5, "description": "Maximum rooms/halls per event", "display_value_basic": "Up to 5", "display_value_professional": "Up to 20", "display_value_enterprise": "Unlimited"},
+                {"key": "LIMIT_STORAGE", "name": "Storage", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 6, "description": "File storage quota", "display_value_basic": "10 GB", "display_value_professional": "50 GB", "display_value_enterprise": "200 GB+ (Custom)"},
+                {"key": "FEAT_EVENT_WEBSITE", "name": "Event Website", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 7, "description": "Event website quality and customization", "display_value_basic": "Basic", "display_value_professional": "Customizable", "display_value_enterprise": "Fully Branded"},
+                {"key": "FEAT_CUSTOM_DOMAIN", "name": "Custom Domain", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 8, "description": "Use your own domain name for portals", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_WHITE_LABEL", "name": "White Label", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 9, "description": "Remove all EventX branding", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
+                
+                {"key": "FEAT_REGISTRATION_PORTAL", "name": "Registration Portal", "category": "REGISTRATION", "category_order": 2, "feature_order": 1, "description": "Attendee-facing registration portal", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Enterprise"},
+                {"key": "FEAT_REGISTRATION_FORMS", "name": "Registration Forms", "category": "REGISTRATION", "category_order": 2, "feature_order": 2, "description": "Custom registration form fields", "display_value_basic": "Standard (Up to 10 Fields)", "display_value_professional": "Custom (Unlimited)", "display_value_enterprise": "Custom (Unlimited)"},
+                {"key": "FEAT_TICKET_CATEGORIES", "name": "Ticket Categories", "category": "REGISTRATION", "category_order": 2, "feature_order": 3, "description": "Number of registration ticket types", "display_value_basic": "3", "display_value_professional": "10", "display_value_enterprise": "Unlimited"},
+                {"key": "FEAT_COUPON_CODES", "name": "Coupon Codes", "category": "REGISTRATION", "category_order": 2, "feature_order": 4, "description": "Promotional discount codes for registration", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_PAYMENT_GATEWAY", "name": "Payment Gateway Integration", "category": "REGISTRATION", "category_order": 2, "feature_order": 5, "description": "Online payment collection for registrations", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_REGISTRATION_ANALYTICS", "name": "Registration Analytics", "category": "REGISTRATION", "category_order": 2, "feature_order": 6, "description": "Registration data reporting and insights", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Advanced"},
+                {"key": "FEAT_BULK_IMPORT", "name": "Bulk Registration Import", "category": "REGISTRATION", "category_order": 2, "feature_order": 7, "description": "Import attendees via CSV/Excel", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_QR_CONFIRMATION", "name": "QR Registration Confirmation", "category": "REGISTRATION", "category_order": 2, "feature_order": 8, "description": "QR code in confirmation email for check-in", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_ATTENDEE_CHECKIN", "name": "Attendee Check-In", "category": "REGISTRATION", "category_order": 2, "feature_order": 9, "description": "Attendee check-in system at venue", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Enterprise"},
+
+                {"key": "FEAT_SPEAKER_PORTAL", "name": "Speaker Portal", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 1, "description": "Speaker-facing portal for profile and file uploads", "display_value_basic": "Partial", "display_value_professional": "Full", "display_value_enterprise": "Full"},
+                {"key": "FEAT_ABSTRACT_SUBMISSION", "name": "Abstract Submission", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 2, "description": "Call for papers and abstract review workflow", "display_value_basic": "❌", "display_value_professional": "Advanced", "display_value_enterprise": "Advanced"},
+                {"key": "FEAT_FILE_UPLOADS", "name": "File Uploads", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 3, "description": "Speaker presentation file upload system", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_PRESENTATION_VALIDATION", "name": "Presentation Validation", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 4, "description": "Automated deep file validation on upload", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Advanced"},
+                {"key": "FEAT_SPEAKER_DASHBOARD", "name": "Speaker Dashboard", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 5, "description": "Speaker self-service dashboard", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Advanced"},
+                {"key": "FEAT_SPEAKER_COMMS", "name": "Speaker Communications", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 6, "description": "Automated emails and notifications to speakers", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Advanced"},
+                {"key": "FEAT_SPEAKER_PROFILES", "name": "Speaker Profiles", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 7, "description": "Public speaker profile pages", "display_value_basic": "Basic", "display_value_professional": "Customizable", "display_value_enterprise": "Fully Custom"},
+                {"key": "FEAT_MULTI_PRESENTATION_VERSIONS", "name": "Multiple Presentation Versions", "category": "SPEAKER_MANAGEMENT", "category_order": 3, "feature_order": 8, "description": "Speakers can upload multiple file versions", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+
+                {"key": "FEAT_BADGE_TEMPLATES", "name": "Badge Templates", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 1, "description": "Number of badge design templates available", "display_value_basic": "3", "display_value_professional": "Unlimited", "display_value_enterprise": "Unlimited"},
+                {"key": "FEAT_CERTIFICATE_TEMPLATES", "name": "Certificate Templates", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 2, "description": "Number of certificate design templates available", "display_value_basic": "3", "display_value_professional": "Unlimited", "display_value_enterprise": "Unlimited"},
+                {"key": "FEAT_CUSTOM_BADGE_DESIGN", "name": "Custom Badge Design", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 3, "description": "Fully custom badge layout and design", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_CUSTOM_CERT_DESIGN", "name": "Custom Certificate Design", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 4, "description": "Fully custom certificate layout and design", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_QR_BADGE", "name": "QR Badge Generation", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 5, "description": "QR codes on badges for scanning", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_BULK_BADGE_EXPORT", "name": "Bulk Badge Export", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 6, "description": "Export all badges as ZIP for bulk printing", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_AUTO_CERTIFICATE", "name": "Auto Certificate Generation", "category": "BADGE_CERTIFICATE", "category_order": 4, "feature_order": 7, "description": "Automatic certificate generation on attendance", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+
+                {"key": "FEAT_EMAIL_NOTIFICATIONS", "name": "Email Notifications", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 1, "description": "Transactional email notifications", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_REMINDER_EMAILS", "name": "Reminder Emails", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 2, "description": "Automated reminder email sequences", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_CAMPAIGN_MGMT", "name": "Campaign Management", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 3, "description": "Email campaign creation and scheduling", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_BULK_EMAIL", "name": "Bulk Email Campaigns", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 4, "description": "Send bulk emails to attendees/speakers", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_ANNOUNCEMENT_CENTER", "name": "Announcement Center", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 5, "description": "In-portal announcement management", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_PUSH_NOTIFICATIONS", "name": "Push Notifications", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 6, "description": "Mobile push notifications", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_WHATSAPP", "name": "WhatsApp Integration", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 7, "description": "WhatsApp messaging for speakers and attendees", "display_value_basic": "❌", "display_value_professional": "Optional Add-On", "display_value_enterprise": "✅"},
+                {"key": "FEAT_SMS", "name": "SMS Integration", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 8, "description": "SMS notifications and OTPs", "display_value_basic": "❌", "display_value_professional": "Optional Add-On", "display_value_enterprise": "✅"},
+
+                {"key": "FEAT_DEFAULT_THEME", "name": "Default Theme", "category": "BRANDING", "category_order": 6, "feature_order": 1, "description": "Standard EventX theme for all portals", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_THEME_CUSTOMIZATION", "name": "Theme Customization", "category": "BRANDING", "category_order": 6, "feature_order": 2, "description": "Customize portal themes", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_CUSTOM_COLORS", "name": "Custom Colors", "category": "BRANDING", "category_order": 6, "feature_order": 3, "description": "Brand-matching color schemes", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_CUSTOM_FONTS", "name": "Custom Fonts", "category": "BRANDING", "category_order": 6, "feature_order": 4, "description": "Custom typography selection", "display_value_basic": "❌", "display_value_professional": "Limited", "display_value_enterprise": "Unlimited"},
+                {"key": "FEAT_LOGO_BRANDING", "name": "Logo Branding", "category": "BRANDING", "category_order": 6, "feature_order": 5, "description": "Organization logo on all portals", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Full White Label"},
+                {"key": "FEAT_CUSTOM_LOGIN_PAGE", "name": "Custom Login Page", "category": "BRANDING", "category_order": 6, "feature_order": 6, "description": "Fully branded login experience", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
+
+                {"key": "FEAT_EMAIL_SUPPORT", "name": "Email Support", "category": "SUPPORT", "category_order": 7, "feature_order": 1, "description": "Email-based customer support", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_OFFICE_HOURS_SUPPORT", "name": "Office Hours Support", "category": "SUPPORT", "category_order": 7, "feature_order": 2, "description": "Support during business hours", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "❌"},
+                {"key": "FEAT_PRIORITY_SUPPORT", "name": "Priority Support", "category": "SUPPORT", "category_order": 7, "feature_order": 3, "description": "Priority queue for support tickets", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_DEDICATED_MANAGER", "name": "Dedicated Account Manager", "category": "SUPPORT", "category_order": 7, "feature_order": 4, "description": "Personal account manager assigned", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
+                {"key": "FEAT_24x7_SUPPORT", "name": "24×7 Support", "category": "SUPPORT", "category_order": 7, "feature_order": 5, "description": "Round-the-clock support availability", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_SLA", "name": "SLA Commitment", "category": "SUPPORT", "category_order": 7, "feature_order": 6, "description": "Formal service level agreement", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
+
+                {"key": "FEAT_MOBILE_APP", "name": "Mobile App Support", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 1, "description": "Mobile app access for attendees", "display_value_basic": "❌", "display_value_professional": "External App Support", "display_value_enterprise": "Full Mobile App"},
+                {"key": "FEAT_EVENT_APP_BRANDING", "name": "Event App Branding", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 2, "description": "Branded mobile app experience", "display_value_basic": "❌", "display_value_professional": "Basic", "display_value_enterprise": "Fully Branded"},
+                {"key": "FEAT_API_ACCESS", "name": "API Access", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 3, "description": "REST API for integrations", "display_value_basic": "❌", "display_value_professional": "Limited", "display_value_enterprise": "Full"},
+                {"key": "FEAT_WEBHOOKS", "name": "Webhooks", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 4, "description": "Event-driven webhook notifications", "display_value_basic": "❌", "display_value_professional": "Limited", "display_value_enterprise": "Full"},
+                {"key": "FEAT_THIRD_PARTY_INTEGRATIONS", "name": "Third-Party Integrations", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 5, "description": "Connect with external tools and services", "display_value_basic": "❌", "display_value_professional": "Basic", "display_value_enterprise": "Enterprise"},
+
+                {"key": "FEAT_VENUE_SUPPORT", "name": "Venue Support", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 1, "description": "Onsite venue operational support", "display_value_basic": "On Demand", "display_value_professional": "On Demand", "display_value_enterprise": "Priority"},
+                {"key": "FEAT_READY_ROOM", "name": "Ready Room Operations", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 2, "description": "Speaker ready room check-in and management", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_SPEAKER_CHECKIN", "name": "Speaker Check-In", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 3, "description": "Venue SRR station speaker check-in", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_SESSION_QUEUE", "name": "Session Queue Management", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 4, "description": "Presentation queue and scheduling display", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_DEVICE_MONITORING", "name": "Device Monitoring", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 5, "description": "Venue device health and status monitoring", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_DIGITAL_SIGNAGE", "name": "Digital Signage", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 6, "description": "Digital display management system", "display_value_basic": "❌", "display_value_professional": "Optional", "display_value_enterprise": "✅"},
+                {"key": "FEAT_EPOSTER_MGMT", "name": "ePoster Management", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 7, "description": "Electronic poster session management", "display_value_basic": "❌", "display_value_professional": "Optional", "display_value_enterprise": "✅"},
+                {"key": "FEAT_VENUE_SYNC", "name": "Venue Sync Services", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 8, "description": "File synchronization to venue devices", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_ONSITE_TECH_SUPPORT", "name": "Onsite Technical Support", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 9, "description": "Technical team present at venue during event", "display_value_basic": "Paid", "display_value_professional": "Paid", "display_value_enterprise": "Included Option"}
             ]
+            
+            # Clean up obsolete features in catalog that are no longer in our seed list
+            from sqlalchemy import delete
+            seed_keys = {f["key"] for f in features}
+            obsolete_stmt = select(FeatureCatalog).where(FeatureCatalog.key.not_in(seed_keys))
+            obsolete_feats = (await db.execute(obsolete_stmt)).scalars().all()
+            for ob_feat in obsolete_feats:
+                logger.info(f"Deleting obsolete feature from catalog: {ob_feat.key}")
+                await db.execute(delete(PlanFeature).where(PlanFeature.feature_id == ob_feat.id))
+                await db.execute(delete(OrganizationFeature).where(OrganizationFeature.feature_id == ob_feat.id))
+                await db.execute(delete(AddonFeature).where(AddonFeature.feature_id == ob_feat.id))
+                await db.delete(ob_feat)
+            await db.flush()
             
             existing_feats_res = await db.execute(select(FeatureCatalog.key))
             existing_feats = set(existing_feats_res.scalars().all())
@@ -354,9 +427,27 @@ async def ensure_plans_and_features():
                         key=f_data["key"],
                         name=f_data["name"],
                         category=f_data["category"],
-                        description=f_data["description"]
+                        category_order=f_data["category_order"],
+                        feature_order=f_data["feature_order"],
+                        description=f_data["description"],
+                        display_value_basic=f_data["display_value_basic"],
+                        display_value_professional=f_data["display_value_professional"],
+                        display_value_enterprise=f_data["display_value_enterprise"],
+                        is_active=True
                     )
                     db.add(feat)
+                else:
+                    # Update existing feature fields in case catalog structure changed
+                    stmt = select(FeatureCatalog).where(FeatureCatalog.key == f_data["key"])
+                    feat = (await db.execute(stmt)).scalar_one()
+                    feat.name = f_data["name"]
+                    feat.category = f_data["category"]
+                    feat.category_order = f_data["category_order"]
+                    feat.feature_order = f_data["feature_order"]
+                    feat.description = f_data["description"]
+                    feat.display_value_basic = f_data["display_value_basic"]
+                    feat.display_value_professional = f_data["display_value_professional"]
+                    feat.display_value_enterprise = f_data["display_value_enterprise"]
             
             await db.flush()
             
@@ -367,68 +458,357 @@ async def ensure_plans_and_features():
             # 2. Seed Default Plans
             plans = [
                 {
-                    "name": "Starter",
+                    "name": "Basic",
+                    "tagline": "Registration + Speaker Management",
                     "description": "Perfect for small events and basic registration.",
-                    "max_events": 3,
-                    "max_users": 3,
-                    "max_registrations": 200,
-                    "max_rooms": 3,
-                    "storage_quota_mb": 2048, # 2 GB
-                    "features": []
+                    "billing_model": "PER_EVENT",
+                    "currency": "INR",
+                    "price_per_event_min": 15000,
+                    "price_per_event_max": 25000,
+                    "max_events": 1,
+                    "max_users": 2,
+                    "max_registrations": 150,
+                    "max_speakers": 30,
+                    "max_sessions": 25,
+                    "max_rooms": 5,
+                    "max_ticket_categories": 3,
+                    "max_badge_templates": 3,
+                    "max_certificate_templates": 3,
+                    "storage_quota_mb": 10240, # 10 GB
+                    "display_order": 1,
+                    "is_popular": False,
+                    "color_hex": "#64748B"
                 },
                 {
                     "name": "Professional",
+                    "tagline": "Registration + Speaker + Campaigns + Venue Operations",
                     "description": "For scaling events needing advanced workflows and badge printing.",
-                    "max_events": 10,
+                    "billing_model": "PER_EVENT",
+                    "currency": "INR",
+                    "price_per_event_min": 60000,
+                    "price_per_event_max": 120000,
+                    "max_events": 1,
                     "max_users": 10,
-                    "max_registrations": 2000,
-                    "max_rooms": 15,
-                    "storage_quota_mb": 10240, # 10 GB
-                    "features": [
-                        "ADV_REG_APPROVALS", "ADV_BADGE_PRINTING", "ADV_REPORTING",
-                        "ADV_PRESENTATION_WORKFLOW", "ADV_POSTERS", "ADV_SCIENTIFIC_PROGRAM"
-                    ]
+                    "max_registrations": 1000,
+                    "max_speakers": 100,
+                    "max_sessions": 100,
+                    "max_rooms": 20,
+                    "max_ticket_categories": 10,
+                    "max_badge_templates": None,
+                    "max_certificate_templates": None,
+                    "storage_quota_mb": 51200, # 50 GB
+                    "display_order": 2,
+                    "is_popular": True,
+                    "color_hex": "#4F46E5"
                 },
                 {
                     "name": "Enterprise",
+                    "tagline": "Complete Conference Ecosystem",
                     "description": "Full control, advanced security, API access, and integrations.",
-                    "max_events": 100,
+                    "billing_model": "PER_EVENT",
+                    "currency": "INR",
+                    "price_per_event_min": 250000,
+                    "price_per_event_max": None,
+                    "max_events": 1,
                     "max_users": 50,
-                    "max_registrations": 100000,
-                    "max_rooms": 100,
-                    "storage_quota_mb": 102400, # 100 GB
-                    "features": [
-                        "ADV_REG_APPROVALS", "ADV_BADGE_PRINTING", "ADV_REPORTING",
-                        "ADV_PRESENTATION_WORKFLOW", "ADV_POSTERS", "ADV_SCIENTIFIC_PROGRAM",
-                        "ENT_API_ACCESS", "ENT_SSO", "ENT_SPONSOR_MGMT", "ENT_AI_TOOLS"
-                    ]
+                    "max_registrations": None,
+                    "max_speakers": 500,
+                    "max_sessions": None,
+                    "max_rooms": None,
+                    "max_ticket_categories": None,
+                    "max_badge_templates": None,
+                    "max_certificate_templates": None,
+                    "storage_quota_mb": 204800, # 200 GB
+                    "display_order": 3,
+                    "is_popular": False,
+                    "color_hex": "#7C3AED"
                 }
             ]
             
-            existing_plans_res = await db.execute(select(SubscriptionPlan.name))
-            existing_plans = set(existing_plans_res.scalars().all())
+            existing_plans_res = await db.execute(select(SubscriptionPlan))
+            existing_plans = {p.name: p for p in existing_plans_res.scalars().all()}
             
             for p_data in plans:
-                if p_data["name"] not in existing_plans:
+                plan = existing_plans.get(p_data["name"])
+                if not plan:
                     plan = SubscriptionPlan(
                         name=p_data["name"],
+                        tagline=p_data["tagline"],
                         description=p_data["description"],
+                        billing_model=p_data["billing_model"],
+                        currency=p_data["currency"],
+                        price_per_event_min=p_data["price_per_event_min"],
+                        price_per_event_max=p_data["price_per_event_max"],
                         max_events=p_data["max_events"],
                         max_users=p_data["max_users"],
                         max_registrations=p_data["max_registrations"],
+                        max_speakers=p_data["max_speakers"],
+                        max_sessions=p_data["max_sessions"],
                         max_rooms=p_data["max_rooms"],
+                        max_ticket_categories=p_data["max_ticket_categories"],
+                        max_badge_templates=p_data["max_badge_templates"],
+                        max_certificate_templates=p_data["max_certificate_templates"],
                         storage_quota_mb=p_data["storage_quota_mb"],
+                        display_order=p_data["display_order"],
+                        is_popular=p_data["is_popular"],
+                        color_hex=p_data["color_hex"],
                         is_active=True
                     )
                     db.add(plan)
                     await db.flush() # get plan.id
                     
-                    # Link features
-                    for f_key in p_data["features"]:
-                        feat = all_feats.get(f_key)
+                    # Wire plan features (only for newly created plans)
+                    for f_data in features:
+                        feat = all_feats.get(f_data["key"])
                         if feat:
-                            db.add(PlanFeature(plan_id=plan.id, feature_id=feat.id, enabled=True))
-            
+                            enabled = True
+                            if plan.name == "Basic":
+                                enabled = f_data["display_value_basic"] != "❌"
+                            elif plan.name == "Professional":
+                                enabled = f_data["display_value_professional"] != "❌"
+                            elif plan.name == "Enterprise":
+                                enabled = f_data["display_value_enterprise"] != "❌"
+                            db.add(PlanFeature(plan_id=plan.id, feature_id=feat.id, enabled=enabled))
+                else:
+                    # Plan exists. We don't overwrite its customized configuration details or feature mappings.
+                    pass
+
+            # 3. Seed Addons
+            addons = [
+                {
+                    "name": "WhatsApp Integration",
+                    "key": "ADDON_WHATSAPP",
+                    "description": "WhatsApp notifications and communication for attendees and speakers",
+                    "price_inr": 10000.0,
+                    "billing_unit": "PER_EVENT",
+                    "available_for_plans": ["PROFESSIONAL", "ENTERPRISE"],
+                    "is_optional_for_plan": "PROFESSIONAL",
+                    "included_in_plan": "ENTERPRISE",
+                    "features_spec": [
+                        {"category": "Notifications", "feature": "Registration Confirmation", "value": "Included"},
+                        {"category": "Notifications", "feature": "Payment Confirmation", "value": "Included"},
+                        {"category": "Notifications", "feature": "Speaker Acceptance", "value": "Included"},
+                        {"category": "Notifications", "feature": "Session Reminder", "value": "Included"},
+                        {"category": "Notifications", "feature": "Event Reminder", "value": "Included"},
+                        {"category": "Notifications", "feature": "Certificate Notification", "value": "Included"},
+                        {"category": "Messaging", "feature": "Bulk Broadcast", "value": "Included"},
+                        {"category": "Messaging", "feature": "Template Messages", "value": "Included"},
+                        {"category": "Messaging", "feature": "Two-Way Chat", "value": "Optional"},
+                        {"category": "Messaging", "feature": "AI Chatbot", "value": "Optional"},
+                        {"category": "Analytics", "feature": "Delivery Tracking", "value": "Included"},
+                        {"category": "Analytics", "feature": "Read Receipts", "value": "Included"},
+                        {"category": "Analytics", "feature": "Click Tracking", "value": "Included"},
+                        {"category": "Compliance", "feature": "Meta Approved Templates", "value": "Included"}
+                    ]
+                },
+                {
+                    "name": "ePoster Module",
+                    "key": "ADDON_EPOSTER",
+                    "description": "Digital ePoster display and management system",
+                    "price_inr": 25000.0,
+                    "billing_unit": "PER_EVENT",
+                    "available_for_plans": ["PROFESSIONAL", "ENTERPRISE"],
+                    "is_optional_for_plan": "PROFESSIONAL",
+                    "included_in_plan": "ENTERPRISE",
+                    "features_spec": [
+                        {"category": "Limits", "feature": "Poster Capacity", "value": "100 / 500 / Unlimited"},
+                        {"category": "Submission", "feature": "Poster Upload Portal", "value": "Included"},
+                        {"category": "Submission", "feature": "Reviewer Workflow", "value": "Included"},
+                        {"category": "Submission", "feature": "Poster Approval Process", "value": "Included"},
+                        {"category": "Display", "feature": "Interactive Poster Viewer", "value": "Included"},
+                        {"category": "Display", "feature": "Zoom Capability", "value": "Included"},
+                        {"category": "Display", "feature": "Video Poster Support", "value": "Optional"},
+                        {"category": "Search", "feature": "Poster Search", "value": "Included"},
+                        {"category": "Search", "feature": "Filter by Category", "value": "Included"},
+                        {"category": "Search", "feature": "Filter by Author", "value": "Included"},
+                        {"category": "Analytics", "feature": "Poster Views Tracking", "value": "Included"},
+                        {"category": "Analytics", "feature": "Most Viewed Posters", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Theme", "value": "Included"}
+                    ]
+                },
+                {
+                    "name": "Digital Signage",
+                    "key": "ADDON_DIGITAL_SIGNAGE",
+                    "description": "Digital signage displays for venue wayfinding and announcements",
+                    "price_inr": 20000.0,
+                    "billing_unit": "PER_EVENT",
+                    "available_for_plans": ["PROFESSIONAL", "ENTERPRISE"],
+                    "is_optional_for_plan": "PROFESSIONAL",
+                    "included_in_plan": "ENTERPRISE",
+                    "features_spec": [
+                        {"category": "Display", "feature": "Session Schedule Screen", "value": "Included"},
+                        {"category": "Display", "feature": "Speaker Information Screen", "value": "Included"},
+                        {"category": "Display", "feature": "Wayfinding Screen", "value": "Included"},
+                        {"category": "Display", "feature": "Sponsor Advertisement Screen", "value": "Included"},
+                        {"category": "Display", "feature": "Welcome Screen", "value": "Included"},
+                        {"category": "Display", "feature": "Emergency Alerts", "value": "Included"},
+                        {"category": "Hardware", "feature": "Screen Count Supported", "value": "5 / 10 / Unlimited"},
+                        {"category": "Hardware", "feature": "TV Support", "value": "Yes"},
+                        {"category": "Hardware", "feature": "LED Wall Support", "value": "Yes"},
+                        {"category": "Sync", "feature": "Real-Time Session Sync", "value": "Yes"},
+                        {"category": "Sync", "feature": "Auto Schedule Updates", "value": "Yes"},
+                        {"category": "Branding", "feature": "Custom Theme", "value": "Yes"},
+                        {"category": "Branding", "feature": "Sponsor Branding", "value": "Yes"},
+                        {"category": "Monitoring", "feature": "Screen Health Monitoring", "value": "Yes"},
+                        {"category": "Monitoring", "feature": "Offline Alert Detection", "value": "Yes"}
+                    ]
+                },
+                {
+                    "name": "Venue Ready Room Setup",
+                    "key": "ADDON_VENUE_READY_ROOM",
+                    "description": "Complete Ready Room setup with SRR stations and device management",
+                    "price_inr": 30000.0,
+                    "billing_unit": "PER_EVENT",
+                    "available_for_plans": ["PROFESSIONAL", "ENTERPRISE"],
+                    "is_optional_for_plan": None,
+                    "included_in_plan": None,
+                    "features_spec": [
+                        {"category": "Operations", "feature": "Speaker Check-In", "value": "Included"},
+                        {"category": "Operations", "feature": "SRR Queue Management", "value": "Included"},
+                        {"category": "Operations", "feature": "Session Readiness Tracking", "value": "Included"},
+                        {"category": "Operations", "feature": "File Verification", "value": "Included"},
+                        {"category": "Operations", "feature": "Presentation Version Control", "value": "Included"},
+                        {"category": "Operations", "feature": "Last Minute Upload Handling", "value": "Included"},
+                        {"category": "Hardware", "feature": "SRR Workstations", "value": "2 / 5 / Custom"},
+                        {"category": "Hardware", "feature": "Local Server Setup", "value": "Optional"},
+                        {"category": "Hardware", "feature": "Backup Storage", "value": "Included"},
+                        {"category": "Monitoring", "feature": "Device Health Monitoring", "value": "Included"},
+                        {"category": "Monitoring", "feature": "Presentation Delivery Status", "value": "Included"},
+                        {"category": "Sync", "feature": "Venue Sync Engine", "value": "Included"},
+                        {"category": "Reporting", "feature": "Session Readiness Dashboard", "value": "Included"}
+                    ]
+                },
+                {
+                    "name": "Onsite Technical Team",
+                    "key": "ADDON_ONSITE_TECH",
+                    "description": "Dedicated technical support team present at your venue",
+                    "price_inr": None,
+                    "billing_unit": "CUSTOM",
+                    "available_for_plans": ["BASIC", "PROFESSIONAL", "ENTERPRISE"],
+                    "is_optional_for_plan": None,
+                    "included_in_plan": "ENTERPRISE",
+                    "features_spec": [
+                        {"category": "Staffing", "feature": "Technical Coordinator", "value": "Included"},
+                        {"category": "Staffing", "feature": "SRR Operator", "value": "Included"},
+                        {"category": "Staffing", "feature": "Device Monitoring Staff", "value": "Included"},
+                        {"category": "Staffing", "feature": "Session Support Engineer", "value": "Included"},
+                        {"category": "Staffing", "feature": "Registration Desk Support", "value": "Optional"},
+                        {"category": "Staffing", "feature": "Speaker Assistance Staff", "value": "Optional"},
+                        {"category": "Operations", "feature": "Presentation Management", "value": "Included"},
+                        {"category": "Operations", "feature": "Session Queue Monitoring", "value": "Included"},
+                        {"category": "Operations", "feature": "Emergency Technical Support", "value": "Included"},
+                        {"category": "Coverage", "feature": "Half Day", "value": "Available"},
+                        {"category": "Coverage", "feature": "Full Day", "value": "Available"},
+                        {"category": "Coverage", "feature": "Multi-Day Event", "value": "Available"},
+                        {"category": "Reporting", "feature": "Daily Operations Report", "value": "Included"},
+                        {"category": "SLA", "feature": "Response Time", "value": "<5 min"}
+                    ]
+                },
+                {
+                    "name": "White Label Deployment",
+                    "key": "ADDON_WHITE_LABEL",
+                    "description": "Remove all EventX branding, use your own domain and identity",
+                    "price_inr": 50000.0,
+                    "billing_unit": "PER_EVENT",
+                    "available_for_plans": ["ENTERPRISE"],
+                    "is_optional_for_plan": None,
+                    "included_in_plan": None,
+                    "features_spec": [
+                        {"category": "Branding", "feature": "EventX Branding Removal", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Logo", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Domain", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Email Templates", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Login Screen", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Colors", "value": "Included"},
+                        {"category": "Branding", "feature": "Custom Typography", "value": "Included"},
+                        {"category": "Security", "feature": "SSL Certificate", "value": "Included"},
+                        {"category": "Security", "feature": "SSO Integration", "value": "Optional"},
+                        {"category": "Infrastructure", "feature": "Dedicated Subdomain", "value": "Included"},
+                        {"category": "Infrastructure", "feature": "Dedicated Environment", "value": "Optional"},
+                        {"category": "Support", "feature": "White Label Onboarding", "value": "Included"}
+                    ]
+                },
+                {
+                    "name": "Dedicated Mobile App",
+                    "key": "ADDON_MOBILE_APP",
+                    "description": "Custom-branded mobile app for attendees on iOS and Android",
+                    "price_inr": 75000.0,
+                    "billing_unit": "PER_EVENT",
+                    "available_for_plans": ["ENTERPRISE"],
+                    "is_optional_for_plan": None,
+                    "included_in_plan": None,
+                    "features_spec": [
+                        {"category": "Platform", "feature": "Android App", "value": "Yes"},
+                        {"category": "Platform", "feature": "iOS App", "value": "Yes"},
+                        {"category": "Branding", "feature": "Custom Logo", "value": "Yes"},
+                        {"category": "Branding", "feature": "Custom Splash Screen", "value": "Yes"},
+                        {"category": "Branding", "feature": "Custom App Name", "value": "Yes"},
+                        {"category": "Branding", "feature": "Custom Theme Colors", "value": "Yes"},
+                        {"category": "Features", "feature": "Agenda View", "value": "Included"},
+                        {"category": "Features", "feature": "Speaker Directory", "value": "Included"},
+                        {"category": "Features", "feature": "Attendee Directory", "value": "Included"},
+                        {"category": "Features", "feature": "Push Notifications", "value": "Included"},
+                        {"category": "Features", "feature": "Live Polling", "value": "Optional"},
+                        {"category": "Features", "feature": "Q&A Module", "value": "Optional"},
+                        {"category": "Features", "feature": "Networking Chat", "value": "Optional"},
+                        {"category": "Features", "feature": "Meeting Scheduler", "value": "Optional"},
+                        {"category": "Distribution", "feature": "Public App Store", "value": "Yes"},
+                        {"category": "Distribution", "feature": "Private Enterprise Distribution", "value": "Yes"},
+                        {"category": "Analytics", "feature": "App Usage Analytics", "value": "Basic/Advanced"},
+                        {"category": "Support", "feature": "Maintenance Period", "value": "30/60/90 Days"}
+                    ]
+                }
+            ]
+
+            existing_addons_res = await db.execute(select(Addon))
+            existing_addons = {a.key: a for a in existing_addons_res.scalars().all()}
+
+            for a_data in addons:
+                addon = existing_addons.get(a_data["key"])
+                if not addon:
+                    addon = Addon(
+                        name=a_data["name"],
+                        key=a_data["key"],
+                        description=a_data["description"],
+                        price_inr=a_data["price_inr"],
+                        billing_unit=a_data["billing_unit"],
+                        available_for_plans=a_data["available_for_plans"],
+                        is_optional_for_plan=a_data["is_optional_for_plan"],
+                        included_in_plan=a_data["included_in_plan"],
+                        features_spec=a_data["features_spec"],
+                        is_active=True
+                    )
+                    db.add(addon)
+                else:
+                    # Addon exists. We don't overwrite its customized configuration details.
+                    pass
+
+            # Clean up obsolete plans
+            from app.modules.billing.models.subscription import OrganizationSubscription
+            from sqlalchemy import update
+
+            default_plans_res = await db.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.name.in_(["Basic", "Professional", "Enterprise"]))
+            )
+            default_plans_map = {p.name: p for p in default_plans_res.scalars().all()}
+            basic_plan = default_plans_map.get("Basic")
+
+            if basic_plan:
+                obsolete_plans_res = await db.execute(
+                    select(SubscriptionPlan).where(SubscriptionPlan.name.not_in(["Basic", "Professional", "Enterprise"]))
+                )
+                obsolete_plans = obsolete_plans_res.scalars().all()
+                for op_plan in obsolete_plans:
+                    logger.info(f"Cleaning up obsolete subscription plan: {op_plan.name} ({op_plan.id})")
+                    # Migrate subscriptions to Basic fallback
+                    await db.execute(
+                        update(OrganizationSubscription)
+                        .where(OrganizationSubscription.plan_id == op_plan.id)
+                        .values(plan_id=basic_plan.id)
+                    )
+                    # Delete obsolete plan (cascading to plan_features table)
+                    await db.delete(op_plan)
+
             await db.commit()
             logger.info("Subscription plans and features seeded.")
         except Exception as e:

@@ -37,12 +37,12 @@ async def get_billing_usage(user: ActiveUser, db: DB):
     plan = res.scalar_one_or_none()
 
     if not plan:
-        # Fallback to Starter plan defaults
-        plan_name = "Starter"
-        max_events = 3
-        max_users = 10
-        max_registrations = 1000
-        storage_quota_bytes = 10240 * 1024 * 1024  # 10 GB
+        # Fallback to Basic plan defaults
+        plan_name = "Basic"
+        max_events = 1
+        max_users = 2
+        max_registrations = 150
+        storage_quota_bytes = 10 * 1024 * 1024 * 1024  # 10 GB
         daily_limit = 10000
     else:
         plan_name = plan.name
@@ -110,4 +110,105 @@ async def get_billing_usage(user: ActiveUser, db: DB):
         "storage_quota_bytes": storage_quota_bytes,
         "api_calls_today": api_calls_today,
         "daily_limit": daily_limit
+    }
+
+
+@router.get("/plan", response_model=Dict[str, Any])
+async def get_billing_plan(user: ActiveUser, db: DB):
+    """
+    Returns the organization's current plan details, status, and active usage meters.
+    """
+    org_id = user.organization_id
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context is required."
+        )
+
+    # Fetch organization subscription
+    stmt = (
+        select(OrganizationSubscription)
+        .where(OrganizationSubscription.organization_id == org_id)
+    )
+    sub = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No subscription found for this organization."
+        )
+        
+    plan = await db.get(SubscriptionPlan, sub.plan_id)
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription plan not found."
+        )
+
+    # Total events
+    events_used = await db.scalar(
+        select(func.count(Event.id)).where(Event.organization_id == org_id, Event.deleted_at.is_(None))
+    ) or 0
+
+    # Total users
+    users_used = await db.scalar(
+        select(func.count(User.id)).where(User.organization_id == org_id, User.deleted_at.is_(None))
+    ) or 0
+
+    # Count registrations across all organization's events
+    registrations_used = await db.scalar(
+        select(func.count(ParticipantRegistration.id))
+        .join(Event, Event.id == ParticipantRegistration.event_id)
+        .where(Event.organization_id == org_id, ParticipantRegistration.deleted_at.is_(None))
+    ) or 0
+
+    # Storage bytes
+    usage_rec = await db.get(OrganizationUsage, org_id)
+    storage_used_bytes = usage_rec.storage_used_bytes if usage_rec else 0
+    storage_used_mb = round(storage_used_bytes / (1024 * 1024), 2)
+
+    return {
+        "subscription_id": sub.id,
+        "status": sub.status,
+        "trial_ends_at": sub.trial_ends_at,
+        "current_period_end": sub.current_period_end,
+        "cancel_at_period_end": sub.cancel_at_period_end,
+        "plan": {
+            "id": plan.id,
+            "name": plan.name,
+            "tagline": plan.tagline,
+            "description": plan.description,
+            "billing_model": plan.billing_model,
+            "currency": plan.currency,
+            "price_per_event_min": float(plan.price_per_event_min) if plan.price_per_event_min is not None else None,
+            "price_per_event_max": float(plan.price_per_event_max) if plan.price_per_event_max is not None else None,
+            "price_display": plan.price_display,
+            "max_events": plan.max_events,
+            "max_users": plan.max_users,
+            "max_registrations": plan.max_registrations,
+            "max_speakers": plan.max_speakers,
+            "max_sessions": plan.max_sessions,
+            "max_rooms": plan.max_rooms,
+            "max_ticket_categories": plan.max_ticket_categories,
+            "storage_quota_mb": plan.storage_quota_mb,
+            "color_hex": plan.color_hex
+        },
+        "usage": {
+            "events": {
+                "used": events_used,
+                "max": plan.max_events
+            },
+            "users": {
+                "used": users_used,
+                "max": plan.max_users
+            },
+            "registrations": {
+                "used": registrations_used,
+                "max": plan.max_registrations
+            },
+            "storage": {
+                "used_mb": storage_used_mb,
+                "max_mb": plan.storage_quota_mb
+            }
+        }
     }

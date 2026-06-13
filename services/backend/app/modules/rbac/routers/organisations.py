@@ -52,12 +52,22 @@ class MemberRoleUpdate(BaseModel):
 
 
 class PlatformOrgUpdate(BaseModel):
-    plan: Optional[str] = Field(None, pattern="^(trial|starter|pro|enterprise)$")
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    custom_domain: Optional[str] = None
+    billing_email: Optional[str] = None
+    country: Optional[str] = None
+    timezone: Optional[str] = None
+    plan: Optional[str] = Field(None, pattern="^(trial|basic|pro|professional|enterprise)$")
     max_events: Optional[int] = Field(None, ge=1)
     max_users: Optional[int] = Field(None, ge=1)
     max_storage_gb: Optional[int] = Field(None, ge=1)
     is_active: Optional[bool] = None
     suspension_reason: Optional[str] = None
+
 
 
 def _clean_slug(slug: str) -> str:
@@ -397,7 +407,9 @@ async def subscribe_organization(
         
     # Find the SubscriptionPlan
     search_name = payload.plan_name.strip().lower()
-    if search_name == "pro":
+    if search_name == "starter":
+        search_name = "basic"
+    elif search_name == "pro":
         search_name = "professional"
         
     # Import billing models dynamically to prevent circular dependencies

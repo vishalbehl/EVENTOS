@@ -19,6 +19,7 @@ from app.modules.registration.routers import (
     payments, portal_auth, portal_dashboard
 )
 from app.modules.analytics.routers import analytics
+from app.modules.analytics.routers.dashboard import router as dashboard_router
 from app.modules.notifications.routers import notifications, webhooks, announcements
 from app.modules.notifications.routers.notifications import email_router
 
@@ -58,6 +59,7 @@ api_router.include_router(queue.router)
 api_router.include_router(posters.router)
 api_router.include_router(analytics.router)
 api_router.include_router(analytics.global_router)
+api_router.include_router(dashboard_router)
 api_router.include_router(settings.router)
 api_router.include_router(global_settings.router)
 api_router.include_router(webhooks.router)

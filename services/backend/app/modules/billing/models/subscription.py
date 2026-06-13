@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
-from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric
+from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,19 +17,44 @@ class SubscriptionPlan(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False) # e.g. 'REGISTRATION'
+    tagline: Mapped[Optional[str]] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text)
     
     max_events: Mapped[int] = mapped_column(Integer, default=3)
     max_users: Mapped[int] = mapped_column(Integer, default=10)
-    max_registrations: Mapped[int] = mapped_column(Integer, default=1000)
-    max_rooms: Mapped[int] = mapped_column(Integer, default=10)
+    max_registrations: Mapped[Optional[int]] = mapped_column(Integer, default=1000)
+    max_speakers: Mapped[Optional[int]] = mapped_column(Integer)
+    max_sessions: Mapped[Optional[int]] = mapped_column(Integer)
+    max_rooms: Mapped[Optional[int]] = mapped_column(Integer, default=10)
+    max_ticket_categories: Mapped[Optional[int]] = mapped_column(Integer)
+    max_badge_templates: Mapped[Optional[int]] = mapped_column(Integer)
+    max_certificate_templates: Mapped[Optional[int]] = mapped_column(Integer)
     storage_quota_mb: Mapped[int] = mapped_column(BigInteger, default=10240)
     
-    stripe_product_id: Mapped[Optional[str]] = mapped_column(String(255))
-    
+    currency: Mapped[str] = mapped_column(String(3), default='INR')
+    price_per_event_min: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    price_per_event_max: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    billing_model: Mapped[str] = mapped_column(String(20), default='PER_EVENT')
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_popular: Mapped[bool] = mapped_column(Boolean, default=False)
+    color_hex: Mapped[Optional[str]] = mapped_column(String(7))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    @property
+    def price_display(self) -> str:
+        if self.price_per_event_max:
+            return f"₹{int(self.price_per_event_min):,} - ₹{int(self.price_per_event_max):,}"
+        elif self.price_per_event_min:
+            return f"Starting at ₹{int(self.price_per_event_min):,}"
+        return "Custom Pricing"
+
+    def check_limit(self, dimension: str, current_value: int) -> bool:
+        limit = getattr(self, f"max_{dimension}", None)
+        if limit is None:
+            return True # Unlimited
+        return current_value < limit
 
 class OrganizationSubscription(Base):
     __tablename__ = "organization_subscriptions"
@@ -68,6 +93,8 @@ class OrganizationFeature(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), primary_key=True)
     feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    override_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
+    override_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=True)
 
 class Addon(Base):
     __tablename__ = "addons"
@@ -75,10 +102,19 @@ class Addon(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    monthly_price: Mapped[float] = mapped_column(Numeric(10, 2), default=0.0)
-    yearly_price: Mapped[float] = mapped_column(Numeric(10, 2), default=0.0)
-    stripe_product_id: Mapped[Optional[str]] = mapped_column(String(255))
+    
+    price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    min_price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    max_price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    billing_unit: Mapped[Optional[str]] = mapped_column(String(20))
+    available_for_plans: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String))
+    is_optional_for_plan: Mapped[Optional[str]] = mapped_column(String(50))
+    included_in_plan: Mapped[Optional[str]] = mapped_column(String(50))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    features_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class AddonFeature(Base):

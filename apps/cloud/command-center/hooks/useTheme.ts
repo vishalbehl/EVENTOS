@@ -3,30 +3,16 @@
 import { useEffect, useState } from 'react';
 
 export type Theme = 
-  | 'void-indigo' 
-  | 'obsidian-rose' 
-  | 'carbon-teal' 
-  | 'amber-noir' 
-  | 'slate-aurora' 
-  | 'forest-ink' 
-  | 'copper-oxide' 
   | 'plasma-violet' 
   | 'light';
 
 export const THEMES: { name: Theme; label: string }[] = [
-  { name: 'void-indigo', label: 'Void indigo' },
-  { name: 'obsidian-rose', label: 'Obsidian rose' },
-  { name: 'carbon-teal', label: 'Carbon teal' },
-  { name: 'amber-noir', label: 'Amber noir' },
-  { name: 'slate-aurora', label: 'Slate aurora' },
-  { name: 'forest-ink', label: 'Forest ink' },
-  { name: 'copper-oxide', label: 'Copper oxide' },
-  { name: 'plasma-violet', label: 'Plasma violet' },
+  { name: 'plasma-violet', label: 'Dark' },
   { name: 'light', label: 'Light' },
 ];
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>('void-indigo');
+  const [theme, setThemeState] = useState<Theme>('plasma-violet');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -41,6 +27,12 @@ export function useTheme() {
       } else {
         document.documentElement.classList.add('dark');
       }
+    } else {
+      // Fallback or old theme migration
+      setThemeState('plasma-violet');
+      localStorage.setItem('eventos-theme', 'plasma-violet');
+      document.documentElement.setAttribute('data-theme', 'plasma-violet');
+      document.documentElement.classList.add('dark');
     }
     setMounted(true);
   }, []);

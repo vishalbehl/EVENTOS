@@ -17,10 +17,10 @@ export default function TrafficDirectorPage() {
         if (isAdmin) {
           router.replace("/super-admin");
         } else {
-          router.replace("/dashboard");
+          router.replace("/admin");
         }
       } else {
-        router.replace("/login");
+        router.replace("/admin");
       }
     }, 100);
 

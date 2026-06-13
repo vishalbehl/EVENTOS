@@ -327,7 +327,10 @@ async def create_session(
                     detail="You do not have permission to create sessions in this room."
                 )
 
-    """Register a new session."""
+    # Check limit
+    from app.modules.billing.services.limit_guard import LimitGuard
+    await LimitGuard.check_sessions(db, event.organization_id, event.id)
+
     dup = await db.execute(
         select(Session).where(
             Session.event_id == event.id,

@@ -15,11 +15,7 @@ from app.modules.developer.models.developer_domain_tables import DeveloperOAuthT
 from app.redis import redis_client
 from tests.conftest import auth_headers
 
-@pytest_asyncio.fixture(autouse=True)
-async def cleanup_redis():
-    await redis_client.connection_pool.disconnect()
-    yield
-    await redis_client.connection_pool.disconnect()
+
 
 @pytest.mark.asyncio
 async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User, db: AsyncSession):
@@ -179,8 +175,12 @@ async def test_developer_rate_limiting(client: AsyncClient, organizer: User, db:
     for k in keys:
         await redis_client.delete(k)
         
+    await redis_client.delete(f"rl:{organizer.organization_id}:minute")
+    await redis_client.delete(f"rl:{organizer.organization_id}:day")
+        
     config_key = f"rate:limit:config:{organizer.organization_id}"
     await redis_client.delete(config_key)
+
 
     # Trigger requests using the API key
     # First request: Allowed

@@ -132,3 +132,43 @@ async def list_execution_failures(
     error message and stack trace for debugging.
     """
     return await JobService.list_failures(db, execution_id=execution_id, page=page, page_size=page_size)
+
+
+@router.post(
+    "/executions/{execution_id}/retry",
+    summary="Retry a failed job execution",
+)
+async def retry_job_execution(
+    execution_id: uuid.UUID,
+    _: SuperAdminOnly,
+    db: DB,
+):
+    """Retry a failed job execution by re-queueing it."""
+    from app.modules.jobs.models.job import JobExecution
+    execution = await db.get(JobExecution, execution_id)
+    if not execution:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Execution not found")
+    execution.status = "queued"
+    await db.commit()
+    return {"message": "Job execution re-queued successfully"}
+
+
+@router.delete(
+    "/executions/{execution_id}",
+    summary="Cancel a pending or running job execution",
+)
+async def cancel_job_execution(
+    execution_id: uuid.UUID,
+    _: SuperAdminOnly,
+    db: DB,
+):
+    """Cancel a pending or running job execution."""
+    from app.modules.jobs.models.job import JobExecution
+    execution = await db.get(JobExecution, execution_id)
+    if not execution:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Execution not found")
+    execution.status = "failed"
+    await db.commit()
+    return {"message": "Job execution cancelled successfully"}

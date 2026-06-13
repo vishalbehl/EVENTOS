@@ -308,6 +308,9 @@ async def manual_register_speaker(
         speaker.designation = payload.designation
         speaker.country = payload.country
     else:
+        from app.modules.billing.services.limit_guard import LimitGuard
+        await LimitGuard.check_speakers(db, event.organization_id, event.id)
+        
         token = str(uuid.uuid4())
         # Generate a human-readable code (8 chars, uppercase)
         code = token.split("-")[0].upper()

@@ -1,5 +1,6 @@
 import sys  # reload trigger - DB restarted
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 
 # Compatibility patch for passlib and modern bcrypt versions
@@ -17,7 +18,7 @@ if sys.platform == 'win32':
     if settings.environment != "testing":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import app.models
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -202,3 +203,19 @@ app.mount("/socket.io", socket_app)
 @app.get("/health", tags=["health"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ── Native WebSocket Fallback for Dashboard ───────────────────
+@app.websocket("/ws/dashboard/{event_id}")
+async def ws_dashboard_fallback(websocket: WebSocket, event_id: uuid.UUID):
+    """Fallback WebSocket handler for dashboard metrics client updates."""
+    await websocket.accept()
+    try:
+        while True:
+            # Receive heartbeat ping
+            data = await websocket.receive_text()
+            # Respond with pong
+            await websocket.send_json({"type": "pong", "event_id": str(event_id)})
+    except WebSocketDisconnect:
+        pass
+

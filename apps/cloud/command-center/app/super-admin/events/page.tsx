@@ -113,7 +113,7 @@ export default function EventExplorerPage() {
                   {event.start_date ? new Date(event.start_date).toLocaleDateString() : "—"}
                 </div>
                 <button
-                  onClick={() => router.push(`/events/${event.id}/speaker/dashboard`)}
+                  onClick={() => window.open(`http://localhost:3001/events/${event.id}/speaker/dashboard`, "_blank")}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[10px] font-bold text-blue-400 hover:bg-blue-500/20 transition-all opacity-0 group-hover:opacity-100"
                 >
                   <ExternalLink className="w-3 h-3" />

@@ -44,6 +44,12 @@ from sqlalchemy.pool import NullPool
 from app.config import settings
 settings.environment = "testing"
 
+# Configure Celery in eager mode for all tests
+from app.worker import celery_app
+celery_app.conf.task_always_eager = True
+celery_app.conf.task_eager_propagates = True
+
+
 # ── Inject a test Fernet key so CredentialCipher works in tests ──
 # This is a fixed throwaway key — safe to hardcode here.
 from cryptography.fernet import Fernet as _Fernet
@@ -93,6 +99,13 @@ _TestSessionLocal = async_sessionmaker(
 
 
 # ── pytest-asyncio event loop managed via pytest.ini ──────────
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for each test session."""
+    policy = asyncio.get_event_loop_policy()
+    loop = policy.new_event_loop()
+    yield loop
+    loop.close()
 
 # ── Database schema setup (once per session) ──────────────────
 

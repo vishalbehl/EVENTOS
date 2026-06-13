@@ -11,21 +11,15 @@ import {
   MonitorPlay, BarChart3, SlidersHorizontal,
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
   Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
-  Code, ShieldCheck
+  Code, ShieldCheck, Building2, CreditCard, Shield, Activity, Database, Search, Terminal, Share2
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
-import { ThemeSwitcher } from "@/components/ThemeSwitcher";
-import { usePermissions } from "@/hooks/usePermissions";
-import { useEvent } from "@/hooks/useEvents";
-import { PERMISSIONS } from "@/lib/permissions";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { eventId } = useParams();
   const { isSidebarCollapsed: isCollapsed, toggleSidebar } = useUIStore();
-  const { user } = useAuthStore();
 
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
 
@@ -33,144 +27,90 @@ export function Sidebar() {
     setOpenMenus(prev => ({ ...prev, [label]: !prev[label] }));
   };
 
-  const isEventWorkspace = !!eventId;
-
   const platformRoutes = [
-    { label: "Home", icon: Home, href: "/dashboard" },
-    { label: "Events", icon: Calendar, href: "/events", permission: PERMISSIONS.EVENTS_VIEW },
-    { label: "Analytics", icon: BarChart3, href: "/analytics", permission: PERMISSIONS.ANALYTICS_VIEW },
-    { label: "User Management", icon: Users, href: "/users", permission: PERMISSIONS.USERS_VIEW },
-    { label: "Developer", icon: Code, href: "/developer", permission: PERMISSIONS.SETTINGS_EDIT },
-    { label: "File Vault", icon: Box, href: "/files" },
-  ];
-
-  const { checkPermission } = usePermissions(eventId as string);
-  const { data: event } = useEvent(eventId as string);
-  const speakerEnabled = event?.speaker_settings?.enabled ?? true;
-  const regEnabled = event?.registration_settings?.enabled ?? true;
-
-  const filterRoutesByPermissions = (routes: any[]) => {
-    return routes
-      .map(route => {
-        if (route.subItems) {
-          const allowedSubItems = route.subItems.filter((sub: any) => !sub.permission || checkPermission(sub.permission));
-          if (allowedSubItems.length === 0) return null;
-          return { ...route, subItems: allowedSubItems };
-        }
-        if (route.permission && !checkPermission(route.permission)) return null;
-        return route;
-      })
-      .filter(Boolean);
-  };
-
-  const eventRoutes = [
-    { label: "Overview", icon: Home, href: `/events/${eventId}/speaker/dashboard` },
-    {
-      label: "PROGRAM",
-      icon: Calendar,
-      subItems: [
-        { label: "Sessions", icon: Calendar, href: `/events/${eventId}/speaker/sessions`, permission: PERMISSIONS.SESSIONS_VIEW },
-        { label: "Rooms", icon: MapPin, href: `/events/${eventId}/speaker/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
-      ]
-    },
-    {
-      label: "SPEAKERS",
-      icon: Users,
-      subItems: [
-        { label: "Speakers", icon: Users, href: `/events/${eventId}/speaker/speakers`, permission: PERMISSIONS.SPEAKERS_VIEW },
-        { label: "File Monitoring", icon: FileVideo, href: `/events/${eventId}/speaker/files`, permission: PERMISSIONS.FILES_VIEW },
-        { label: "Posters", icon: MonitorPlay, href: `/events/${eventId}/speaker/eposters`, permission: PERMISSIONS.POSTERS_VIEW },
-      ]
-    },
-    {
-      label: "COMMUNICATION",
-      icon: Mail,
-      subItems: [
-        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/speaker/emails`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/speaker/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Notifications", icon: Bell, href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
-      ]
-    },
-    {
-      label: "DESIGN STUDIO",
-      icon: Palette,
-      subItems: [
-        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/speaker/theme`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/speaker/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
-      ]
-    },
-    {
-      label: "AUTOMATION",
-      icon: ClipboardList,
-      subItems: [
-        { label: "Workflows", icon: ClipboardList, href: `/events/${eventId}/speaker/workflows` },
-      ]
-    }
-  ];
-
-  const isRegistrationWorkspace = !!(eventId && pathname?.includes(`/events/${eventId}/registration`));
-
-  const registrationRoutes = [
-    { label: "Overview", icon: Home, href: `/events/${eventId}/registration/dashboard` },
-    {
-      label: "ATTENDEES",
-      icon: Users,
-      subItems: [
-        { label: "Participants", icon: Users, href: `/events/${eventId}/registration/participants` },
-        { label: "Review Queue", icon: ClipboardList, href: `/events/${eventId}/registration/review` },
-      ]
-    },
-    {
-      label: "DESIGN STUDIO",
-      icon: Palette,
-      subItems: [
-        { label: "Form Builder", icon: SlidersHorizontal, href: `/events/${eventId}/registration/form-builder` },
-        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/registration/theme` },
-        { label: "Template Designer", icon: Layout, href: `/events/${eventId}/registration/template-designer` },
-        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/registration/email-designer` },
-      ]
-    },
-    {
-      label: "COMMUNICATION",
-      icon: Mail,
-      subItems: [
-        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
-        { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/registration/announcements` },
-      ]
-    },
-    {
-      label: "FINANCE",
+    { label: "Overview", icon: LayoutDashboard, href: "/super-admin" },
+    { label: "Organizations", icon: Building2, href: "/super-admin/organizations" },
+    { 
+      label: "Commercial", 
       icon: Banknote,
       subItems: [
-        { label: "Financials", icon: Banknote, href: `/events/${eventId}/registration/financials` },
+        { label: "Revenue", icon: BarChart3, href: "/super-admin/commercial/revenue" },
+        { label: "Plans & Limits", icon: SlidersHorizontal, href: "/super-admin/commercial/plans" },
+        { label: "Subscriptions", icon: CreditCard, href: "/super-admin/commercial/subscriptions" },
+        { label: "Invoices", icon: FileSpreadsheet, href: "/super-admin/commercial/invoices" },
       ]
-    }
+    },
+    { label: "Events Control", icon: Calendar, href: "/super-admin/events" },
+    { 
+      label: "Applications", 
+      icon: Box,
+      subItems: [
+        { label: "Registry", icon: Layout, href: "/super-admin/applications/registry" },
+        { label: "Feature Flags", icon: Code, href: "/super-admin/applications/feature-flags" },
+      ]
+    },
+    { 
+      label: "Operations", 
+      icon: Settings,
+      subItems: [
+        { label: "System Health", icon: Activity, href: "/super-admin/operations/health" },
+        { label: "Background Jobs", icon: ClipboardList, href: "/super-admin/operations/jobs" },
+        { label: "Database", icon: Database, href: "/super-admin/operations/database" },
+        { label: "Storage Vault", icon: Box, href: "/super-admin/operations/storage" },
+        { label: "Search Index", icon: Search, href: "/super-admin/operations/search" },
+      ]
+    },
+    { 
+      label: "Security", 
+      icon: ShieldCheck,
+      subItems: [
+        { label: "Global Users", icon: Users, href: "/super-admin/security/users" },
+        { label: "Audit Trails", icon: FileText, href: "/super-admin/security/audit" },
+        { label: "System Events", icon: Bell, href: "/super-admin/security/events" },
+        { label: "Impersonation", icon: User, href: "/super-admin/security/impersonation" },
+      ]
+    },
+    { 
+      label: "Developer", 
+      icon: Terminal,
+      subItems: [
+        { label: "API Analytics", icon: BarChart3, href: "/super-admin/developer/analytics" },
+        { label: "Webhooks", icon: Megaphone, href: "/super-admin/developer/webhooks" },
+        { label: "Integrations", icon: Share2, href: "/super-admin/developer/integrations" },
+        { label: "Rate Limits", icon: SlidersHorizontal, href: "/super-admin/developer/rate-limits" },
+      ]
+    },
+    { 
+      label: "Support", 
+      icon: Info,
+      subItems: [
+        { label: "Ticket Queue", icon: ClipboardList, href: "/super-admin/support/tickets" },
+        { label: "SLA Management", icon: Shield, href: "/super-admin/support/sla" },
+      ]
+    },
+    { 
+      label: "System Settings", 
+      icon: Palette,
+      subItems: [
+        { label: "General", icon: Settings, href: "/super-admin/settings/general" },
+        { label: "Platform Security", icon: ShieldCheck, href: "/super-admin/settings/security" },
+        { label: "Email Templates", icon: Mail, href: "/super-admin/settings/email-templates" },
+        { label: "Feature Catalog", icon: Layout, href: "/super-admin/settings/feature-catalog" },
+      ]
+    },
   ];
 
-  const filteredPlatformRoutes = platformRoutes.filter(r => !r.permission || checkPermission(r.permission));
+  const currentRoutes = platformRoutes;
 
-  const filteredEventRoutes = filterRoutesByPermissions(eventRoutes);
-  const filteredRegistrationRoutes = filterRoutesByPermissions(registrationRoutes);
-
-  const bottomRoutes = isRegistrationWorkspace
-    ? [
-      { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
-      { label: "Documentation", icon: FileText, href: "/docs" },
-    ]
-    : [
-      { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
-      { label: "Documentation", icon: FileText, href: "/docs" },
-    ];
-
-  const currentRoutes = isRegistrationWorkspace
-    ? (regEnabled ? filteredRegistrationRoutes : [])
-    : (isEventWorkspace ? (speakerEnabled ? filteredEventRoutes : []) : filteredPlatformRoutes);
+  const bottomRoutes = [
+    { label: "Documentation", icon: FileText, href: "/docs" },
+  ];
 
   useEffect(() => {
     if (!pathname) return;
     const newOpen: Record<string, boolean> = {};
     currentRoutes.forEach((route: any) => {
-      if (route.subItems && route.subItems.some((sub: any) => pathname === sub.href)) {
+      if (route.subItems && route.subItems.some((sub: any) => pathname.startsWith(sub.href))) {
         newOpen[route.label] = true;
       }
     });

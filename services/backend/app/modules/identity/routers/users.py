@@ -77,6 +77,11 @@ async def create_user(
     # Organizers always create users within their own org; only super_admin can specify a different org
     org_id = payload.organization_id if current_user.role == "super_admin" else current_user.organization_id
 
+    # Check user limit
+    if org_id:
+        from app.modules.billing.services.limit_guard import LimitGuard
+        await LimitGuard.check_users(db, org_id)
+
     user = User(
         email=payload.email,
         password_hash=auth_service.hash_password(payload.password),
