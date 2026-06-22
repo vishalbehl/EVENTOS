@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, formatApiError } from "@/lib/utils";
 
 type ImportPreviewRow = {
   row_number: number;
@@ -100,7 +100,7 @@ export function ScheduleImportModal({ isOpen, onClose, eventId }: ScheduleImport
         toast.warning("Agenda parsed with blocking conflicts. Review rows.");
       }
     } catch (error: any) {
-      const msg = error.response?.data?.detail || "Could not parse workbook.";
+      const msg = formatApiError(error, "Could not parse workbook.");
       setImportError(msg);
       toast.error(msg);
     } finally {
@@ -126,7 +126,7 @@ export function ScheduleImportModal({ isOpen, onClose, eventId }: ScheduleImport
       setImportCommitted(true);
       toast.success("Workbook import successfully queued!");
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || "Could not queue import.");
+      toast.error(formatApiError(error, "Could not queue import."));
     } finally {
       setIsUploading(false);
     }
@@ -327,7 +327,7 @@ export function ScheduleImportModal({ isOpen, onClose, eventId }: ScheduleImport
                               const res = await autoInvite.mutateAsync();
                               toast.success(`Queued ${res.pending_speakers} invitation emails.`);
                             } catch (e: any) {
-                              toast.error(e?.response?.data?.detail || "Failed to dispatch invitations.");
+                              toast.error(formatApiError(e, "Failed to dispatch invitations."));
                             }
                           }}
                           disabled={autoInvite.isPending}

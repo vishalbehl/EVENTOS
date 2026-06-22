@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiDelete, apiPost } from "@/lib/api-client";
+import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
 
 export interface SessionSummary {
@@ -68,7 +69,7 @@ export function useCreateSession(eventId: string) {
       toast.success("Session created successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.detail || "Failed to create session");
+      toast.error(formatApiError(error, "Failed to create session"));
     }
   });
 }

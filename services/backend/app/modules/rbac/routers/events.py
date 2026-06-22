@@ -39,7 +39,7 @@ async def list_events(
     """List events scoped to the authenticated user's organisation."""
     if current_user.role == 'super_admin':
         q = select(Event)
-    elif current_user.role == 'admin':
+    elif current_user.role in ('admin', 'organiser'):
         q = select(Event).where(Event.organization_id == current_user.organization_id)
     else:
         # Restricted roles: only see assigned events

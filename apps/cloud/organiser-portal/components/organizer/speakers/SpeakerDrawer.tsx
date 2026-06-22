@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, formatDateInTZ, formatTimeRangeInTZ, formatDateTimeInTZ } from "@/lib/utils";
+import { cn, formatDateInTZ, formatTimeRangeInTZ, formatDateTimeInTZ, formatApiError } from "@/lib/utils";
 import {
   SpeakerSummary,
   SpeakerTalk,
@@ -163,7 +163,7 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
       toast.success("Speaker profile saved successfully!");
       queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
     } catch (err: any) {
-      setProfileError(err.response?.data?.detail || "Failed to save profile.");
+      setProfileError(formatApiError(err, "Failed to save profile."));
       toast.error("Failed to save speaker profile.");
     }
   };
@@ -533,7 +533,7 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
                         });
                         toast.success("Profile update requested successfully!", { id: loadingId });
                       } catch (err: any) {
-                        toast.error(err.response?.data?.detail || "Failed to send request email.");
+                        toast.error(formatApiError(err, "Failed to send request email."));
                       }
                     }}
                     variant="outline"

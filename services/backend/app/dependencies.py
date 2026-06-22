@@ -58,7 +58,7 @@ async def get_db() -> AsyncSession:
         org_id = tenant_org_id.get()
         if org_id:
             await session.execute(
-                text("SET app.current_organization_id = :org_id"),
+                text("SELECT set_config('app.current_organization_id', :org_id, false)"),
                 {"org_id": str(org_id)}
             )
         else:
@@ -209,8 +209,9 @@ async def get_current_user(
     if token_data.role == "developer":
         # Resolve user if present (OAuth2 flow)
         if token_data.user_id:
+            from sqlalchemy.orm import selectinload
             result = await db.execute(
-                select(User).where(User.id == token_data.user_id)
+                select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
             )
             user = result.scalar_one_or_none()
             if user:
@@ -228,9 +229,10 @@ async def get_current_user(
             is_platform_admin=False
         )
 
+    from sqlalchemy.orm import selectinload
     print(f"DEBUG: get_current_user user_id={token_data.user_id} org_id={token_data.organization_id}")
     result = await db.execute(
-        select(User).where(User.id == token_data.user_id)
+        select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
     )
     user = result.scalar_one_or_none()
     print(f"DEBUG: get_current_user found={user}")
@@ -475,8 +477,8 @@ async def get_current_event(
                 detail=f"Event {event_id} not found.",
             )
         
-        # Enforce assignments for restricted roles (Organisers and below, but NOT Admins)
-        if user.role in ["organiser", "session_manager", "technician", "volunteer"]:
+        # Enforce assignments for restricted roles (excluding Admins and Organisers)
+        if user.role in ["session_manager", "technician", "volunteer"]:
             from app.modules.rbac.models.rbac import UserAccessNode
             from app.modules.events.models.room import Room
             from app.modules.events.models.session import Session

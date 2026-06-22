@@ -17,6 +17,9 @@ export function ImpersonationBanner() {
   if (!hydrated || !originalAccessToken) return null;
 
   const handleStop = () => {
+    localStorage.removeItem("eventos_original_token");
+    localStorage.removeItem("eventos_impersonating_org");
+    localStorage.removeItem("impersonated_user_name");
     stopImpersonation();
     // Redirect back to Super Admin at port 3000
     window.location.href = "http://localhost:3000/super-admin/organizations";

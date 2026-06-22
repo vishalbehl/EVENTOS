@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
 import { toast } from 'sonner'
+import { formatApiError } from '@/lib/utils'
 
 const THEMES = [
   { id: 'midnight', label: 'Midnight', desc: 'Deep dark with violet accents', color: '#7c3aed', bg: '#0f0a1a' },
@@ -63,7 +64,7 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
       setIsLive(!isLive)
       toast.success(!isLive ? 'Speaker Portal is now LIVE 🚀' : 'Speaker Portal set to Draft')
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to update portal status.')
+      toast.error(formatApiError(err, 'Failed to update portal status.'))
     } finally {
       setToggling(false)
     }
@@ -92,7 +93,7 @@ export default function SpeakerTab({ eventId }: { eventId: string }) {
       })
       toast.success('Speaker Portal settings updated successfully!')
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to update settings.')
+      toast.error(formatApiError(err, 'Failed to update settings.'))
     } finally {
       setSavingSettings(false)
     }

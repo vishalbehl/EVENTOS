@@ -169,8 +169,6 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                   className="w-full h-11 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none cursor-pointer"
                 >
                   <option value="simulated" className="bg-[var(--base)] text-[var(--text)]">Simulation Sandbox (Mock)</option>
-                  <option value="stripe" className="bg-[var(--base)] text-[var(--text)]">Stripe Checkout</option>
-                  <option value="razorpay" className="bg-[var(--base)] text-[var(--text)]">Razorpay Payments</option>
                 </select>
               </div>
 
@@ -194,78 +192,6 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                   />
                 </button>
               </div>
-
-              {/* Stripe Credentials inputs */}
-              {activeGateway === 'stripe' && (
-                <div className="space-y-4 pt-2 border-t border-white/5 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--pri)] block">Stripe Credentials</span>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-muted">Publishable Key</label>
-                    <input
-                      type="text"
-                      placeholder="pk_test_..."
-                      value={stripePubKey}
-                      onChange={e => setStripePubKey(e.target.value)}
-                      className="w-full h-10 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-muted block">Secret Key</label>
-                    <div className="relative flex items-center">
-                      <input
-                        type={showStripeSecret ? 'text' : 'password'}
-                        placeholder="sk_test_..."
-                        value={stripeSecKey}
-                        onChange={e => setStripeSecKey(e.target.value)}
-                        className="w-full h-10 pl-4 pr-10 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowStripeSecret(!showStripeSecret)}
-                        className="absolute right-3 text-muted hover:text-[var(--text)] transition-colors"
-                      >
-                        {showStripeSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Razorpay Credentials inputs */}
-              {activeGateway === 'razorpay' && (
-                <div className="space-y-4 pt-2 border-t border-white/5 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--pri)] block">Razorpay Credentials</span>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-muted">Key ID</label>
-                    <input
-                      type="text"
-                      placeholder="rzp_test_..."
-                      value={razorpayKeyId}
-                      onChange={e => setRazorpayKeyId(e.target.value)}
-                      className="w-full h-10 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-wider text-muted block">Key Secret</label>
-                    <div className="relative flex items-center">
-                      <input
-                        type={showRazorpaySecret ? 'text' : 'password'}
-                        placeholder="Secret Key"
-                        value={razorpayKeySecret}
-                        onChange={e => setRazorpayKeySecret(e.target.value)}
-                        className="w-full h-10 pl-4 pr-10 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowRazorpaySecret(!showRazorpaySecret)}
-                        className="absolute right-3 text-muted hover:text-[var(--text)] transition-colors"
-                      >
-                        {showRazorpaySecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </>
           )}
 

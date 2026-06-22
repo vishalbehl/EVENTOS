@@ -155,9 +155,9 @@ class RBACService:
         required_permission: str,
         scope_id: Optional[uuid.UUID] = None
     ) -> bool:
-        # Optimization: Super admins and Admins bypass everything
+        # Optimization: Super admins, Admins, and Organisers bypass everything
         user = await db.get(User, user_id)
-        if user and user.role in ['super_admin', 'admin']:
+        if user and user.role in ['super_admin', 'admin', 'organiser']:
             return True
             
         perms = await RBACService.get_user_permissions(db, user_id, event_id=scope_id)

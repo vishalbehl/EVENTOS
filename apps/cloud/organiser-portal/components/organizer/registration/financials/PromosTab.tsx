@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Ticket, Plus, Trash2, Calendar, Users, Percent, DollarSign, ToggleLeft, ToggleRight } from 'lucide-react'
 import { apiClient } from '@/lib/api-client'
+import { formatApiError } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface PromoCode {
@@ -77,7 +78,7 @@ export default function PromosTab({ eventId }: { eventId: string }) {
       setMaxUses('')
       setExpiryDate('')
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to create promo code.')
+      toast.error(formatApiError(err, 'Failed to create promo code.'))
     } finally {
       setSaving(false)
     }

@@ -32,7 +32,9 @@ EXCLUDED_DIRS = {
     "coverage",
     ".turbo",
     ".parcel-cache",
-    ".DS_Store"
+    ".DS_Store",
+    "docs",
+    "md files"
 }
 
 EXCLUDED_EXTENSIONS = {

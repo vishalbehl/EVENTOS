@@ -16,7 +16,7 @@ class AuditContext:
     actor_role: Optional[str] = None
     old_state: Optional[Dict[str, Any]] = None
     new_state: Optional[Dict[str, Any]] = None
-    diff: Optional[Dict[str, Any]] = None
+    change_diff: Optional[Dict[str, Any]] = None
     actor_ip: Optional[str] = None
     actor_user_agent: Optional[str] = None
     geo_location: Optional[Dict[str, Any]] = None
@@ -72,7 +72,7 @@ class AuditService:
             actor_role=ctx.actor_role,
             old_state=ctx.old_state,
             new_state=ctx.new_state,
-            diff=ctx.diff,
+            change_diff=ctx.change_diff,
             actor_ip=ctx.actor_ip,
             actor_user_agent=ctx.actor_user_agent,
             geo_location=ctx.geo_location,

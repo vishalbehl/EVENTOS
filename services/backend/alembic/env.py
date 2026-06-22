@@ -61,7 +61,11 @@ def include_object(object, name, type_, reflected, compare_to):
             "applications", "billing", "developer", "events",
             "identity", "platform", "analytics", "communications",
             "crm", "support", "marketplace", "mobile", "ai", "audit",
-            "workflow", "files", "jobs", "search", "sponsors"
+            "workflow", "files", "jobs", "search", "sponsors", "platform_workflows",
+            "platform_notifications", "platform_communications", "platform_alerts", "platform_webhooks",
+            "platform_audit", "platform_activity", "platform_compliance",
+            "commercial", "inventory", "pricing", "procurement",
+            "technology_services", "operations_planning", "resource_management", "deployment_management"
         }
 
     if type_ == "table" and name in (

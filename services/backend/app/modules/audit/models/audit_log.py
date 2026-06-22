@@ -1,6 +1,5 @@
 import uuid
 import hashlib
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
@@ -44,12 +43,12 @@ class AuditLog(Base):
     resource_type: Mapped[str] = mapped_column(String(50), index=True)
     resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     action_type: Mapped[str] = mapped_column(String(80), index=True)
-    actor_role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    actor_role: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # ── Data Snapshots (Sanitized) ──────────────────────
     old_state: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     new_state: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    diff: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    change_diff: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     
     # ── Forensic Metadata ────────────────────────────────
     actor_ip: Mapped[Optional[str]] = mapped_column(String(45))
@@ -57,7 +56,7 @@ class AuditLog(Base):
     geo_location: Mapped[Optional[dict]] = mapped_column(JSONB) # {city, country, lat, lon}
     
     # ── Tamper Proofing ──────────────────────────────────
-    row_hash: Mapped[Optional[str]] = mapped_column(String(64)) # SHA-256 of the row details
+    row_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA-256 tamper-proof hash (indexed via __table_args__)
     is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false', nullable=False)
     
     # ── Operational ──────────────────────────────────────
@@ -84,6 +83,7 @@ class AuditLog(Base):
 
     __table_args__ = (
         Index("ix_audit_logs_correlation", "correlation_id"),
+        Index("ix_audit_logs_row_hash", "row_hash"),
     )
 
 
@@ -91,25 +91,18 @@ class AuditLog(Base):
 def generate_row_hash(mapper, connection, target):
     """
     Computes row_hash as SHA-256 of:
-    f"{action_type}:{resource_id}:{actor_user_id}:{occurred_at}:{new_state}"
+    f"{schema_name}:{table_name}:{record_id}:{action}:{timestamp}"
+    
+    This provides a tamper-proof fingerprint for each audit entry.
     """
     if not target.occurred_at:
         target.occurred_at = datetime.now(timezone.utc)
-    
-    new_state_val = target.new_state
-    if isinstance(new_state_val, dict):
-        new_state_str = json.dumps(new_state_val, sort_keys=True)
-    elif isinstance(new_state_val, str):
-        new_state_str = new_state_val
-    else:
-        new_state_str = ""
-        
-    action_type = target.action_type or ""
-    resource_id = str(target.resource_id) if target.resource_id else ""
-    actor_user_id = str(target.actor_user_id) if target.actor_user_id else ""
-    
-    # Ensure timezone-aware comparison and format
-    occurred_at_str = target.occurred_at.isoformat() if hasattr(target.occurred_at, "isoformat") else str(target.occurred_at)
-    
-    payload = f"{action_type}:{resource_id}:{actor_user_id}:{occurred_at_str}:{new_state_str}"
+
+    schema_name = "audit"
+    table_name = "logs"
+    record_id = str(target.resource_id) if target.resource_id else ""
+    action = target.action_type or ""
+    timestamp = target.occurred_at.isoformat() if hasattr(target.occurred_at, "isoformat") else str(target.occurred_at)
+
+    payload = f"{schema_name}:{table_name}:{record_id}:{action}:{timestamp}"
     target.row_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()

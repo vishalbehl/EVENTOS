@@ -16,7 +16,7 @@ class TicketTypeUpdate(BaseModel):
 class TicketTypeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: uuid.UUID
     event_id: uuid.UUID
     role_name: str
     tier_name: str

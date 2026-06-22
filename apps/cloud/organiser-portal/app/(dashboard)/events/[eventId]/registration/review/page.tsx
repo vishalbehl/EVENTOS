@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiGet, apiPatch } from "@/lib/api-client";
+import { formatApiError } from "@/lib/utils";
 
 interface ParticipantRegistration {
   id: string;
@@ -182,7 +183,7 @@ export default function ReviewPage() {
       fetchRegistrations();
     } catch (err: any) {
       console.error(err);
-      toast.error(err.detail || "Action failed. Check event capacity limits.");
+      toast.error(formatApiError(err, "Action failed. Check event capacity limits."));
     }
   };
 
@@ -204,7 +205,7 @@ export default function ReviewPage() {
       fetchRegistrations();
     } catch (err: any) {
       console.error(err);
-      toast.error(err.detail || "Failed to promote registration. Capacities might be full.");
+      toast.error(formatApiError(err, "Failed to promote registration. Capacities might be full."));
     }
   };
 

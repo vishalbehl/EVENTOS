@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { apiClient, apiGet, apiPost } from "@/lib/api-client";
+import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface AddParticipantModalProps {
@@ -172,7 +173,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       onSuccess();
       onClose();
     } catch (err: any) {
-      toast.error(err.message || "Failed to register participant.");
+      toast.error(formatApiError(err, "Failed to register participant."));
     } finally {
       setSubmitting(false);
     }
@@ -198,7 +199,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       link.click();
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      toast.error(err.message || "Failed to download Excel template.");
+      toast.error(formatApiError(err, "Failed to download Excel template."));
     }
   };
 
@@ -218,7 +219,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       toast.success("Spreadsheet processed successfully.");
       onSuccess();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || err.message || "Failed to import Excel file.");
+      toast.error(formatApiError(err, "Failed to import Excel file."));
     } finally {
       setImporting(false);
     }

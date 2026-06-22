@@ -75,8 +75,8 @@ body { background: var(--base); color: var(--text); }
 
 /* Global native select dropdown styling to follow theme design */
 select {
-  background-color: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background-color: var(--surf) !important;
+  border: 1px solid var(--border) !important;
   border-radius: 12px !important;
   color: var(--text) !important;
   font-weight: 600 !important;
@@ -86,8 +86,8 @@ select {
 }
 
 select:hover {
-  background-color: rgba(255, 255, 255, 0.08) !important;
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  background-color: color-mix(in srgb, var(--text) 5%, var(--surf)) !important;
+  border-color: color-mix(in srgb, var(--text) 15%, var(--border)) !important;
 }
 
 select:focus {
@@ -96,7 +96,7 @@ select:focus {
 }
 
 select option, select optgroup {
-  background-color: var(--base) !important;
+  background-color: var(--surf) !important;
   color: var(--text) !important;
   font-weight: 600 !important;
 }

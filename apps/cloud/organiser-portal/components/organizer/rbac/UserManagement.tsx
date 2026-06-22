@@ -83,7 +83,7 @@ import {
 } from "../../ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, formatApiError } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
 import { CreateUserDialog } from "./CreateUserDialog";
 
@@ -525,7 +525,7 @@ export function UserManagement() {
         await fetchRBAC();
       } else {
         const error = await res.json();
-        toast.error(`Authorization Failed: ${error.detail || "Database rejected assignment"}`);
+        toast.error(`Authorization Failed: ${formatApiError(error, "Database rejected assignment")}`);
       }
     } catch (e) {
       toast.error("Network Error: Failed to reach security service");

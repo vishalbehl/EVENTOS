@@ -18,7 +18,7 @@ export function ImpersonationBanner() {
 
   const handleStop = () => {
     stopImpersonation();
-    router.push("/super-admin/organizations");
+    router.push("/organizations");
   };
 
   return (

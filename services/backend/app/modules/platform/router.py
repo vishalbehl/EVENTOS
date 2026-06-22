@@ -88,7 +88,8 @@ async def require_platform_admin(current_user: User = Depends(get_current_user))
     is_admin = (
         (current_user.platform_role and current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN", "FINANCE_ADMIN"]) or
         current_user.role == "super_admin" or
-        getattr(current_user, "is_platform_admin", False)
+        getattr(current_user, "is_platform_admin", False) or
+        (current_user.organization and current_user.organization.slug == "eventxos")
     )
     if not is_admin:
         raise HTTPException(status_code=403, detail="Platform Admin access required")
@@ -376,6 +377,22 @@ async def list_organizations(db: AsyncSession = Depends(get_db), current_user: U
         elif "BASIC" in pname:
             mrr = 49.0
             
+        # Query users count in organization
+        users_count = await db.scalar(
+            select(func.count(User.id)).where(User.organization_id == org.id)
+        ) or 0
+
+        # Query organizer/owner name (creator)
+        owner_stmt = select(User).where(
+            and_(User.organization_id == org.id, User.role.in_(["owner", "admin", "super_admin"]))
+        ).order_by(User.created_at.asc()).limit(1)
+        owner_user = (await db.execute(owner_stmt)).scalar_one_or_none()
+        if not owner_user:
+            owner_stmt = select(User).where(User.organization_id == org.id).order_by(User.created_at.asc()).limit(1)
+            owner_user = (await db.execute(owner_stmt)).scalar_one_or_none()
+
+        creator_name = f"{owner_user.first_name} {owner_user.last_name}" if owner_user else "—"
+
         response.append({
             "id": org.id,
             "name": org.name,
@@ -386,6 +403,8 @@ async def list_organizations(db: AsyncSession = Depends(get_db), current_user: U
             "health_status": health.status if health else "HEALTHY",
             "created_at": org.created_at,
             "events_count": usage.active_events_count if usage else 0,
+            "users_count": users_count,
+            "created_by": creator_name,
             "mrr": mrr
         })
     return response
@@ -1257,6 +1276,7 @@ async def get_revenue_metrics(
 # ── Global Users ───────────────────────────────────────────────
 
 # C1: Extended user list with risk scores + session counts
+@router.get("/global-users")
 @router.get("/users")
 async def get_platform_users(
     search: Optional[str] = None,
@@ -1459,7 +1479,7 @@ async def get_audit_logs(
         u.first_name || ' ' || u.last_name as actor_name,
         u.email as actor_email,
         al.action_type, al.resource_type, al.resource_id,
-        al.diff, al.request_id, al.correlation_id,
+        al.change_diff, al.request_id, al.correlation_id,
         al.actor_ip, al.actor_user_agent,
         al.is_sensitive, al.row_hash, al.occurred_at,
         al.actor_role,
@@ -1514,7 +1534,7 @@ async def get_audit_logs(
         if include_state:
             item["old_state"] = row.old_state
             item["new_state"] = row.new_state
-            item["diff"] = row.diff
+            item["change_diff"] = row.change_diff
         results.append(item)
     
     # Action type counts for quick filters sidebar
@@ -1676,6 +1696,14 @@ async def update_organization_status(
     else:
         org.suspended_at = None
         org.suspension_reason = None
+    
+    # Sync corresponding OrganizationSubscription status
+    sub_stmt = select(OrganizationSubscription).where(
+        OrganizationSubscription.organization_id == org_id
+    )
+    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    if sub:
+        sub.status = "SUSPENDED" if not payload.is_active else "ACTIVE"
     
     # Log activity
     log = ActivityTimeline(
@@ -1959,7 +1987,7 @@ async def get_platform_audit(
         if include_state:
             item["old_state"] = log.old_state
             item["new_state"] = log.new_state
-            item["diff"] = log.diff
+            item["change_diff"] = log.change_diff
         items.append(item)
 
     return {
@@ -2376,6 +2404,49 @@ async def change_organization_plan(
     return {"message": "Plan changed successfully", "plan": plan.name}
 
 
+# ── Remove Organization Subscription ──────────────────────────
+
+@router.delete("/organizations/{org_id}/subscription")
+async def delete_organization_subscription(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin)
+):
+    """Delete the active subscription, addons, and limits override for an organization (Super Admin)."""
+    # 1. Delete active subscription
+    await db.execute(delete(OrganizationSubscription).where(
+        OrganizationSubscription.organization_id == org_id
+    ))
+    
+    # 2. Delete organization addons
+    await db.execute(delete(OrganizationAddon).where(
+        OrganizationAddon.organization_id == org_id
+    ))
+    
+    # 3. Delete tenant limits overrides
+    await db.execute(delete(TenantLimit).where(
+        TenantLimit.organization_id == org_id
+    ))
+    
+    # 4. Reset Organization fields
+    org = await db.get(Organization, org_id)
+    if org:
+        org.plan = "trial"
+        org.plan_expires_at = None
+        org.max_events = 1
+        org.max_users = 2
+        org.max_storage_gb = 10
+        
+    db.add(ActivityTimeline(
+        organization_id=org_id,
+        actor_id=current_user.id,
+        action_type="SUBSCRIPTION_REMOVED",
+        metadata_data={"by": str(current_user.id)}
+    ))
+    await db.commit()
+    return {"message": "Subscription removed successfully"}
+
+
 # ── Extend Organization Trial ─────────────────────────────────
 
 class ExtendTrialRequest(BaseModel):
@@ -2656,10 +2727,10 @@ async def ensure_invoice_columns(db: AsyncSession):
     if _invoices_altered:
         return
     try:
-        await db.execute(sa.text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'USD'"))
-        await db.execute(sa.text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS due_date TIMESTAMP WITH TIME ZONE"))
-        await db.execute(sa.text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE"))
-        await db.execute(sa.text("ALTER TABLE billing.invoice_items ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1"))
+        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'USD'"))
+        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS due_date TIMESTAMP WITH TIME ZONE"))
+        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE"))
+        await db.execute(text("ALTER TABLE billing.invoice_items ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1"))
         await db.commit()
         _invoices_altered = True
     except Exception as e:

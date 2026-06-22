@@ -54,13 +54,20 @@ export default function DashboardLayout({
   }, []);
 
   const exitImpersonation = () => {
-    const originalToken = localStorage.getItem("eventos_original_token");
     localStorage.removeItem("eventos_original_token");
     localStorage.removeItem("eventos_impersonating_org");
-    if (originalToken && user) {
-      setAuth(user, originalToken, useAuthStore.getState().refreshToken || undefined, useAuthStore.getState().rememberMe);
+    localStorage.removeItem("impersonated_user_name");
+    
+    const store = useAuthStore.getState();
+    const isSuperAdmin = store.originalUser?.role === 'super_admin' || store.originalUser?.is_platform_admin || !store.originalUser;
+
+    store.stopImpersonation();
+
+    if (isSuperAdmin) {
+      window.location.href = "http://localhost:3000/super-admin/organizations";
+    } else {
+      window.location.reload();
     }
-    window.location.reload();
   };
 
   useEffect(() => {

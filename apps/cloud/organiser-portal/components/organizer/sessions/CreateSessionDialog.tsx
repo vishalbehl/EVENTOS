@@ -10,7 +10,7 @@ import { useEvent } from "@/hooks/useEvents";
 import { apiPost } from "@/lib/api-client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { fromDateTimeLocalString } from "@/lib/utils";
+import { fromDateTimeLocalString, formatApiError } from "@/lib/utils";
 import { SESSION_CATEGORIES } from "@/types/models";
 
 interface CreateSessionDialogProps {
@@ -89,9 +89,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
         moderator_name: "", description: ""
       });
     } catch (err: any) {
-      const detail = err.response?.data?.detail;
-      const msg = Array.isArray(detail) ? detail.map((d: any) => d.msg).join(", ") : detail || err.message || "Failed to create session";
-      toast.error(msg);
+      toast.error(formatApiError(err, "Failed to create session"));
     } finally {
       setLoading(false);
     }

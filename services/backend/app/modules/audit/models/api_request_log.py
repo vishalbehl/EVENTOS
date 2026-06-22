@@ -53,6 +53,7 @@ class WorkerJobLog(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[str] = mapped_column(String(255), unique=True, index=True) # Celery Task ID
     correlation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
+    actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)  # No FK — avoids violations from system/orphaned users
     
     # ── Task Details ─────────────────────────────────────
     task_name: Mapped[str] = mapped_column(String(255), index=True)

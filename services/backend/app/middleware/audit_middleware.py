@@ -13,7 +13,9 @@ from starlette.types import ASGIApp
 
 from app.config import settings
 from app.database import Base, AsyncSessionLocal
-from app.modules.audit.services.audit_service import AuditService, AuditContext
+from app.modules.audit.services.audit_service import AuditContext
+from app.modules.platform_audit.services import AuditService
+
 
 # Regex for UUIDs in paths
 _UUID_PATTERN = re.compile(
@@ -367,7 +369,7 @@ class AuditMiddleware:
                     actor_role=role,
                     old_state=old_state,
                     new_state=after_state if isinstance(after_state, dict) else None,
-                    diff=diff if diff else None,
+                    change_diff=diff if diff else None,
                     actor_ip=actor_ip,
                     actor_user_agent=actor_user_agent,
                     geo_location=None, # lookup via geoip when available

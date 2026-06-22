@@ -1,6 +1,7 @@
 // services/api-client.ts (Updated: 2026-05-05)
 
 import axios, { AxiosError, AxiosInstance, AxiosResponse, AxiosRequestConfig } from "axios"
+import { getErrorMessage } from "./utils"
 
 export interface ApiError {
   message: string
@@ -60,11 +61,12 @@ class ApiClient {
 
         if (error.response) {
           apiError.status = error.response.status
-          apiError.message =
-            (error.response.data as any)?.detail ||
-            (error.response.data as any)?.message ||
-            error.message
-
+          apiError.message = getErrorMessage(
+            (error.response.data as any)?.detail ??
+              (error.response.data as any)?.message ??
+              error.message,
+            "Something went wrong"
+          )
           apiError.details = error.response.data
         } else if (error.request) {
           apiError.message = "No response from server"

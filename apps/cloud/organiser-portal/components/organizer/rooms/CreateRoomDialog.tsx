@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCreateRoom } from "@/hooks/useRooms";
+import { formatApiError } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface CreateRoomDialogProps {
   isOpen: boolean;
@@ -68,9 +70,9 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
         is_active: true
       });
     } catch (error: any) {
-      const detail = error.response?.data?.detail;
-      const message = Array.isArray(detail) ? detail.map((d: any) => d.msg).join(", ") : detail;
-      console.error("Failed to create room:", message || error.message);
+      const message = formatApiError(error, "Failed to create room.");
+      console.error("Failed to create room:", message);
+      toast.error(message);
     }
   };
 

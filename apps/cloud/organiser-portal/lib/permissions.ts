@@ -44,7 +44,30 @@ export const PERMISSIONS = {
   ROOMS_MANAGE: 'ROOMS:MANAGE',
   DEVICES_MANAGE: 'DEVICES:MANAGE',
   ONSITE_SUPPORT: 'ONSITE:SUPPORT',
+
+  // Operations & Tech Services (Phase 7)
+  OPERATIONS_REQUESTS_MANAGE: 'OPERATIONS.REQUESTS:MANAGE',
+  OPERATIONS_PROJECTS_MANAGE: 'OPERATIONS.PROJECTS:MANAGE',
+  OPERATIONS_RESOURCES_MANAGE: 'OPERATIONS.RESOURCES:MANAGE',
+  OPERATIONS_DEPLOYMENTS_MANAGE: 'OPERATIONS.DEPLOYMENTS:MANAGE',
+
+  // Organizer Technology Services
+  TECHNOLOGY_REQUEST_CREATE: 'technology.request:create',
+  TECHNOLOGY_REQUEST_VIEW: 'technology.request:view',
+  TECHNOLOGY_REQUEST_EDIT: 'technology.request:edit',
+  TECHNOLOGY_REQUEST_CANCEL: 'technology.request:cancel',
+  TECHNOLOGY_QUOTE_VIEW: 'technology.quote:view',
+  TECHNOLOGY_STATUS_VIEW: 'technology.status:view',
+
+  // Internal ERP Operations
+  OPERATIONS_MANAGE: 'operations:manage',
+  PROJECTS_MANAGE: 'projects:manage',
+  RESOURCES_MANAGE: 'resources:manage',
+  DEPLOYMENTS_MANAGE: 'deployments:manage',
+  RISKS_MANAGE: 'risks:manage',
+  READINESS_MANAGE: 'readiness:manage',
 } as const;
+
 
 export type PermissionCode = typeof PERMISSIONS[keyof typeof PERMISSIONS];
 

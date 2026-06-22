@@ -88,6 +88,12 @@ class User(Base):
         "Organization", back_populates="users"
     )
 
+    @property
+    def organization_slug(self) -> Optional[str]:
+        if "organization" in self.__dict__ and self.organization:
+            return self.organization.slug
+        return None
+
     # Events this user created
     created_events: Mapped[List["Event"]] = relationship(
         "Event",

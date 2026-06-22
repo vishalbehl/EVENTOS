@@ -32,15 +32,16 @@ class Organization(Base):
     logo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     plan: Mapped[str] = mapped_column(
         String(50), nullable=False, default="trial"
+        # DEPRECATED: Use billing entitlement queries instead
         # trial | basic | pro | enterprise
     )
     plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#6366f1")
     secondary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#8b5cf6")
     custom_domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    max_events: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
-    max_storage_gb: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    max_events: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # DEPRECATED: Use billing entitlement queries instead
+    max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=2)  # DEPRECATED: Use billing entitlement queries instead
+    max_storage_gb: Mapped[int] = mapped_column(Integer, nullable=False, default=10)  # DEPRECATED: Use billing entitlement queries instead
     billing_email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="IN")
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="Asia/Kolkata")

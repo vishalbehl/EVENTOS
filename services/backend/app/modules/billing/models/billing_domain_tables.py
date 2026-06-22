@@ -13,12 +13,14 @@ class Invoice(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), default="USD", server_default="USD")
+    currency: Mapped[str] = mapped_column(String(10), default="INR", server_default="INR")
     status: Mapped[str] = mapped_column(String(50), default="UNPAID") # PAID, UNPAID, VOID, REFUNDED
     due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     stripe_invoice_id: Mapped[Optional[str]] = mapped_column(String(255))
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True, index=True)
+    activation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.event_activations.id", ondelete="SET NULL"), nullable=True, index=True)
 
 class InvoiceItem(Base):
     __tablename__ = "invoice_items"

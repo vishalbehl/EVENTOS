@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.core.encryption import encrypt, decrypt
 from app.modules.identity.models.user import User
+from app.modules.identity.services.auth_service import create_access_token
 from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
 from app.modules.audit.models.audit_domain_tables import ImpersonationLog
 from app.middleware.ip_allowlist import IPAllowlistMiddleware
@@ -227,3 +228,57 @@ async def test_impersonation_logs_endpoints(db, client):
     # Verify log ended
     await db.refresh(log)
     assert log.terminated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_organization_clears_impersonation_fk_references(db, client):
+    from app.modules.platform.models.organization import Organization
+
+    target_org = Organization(name="Delete Org", slug="delete-org")
+    admin_org = Organization(name="Admin Org", slug="admin-org")
+    db.add_all([target_org, admin_org])
+    await db.flush()
+
+    super_admin = User(
+        organization_id=admin_org.id,
+        email="admin-delete@test.com",
+        first_name="Admin",
+        last_name="Delete",
+        role="super_admin",
+        platform_role="SUPER_ADMIN",
+    )
+    target_user = User(
+        organization_id=target_org.id,
+        email="target-delete@test.com",
+        first_name="Target",
+        last_name="Delete",
+        role="organizer",
+    )
+    db.add_all([super_admin, target_user])
+    await db.flush()
+
+    log = ImpersonationLog(
+        super_admin_id=super_admin.id,
+        target_organization_id=target_org.id,
+        target_user_id=target_user.id,
+        reason="Delete org cleanup test",
+        session_expires_at=datetime.now(timezone.utc),
+    )
+    db.add(log)
+    await db.commit()
+
+    token = create_access_token(super_admin)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.delete(f"/api/v1/platform/organizations/{target_org.id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["message"] == "Organization and all associated data successfully deleted"
+
+    deleted_org = await db.get(Organization, target_org.id)
+    assert deleted_org is None
+
+    refreshed_log = await db.get(ImpersonationLog, log.id)
+    assert refreshed_log is not None
+    assert refreshed_log.target_user_id is None
+    assert refreshed_log.target_organization_id is None
+    assert refreshed_log.super_admin_id == super_admin.id

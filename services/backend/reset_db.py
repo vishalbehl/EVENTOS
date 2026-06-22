@@ -21,7 +21,13 @@ with engine.connect() as conn:
         "platform", "identity", "rbac", "crm", "support", "billing", "events", "speakers",
         "registration", "presentations", "venue", "communications", "analytics", "audit",
         "applications", "marketplace", "developer", "integrations", "mobile", "ai",
-        "workflow", "files", "jobs", "search", "sponsors"
+        "workflow", "files", "jobs", "search", "sponsors", "commercial", "inventory",
+        "procurement", "pricing", "technology_services", "operations_planning",
+        "resource_management", "deployment_management",
+        "platform_workflows", "platform_notifications", "platform_communications", 
+        "platform_alerts", "platform_webhooks", "platform_audit", "platform_activity", 
+        "platform_compliance", "templates", "website_builder", "blueprints", 
+        "design_system", "theme_engine"
     ]
     for schema in schemas:
         print(f"Dropping schema {schema} (cascade)...")

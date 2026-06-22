@@ -1,0 +1,152 @@
+# app/modules/platform/permissions/service.py
+import uuid
+from typing import List, Set, Optional, Dict, Any
+from sqlalchemy import select, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.modules.platform.permissions.models import PlatformPermission, PlatformRolePermission
+from app.modules.platform.permissions.repository import PermissionRepository
+from app.modules.platform.permissions.constants import DEFAULT_PERMISSIONS
+from app.modules.platform.roles.models import DepartmentRole, UserAssignment
+
+
+class PermissionService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repository = PermissionRepository(db)
+
+    async def seed_permissions(self) -> int:
+        count = 0
+        for p in DEFAULT_PERMISSIONS:
+            existing = await self.repository.get_permission_by_code(p["code"])
+            if not existing:
+                await self.repository.create_permission(
+                    code=p["code"],
+                    name=p["name"],
+                    module=p["module"],
+                    description=p["description"]
+                )
+                count += 1
+        if count > 0:
+            await self.db.commit()
+        return count
+
+    async def list_permissions(self) -> List[PlatformPermission]:
+        # Proactively seed if table is empty
+        all_perms = await self.repository.get_all_permissions()
+        if not all_perms:
+            await self.seed_permissions()
+            all_perms = await self.repository.get_all_permissions()
+        return all_perms
+
+    async def get_role_permissions(self, role_id: uuid.UUID) -> List[str]:
+        perms = await self.repository.get_permissions_for_role(role_id)
+        return [p.code for p in perms]
+
+    async def toggle_role_permission(self, role_id: uuid.UUID, permission_id: uuid.UUID) -> str:
+        perm = await self.repository.get_permission_by_id(permission_id)
+        if not perm:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Permission not found.")
+
+        existing = await self.repository.get_role_permission(role_id, permission_id)
+        if existing:
+            await self.repository.remove_role_permission(role_id, permission_id)
+            msg = "Permission removed from role"
+        else:
+            await self.repository.add_role_permission(role_id, permission_id)
+            msg = "Permission added to role"
+        await self.db.commit()
+        return msg
+
+    # =====================================================================
+    # ERP AUTHORIZATION CHECKING ENGINE
+    # =====================================================================
+
+    async def get_user_erp_context(self, user_id: uuid.UUID, org_id: uuid.UUID) -> List[Dict[str, Any]]:
+        """
+        Gathers all department/team assignments for a user.
+        """
+        stmt = (
+            select(UserAssignment)
+            .options(
+                selectinload(UserAssignment.role),
+                selectinload(UserAssignment.department),
+                selectinload(UserAssignment.team)
+            )
+            .where(
+                UserAssignment.user_id == user_id,
+                UserAssignment.organization_id == org_id,
+                UserAssignment.deleted_at == None
+            )
+        )
+        result = await self.db.execute(stmt)
+        assignments = result.scalars().all()
+
+        user_context = []
+        for asgn in assignments:
+            # Gather role permissions
+            role_perms = await self.repository.get_permissions_for_role(asgn.role_id)
+            perm_codes = {p.code for p in role_perms}
+
+            user_context.append({
+                "assignment_id": asgn.id,
+                "department_id": asgn.department_id,
+                "department_code": asgn.department.code if asgn.department else None,
+                "team_id": asgn.team_id,
+                "team_code": asgn.team.code if asgn.team else None,
+                "role_id": asgn.role_id,
+                "role_code": asgn.role.code,
+                "access_level": asgn.role.access_level, # GLOBAL, DEPARTMENT, TEAM, SELF
+                "permissions": perm_codes
+            })
+        return user_context
+
+    async def check_user_permission(
+        self,
+        user_id: uuid.UUID,
+        org_id: uuid.UUID,
+        required_permission: str,
+        resource_dept_id: Optional[uuid.UUID] = None,
+        resource_team_id: Optional[uuid.UUID] = None,
+        resource_owner_id: Optional[uuid.UUID] = None
+    ) -> bool:
+        """
+        Evaluates whether a user can perform an action based on data access levels.
+        """
+        # Bypass for Super Admins
+        from app.modules.identity.models.user import User
+        user = await self.db.get(User, user_id)
+        if user and user.role == "super_admin":
+            return True
+
+        user_context = await self.get_user_erp_context(user_id, org_id)
+
+        for ctx in user_context:
+            # 1. Check if the role grants the permission code
+            if required_permission not in ctx["permissions"]:
+                continue
+
+            access_level = ctx["access_level"]
+
+            # 2. Check access level constraints
+            if access_level == "GLOBAL":
+                return True
+
+            elif access_level == "DEPARTMENT":
+                # Matches if resource belongs to user's assigned department
+                if resource_dept_id and ctx["department_id"] == resource_dept_id:
+                    return True
+
+            elif access_level == "TEAM":
+                # Matches if resource belongs to user's assigned team
+                if resource_team_id and ctx["team_id"] == resource_team_id:
+                    return True
+
+            elif access_level == "SELF":
+                # Matches if user owns the resource
+                if resource_owner_id and user_id == resource_owner_id:
+                    return True
+
+        return False

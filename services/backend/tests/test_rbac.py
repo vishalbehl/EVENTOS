@@ -34,7 +34,7 @@ async def test_rbac_inheritance(db: AsyncSession, organization):
         email="test_rbac@example.com",
         first_name="Test",
         last_name="RBAC",
-        role="organiser",
+        role="session_manager",
         organization_id=organization.id
     )
     db.add(user)
@@ -80,7 +80,7 @@ async def test_scoped_permission_override(db: AsyncSession, organization):
         email="scoped@example.com",
         first_name="Scoped",
         last_name="User",
-        role="organiser",
+        role="session_manager",
         organization_id=organization.id
     )
     db.add(user)
@@ -121,7 +121,7 @@ async def test_rbac_middleware_enforcement(client: AsyncClient, db: AsyncSession
         email="stale@example.com",
         first_name="Stale",
         last_name="User",
-        role="organiser",
+        role="session_manager",
         organization_id=organization.id
     )
     token = create_access_token(stale_user)

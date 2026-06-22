@@ -120,13 +120,33 @@ async def setup_test_database():
         "platform", "identity", "rbac", "crm", "support", "billing", "events", "speakers",
         "registration", "presentations", "venue", "communications", "analytics", "audit",
         "applications", "marketplace", "developer", "integrations", "mobile", "ai",
-        "workflow", "files", "jobs", "search", "sponsors", "auth", "notifications"
+        "workflow", "files", "jobs", "search", "sponsors", "auth", "notifications", "platform_workflows",
+        "platform_notifications", "platform_communications", "platform_alerts", "platform_webhooks",
+        "platform_audit", "platform_activity", "platform_compliance",
+        "commercial", "inventory", "procurement", "pricing",
+        "templates", "website_builder", "blueprints", "design_system", "theme_engine",
+        "technology_services", "operations_planning", "resource_management", "deployment_management"
     ]
     
     async with _test_engine.begin() as conn:
         for schema in schemas:
             await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Create default partitions for test runs
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_audit.audit_logs_default PARTITION OF platform_audit.audit_logs DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_audit.api_activity_logs_default PARTITION OF platform_audit.api_activity_logs DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_activity.activity_feed_default PARTITION OF platform_activity.activity_feed DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_activity.user_activity_logs_default PARTITION OF platform_activity.user_activity_logs DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_audit.login_history_default PARTITION OF platform_audit.login_history DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_compliance.security_events_default PARTITION OF platform_compliance.security_events DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS inventory.hardware_movements_default PARTITION OF inventory.hardware_movements DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS pricing.pricing_simulations_default PARTITION OF pricing.pricing_simulations DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS pricing.revenue_forecasts_default PARTITION OF pricing.revenue_forecasts DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS technology_services.request_history_default PARTITION OF technology_services.request_history DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS operations_planning.project_tasks_default PARTITION OF operations_planning.project_tasks DEFAULT"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS deployment_management.deployment_logs_default PARTITION OF deployment_management.deployment_logs DEFAULT"))
+
     
     yield
     

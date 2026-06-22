@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -65,6 +66,7 @@ def upgrade() -> None:
     op.add_column('addons', sa.Column('included_in_plan', sa.String(50), nullable=True), schema='billing')
     # if set to 'ENTERPRISE', means it's included (not extra cost) for that plan
     op.add_column('addons', sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'), schema='billing')
+    op.add_column('addons', sa.Column('features_spec', postgresql.JSONB(astext_type=sa.Text()), nullable=True), schema='billing')
 
     # 1C — Feature catalog: add category ordering
     op.add_column('feature_catalog', sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'), schema='platform')
@@ -292,7 +294,7 @@ def downgrade() -> None:
 
     op.drop_constraint('uq_addons_key', 'addons', schema='billing', type_='unique')
     for col in ['key','price_inr','billing_unit','available_for_plans',
-                'is_optional_for_plan','included_in_plan','is_active']:
+                'is_optional_for_plan','included_in_plan','is_active','features_spec']:
         op.drop_column('addons', col, schema='billing')
 
     for col in ['category_order','feature_order',

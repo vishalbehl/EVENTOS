@@ -105,7 +105,7 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Link href="/super-admin/notifications">
+          <Link href="/notifications">
             <button className="h-9 w-9 rounded-lg glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--sec)] hover:border-[var(--sec)]/30 transition-all relative group">
               <Bell className="h-4.5 w-4.5" />
               <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 bg-[var(--dan)] rounded-full border border-[var(--surf)] pulse-glow-red" />
@@ -206,12 +206,12 @@ export function Header() {
                   <p className="text-[10px] font-black text-muted uppercase tracking-widest mt-1">ID: {user?.id?.slice(0, 8)}</p>
                 </div>
                 <div className="space-y-1">
-                  <Link href="/super-admin/settings?tab=profile">
+                  <Link href="/settings?tab=profile">
                     <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[color-mix(in_srgb,var(--text)_5%,transparent)] transition-all text-[12px] font-bold text-muted hover:text-[var(--text)]">
                       <User className="h-4 w-4" /> View Profile
                     </button>
                   </Link>
-                  <Link href="/super-admin/settings">
+                  <Link href="/settings">
                     <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[color-mix(in_srgb,var(--text)_5%,transparent)] transition-all text-[12px] font-bold text-muted hover:text-[var(--text)]">
                       <Settings className="h-4 w-4" /> Global Settings
                     </button>

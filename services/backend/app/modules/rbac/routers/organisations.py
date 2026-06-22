@@ -19,6 +19,9 @@ from app.modules.platform.models.organization import Organization
 from app.modules.rbac.schemas.organization import OrganizationResponse, OrganizationUpdate
 from app.services import auth_service
 
+from app.redis import redis_client
+import json
+
 router = APIRouter(tags=["organisations"])
 
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,48}[a-z0-9])?$")
@@ -307,7 +310,7 @@ async def remove_member(member_id: uuid.UUID, current_user: User = Depends(requi
 
 
 async def _require_platform_admin(current_user: User = Depends(get_current_user)) -> User:
-    if not getattr(current_user, "is_platform_admin", False) and current_user.role != "super_admin":
+    if not getattr(current_user, "is_platform_admin", False) and current_user.role != "super_admin" and not (current_user.organization and current_user.organization.slug == "eventxos"):
         raise HTTPException(status_code=403, detail="Platform admin access required.")
     return current_user
 
@@ -384,8 +387,235 @@ async def impersonate(org_id: uuid.UUID, _: User = Depends(_require_platform_adm
     return {"access_token": auth_service.create_access_token(user)}
 
 
+class CalculatePriceRequest(BaseModel):
+    plan_name: str
+    is_custom: bool = False
+    custom_limits: Optional[dict[str, int]] = None
+    addon_keys: Optional[list[str]] = None
+    promo_code: Optional[str] = None
+
+
+async def _calculate_price_logic(
+    db: AsyncSession,
+    plan_name: str,
+    is_custom: bool,
+    custom_limits: Optional[dict[str, int]],
+    addon_keys: Optional[list[str]],
+    promo_code: Optional[str]
+) -> dict:
+    from app.modules.billing.models.subscription import SubscriptionPlan, Addon
+    
+    # 1. Fetch base plan
+    search_name = plan_name.strip().lower()
+    if search_name == "starter":
+        search_name = "basic"
+    elif search_name == "pro":
+        search_name = "professional"
+        
+    stmt = select(SubscriptionPlan).where(func.lower(SubscriptionPlan.name) == search_name)
+    plan = (await db.execute(stmt)).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"Plan '{plan_name}' not found.")
+        
+    base_price_per_event = float(plan.price_per_event_min or 0)
+    
+    # Quota additions
+    extra_quota_price_per_event = 0.0
+    number_of_events = 1
+    
+    limits_breakdown = []
+    
+    if is_custom and custom_limits:
+        number_of_events = max(1, custom_limits.get("max_events", 1))
+        
+        # Calculate extra users
+        if "max_users" in custom_limits:
+            target_users = custom_limits["max_users"]
+            base_users = plan.max_users or 0
+            if target_users > base_users:
+                extra = target_users - base_users
+                cost = extra * 1500.0
+                extra_quota_price_per_event += cost
+                limits_breakdown.append({"key": "max_users", "extra": extra, "cost": cost})
+                
+        # Calculate extra registrations
+        if "max_registrations" in custom_limits:
+            target_reg = custom_limits["max_registrations"]
+            base_reg = plan.max_registrations or 0
+            if target_reg > base_reg:
+                extra = target_reg - base_reg
+                cost = extra * 5.0
+                extra_quota_price_per_event += cost
+                limits_breakdown.append({"key": "max_registrations", "extra": extra, "cost": cost})
+
+        # Calculate extra speakers
+        if "max_speakers" in custom_limits:
+            target_speakers = custom_limits["max_speakers"]
+            base_speakers = plan.max_speakers or 0
+            if target_speakers > base_speakers:
+                extra = target_speakers - base_speakers
+                cost = extra * 100.0
+                extra_quota_price_per_event += cost
+                limits_breakdown.append({"key": "max_speakers", "extra": extra, "cost": cost})
+
+        # Calculate extra rooms
+        if "max_rooms" in custom_limits:
+            target_rooms = custom_limits["max_rooms"]
+            base_rooms = plan.max_rooms or 0
+            if target_rooms > base_rooms:
+                extra = target_rooms - base_rooms
+                cost = extra * 1000.0
+                extra_quota_price_per_event += cost
+                limits_breakdown.append({"key": "max_rooms", "extra": extra, "cost": cost})
+
+        # Calculate extra storage
+        if "max_storage_gb" in custom_limits:
+            target_storage = custom_limits["max_storage_gb"]
+            base_storage = max(1, (plan.storage_quota_mb or 0) // 1024)
+            if target_storage > base_storage:
+                extra = target_storage - base_storage
+                cost = extra * 200.0
+                extra_quota_price_per_event += cost
+                limits_breakdown.append({"key": "max_storage_gb", "extra": extra, "cost": cost})
+
+    # Addons pricing
+    addons_price_per_event = 0.0
+    addons_breakdown = []
+    if addon_keys:
+        for key in addon_keys:
+            addon_stmt = select(Addon).where(Addon.key == key)
+            addon = (await db.execute(addon_stmt)).scalar_one_or_none()
+            if addon:
+                if addon.included_in_plan and addon.included_in_plan.lower() == plan.name.lower():
+                    price = 0.0
+                elif key in ("ADDON_VENUE_READY_ROOM", "ADDON_ONSITE_TECH"):
+                    price = 0.0
+                else:
+                    price = float(addon.price_inr or 0)
+                
+                addons_price_per_event += price
+                addons_breakdown.append({"name": addon.name, "key": addon.key, "price": price})
+
+    # Subtotal
+    subtotal_per_event = base_price_per_event + extra_quota_price_per_event + addons_price_per_event
+    subtotal = subtotal_per_event * number_of_events
+    
+    # Promo code discount
+    discount = 0.0
+    discount_percent = 0
+    if promo_code:
+        code = promo_code.strip().upper()
+        if code == "EVENTOS50":
+            discount_percent = 50
+            discount = subtotal * 0.50
+        elif code == "WELCOME20":
+            discount_percent = 20
+            discount = subtotal * 0.20
+            
+    total = max(0.0, subtotal - discount)
+    
+    return {
+        "plan_name": plan.name,
+        "base_price_per_event": base_price_per_event,
+        "extra_quota_price_per_event": extra_quota_price_per_event,
+        "addons_price_per_event": addons_price_per_event,
+        "price_per_event": subtotal_per_event,
+        "number_of_events": number_of_events,
+        "subtotal": subtotal,
+        "discount": discount,
+        "discount_percent": discount_percent,
+        "total": total,
+        "limits_breakdown": limits_breakdown,
+        "addons_breakdown": addons_breakdown
+    }
+
+
+@router.post("/organisations/calculate-price")
+async def calculate_price(
+    payload: CalculatePriceRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+) -> dict:
+    """Calculate checkout price for subscription dynamically based on DB records."""
+    await _require_org_admin(db, current_user)
+    res = await _calculate_price_logic(
+        db,
+        plan_name=payload.plan_name,
+        is_custom=payload.is_custom,
+        custom_limits=payload.custom_limits,
+        addon_keys=payload.addon_keys,
+        promo_code=payload.promo_code
+    )
+    # Save to redis cart
+    cart_key = f"cart:{current_user.organization_id}"
+    await redis_client.setex(cart_key, 3600, json.dumps(payload.model_dump()))
+    return res
+
+
+@router.get("/organisations/calculate-price")
+async def get_calculate_price(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+) -> dict:
+    """Fetch the current tentative billing cart from Redis."""
+    cart_key = f"cart:{current_user.organization_id}"
+    data = await redis_client.get(cart_key)
+    if data:
+        try:
+            payload_dict = json.loads(data)
+            return await _calculate_price_logic(db, **payload_dict)
+        except Exception:
+            pass
+            
+    # Fallback: Current active plan
+    org = await db.get(Organization, current_user.organization_id)
+    return await _calculate_price_logic(
+        db,
+        plan_name=org.plan or "basic",
+        is_custom=False,
+        custom_limits=None,
+        addon_keys=None,
+        promo_code=None
+    )
+
+
+@router.get("/organisations/addons")
+async def list_available_addons(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+) -> list[dict]:
+    """List all active addons from the DB."""
+    from app.modules.billing.models.subscription import Addon
+    result = await db.execute(
+        select(Addon).where(Addon.is_active == True).order_by(Addon.name.asc())
+    )
+    addons = result.scalars().all()
+    return [
+        {
+            "id": str(addon.id),
+            "name": addon.name,
+            "key": addon.key,
+            "description": addon.description,
+            "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
+            "billing_unit": addon.billing_unit,
+            "available_for_plans": addon.available_for_plans,
+            "is_optional_for_plan": addon.is_optional_for_plan,
+            "included_in_plan": addon.included_in_plan,
+        }
+        for addon in addons
+    ]
+
+
 class SubscribeRequest(BaseModel):
     plan_name: str
+    is_custom: bool = False
+    custom_limits: Optional[dict[str, int]] = None
+    addon_keys: Optional[list[str]] = None
+    promo_code: Optional[str] = None
+    billing_name: str
+    billing_email: EmailStr
+    billing_phone: str
+    gst_number: Optional[str] = None
     cardholder_name: Optional[str] = None
     card_number: Optional[str] = None
     expiry: Optional[str] = None
@@ -398,54 +628,146 @@ async def subscribe_organization(
     current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Subscribe current organization to a plan with mock payment checkout."""
+    """Subscribe current organization to a plan with custom limits, addons, and invoice logging."""
     await _require_org_admin(db, current_user)
     
     org = await db.get(Organization, current_user.organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
         
-    # Find the SubscriptionPlan
+    # Calculate price based on DB rules
+    price_info = await _calculate_price_logic(
+        db,
+        plan_name=payload.plan_name,
+        is_custom=payload.is_custom,
+        custom_limits=payload.custom_limits,
+        addon_keys=payload.addon_keys,
+        promo_code=payload.promo_code
+    )
+    
+    # Import billing models
+    from app.modules.billing.models.subscription import (
+        SubscriptionPlan, OrganizationSubscription, ActivityTimeline, 
+        Addon, OrganizationAddon, SubscriptionTransaction
+    )
+    from app.modules.platform.models.platform_domain_tables import TenantLimit
+    from sqlalchemy import delete
+    
+    # Resolve plan
     search_name = payload.plan_name.strip().lower()
     if search_name == "starter":
         search_name = "basic"
     elif search_name == "pro":
         search_name = "professional"
         
-    # Import billing models dynamically to prevent circular dependencies
-    from app.modules.billing.models.subscription import SubscriptionPlan, OrganizationSubscription, ActivityTimeline
-    
     stmt = select(SubscriptionPlan).where(func.lower(SubscriptionPlan.name) == search_name)
     plan = (await db.execute(stmt)).scalar_one_or_none()
-    
     if not plan:
-        raise HTTPException(status_code=404, detail=f"Subscription plan '{payload.plan_name}' not found.")
+        raise HTTPException(status_code=404, detail=f"Plan '{payload.plan_name}' not found.")
         
-    # Check if subscription already exists
+    # Ensure payment transaction is logged
+    transaction = SubscriptionTransaction(
+        organization_id=org.id,
+        plan_name=plan.name,
+        amount=price_info["total"],
+        promo_code=payload.promo_code,
+        gst_number=payload.gst_number,
+        billing_name=payload.billing_name,
+        billing_email=payload.billing_email,
+        billing_phone=payload.billing_phone,
+        status="SUCCESS",
+        is_custom_plan=payload.is_custom,
+        custom_limits=payload.custom_limits,
+        addon_keys=payload.addon_keys
+    )
+    db.add(transaction)
+    await db.flush()
+    
+    # Update Subscription record
     sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org.id)
     sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    
+    current_period_end = datetime.now(timezone.utc) + timedelta(days=365) # 1 year
     
     if not sub:
         sub = OrganizationSubscription(
             organization_id=org.id,
             plan_id=plan.id,
             status="ACTIVE",
-            current_period_end=datetime.now(timezone.utc) + timedelta(days=365) # 1 year
+            current_period_end=current_period_end
         )
         db.add(sub)
     else:
         sub.plan_id = plan.id
         sub.status = "ACTIVE"
-        sub.current_period_end = datetime.now(timezone.utc) + timedelta(days=365)
+        sub.current_period_end = current_period_end
         
-    # Update Organization plan and limits
-    org.plan = "pro" if plan.name.lower() == "professional" else plan.name.lower()
-    org.max_events = plan.max_events
-    org.max_users = plan.max_users
-    org.max_storage_gb = max(1, plan.storage_quota_mb // 1024)
-    org.plan_expires_at = sub.current_period_end
+    # Clear old custom limits if not custom, otherwise set them
+    await db.execute(delete(TenantLimit).where(TenantLimit.organization_id == org.id))
     
-    # Save a timeline event or payment event
+    final_max_events = plan.max_events
+    final_max_users = plan.max_users
+    final_max_storage_gb = max(1, plan.storage_quota_mb // 1024)
+    
+    if payload.is_custom and payload.custom_limits:
+        for k, v in payload.custom_limits.items():
+            if v is not None:
+                limit_override = TenantLimit(
+                    organization_id=org.id,
+                    limit_key=k,
+                    limit_value=v
+                )
+                db.add(limit_override)
+                
+        # Sync Organization fields with custom selections
+        final_max_events = payload.custom_limits.get("max_events", final_max_events)
+        final_max_users = payload.custom_limits.get("max_users", final_max_users)
+        final_max_storage_gb = payload.custom_limits.get("max_storage_gb", final_max_storage_gb)
+        
+    # Handle Addons
+    # Delete previous organization addons
+    await db.execute(delete(OrganizationAddon).where(OrganizationAddon.organization_id == org.id))
+    
+    if payload.addon_keys:
+        for addon_key in payload.addon_keys:
+            addon_stmt = select(Addon).where(Addon.key == addon_key)
+            addon_obj = (await db.execute(addon_stmt)).scalar_one_or_none()
+            if addon_obj:
+                org_addon = OrganizationAddon(
+                    organization_id=org.id,
+                    addon_id=addon_obj.id,
+                    status="ACTIVE",
+                    purchased_at=datetime.now(timezone.utc),
+                    expires_at=current_period_end
+                )
+                db.add(org_addon)
+                
+    # Check for venue operations callback
+    venue_ops_keys = {"ADDON_VENUE_READY_ROOM", "ADDON_ONSITE_TECH"}
+    has_venue_ops = False
+    if payload.addon_keys:
+        has_venue_ops = any(k in venue_ops_keys for k in payload.addon_keys)
+        
+    if has_venue_ops:
+        from app.modules.support.models.ticket import SupportTicket
+        callback_ticket = SupportTicket(
+            organization_id=org.id,
+            creator_id=current_user.id,
+            subject="Venue Operations Callback Request",
+            description=f"The organiser has subscribed to the {plan.name} plan and selected Venue Operations addons. Selected keys: {', '.join(payload.addon_keys)}. Please contact them at {payload.billing_phone} or {payload.billing_email} to discuss pricing.",
+            priority="HIGH",
+            status="OPEN"
+        )
+        db.add(callback_ticket)
+                
+    # Update Organization core values
+    org.plan = "custom" if payload.is_custom else plan.name.lower()
+    org.max_events = final_max_events
+    org.max_users = final_max_users
+    org.max_storage_gb = final_max_storage_gb
+    org.plan_expires_at = current_period_end
+    
+    # Save standard ActivityTimeline event
     payment_event = ActivityTimeline(
         organization_id=org.id,
         actor_id=current_user.id,
@@ -453,9 +775,10 @@ async def subscribe_organization(
         metadata_data={
             "plan_id": str(plan.id),
             "plan_name": plan.name,
-            "mock_cardholder": payload.cardholder_name,
-            "mock_card_last4": payload.card_number[-4:] if payload.card_number and len(payload.card_number) >= 4 else "0000",
-            "amount_paid": 0.0,
+            "transaction_id": str(transaction.id),
+            "amount_paid": price_info["total"],
+            "is_custom": payload.is_custom,
+            "gst_number": payload.gst_number,
         }
     )
     db.add(payment_event)
@@ -464,8 +787,10 @@ async def subscribe_organization(
     await db.refresh(org)
     
     return {
-        "message": f"Successfully subscribed to {plan.name}.",
-        "organization": OrganizationResponse.model_validate(org).model_dump(mode="json")
+        "message": f"Successfully subscribed to {plan.name} (Custom={payload.is_custom}).",
+        "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
+        "transaction_id": str(transaction.id),
+        "amount_paid": price_info["total"],
     }
 
 
@@ -473,13 +798,13 @@ async def subscribe_organization(
 async def list_available_plans(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_active_user)
-):
+) -> list[dict]:
     """List available subscription plans for organization signup."""
     from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature
     from app.modules.platform.models.feature import FeatureCatalog
     
     result = await db.execute(
-        select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.created_at.asc())
+        select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.display_order.asc())
     )
     plans = result.scalars().all()
     
@@ -494,15 +819,120 @@ async def list_available_plans(
         plans_list.append({
             "id": str(p.id),
             "name": p.name,
+            "tagline": p.tagline,
             "description": p.description,
+            "billing_model": p.billing_model,
+            "currency": p.currency,
+            "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
+            "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
             "max_events": p.max_events,
             "max_users": p.max_users,
             "max_registrations": p.max_registrations,
+            "max_speakers": p.max_speakers,
+            "max_sessions": p.max_sessions,
             "max_rooms": p.max_rooms,
+            "max_ticket_categories": p.max_ticket_categories,
+            "max_badge_templates": p.max_badge_templates,
+            "max_certificate_templates": p.max_certificate_templates,
             "storage_quota_mb": p.storage_quota_mb,
+            "is_popular": p.is_popular,
+            "color_hex": p.color_hex,
             "features": feats
         })
         
     return plans_list
+
+
+@router.get("/organisations/features/matrix")
+async def get_org_features_matrix(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+):
+    """Get grouped feature catalog matrix for plan comparison (Organizer Facing)."""
+    from app.modules.platform.models.feature import FeatureCatalog
+    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature
+
+    stmt = select(FeatureCatalog).where(FeatureCatalog.is_active == True).order_by(
+        FeatureCatalog.category_order.asc(),
+        FeatureCatalog.feature_order.asc()
+    )
+    features = (await db.execute(stmt)).scalars().all()
+    
+    plans_stmt = select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.display_order.asc())
+    plans = (await db.execute(plans_stmt)).scalars().all()
+    plans_map = {p.name.upper(): p for p in plans}
+    
+    pf_stmt = select(PlanFeature).where(PlanFeature.enabled == True)
+    pf_results = (await db.execute(pf_stmt)).scalars().all()
+    enabled_plan_features = {(pf.plan_id, pf.feature_id) for pf in pf_results}
+    
+    categories = {}
+    for f in features:
+        cat = f.category or "General"
+        if cat not in categories:
+            categories[cat] = {
+                "id": cat,
+                "category": cat,
+                "category_name": cat.replace("_", " ").title(),
+                "features": []
+            }
+            
+        plan_values = {}
+        for p_name, p in plans_map.items():
+            val = "-"
+            if f.key == "LIMIT_ORGANIZER_USERS":
+                val = str(p.max_users) if p.max_users is not None else "Unlimited"
+            elif f.key == "LIMIT_REGISTRATIONS":
+                val = f"Up to {p.max_registrations:,}" if p.max_registrations is not None else "Unlimited"
+            elif f.key == "LIMIT_SPEAKERS":
+                val = f"Up to {p.max_speakers}" if p.max_speakers is not None else "Unlimited"
+            elif f.key == "LIMIT_STORAGE":
+                val = f"{p.storage_quota_mb // 1024} GB" if p.storage_quota_mb is not None else "Unlimited"
+            else:
+                is_enabled = (p.id, f.id) in enabled_plan_features
+                val = "Yes" if is_enabled else "No"
+            plan_values[p.name] = val # Using plan name as key for frontend mapping
+
+        categories[cat]["features"].append({
+            "id": str(f.id),
+            "key": f.key,
+            "name": f.name,
+            "label": f.name,
+            "description": f.description,
+            "plans": plan_values
+        })
+        
+    return {"categories": list(categories.values()), "plans": [{"key": p.name, "name": p.name} for p in plans]}
+
+
+@router.get("/organisations/me/billing-history")
+async def get_billing_history(
+    current_user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    """List subscription purchase history for the current organization."""
+    from app.modules.billing.models.subscription import SubscriptionTransaction
+    
+    stmt = (
+        select(SubscriptionTransaction)
+        .where(SubscriptionTransaction.organization_id == current_user.organization_id)
+        .order_by(SubscriptionTransaction.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    transactions = res.scalars().all()
+    
+    return [
+        {
+            "id": str(t.id),
+            "plan_name": t.plan_name,
+            "amount_paid": float(t.amount),
+            "purchase_date": t.created_at.isoformat() if t.created_at else None,
+            "status": t.status,
+            "addons_purchased": t.addon_keys or [],
+            "event_name": "Workspace Subscription",
+            "actions": []
+        }
+        for t in transactions
+    ]
 
 

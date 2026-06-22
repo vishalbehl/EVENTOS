@@ -13,7 +13,7 @@ import { usePosterCategories } from "@/hooks/usePosters";
 import { apiPost } from "@/lib/api-client";
 import { SPEAKER_TYPES } from "@/types/backend";
 
-import { cn, formatDateInTZ, formatTimeInTZ } from "@/lib/utils";
+import { cn, formatApiError, formatDateInTZ, formatTimeInTZ } from "@/lib/utils";
 import { toast } from "sonner";
 import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -174,11 +174,7 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
       setTalks([]);
 
     } catch (err: any) {
-      const detail = err.response?.data?.detail;
-      const msg = Array.isArray(detail) 
-        ? detail.map((d: any) => d.msg).join(", ") 
-        : typeof detail === 'string' ? detail : "Registration failed";
-      toast.error(msg);
+      toast.error(formatApiError(err, "Registration failed"));
     } finally {
       setLoading(false);
     }

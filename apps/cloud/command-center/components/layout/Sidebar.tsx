@@ -28,74 +28,74 @@ export function Sidebar() {
   };
 
   const platformRoutes = [
-    { label: "Overview", icon: LayoutDashboard, href: "/super-admin" },
-    { label: "Organizations", icon: Building2, href: "/super-admin/organizations" },
+    { label: "Overview", icon: LayoutDashboard, href: "/overview" },
+    { label: "Organizations", icon: Building2, href: "/organizations" },
     { 
       label: "Commercial", 
       icon: Banknote,
       subItems: [
-        { label: "Revenue", icon: BarChart3, href: "/super-admin/commercial/revenue" },
-        { label: "Plans & Limits", icon: SlidersHorizontal, href: "/super-admin/commercial/plans" },
-        { label: "Subscriptions", icon: CreditCard, href: "/super-admin/commercial/subscriptions" },
-        { label: "Invoices", icon: FileSpreadsheet, href: "/super-admin/commercial/invoices" },
+        { label: "Revenue", icon: BarChart3, href: "/commercial/revenue" },
+        { label: "Plans & Limits", icon: SlidersHorizontal, href: "/commercial/plans" },
+        { label: "Subscriptions", icon: CreditCard, href: "/commercial/subscriptions" },
+        { label: "Invoices", icon: FileSpreadsheet, href: "/commercial/invoices" },
       ]
     },
-    { label: "Events Control", icon: Calendar, href: "/super-admin/events" },
+    { label: "Events Control", icon: Calendar, href: "/events" },
     { 
       label: "Applications", 
       icon: Box,
       subItems: [
-        { label: "Registry", icon: Layout, href: "/super-admin/applications/registry" },
-        { label: "Feature Flags", icon: Code, href: "/super-admin/applications/feature-flags" },
+        { label: "Registry", icon: Layout, href: "/applications/registry" },
+        { label: "Feature Flags", icon: Code, href: "/applications/feature-flags" },
       ]
     },
     { 
       label: "Operations", 
       icon: Settings,
       subItems: [
-        { label: "System Health", icon: Activity, href: "/super-admin/operations/health" },
-        { label: "Background Jobs", icon: ClipboardList, href: "/super-admin/operations/jobs" },
-        { label: "Database", icon: Database, href: "/super-admin/operations/database" },
-        { label: "Storage Vault", icon: Box, href: "/super-admin/operations/storage" },
-        { label: "Search Index", icon: Search, href: "/super-admin/operations/search" },
+        { label: "System Health", icon: Activity, href: "/operations/health" },
+        { label: "Background Jobs", icon: ClipboardList, href: "/operations/jobs" },
+        { label: "Database", icon: Database, href: "/operations/database" },
+        { label: "Storage Vault", icon: Box, href: "/operations/storage" },
+        { label: "Search Index", icon: Search, href: "/operations/search" },
       ]
     },
     { 
       label: "Security", 
       icon: ShieldCheck,
       subItems: [
-        { label: "Global Users", icon: Users, href: "/super-admin/security/users" },
-        { label: "Audit Trails", icon: FileText, href: "/super-admin/security/audit" },
-        { label: "System Events", icon: Bell, href: "/super-admin/security/events" },
-        { label: "Impersonation", icon: User, href: "/super-admin/security/impersonation" },
+        { label: "Global Users", icon: Users, href: "/security/users" },
+        { label: "Audit Trails", icon: FileText, href: "/security/audit" },
+        { label: "System Events", icon: Bell, href: "/security/events" },
+        { label: "Impersonation", icon: User, href: "/security/impersonation" },
       ]
     },
     { 
       label: "Developer", 
       icon: Terminal,
       subItems: [
-        { label: "API Analytics", icon: BarChart3, href: "/super-admin/developer/analytics" },
-        { label: "Webhooks", icon: Megaphone, href: "/super-admin/developer/webhooks" },
-        { label: "Integrations", icon: Share2, href: "/super-admin/developer/integrations" },
-        { label: "Rate Limits", icon: SlidersHorizontal, href: "/super-admin/developer/rate-limits" },
+        { label: "API Analytics", icon: BarChart3, href: "/developer/analytics" },
+        { label: "Webhooks", icon: Megaphone, href: "/developer/webhooks" },
+        { label: "Integrations", icon: Share2, href: "/developer/integrations" },
+        { label: "Rate Limits", icon: SlidersHorizontal, href: "/developer/rate-limits" },
       ]
     },
     { 
       label: "Support", 
       icon: Info,
       subItems: [
-        { label: "Ticket Queue", icon: ClipboardList, href: "/super-admin/support/tickets" },
-        { label: "SLA Management", icon: Shield, href: "/super-admin/support/sla" },
+        { label: "Ticket Queue", icon: ClipboardList, href: "/support/tickets" },
+        { label: "SLA Management", icon: Shield, href: "/support/sla" },
       ]
     },
     { 
       label: "System Settings", 
       icon: Palette,
       subItems: [
-        { label: "General", icon: Settings, href: "/super-admin/settings/general" },
-        { label: "Platform Security", icon: ShieldCheck, href: "/super-admin/settings/security" },
-        { label: "Email Templates", icon: Mail, href: "/super-admin/settings/email-templates" },
-        { label: "Feature Catalog", icon: Layout, href: "/super-admin/settings/feature-catalog" },
+        { label: "General", icon: Settings, href: "/settings/general" },
+        { label: "Platform Security", icon: ShieldCheck, href: "/settings/security" },
+        { label: "Email Templates", icon: Mail, href: "/settings/email-templates" },
+        { label: "Feature Catalog", icon: Layout, href: "/settings/feature-catalog" },
       ]
     },
   ];

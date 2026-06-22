@@ -42,6 +42,7 @@ class UserMeResponse(BaseModel):
     last_name: str
     role: str
     organization_id: uuid.UUID
+    organization_slug: Optional[str] = None
     avatar_url: Optional[str] = None
     is_active: bool
     is_platform_admin: bool = False

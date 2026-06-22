@@ -12,12 +12,17 @@ from app.modules.platform.models.platform_domain_tables import (
     OrganizationDomain, OrganizationSetting, FeatureFlag,
     GlobalAnnouncement, TenantLimit, TenantUsage
 )
+from app.modules.platform.departments.models import Department, DepartmentMember
+from app.modules.platform.teams.models import Team, TeamMember
+from app.modules.platform.roles.models import DepartmentRole, UserAssignment
+from app.modules.platform.permissions.models import PlatformPermission, PlatformRolePermission
 
 from app.modules.billing.models.subscription import (
     SubscriptionPlan, OrganizationSubscription, PlanFeature,
     OrganizationFeature, Addon, AddonFeature, OrganizationAddon,
     ActivityTimeline, RevenueMetric
 )
+from app.modules.billing.models.event_activation import EventActivation
 from app.modules.billing.models.billing_domain_tables import (
     Invoice, InvoiceItem, PaymentMethod, MarketplaceSubscription as BillingMarketplaceSubscription,
     MarketplaceTransaction as BillingMarketplaceTransaction
@@ -150,6 +155,17 @@ from app.modules.marketplace.models.marketplace_domain_tables import (
 from app.modules.workflow.models.workflow import (
     Workflow, WorkflowStep, WorkflowInstance, WorkflowTask, WorkflowAssignment, WorkflowHistory
 )
+from app.modules.platform_workflows.workflows.models import (
+    ApprovalWorkflow, ApprovalWorkflowStep, ApprovalStepApprover
+)
+from app.modules.platform_workflows.conditions.models import ApprovalWorkflowCondition
+from app.modules.platform_workflows.instances.models import (
+    ApprovalInstance, ApprovalInstanceStep, ApprovalAttachment
+)
+from app.modules.platform_workflows.comments.models import ApprovalComment
+from app.modules.platform_workflows.delegations.models import ApprovalDelegation
+from app.modules.platform_workflows.escalations.models import ApprovalEscalation
+from app.modules.platform_workflows.history.models import ApprovalHistory
 from app.modules.files.models.file import (
     Asset, AssetVersion, AssetTag, AssetPermission, StorageLocation, UploadSession, VirusScan
 )
@@ -170,3 +186,116 @@ from app.modules.mobile.models.mobile import (
 from app.modules.ai.models.ai import (
     AiAssistant, AiPrompt, AiPromptVersion, AiConversation, AiMessage, AiAction, AiUsage, AiCostTracking, AiFeedback, AiEmbedding
 )
+
+# platform_notifications models
+from app.modules.platform_notifications.events.models import NotificationEvent as PlatformNotificationEvent
+from app.modules.platform_notifications.templates.models import NotificationTemplate
+from app.modules.platform_notifications.preferences.models import NotificationPreference as PlatformNotificationPreference
+from app.modules.platform_notifications.queue.models import NotificationQueue as PlatformNotificationQueue
+from app.modules.platform_notifications.deliveries.models import (
+    NotificationDelivery, InAppNotification, NotificationAttachment
+)
+from app.modules.platform_notifications.announcements.models import SystemAnnouncement
+from app.modules.platform_notifications.webhooks.models import NotificationWebhook
+from app.modules.platform_notifications.subscriptions.models import (
+    NotificationGroup, NotificationGroupMember, NotificationSubscription
+)
+from app.modules.platform_notifications.digests.models import NotificationDigest
+from app.modules.platform_notifications.logs.models import NotificationLog
+
+# platform_audit models
+from app.modules.platform_audit.models import (
+    PlatformAuditLog, EntityHistory, LoginHistory, ApiActivityLog,
+    ExportLog, PlatformImpersonationLog, DataAccessLog
+)
+
+# platform_activity models
+from app.modules.platform_activity.models import (
+    UserActivityLog, ActivityFeed, ActivitySubscription
+)
+
+# platform_compliance models
+from app.modules.platform_compliance.models import (
+    PlatformSecurityEvent, ComplianceReport, RetentionPolicy
+)
+
+# commercial models
+from app.modules.commercial.models import (
+    ServiceCategory, Service, ServiceFeature, ServicePackage,
+    PackageService, StaffRole, StaffRate, StaffSkill
+)
+
+# inventory models
+from app.modules.inventory.models import (
+    HardwareCategory, HardwareItem, HardwareStock, HardwareMovement, HardwareMaintenance
+)
+
+# pricing models
+from app.modules.pricing.models import (
+    PricingRule, PricingRuleCondition, PricingRuleAction, ServicePricing,
+    DiscountRule, TaxRule, CurrencyRate, PricingSimulation, CostFormula,
+    MarginPolicy, RevenueForecast
+)
+
+# procurement models
+from app.modules.procurement.models import (
+    Vendor, VendorService
+)
+
+# templates models
+from app.modules.templates.models import (
+    TemplateCategory, Template, TemplateVersion, TemplateDependency,
+    TemplateInstallation, TemplateUsage, TemplateReview,
+    TemplateMarketplaceCategory, MarketplaceListing, MarketplacePurchase, MarketplaceFavorite
+)
+
+# website_builder models
+from app.modules.website_builder.models import (
+    Site, Page, PageSection, PageComponent, PageAsset,
+    NavigationMenu, MenuItem, Blog, SiteDomain
+)
+
+# design_system models
+from app.modules.design_system.models import (
+    DesignToken, ThemePreset, ComponentLibrary
+)
+
+# theme_engine models
+from app.modules.theme_engine.models import (
+    Theme, ThemeAsset
+)
+
+# blueprints models
+from app.modules.blueprints.models import (
+    EventBlueprint, BlueprintTemplate, BlueprintInstallation, BlueprintStep
+)
+
+# technology_services models
+from app.modules.technology_services.models import (
+    ServiceRequest, ServiceRequestItem, Requirement, RequirementDocument, RequestComment, RequestHistory,
+    RequestAssignment, ServiceLevel, ServiceSlaPolicy, ServiceSlaTarget, ServiceSlaBreach,
+    RequirementTemplate, RequirementFormTemplate, RequirementFormField, RequirementResponse
+)
+
+# operations_planning models
+from app.modules.operations_planning.models import (
+    Project, Milestone, ProjectTask, TaskDependency,
+    ProjectTemplate, ProjectTemplateTask, EventTimeline, TimelineMilestone, TimelineDependency,
+    ProjectVendor, VendorAssignment, ProjectDependency, ProjectBlocker
+)
+
+# resource_management models
+from app.modules.resource_management.models import (
+    ResourcePlan, ResourceAllocation, StaffAssignment, EquipmentAssignment, TravelPlan,
+    ResourceAvailability, EmployeeCalendar, EquipmentCalendar, TravelBooking, HotelBooking, TransportBooking
+)
+
+# deployment_management models
+from app.modules.deployment_management.models import (
+    Deployment, DeploymentChecklist, DeploymentLog, ReadinessScore, Risk,
+    DeploymentRunbook, DeploymentStep, Issue, RiskAction, RiskEscalation, RiskComment,
+    ProjectCost, ProjectActual, ProjectProfitability, ProjectActualCost,
+    ServiceMetric, ProjectMetric, ResourceMetric, DeploymentMetric
+)
+
+

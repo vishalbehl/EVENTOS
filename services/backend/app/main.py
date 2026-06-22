@@ -157,8 +157,13 @@ from app.middleware.plan_guard import PlanGuardMiddleware
 from app.middleware.application_guard import ApplicationGuardMiddleware
 from app.middleware.ip_allowlist import IPAllowlistMiddleware
 from app.middleware.rate_limiter import RateLimiterMiddleware
+from app.middleware.request_logging import RequestLoggingMiddleware
+from app.middleware.security_middleware import SecurityMiddleware
 
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(AuditMiddleware)
+
 app.add_middleware(PlanGuardMiddleware)
 app.add_middleware(RBACMiddleware)
 app.add_middleware(ApplicationGuardMiddleware)

@@ -58,6 +58,7 @@ class UserResponse(UserBase):
     
     id: uuid.UUID
     organization_id: uuid.UUID
+    organization_slug: Optional[str] = None
     created_at: datetime
     last_login_at: Optional[datetime] = None
     is_2fa_enabled: bool

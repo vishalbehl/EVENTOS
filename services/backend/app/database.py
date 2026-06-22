@@ -59,9 +59,6 @@ TABLE_SCHEMAS = {
     "sso_identities": "identity",
 
     # rbac
-    "roles": "rbac",
-    "permissions": "rbac",
-    "role_permissions": "rbac",
     "user_role_assignments": "rbac",
     "scoped_permissions": "rbac",
     "organization_members": "rbac",
@@ -72,7 +69,6 @@ TABLE_SCHEMAS = {
 
     # crm
     "accounts": "crm",
-    "contacts": "crm",
     "leads": "crm",
     "opportunities": "crm",
     "pipeline_stages": "crm",
@@ -102,17 +98,17 @@ TABLE_SCHEMAS = {
     "addons": "billing",
     "addon_features": "billing",
     "organization_addons": "billing",
-    "invoices": "billing",
     "invoice_items": "billing",
     "payment_methods": "billing",
     "payment_events": "billing",
     "revenue_metrics": "billing",
     "marketplace_subscriptions": "billing",
     "marketplace_transactions": "billing",
+    "subscription_transactions": "billing",
+    "event_activations": "billing",
 
     # events
     "events": "events",
-    "sessions": "events",
     "rooms": "events",
     "tracks": "events",
     "agendas": "events",
@@ -124,7 +120,6 @@ TABLE_SCHEMAS = {
     "capacity_rules": "events",
 
     # speakers
-    "speakers": "speakers",
     "profiles": "speakers",
     "invitations": "speakers",
     "event_assignments": "speakers",
@@ -140,7 +135,6 @@ TABLE_SCHEMAS = {
     # registration
     "participants": "registration",
     "registrations": "registration",
-    "roles": "registration",
     "ticket_types": "registration",
     "registration_forms": "registration",
     "form_fields": "registration",
@@ -167,15 +161,12 @@ TABLE_SCHEMAS = {
     "processing_jobs": "presentations",
 
     # venue
-    "devices": "venue",
     "device_heartbeats": "venue",
     "device_security": "venue",
     "srr_stations": "venue",
     "srr_checkins": "venue",
     "presentation_queue": "venue",
     "playback_events": "venue",
-    "sync_jobs": "venue",
-    "sync_history": "venue",
     "network_events": "venue",
     "runtime_events": "venue",
     "activity_logs": "venue",
@@ -187,10 +178,7 @@ TABLE_SCHEMAS = {
     "email_logs": "communications",
     "announcements": "communications",
     "push_notifications": "communications",
-    "device_tokens": "communications",
     "sms_messages": "communications",
-    "notification_preferences": "communications",
-    "notification_queue": "communications",
     "notification_delivery_logs": "communications",
 
     # analytics
@@ -201,7 +189,6 @@ TABLE_SCHEMAS = {
     "dashboard_metrics": "analytics",
     "feature_usage": "analytics",
     "application_usage": "analytics",
-    "api_usage": "analytics",
     "event_metrics": "analytics",
     "adoption_metrics": "analytics",
 
@@ -217,8 +204,6 @@ TABLE_SCHEMAS = {
     "access_reviews": "audit",
 
     # applications
-    "apps": "applications",
-    "app_versions": "applications",
     "app_features": "applications",
     "app_permissions": "applications",
     "organization_apps": "applications",
@@ -234,16 +219,11 @@ TABLE_SCHEMAS = {
     "categories": "marketplace",
     "reviews": "marketplace",
     "installations": "marketplace",
-    "permissions": "marketplace",
-    "subscriptions": "marketplace",
-    "transactions": "marketplace",
     "version_history": "marketplace",
-    "packages": "marketplace",
 
     # developer
     "developer_api_keys": "developer",  # differentiate developer api keys from user api keys
     "api_scopes": "developer",
-    "api_usage": "developer",
     "api_products": "developer",
     "api_subscriptions": "developer",
     "oauth_clients": "developer",
@@ -257,14 +237,11 @@ TABLE_SCHEMAS = {
     "providers": "integrations",
     "connections": "integrations",
     "oauth_connections": "integrations",
-    "sync_jobs": "integrations",
-    "sync_history": "integrations",
     "webhooks": "integrations",
     "webhook_deliveries": "integrations",
     "external_resources": "integrations",
     "integration_logs": "integrations",
     "integration_settings": "integrations",
-    "marketplace_apps": "integrations",
 
     # mobile
     "mobile_devices": "mobile",
@@ -296,8 +273,20 @@ TABLE_SCHEMAS = {
     "workflow_assignments": "workflow",
     "workflow_history": "workflow",
 
+    # platform_workflows
+    "approval_workflows": "platform_workflows",
+    "approval_workflow_steps": "platform_workflows",
+    "approval_workflow_conditions": "platform_workflows",
+    "approval_step_approvers": "platform_workflows",
+    "approval_instances": "platform_workflows",
+    "approval_instance_steps": "platform_workflows",
+    "approval_comments": "platform_workflows",
+    "approval_attachments": "platform_workflows",
+    "approval_delegations": "platform_workflows",
+    "approval_escalations": "platform_workflows",
+    "approval_history": "platform_workflows",
+
     # files
-    "assets": "files",
     "asset_versions": "files",
     "asset_tags": "files",
     "asset_permissions": "files",
@@ -319,33 +308,214 @@ TABLE_SCHEMAS = {
 
     # sponsors
     "sponsors": "sponsors",
-    "contacts": "sponsors",
-    "packages": "sponsors",
     "booths": "sponsors",
     "deliverables": "sponsors",
-    "invoices": "sponsors",
-    "assets": "sponsors",
+
+    # platform_notifications schema
+    "notification_events": "platform_notifications",
+    "notification_templates": "platform_notifications",
+    "notification_deliveries": "platform_notifications",
+    "in_app_notifications": "platform_notifications",
+    "notification_attachments": "platform_notifications",
+
+    # platform_communications schema
+    "notification_groups": "platform_communications",
+    "notification_group_members": "platform_communications",
+    "notification_subscriptions": "platform_communications",
+    "notification_digests": "platform_communications",
+
+    # platform_alerts schema
+    "system_announcements": "platform_alerts",
+    "notification_logs": "platform_alerts",
+
+    # platform_webhooks schema
+    "notification_webhooks": "platform_webhooks",
+
+    # platform_audit schema mappings
+    "audit_logs": "platform_audit",
+    "entity_history": "platform_audit",
+    "login_history": "platform_audit",
+    "api_activity_logs": "platform_audit",
+    "export_logs": "platform_audit",
+    "data_access_logs": "platform_audit",
+
+    # platform_activity schema mappings
+    "user_activity_logs": "platform_activity",
+    "activity_feed": "platform_activity",
+    "activity_subscriptions": "platform_activity",
+
+    # platform_compliance schema mappings
+    "compliance_reports": "platform_compliance",
+    "retention_policies": "platform_compliance",
+
+    # commercial schema mappings
+    "service_categories": "commercial",
+    "services": "commercial",
+    "service_features": "commercial",
+    "service_packages": "commercial",
+    "package_services": "commercial",
+    "staff_roles": "commercial",
+    "staff_rates": "commercial",
+    "staff_skills": "commercial",
+
+    # technology_services schema mappings
+    "service_requests": "technology_services",
+    "service_request_items": "technology_services",
+    "requirements": "technology_services",
+    "requirement_documents": "technology_services",
+    "request_comments": "technology_services",
+    "request_history": "technology_services",
+    "request_assignments": "technology_services",
+    "service_levels": "technology_services",
+    "service_sla_policies": "technology_services",
+    "service_sla_targets": "technology_services",
+    "service_sla_breaches": "technology_services",
+    "requirement_templates": "technology_services",
+    "requirement_form_templates": "technology_services",
+    "requirement_form_fields": "technology_services",
+    "requirement_responses": "technology_services",
+
+    # operations_planning schema mappings
+    "projects": "operations_planning",
+    "milestones": "operations_planning",
+    "project_tasks": "operations_planning",
+    "task_dependencies": "operations_planning",
+    "project_templates": "operations_planning",
+    "project_template_tasks": "operations_planning",
+    "event_timelines": "operations_planning",
+    "timeline_milestones": "operations_planning",
+    "timeline_dependencies": "operations_planning",
+    "project_vendors": "operations_planning",
+    "vendor_assignments": "operations_planning",
+    "project_dependencies": "operations_planning",
+    "project_blockers": "operations_planning",
+
+    # resource_management schema mappings
+    "resource_plans": "resource_management",
+    "resource_allocations": "resource_management",
+    "staff_assignments": "resource_management",
+    "equipment_assignments": "resource_management",
+    "travel_plans": "resource_management",
+    "resource_availability": "resource_management",
+    "employee_calendars": "resource_management",
+    "equipment_calendars": "resource_management",
+    "travel_bookings": "resource_management",
+    "hotel_bookings": "resource_management",
+    "transport_bookings": "resource_management",
+
+    # deployment_management schema mappings
+    "deployments": "deployment_management",
+    "deployment_checklists": "deployment_management",
+    "deployment_logs": "deployment_management",
+    "readiness_scores": "deployment_management",
+    "risks": "deployment_management",
+    "deployment_runbooks": "deployment_management",
+    "deployment_steps": "deployment_management",
+    "issues": "deployment_management",
+    "risk_actions": "deployment_management",
+    "risk_escalations": "deployment_management",
+    "risk_comments": "deployment_management",
+    "project_costs": "deployment_management",
+    "project_actuals": "deployment_management",
+    "project_profitability": "deployment_management",
+    "project_actual_costs": "deployment_management",
+    "service_metrics": "deployment_management",
+    "project_metrics": "deployment_management",
+    "resource_metrics": "deployment_management",
+    "deployment_metrics": "deployment_management",
+
+    # procurement schema mappings
+    "vendors": "procurement",
+    "vendor_services": "procurement",
+
+    # inventory schema mappings
+    "hardware_categories": "inventory",
+    "hardware_items": "inventory",
+    "hardware_stock": "inventory",
+    "hardware_movements": "inventory",
+    "hardware_maintenance": "inventory",
+
+    # pricing schema mappings
+    "pricing_rules": "pricing",
+    "pricing_rule_conditions": "pricing",
+    "pricing_rule_actions": "pricing",
+    "service_pricing": "pricing",
+    "discount_rules": "pricing",
+    "tax_rules": "pricing",
+    "currency_rates": "pricing",
+    "pricing_simulations": "pricing",
+    "cost_formulas": "pricing",
+    "margin_policies": "pricing",
+    "revenue_forecasts": "pricing",
+
+    # templates schema mappings
+    "template_categories": "templates",
+    "templates": "templates",
+    "template_versions": "templates",
+    "template_dependencies": "templates",
+    "template_installations": "templates",
+    "template_usage": "templates",
+    "template_reviews": "templates",
+    "template_marketplace_categories": "templates",
+    "marketplace_listings": "templates",
+    "marketplace_purchases": "templates",
+    "marketplace_favorites": "templates",
+
+    # website_builder schema mappings
+    "sites": "website_builder",
+    "pages": "website_builder",
+    "page_sections": "website_builder",
+    "page_components": "website_builder",
+    "page_assets": "website_builder",
+    "navigation_menus": "website_builder",
+    "menu_items": "website_builder",
+    "blogs": "website_builder",
+    "site_domains": "website_builder",
+
+    # design_system schema mappings
+    "design_tokens": "design_system",
+    "theme_presets": "design_system",
+    "component_library": "design_system",
+
+    # theme_engine schema mappings
+    "themes": "theme_engine",
+    "theme_assets": "theme_engine",
+
+    # blueprints schema mappings
+    "event_blueprints": "blueprints",
+    "blueprint_templates": "blueprints",
+    "blueprint_installations": "blueprints",
+    "blueprint_steps": "blueprints",
 }
+
 
 class SchemaDeclarativeMeta(DeclarativeAttributeIntercept):
     def __new__(mcls, name, bases, dict_):
         module = dict_.get("__module__", "")
         if "__tablename__" in dict_ or "__table__" in dict_:
-            if "app.modules." in module:
+            tablename = dict_.get("__tablename__")
+            if tablename in TABLE_SCHEMAS:
+                schema_name = TABLE_SCHEMAS[tablename]
+            elif "app.modules." in module:
                 schema_name = module.split(".")[2]
-                
+            else:
+                schema_name = None
+
+            if schema_name:
                 table_args = dict_.get("__table_args__", None)
                 if table_args is None:
                     dict_["__table_args__"] = {"schema": schema_name}
                 elif isinstance(table_args, dict):
                     new_args = dict(table_args)
-                    new_args["schema"] = schema_name
+                    if "schema" not in new_args:
+                        new_args["schema"] = schema_name
                     dict_["__table_args__"] = new_args
                 elif isinstance(table_args, tuple):
                     new_args = list(table_args)
                     if new_args and isinstance(new_args[-1], dict):
                         last_dict = dict(new_args[-1])
-                        last_dict["schema"] = schema_name
+                        if "schema" not in last_dict:
+                            last_dict["schema"] = schema_name
                         new_args[-1] = last_dict
                     else:
                         new_args.append({"schema": schema_name})

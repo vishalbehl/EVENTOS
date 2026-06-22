@@ -46,6 +46,7 @@ class RegistrationThemeSetting(Base):
     payment_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active_gateway: Mapped[str] = mapped_column(String(50), nullable=False, default="simulated")
     stripe_credentials: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    encrypted_stripe_credentials: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Fernet-encrypted Stripe secrets
     tier_cutoffs: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     disabled_categories: Mapped[List[str]] = mapped_column(JSONB, nullable=False, default=list)
     

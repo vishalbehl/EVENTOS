@@ -783,6 +783,36 @@ async def ensure_plans_and_features():
                     # Addon exists. We don't overwrite its customized configuration details.
                     pass
 
+            # 4. Seed Addon ↔ Feature Mappings
+            addon_feature_mappings = {
+                "ADDON_WHATSAPP": ["FEAT_WHATSAPP"],
+                "ADDON_EPOSTER": ["FEAT_EPOSTER_MGMT"],
+                "ADDON_WHITE_LABEL": ["FEAT_WHITE_LABEL"],
+            }
+            # Refresh addon map after possible inserts
+            refreshed_addons_res = await db.execute(select(Addon))
+            refreshed_addons = {a.key: a for a in refreshed_addons_res.scalars().all()}
+
+            for addon_key, feature_keys in addon_feature_mappings.items():
+                addon_obj = refreshed_addons.get(addon_key)
+                if not addon_obj:
+                    logger.warning(f"Addon key '{addon_key}' not found, skipping feature mapping.")
+                    continue
+                for feat_key in feature_keys:
+                    feat_obj = all_feats.get(feat_key)
+                    if not feat_obj:
+                        logger.warning(f"Feature key '{feat_key}' not found, skipping mapping for addon '{addon_key}'.")
+                        continue
+                    existing_mapping = await db.execute(
+                        select(AddonFeature).where(
+                            AddonFeature.addon_id == addon_obj.id,
+                            AddonFeature.feature_id == feat_obj.id
+                        )
+                    )
+                    if not existing_mapping.scalar_one_or_none():
+                        db.add(AddonFeature(addon_id=addon_obj.id, feature_id=feat_obj.id))
+                        logger.info(f"Seeded addon-feature mapping: {addon_key} -> {feat_key}")
+            await db.flush()
             # Clean up obsolete plans
             from app.modules.billing.models.subscription import OrganizationSubscription
             from sqlalchemy import update
@@ -839,19 +869,55 @@ async def ensure_admin_user():
             # Seed event default settings if missing
             await ensure_event_settings_defaults(db)
 
-            # 1. Check if any organization exists
+            # 1. Check if default org with slug "default-org" exists to migrate it
+            result = await db.execute(select(Organization).where(Organization.slug == "default-org"))
+            default_org = result.scalar_one_or_none()
+            if default_org:
+                logger.info("Migrating default organization slug/name to Eventxos...")
+                default_org.name = "Eventxos"
+                default_org.slug = "eventxos"
+                await db.flush()
+
+            # 2. Check if any organization exists
             result = await db.execute(select(Organization))
             org = result.scalars().first()
 
             if not org:
-                logger.info("No organization found. Creating default organization...")
+                logger.info("No organization found. Creating default organization Eventxos...")
                 org = Organization(
                     id=uuid.uuid4(),
-                    name="Default Organization",
-                    slug="default-org"
+                    name="Eventxos",
+                    slug="eventxos"
                 )
                 db.add(org)
                 await db.flush()
+
+            # Ensure OrganizationSubscription exists for all organizations to prevent 404s
+            from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
+            from datetime import timezone, datetime, timedelta
+            
+            plan_res = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.name == "Enterprise"))
+            ent_plan = plan_res.scalar_one_or_none()
+            if not ent_plan:
+                plan_res = await db.execute(select(SubscriptionPlan))
+                ent_plan = plan_res.scalars().first()
+
+            all_orgs_res = await db.execute(select(Organization))
+            for target_org in all_orgs_res.scalars().all():
+                sub_res = await db.execute(select(OrganizationSubscription).where(OrganizationSubscription.organization_id == target_org.id))
+                org_sub = sub_res.scalar_one_or_none()
+                if not org_sub and ent_plan:
+                    logger.info(f"No subscription found for organization {target_org.name}. Seeding default active Enterprise subscription...")
+                    org_sub = OrganizationSubscription(
+                        id=uuid.uuid4(),
+                        organization_id=target_org.id,
+                        plan_id=ent_plan.id,
+                        status="ACTIVE",
+                        trial_ends_at=None,
+                        current_period_end=datetime.now(timezone.utc) + timedelta(days=365)
+                    )
+                    db.add(org_sub)
+                    await db.flush()
 
             # 2. Check if any Super Admin exists
             result = await db.execute(select(User).where(User.role == "super_admin"))
@@ -875,6 +941,7 @@ async def ensure_admin_user():
                 logger.info(f"Created default admin: {admin_email} / admin123")
             else:
                 logger.debug("At least one Super Admin already exists. Skipping default admin creation.")
+                await db.commit()
 
         except Exception as e:
             logger.error(f"Failed to ensure admin user: {e}")

@@ -13,7 +13,7 @@ export function SuperAdminGuard({ children }: { children: React.ReactNode }) {
     if (!hasHydrated) return;
     const isAdmin = user?.platform_role === "SUPER_ADMIN" || user?.is_platform_admin || user?.role === "super_admin";
     if (!isAuthenticated) {
-      router.replace("/admin");
+      router.replace("/");
       return;
     }
     if (!isAdmin) {

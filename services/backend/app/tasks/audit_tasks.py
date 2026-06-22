@@ -120,7 +120,7 @@ async def _write_audit_log_async(audit_data: dict) -> None:
             actor_role=audit_data.get("actor_role"),
             old_state=audit_data.get("old_state"),
             new_state=audit_data.get("new_state"),
-            diff=audit_data.get("diff"),
+            change_diff=audit_data.get("change_diff"),
             actor_ip=audit_data.get("actor_ip"),
             actor_user_agent=audit_data.get("actor_user_agent"),
             geo_location=audit_data.get("geo_location"),

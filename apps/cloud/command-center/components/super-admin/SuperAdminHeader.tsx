@@ -200,7 +200,7 @@ export function SuperAdminHeader() {
 
         {/* Settings Gear Shortcut */}
         <button
-          onClick={() => router.push("/super-admin/settings/general")}
+          onClick={() => router.push("/settings/general")}
           className="p-2 rounded-lg border border-border bg-surface text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-surface-2 transition-all flex items-center justify-center cursor-pointer"
           title="Console Settings"
         >
@@ -246,7 +246,7 @@ export function SuperAdminHeader() {
                 <button
                   onClick={() => {
                     setIsProfileOpen(false);
-                    router.push("/super-admin/settings/general");
+                    router.push("/settings/general");
                   }}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-surface-2 transition-all text-left cursor-pointer"
                 >
@@ -307,12 +307,12 @@ export function SuperAdminHeader() {
                   </span>
                   <div className="space-y-0.5">
                     {[
-                      { title: "Dashboard Overview", url: "/super-admin", icon: LayoutDashboard },
-                      { title: "Organizations Registry", url: "/super-admin/organizations", icon: Building2 },
-                      { title: "Commercial Subscriptions", url: "/super-admin/commercial/subscriptions", icon: CreditCard },
-                      { title: "Security Users", url: "/super-admin/security/users", icon: User },
-                      { title: "Operations Jobs Monitor", url: "/super-admin/operations/jobs", icon: Cpu },
-                      { title: "General Settings", url: "/super-admin/settings/general", icon: Settings },
+                      { title: "Dashboard Overview", url: "/overview", icon: LayoutDashboard },
+                      { title: "Organizations Registry", url: "/organizations", icon: Building2 },
+                      { title: "Commercial Subscriptions", url: "/commercial/subscriptions", icon: CreditCard },
+                      { title: "Security Users", url: "/security/users", icon: User },
+                      { title: "Operations Jobs Monitor", url: "/operations/jobs", icon: Cpu },
+                      { title: "General Settings", url: "/settings/general", icon: Settings },
                     ]
                       .filter((p) => p.title.toLowerCase().includes(searchQuery.toLowerCase()))
                       .map((p, idx) => (
@@ -339,8 +339,8 @@ export function SuperAdminHeader() {
                   <div className="space-y-0.5">
                     {[
                       { title: "Trigger Telemetry Refresh", action: handleRefresh, icon: RefreshCw },
-                      { title: "Impersonate Active Tenant", url: "/super-admin/security/impersonation", icon: Shield },
-                      { title: "Audit Active System Logs", url: "/super-admin/security/audit", icon: FileText },
+                      { title: "Impersonate Active Tenant", url: "/security/impersonation", icon: Shield },
+                      { title: "Audit Active System Logs", url: "/security/audit", icon: FileText },
                     ]
                       .filter((a) => a.title.toLowerCase().includes(searchQuery.toLowerCase()))
                       .map((a, idx) => (

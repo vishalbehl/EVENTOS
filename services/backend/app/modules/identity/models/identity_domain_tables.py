@@ -13,9 +13,25 @@ class MfaDevice(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
     device_type: Mapped[str] = mapped_column(String(50), default="totp") # totp, webauthn
-    secret: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False)  # Fernet-encrypted TOTP secret
+    backup_codes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Fernet-encrypted JSON array
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    @property
+    def totp_secret(self) -> str:
+        """Decrypt TOTP secret — service layer only, never expose via API."""
+        from app.core.encryption import decrypt
+        return decrypt(self.encrypted_secret)
+
+    @property
+    def decrypted_backup_codes(self) -> list:
+        """Decrypt backup codes — service layer only, never expose via API."""
+        if not self.backup_codes:
+            return []
+        import json
+        from app.core.encryption import decrypt
+        return json.loads(decrypt(self.backup_codes))
 
 class UserSession(Base):
     __tablename__ = "user_sessions"

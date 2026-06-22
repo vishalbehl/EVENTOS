@@ -281,6 +281,61 @@ export function truncate(str: string, maxLength: number): string {
   return `${str.slice(0, maxLength - 1)}…`;
 }
 
+export function getErrorMessage(value: any, fallback = "Something went wrong"): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+
+  if (Array.isArray(value)) {
+    // Handle validation error arrays (Pydantic format)
+    const messages = value
+      .map((item) => {
+        if (item && typeof item === "object" && item.msg) {
+          // Validation error format: { msg, loc, type, ... }
+          const fieldName = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : null;
+          return fieldName ? `${fieldName}: ${item.msg}` : item.msg;
+        }
+        return getErrorMessage(item, "");
+      })
+      .filter(Boolean);
+    return messages.length ? messages.join("; ") : fallback;
+  }
+
+  if (value && typeof value === "object") {
+    if (typeof value.message === "string" && value.message.trim()) {
+      return value.message.trim();
+    }
+    if (typeof value.msg === "string" && value.msg.trim()) {
+      return value.msg.trim();
+    }
+    if (value.detail !== undefined) {
+      return getErrorMessage(value.detail, fallback);
+    }
+    if (value.errors !== undefined) {
+      return getErrorMessage(value.errors, fallback);
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  return fallback;
+}
+
+export function formatApiError(error: any, fallback = "Something went wrong"): string {
+  if (!error) return fallback;
+  const candidate =
+    error?.response?.data?.detail ??
+    error?.response?.data?.message ??
+    error?.detail ??
+    error?.message ??
+    error;
+  return getErrorMessage(candidate, fallback);
+}
+
 export function downloadCSV(content: string, filename: string): void {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);

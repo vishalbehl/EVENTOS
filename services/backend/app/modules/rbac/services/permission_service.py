@@ -57,8 +57,16 @@ async def get_user_permissions(
             return [
                 "EVENTS:VIEW", "EVENTS:EDIT", "SESSIONS:VIEW", "SPEAKERS:VIEW", "FILES:VIEW", 
                 "ROOMS:MANAGE", "FILES:APPROVE", "FILES:REJECT", "FILES:DOWNLOAD",
-                "ANALYTICS:VIEW", "POSTERS:VIEW", "USERS:VIEW", "SETTINGS:EDIT"
+                "ANALYTICS:VIEW", "POSTERS:VIEW", "USERS:VIEW", "SETTINGS:EDIT",
+                "OPERATIONS.REQUESTS:MANAGE", "OPERATIONS.PROJECTS:MANAGE", 
+                "OPERATIONS.RESOURCES:MANAGE", "OPERATIONS.DEPLOYMENTS:MANAGE",
+                "technology.request:create", "technology.request:view", 
+                "technology.request:edit", "technology.request:cancel", 
+                "technology.quote:view", "technology.status:view",
+                "operations:manage", "projects:manage", "resources:manage", 
+                "deployments:manage", "risks:manage", "readiness:manage"
             ]
+
 
     # 2. Expand Inherited Roles
     expanded_roles = set(role_ids)

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiGet, apiPost, apiPatch } from "@/lib/api-client";
+import { formatApiError } from "@/lib/utils";
 
 interface CapacityStatus {
   id: string;
@@ -133,7 +134,7 @@ export default function CapacityTab() {
       fetchCapacityData();
     } catch (err: any) {
       console.error(err);
-      toast.error(err.detail || "Failed to save capacity rule.");
+      toast.error(formatApiError(err, "Failed to save capacity rule."));
     }
   };
 

@@ -15,36 +15,56 @@ from app.modules.events.models.event import Event
 class LimitGuard:
     @staticmethod
     async def get_plan_for_org(db: AsyncSession, org_id: UUID) -> SubscriptionPlan:
-        # Resolve active subscription
-        stmt = (
-            select(SubscriptionPlan)
-            .join(OrganizationSubscription, OrganizationSubscription.plan_id == SubscriptionPlan.id)
-            .where(
-                OrganizationSubscription.organization_id == org_id,
-                OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"])
+        # Check if organization slug is "eventxos"
+        from app.modules.platform.models.organization import Organization
+        from app.modules.billing.services.entitlement_resolver import EntitlementResolver
+        
+        org_res = await db.execute(select(Organization).where(Organization.id == org_id))
+        org = org_res.scalar_one_or_none()
+        if org and org.slug == "eventxos":
+            return SubscriptionPlan(
+                name="Supervisor",
+                max_events=None,
+                max_users=None,
+                max_registrations=None,
+                max_speakers=None,
+                max_sessions=None,
+                max_rooms=None,
+                max_ticket_categories=None,
+                max_badge_templates=None,
+                max_certificate_templates=None,
+                storage_quota_mb=999999999,
             )
+
+        # Retrieve limits dynamically from EntitlementResolver
+        max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")
+        max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
+        max_registrations = await EntitlementResolver.get_limit(db, org_id, "max_registrations")
+        max_speakers = await EntitlementResolver.get_limit(db, org_id, "max_speakers")
+        max_sessions = await EntitlementResolver.get_limit(db, org_id, "max_sessions")
+        max_rooms = await EntitlementResolver.get_limit(db, org_id, "max_rooms")
+        max_ticket_categories = await EntitlementResolver.get_limit(db, org_id, "max_ticket_categories")
+        max_badge_templates = await EntitlementResolver.get_limit(db, org_id, "max_badge_templates")
+        max_certificate_templates = await EntitlementResolver.get_limit(db, org_id, "max_certificate_templates")
+        storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
+
+        # Resolve active subscription plan name for representation
+        sub = await EntitlementResolver.get_active_subscription(db, org_id)
+        plan_name = sub.plan.name if sub and sub.plan else "Basic"
+
+        return SubscriptionPlan(
+            name=plan_name,
+            max_events=max_events,
+            max_users=max_users,
+            max_registrations=max_registrations,
+            max_speakers=max_speakers,
+            max_sessions=max_sessions,
+            max_rooms=max_rooms,
+            max_ticket_categories=max_ticket_categories,
+            max_badge_templates=max_badge_templates,
+            max_certificate_templates=max_certificate_templates,
+            storage_quota_mb=storage_quota_mb or 10240,
         )
-        plan = await db.scalar(stmt)
-        if not plan:
-            # Fallback/Default plan (Basic)
-            fallback_stmt = select(SubscriptionPlan).where(SubscriptionPlan.name == "Basic")
-            plan = await db.scalar(fallback_stmt)
-            
-        if not plan:
-            plan = SubscriptionPlan(
-                name="Basic",
-                max_events=1,
-                max_users=2,
-                max_registrations=150,
-                max_speakers=30,
-                max_sessions=25,
-                max_rooms=5,
-                max_ticket_categories=3,
-                max_badge_templates=3,
-                max_certificate_templates=3,
-                storage_quota_mb=10240,
-            )
-        return plan
 
 
     @classmethod

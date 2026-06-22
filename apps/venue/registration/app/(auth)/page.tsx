@@ -40,6 +40,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await authService.login({ email, password }, rememberMe);
+      sessionStorage.setItem("session_active", "true");
       toast.success("Identity verified. Accessing EventOS ecosystem.");
       setStep(2);
       setTimeout(() => {
@@ -171,18 +172,6 @@ export default function LoginPage() {
                         <>Initialize Shell <ChevronRight className="ml-2 h-4 w-4 group-hover/btn:translate-x-1 transition-transform" /></>
                       )}
                     </Button>
-
-                    {/* Temporary Dev Fast Login */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEmail("admin@eventos.com");
-                        setPassword("admin123");
-                      }}
-                      className="w-full py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--pri)]/40 hover:text-[var(--sec)] transition-colors border border-dashed border-white/10 rounded-xl"
-                    >
-                      Dev Fast Login (Admin)
-                    </button>
                   </div>
                 </motion.form>
               ) : (

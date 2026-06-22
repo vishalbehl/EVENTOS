@@ -21,6 +21,34 @@ celery_app.conf.update(
         "flush-api-usage-every-5-minutes": {
             "task": "app.tasks.platform_tasks.flush_api_usage",
             "schedule": 300.0,  # every 5 minutes
+        },
+        "check-expired-approvals-every-10-minutes": {
+            "task": "app.tasks.workflow_jobs.check_expired_approvals",
+            "schedule": 600.0,  # every 10 minutes
+        },
+        "check-escalations-every-10-minutes": {
+            "task": "app.tasks.workflow_jobs.check_escalations",
+            "schedule": 600.0,  # every 10 minutes
+        },
+        "send-reminders-every-10-minutes": {
+            "task": "app.tasks.workflow_jobs.send_reminders",
+            "schedule": 600.0,  # every 10 minutes
+        },
+        "process-notification-queue-every-minute": {
+            "task": "app.tasks.notification_jobs.process_notification_queue",
+            "schedule": 60.0,  # every minute
+        },
+        "retry-failed-notifications-every-5-minutes": {
+            "task": "app.tasks.notification_jobs.retry_failed_notifications",
+            "schedule": 300.0,  # every 5 minutes
+        },
+        "send-digests-every-hour": {
+            "task": "app.tasks.notification_jobs.send_digests",
+            "schedule": 3600.0,  # every hour
+        },
+        "expire-announcements-daily": {
+            "task": "app.tasks.notification_jobs.expire_announcements",
+            "schedule": 86400.0,  # daily
         }
     }
 )

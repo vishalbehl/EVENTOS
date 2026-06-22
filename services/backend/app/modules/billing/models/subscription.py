@@ -3,13 +3,15 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.database import Base
 
 if TYPE_CHECKING:
     from app.modules.platform.models.organization import Organization
     from app.modules.identity.models.user import User
+    from app.modules.events.models.event import Event
+    from app.modules.billing.models.event_activation import EventActivation
 
 class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
@@ -135,6 +137,26 @@ class OrganizationAddon(Base):
     purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=True
+    )
+    activation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("billing.event_activations.id", ondelete="CASCADE"), nullable=True
+    )
+
+    # Relationships
+    event: Mapped[Optional["Event"]] = relationship("Event", backref="organization_addons")
+    activation: Mapped[Optional["EventActivation"]] = relationship("EventActivation", backref="organization_addons")
+
+    @validates("event_id", "activation_id")
+    def validate_scope(self, key, value):
+        if value is not None:
+            other_key = "activation_id" if key == "event_id" else "event_id"
+            other_val = getattr(self, other_key, None)
+            if other_val is not None:
+                raise ValueError("An addon cannot be scoped to both an event and an activation simultaneously.")
+        return value
+
 class ActivityTimeline(Base):
     __tablename__ = "payment_events"
     __table_args__ = {"schema": "billing"}
@@ -145,6 +167,25 @@ class ActivityTimeline(Base):
     action_type: Mapped[str] = mapped_column(String(100), nullable=False)
     metadata_data: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class SubscriptionTransaction(Base):
+    __tablename__ = "subscription_transactions"
+    __table_args__ = {"schema": "billing"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
+    plan_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    promo_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    gst_number: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
+    billing_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    billing_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    billing_phone: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="SUCCESS")
+    is_custom_plan: Mapped[bool] = mapped_column(Boolean, default=False)
+    custom_limits: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    addon_keys: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class RevenueMetric(Base):
     __tablename__ = "revenue_metrics"

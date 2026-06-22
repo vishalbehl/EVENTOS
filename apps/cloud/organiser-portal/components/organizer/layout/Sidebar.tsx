@@ -36,12 +36,11 @@ export function Sidebar() {
   const isEventWorkspace = !!eventId;
 
   const platformRoutes = [
-    { label: "Home", icon: Home, href: "/dashboard" },
+    { label: "Dashboard", icon: Home, href: "/dashboard" },
     { label: "Events", icon: Calendar, href: "/events", permission: PERMISSIONS.EVENTS_VIEW },
+    { label: "Plans & Add-ons", icon: Banknote, href: "/billing" },
     { label: "Analytics", icon: BarChart3, href: "/analytics", permission: PERMISSIONS.ANALYTICS_VIEW },
     { label: "User Management", icon: Users, href: "/users", permission: PERMISSIONS.USERS_VIEW },
-    { label: "Developer", icon: Code, href: "/developer", permission: PERMISSIONS.SETTINGS_EDIT },
-    { label: "File Vault", icon: Box, href: "/files" },
   ];
 
   const { checkPermission } = usePermissions(eventId as string);
@@ -147,24 +146,46 @@ export function Sidebar() {
     }
   ];
 
-  const filteredPlatformRoutes = platformRoutes.filter(r => !r.permission || checkPermission(r.permission));
+  const technologyServicesRoutes = [
+    { label: "Overview", icon: Home, href: `/events/${eventId}/technology-services/dashboard` },
+    {
+      label: "SERVICES CATALOG",
+      icon: ClipboardList,
+      subItems: [
+        { label: "Catalog & Wizard", icon: ClipboardList, href: `/events/${eventId}/technology-services/requests`, permission: PERMISSIONS.TECHNOLOGY_REQUEST_VIEW },
+        { label: "Pricing Quotes", icon: Banknote, href: `/events/${eventId}/technology-services/quotes`, permission: PERMISSIONS.TECHNOLOGY_QUOTE_VIEW },
+        { label: "Delivery Status", icon: ShieldCheck, href: `/events/${eventId}/technology-services/status`, permission: PERMISSIONS.TECHNOLOGY_STATUS_VIEW }
+      ]
+    }
+  ];
 
+  const isTechnologyServicesWorkspace = !!(eventId && pathname?.includes(`/events/${eventId}/technology-services`));
+
+  const filteredPlatformRoutes = platformRoutes.filter(r => !r.permission || checkPermission(r.permission));
   const filteredEventRoutes = filterRoutesByPermissions(eventRoutes);
   const filteredRegistrationRoutes = filterRoutesByPermissions(registrationRoutes);
+  const filteredTechnologyServicesRoutes = filterRoutesByPermissions(technologyServicesRoutes);
 
-  const bottomRoutes = isRegistrationWorkspace
+  const bottomRoutes = isTechnologyServicesWorkspace
     ? [
-      { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
       { label: "Documentation", icon: FileText, href: "/docs" },
     ]
-    : [
-      { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
-      { label: "Documentation", icon: FileText, href: "/docs" },
-    ];
+    : (isRegistrationWorkspace
+        ? [
+          { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
+          { label: "Documentation", icon: FileText, href: "/docs" },
+        ]
+        : [
+          { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
+          { label: "Documentation", icon: FileText, href: "/docs" },
+        ]);
 
-  const currentRoutes = isRegistrationWorkspace
-    ? (regEnabled ? filteredRegistrationRoutes : [])
-    : (isEventWorkspace ? (speakerEnabled ? filteredEventRoutes : []) : filteredPlatformRoutes);
+  const currentRoutes = isTechnologyServicesWorkspace
+    ? filteredTechnologyServicesRoutes
+    : (isRegistrationWorkspace
+        ? (regEnabled ? filteredRegistrationRoutes : [])
+        : (isEventWorkspace ? (speakerEnabled ? filteredEventRoutes : []) : filteredPlatformRoutes));
+
 
   useEffect(() => {
     if (!pathname) return;
