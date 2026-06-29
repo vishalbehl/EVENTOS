@@ -629,6 +629,7 @@ AuthenticatedSpeaker = Annotated[Speaker, Depends(verify_upload_token)]
 
 async def verify_device_key(
     request: Request,
+    db: DB,
     x_device_key: Annotated[
         Optional[str],
         Header(
@@ -636,7 +637,6 @@ async def verify_device_key(
             description="API key registered for this venue device",
         ),
     ] = None,
-    db: DB = Depends(get_db),
 ) -> dict:
     """
     Authenticates on-site Electron apps (kiosk, station, room PC, etc.)

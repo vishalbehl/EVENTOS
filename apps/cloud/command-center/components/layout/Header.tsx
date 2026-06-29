@@ -70,11 +70,11 @@ export function Header() {
   });
 
   return (
-    <header className="sticky top-0 z-30 w-full h-16 flex items-center px-6 gap-6 glass-3d border-t-0 border-x-0 rounded-none bg-[var(--base)]/40">
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center gap-6 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_88%,transparent)] px-6 backdrop-blur-xl">
       {/* Breadcrumbs */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div className="h-8 w-8 glass-3d border-default rounded-lg flex items-center justify-center shrink-0">
-          <ShieldCheck className="h-4 w-4 text-[var(--pri)]" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)]">
+          <ShieldCheck className="h-4 w-4 text-[var(--text)]" />
         </div>
         <div className="flex items-center gap-1.5 overflow-hidden">
           {breadcrumbs.map((crumb, i) => (
@@ -84,7 +84,7 @@ export function Header() {
                 href={crumb.href}
                 className={cn(
                   "text-[10px] font-black uppercase tracking-widest transition-colors",
-                  i === breadcrumbs.length - 1 ? "text-[var(--text)]" : "text-muted hover:text-[var(--pri)] cursor-pointer"
+                  i === breadcrumbs.length - 1 ? "text-[var(--text)]" : "text-muted hover:text-[var(--text)] cursor-pointer"
                 )}
               >
                 {crumb.label}
@@ -101,21 +101,21 @@ export function Header() {
           <p className="text-[12px] font-black text-[var(--text)] tracking-tighter tabular-nums leading-none mb-0.5">
             {time ? time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: timezone }) : "--:--:-- --"}
           </p>
-          <p className="text-[8px] font-black text-[var(--pri)] uppercase tracking-[0.2em]">{time ? time.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: timezone }).toUpperCase() : ""}</p>
+          <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-[0.2em]">{time ? time.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: timezone }).toUpperCase() : ""}</p>
         </div>
 
         <div className="flex items-center gap-2">
           <Link href="/notifications">
-            <button className="h-9 w-9 rounded-lg glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--sec)] hover:border-[var(--sec)]/30 transition-all relative group">
+            <button className="relative flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]">
               <Bell className="h-4.5 w-4.5" />
-              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 bg-[var(--dan)] rounded-full border border-[var(--surf)] pulse-glow-red" />
+              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-[var(--surf)] bg-[var(--dan)]" />
             </button>
           </Link>
 
           <div className="relative" ref={themeMenuRef}>
             <button
               onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
-              className="h-9 w-9 rounded-lg glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--pri)] hover:border-[var(--pri)]/30 transition-all"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]"
             >
               <Palette className="h-4.5 w-4.5" />
             </button>
@@ -125,7 +125,7 @@ export function Header() {
                   initial={{ opacity: 0, y: 8, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                  className="absolute right-0 mt-2.5 w-48 glass-3d border-default rounded-2xl p-2.5 z-50 shadow-2xl"
+                  className="absolute right-0 z-50 mt-2.5 w-48 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5"
                 >
                   <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-2 px-1">Select Theme</p>
                   <div className="grid grid-cols-2 gap-2">
@@ -136,7 +136,7 @@ export function Header() {
                         className={cn(
                           "h-8 flex items-center justify-center gap-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all",
                           theme === t.name 
-                            ? "bg-[var(--pri)]/10 text-[var(--pri)] border-[var(--pri)]/30 scale-105" 
+                            ? "bg-[var(--pri)] text-[var(--primary-foreground)] border-[var(--pri)]" 
                             : "border-default text-muted hover:text-[var(--text)] hover:border-muted"
                         )}
                         title={t.label}
@@ -144,7 +144,7 @@ export function Header() {
                         <div 
                           className="h-3 w-3 rounded-full border border-black/10 shrink-0"
                           style={{
-                            background: t.name === 'plasma-violet' ? '#8B5CF6' : '#FFFFFF'
+                            background: t.name === 'plasma-violet' ? '#000000' : '#FFFFFF'
                           }}
                         />
                         <span>{t.label}</span>
@@ -157,7 +157,7 @@ export function Header() {
           </div>
 
           <Link href="/docs">
-            <button className="h-9 w-9 rounded-lg glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--text)] hover:border-default transition-all">
+            <button className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]">
               <HelpCircle className="h-4.5 w-4.5" />
             </button>
           </Link>
@@ -172,12 +172,12 @@ export function Header() {
               <p className="text-[11px] font-black text-[var(--text)] leading-none mb-0.5 uppercase tracking-tight">
                 {user?.full_name || user?.first_name || 'Account'}
               </p>
-              <p className="text-[8px] font-black text-[var(--pri)] uppercase tracking-[0.2em] opacity-70">
+              <p className="text-[8px] font-black text-[var(--muted)] uppercase tracking-[0.2em] opacity-70">
                 Super Admin
               </p>
             </div>
             <div
-              className="h-9 w-9 rounded-lg bg-gradient-to-br from-[var(--pri)]/20 to-[var(--sec)]/20 border border-default flex items-center justify-center text-[11px] font-black text-[var(--text)] shadow-lg hover:scale-105 transition-transform overflow-hidden relative"
+              className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card)] text-[11px] font-black text-[var(--text)] transition-transform hover:scale-105"
             >
               {user?.avatar_url ? (
                 <img src={user.avatar_url} alt="User" className="h-full w-full object-cover" />
@@ -197,7 +197,7 @@ export function Header() {
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute right-0 top-full mt-3 w-64 glass-3d border-default rounded-[1.5rem] p-4 z-50 shadow-2xl"
+                className="absolute right-0 top-full z-50 mt-3 w-64 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
               >
                 <div className="px-2 py-3 border-b border-default mb-2">
                   <p className="text-[14px] font-black text-[var(--text)] truncate">
@@ -207,12 +207,12 @@ export function Header() {
                 </div>
                 <div className="space-y-1">
                   <Link href="/settings?tab=profile">
-                    <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[color-mix(in_srgb,var(--text)_5%,transparent)] transition-all text-[12px] font-bold text-muted hover:text-[var(--text)]">
+                    <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[12px] font-bold text-muted transition-all hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text)]">
                       <User className="h-4 w-4" /> View Profile
                     </button>
                   </Link>
                   <Link href="/settings">
-                    <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[color-mix(in_srgb,var(--text)_5%,transparent)] transition-all text-[12px] font-bold text-muted hover:text-[var(--text)]">
+                    <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[12px] font-bold text-muted transition-all hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text)]">
                       <Settings className="h-4 w-4" /> Global Settings
                     </button>
                   </Link>
@@ -222,7 +222,7 @@ export function Header() {
                       setIsUserMenuOpen(false);
                       logout();
                     }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--dan)]/10 transition-all text-[12px] font-bold text-[var(--dan)]"
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[12px] font-bold text-[var(--dan)] transition-all hover:bg-[var(--dan)]/10"
                   >
                     <LogOut className="h-4 w-4" /> Sign Out
                   </button>

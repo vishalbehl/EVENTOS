@@ -42,7 +42,6 @@ export default function DashboardLayout({
           const data = await response.json();
           if (data && data.timezone) {
             localStorage.setItem("system-timezone", data.timezone);
-            // Dispatch custom event to notify timezone changes in the UI
             window.dispatchEvent(new Event("system-timezone-changed"));
           }
         }
@@ -73,20 +72,15 @@ export default function DashboardLayout({
   useEffect(() => {
     const fetchUser = async () => {
       if (isAuthenticated && accessToken && !user) {
-        console.log("[Auth] Fetching user profile...");
         try {
           const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
           });
           if (response.ok) {
             const userData = await response.json();
-            console.log("[Auth] Profile sync successful:", userData.email);
             setAuth(userData, accessToken, useAuthStore.getState().refreshToken || undefined, useAuthStore.getState().rememberMe);
           } else if (response.status === 401) {
-            console.warn("[Auth] 401 Unauthorized during profile sync. Logging out.");
             logout();
-          } else {
-            console.error("[Auth] Unexpected profile sync error:", response.status);
           }
         } catch (error) {
           console.error("[Auth] Profile fetch network error:", error);
@@ -98,7 +92,7 @@ export default function DashboardLayout({
     }
   }, [isAuthenticated, accessToken, user, setAuth, logout, hydrated, hasHydrated]);
 
-  // Track user activity to update lastActivity in Zustand
+  // Track user activity
   useEffect(() => {
     if (!hydrated || !hasHydrated || !isAuthenticated) return;
 
@@ -115,7 +109,7 @@ export default function DashboardLayout({
 
     const handleActivity = throttle(() => {
       useAuthStore.getState().updateActivity();
-    }, 60000); // 1 minute throttle
+    }, 60000);
 
     window.addEventListener("mousedown", handleActivity);
     window.addEventListener("keydown", handleActivity);
@@ -130,16 +124,14 @@ export default function DashboardLayout({
     };
   }, [hydrated, hasHydrated, isAuthenticated]);
 
-  // Session limit and inactivity checks
+  // Session checks
   useEffect(() => {
     if (!hydrated || !hasHydrated) return;
 
-    // Check tab session status
     const sessionActive = sessionStorage.getItem("session_active");
     if (!sessionActive) {
       const { rememberMe } = useAuthStore.getState();
       if (isAuthenticated && !rememberMe) {
-        console.warn("[Auth] Session ended because Remember Me was disabled. Logging out.");
         logout();
         router.push("/");
         return;
@@ -150,15 +142,12 @@ export default function DashboardLayout({
     if (isAuthenticated) {
       const { loginTime, lastActivity, rememberMe } = useAuthStore.getState();
       const now = Date.now();
-
-      const maxSessionDuration = rememberMe ? 15 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000; // 15 days vs 1 day
-      const maxInactivityDuration = 36 * 60 * 60 * 1000; // 36 hours (1.5 days)
-
-      const isSessionExpired = loginTime ? (now - loginTime > maxSessionDuration) : false;
-      const isInactiveExpired = lastActivity ? (now - lastActivity > maxInactivityDuration) : false;
+      const maxSessionDuration = rememberMe ? 15 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      const maxInactivityDuration = 36 * 60 * 60 * 1000;
+      const isSessionExpired  = loginTime     ? (now - loginTime     > maxSessionDuration)    : false;
+      const isInactiveExpired = lastActivity  ? (now - lastActivity  > maxInactivityDuration) : false;
 
       if (isSessionExpired || isInactiveExpired) {
-        console.warn("[Auth] Session expired. Logging out.");
         logout();
         router.push("/");
         return;
@@ -169,10 +158,10 @@ export default function DashboardLayout({
   }, [hydrated, hasHydrated, isAuthenticated, accessToken, logout, router]);
 
   const isSpeakerPath = pathname?.includes(`/events/${eventId}/speaker`);
-  const isRegPath = pathname?.includes(`/events/${eventId}/registration`);
+  const isRegPath     = pathname?.includes(`/events/${eventId}/registration`);
 
   const speakerModeEnabled = event?.speaker_settings?.enabled ?? true;
-  const regModeEnabled = event?.registration_settings?.enabled ?? true;
+  const regModeEnabled     = event?.registration_settings?.enabled ?? true;
 
   const isBlocked = (isSpeakerPath && !speakerModeEnabled) || (isRegPath && !regModeEnabled);
 
@@ -180,20 +169,38 @@ export default function DashboardLayout({
 
   if (eventId && !isEventLoading && isBlocked) {
     content = (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-6 max-w-lg mx-auto my-auto animate-in fade-in zoom-in duration-500">
-        <div className="h-20 w-20 rounded-[2rem] bg-[var(--dan)]/10 flex items-center justify-center border border-[var(--dan)]/30 shadow-lg shadow-[var(--dan)]/5">
-          <Lock className="h-8 w-8 text-[var(--dan)]" />
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-6 max-w-lg mx-auto my-auto animate-slide-up-fade">
+        <div
+          className="h-20 w-20 rounded-[2rem] flex items-center justify-center"
+          style={{
+            background: "var(--color-danger-muted)",
+            border: "1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)",
+            boxShadow: "0 8px 24px rgba(239, 68, 68, 0.12)",
+          }}
+        >
+          <Lock className="h-8 w-8" style={{ color: "var(--color-danger)" }} />
         </div>
         <div className="space-y-3">
-          <h3 className="text-2xl font-black text-[var(--text)] tracking-tighter">Module Access Restricted</h3>
-          <p className="text-muted text-[11px] font-bold uppercase tracking-[0.2em] leading-relaxed">
-            The {isSpeakerPath ? "Speaker Presentation Desk" : "On-Site Registration"} module is not enabled for this event. 
+          <h3
+            className="text-[22px] font-bold tracking-tight"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            Module Access Restricted
+          </h3>
+          <p
+            className="text-[11px] font-semibold uppercase tracking-[0.2em] leading-relaxed"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            The {isSpeakerPath ? "Speaker Presentation Desk" : "On-Site Registration"} module is not enabled for this event.
           </p>
-          <p className="text-muted text-[10px] font-medium leading-relaxed">
-            Please enable it in the Event Configuration settings or contact your administrator.
+          <p
+            className="text-[12px] leading-relaxed"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Please enable it in Event Configuration settings or contact your administrator.
           </p>
         </div>
-        <Button 
+        <Button
           onClick={() => {
             if (isSpeakerPath && regModeEnabled) {
               router.push(`/events/${eventId}/registration`);
@@ -203,45 +210,87 @@ export default function DashboardLayout({
               router.push("/events");
             }
           }}
-          className="rounded-xl px-8 font-black uppercase text-[10px] tracking-widest bg-[var(--pri)] hover:bg-[var(--sec)] border-0 text-[var(--text)]"
         >
-          {isSpeakerPath && regModeEnabled ? "Switch to Registration Workspace" : (isRegPath && speakerModeEnabled ? "Switch to Speaker Workspace" : "Go Back to Events")}
+          {isSpeakerPath && regModeEnabled
+            ? "Switch to Registration"
+            : isRegPath && speakerModeEnabled
+            ? "Switch to Speaker Workspace"
+            : "Back to Events"}
         </Button>
       </div>
     );
   }
 
   return (
-    <div className="relative h-screen overflow-hidden bg-[var(--base)] text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-app-wallpaper opacity-85" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_74%_14%,color-mix(in_srgb,var(--pri)_12%,transparent),transparent_24%),linear-gradient(color-mix(in_srgb,var(--base)_72%,transparent),color-mix(in_srgb,var(--base)_92%,transparent))]" />
+    <div
+      className="relative h-screen overflow-hidden"
+      style={{ background: "var(--color-bg)" }}
+    >
+      {/* ── Ambient gradient overlay ── */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-60"
+        style={{
+          background: `
+            radial-gradient(ellipse at 75% 10%, rgba(124, 58, 237, 0.12), transparent 50%),
+            radial-gradient(ellipse at 10% 80%, rgba(6, 182, 212, 0.06), transparent 50%)
+          `,
+        }}
+      />
+
+      {/* ── Sidebar ── */}
       <aside
         className={cn(
           "hidden h-full md:fixed md:inset-y-0 md:z-[80] md:flex md:flex-col transition-all duration-300 ease-in-out",
-          isSidebarCollapsed ? "md:w-20" : "md:w-72"
+          isSidebarCollapsed ? "md:w-[72px]" : "md:w-64"
         )}
       >
         <Sidebar />
       </aside>
+
+      {/* ── Main content ── */}
       <main
         className={cn(
           "relative h-screen overflow-hidden flex flex-col transition-all duration-300 ease-in-out",
-          isSidebarCollapsed ? "md:pl-20" : "md:pl-72"
+          isSidebarCollapsed ? "md:pl-[72px]" : "md:pl-64"
         )}
       >
         <Header />
+
+        {/* Impersonation banner */}
         {impersonatingOrg && (
-          <div className="mx-4 mt-4 md:mx-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-100 flex items-center justify-between">
+          <div
+            className="mx-4 mt-3 md:mx-6 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center justify-between"
+            style={{
+              background: "var(--color-warning-muted)",
+              border: "1px solid color-mix(in srgb, var(--color-warning) 30%, transparent)",
+              color: "var(--color-warning)",
+            }}
+          >
             <span>Viewing as {impersonatingOrg}</span>
-            <button onClick={exitImpersonation} className="text-[10px] font-black uppercase tracking-widest text-amber-200 hover:text-white">Exit impersonation</button>
+            <button
+              onClick={exitImpersonation}
+              className="text-[10px] font-bold uppercase tracking-widest hover:opacity-80 transition-opacity"
+            >
+              Exit Impersonation
+            </button>
           </div>
         )}
-        <div className="flex-1 min-h-0 px-4 py-5 md:px-6 flex flex-col">
-          <div className="flex-1 rounded-[14px] border border-default bg-[color-mix(in_srgb,var(--base)_80%,transparent)] p-5 shadow-[0_24px_80px_color-mix(in_srgb,var(--base)_28%,transparent)] backdrop-blur-md md:p-6 flex flex-col min-h-0 overflow-y-auto custom-scrollbar">
+
+        {/* ── Page content wrapper — CANVAS layer (surface-1) ── */}
+        <div className="flex-1 min-h-0 px-4 py-4 md:px-6 flex flex-col">
+          <div
+            className="flex-1 rounded-[var(--radius-lg)] flex flex-col min-h-0 overflow-y-auto custom-scrollbar p-5 md:p-6"
+            style={{
+              background: "var(--color-surface-1)",
+              border: "1px solid var(--color-border-subtle)",
+              boxShadow: "inset 0 1px 0 color-mix(in srgb, white 4%, transparent), 0 2px 16px color-mix(in srgb, var(--color-bg) 60%, transparent)",
+            }}
+          >
             {content}
           </div>
         </div>
       </main>
+
       <AiFloatingAssistant />
     </div>
   );

@@ -57,15 +57,12 @@ async def test_ops_planning_flow(client: AsyncClient, super_admin: User, event: 
     # Create Hardware Item
     hw_item = HardwareItem(
         id=uuid.uuid4(),
-        organization_id=super_admin.organization_id,
         category_id=hw_category.id,
         asset_code=f"MIC-LAPEL-{uuid.uuid4().hex[:6].upper()}",
         name="Wireless Lapel Microphone",
         brand="Shure",
         model="SLX-D",
-        serial_number=f"SN-{uuid.uuid4().hex[:8].upper()}",
-        status="AVAILABLE",
-        condition="GOOD"
+        status="AVAILABLE"
     )
     db.add(hw_item)
     await db.flush()

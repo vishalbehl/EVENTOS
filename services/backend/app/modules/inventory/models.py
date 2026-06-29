@@ -21,20 +21,33 @@ class HardwareItem(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     category_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("inventory.hardware_categories.id", ondelete="RESTRICT"), nullable=False)
     asset_code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     brand: Mapped[str] = mapped_column(String(100), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
-    serial_number: Mapped[str] = mapped_column(String(100), nullable=False)
-    purchase_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     purchase_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
-    replacement_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    renting_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
     status: Mapped[str] = mapped_column(String(50), default="AVAILABLE") # AVAILABLE, ALLOCATED, MAINTENANCE, RETIRED, LOST
-    condition: Mapped[str] = mapped_column(String(50), default="GOOD") # NEW, GOOD, FAIR, POOR
-    location: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    pricing_unit: Mapped[str] = mapped_column(String(50), default="PER_EVENT")
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tax_category: Mapped[str] = mapped_column(String(50), default="GST_18")
+
+    @property
+    def location(self) -> Optional[str]:
+        return getattr(self, "_transient_location", None)
+
+    @location.setter
+    def location(self, value: Optional[str]) -> None:
+        self._transient_location = value
+
+    @property
+    def condition(self) -> Optional[str]:
+        return getattr(self, "_transient_condition", None)
+
+    @condition.setter
+    def condition(self, value: Optional[str]) -> None:
+        self._transient_condition = value
 
 
 class HardwareStock(Base):

@@ -21,6 +21,10 @@ class Invoice(Base):
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True, index=True)
     activation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.event_activations.id", ondelete="SET NULL"), nullable=True, index=True)
+    invoice_number: Mapped[Optional[str]] = mapped_column(String(50))
+    gst_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0, server_default="0.0")
+    total_amount_inr: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0, server_default="0.0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class InvoiceItem(Base):
     __tablename__ = "invoice_items"
@@ -43,21 +47,4 @@ class PaymentMethod(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-class MarketplaceSubscription(Base):
-    __tablename__ = "marketplace_subscriptions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
-    app_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("marketplace.apps.id", ondelete="CASCADE"))
-    status: Mapped[str] = mapped_column(String(50), default="ACTIVE")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-class MarketplaceTransaction(Base):
-    __tablename__ = "marketplace_transactions"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
-    subscription_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.marketplace_subscriptions.id", ondelete="CASCADE"))
-    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="SUCCESS")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

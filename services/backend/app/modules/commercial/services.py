@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.commercial.models import (
     ServiceCategory, Service, ServiceFeature, ServicePackage,
-    PackageService, StaffRole, StaffRate, StaffSkill
+    PackageService, StaffRole
 )
 
 class ServiceCatalogService:

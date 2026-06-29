@@ -277,7 +277,8 @@ async def test_delete_organization_clears_impersonation_fk_references(db, client
     deleted_org = await db.get(Organization, target_org.id)
     assert deleted_org is None
 
-    refreshed_log = await db.get(ImpersonationLog, log.id)
+    db.expunge(log)
+    refreshed_log = (await db.execute(select(ImpersonationLog).where(ImpersonationLog.id == log.id))).scalar_one_or_none()
     assert refreshed_log is not None
     assert refreshed_log.target_user_id is None
     assert refreshed_log.target_organization_id is None

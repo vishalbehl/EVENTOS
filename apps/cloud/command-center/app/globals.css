@@ -1,134 +1,66 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 @import "../src/styles/themes.css";
 @import "../src/styles/global.css";
 
 :root {
-  --font-dm-sans: 'DM Sans', sans-serif;
-  --font-dm-mono: 'DM Mono', monospace;
+  --font-dm-sans: 'Inter', sans-serif;
+  --font-dm-mono: 'Geist Mono', monospace;
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'Geist Mono', monospace;
 
-  /* Backgrounds - light mode */
-  --bg-base: #F8F9FC;
-  --bg-surface: #FFFFFF;
-  --bg-surface-2: #F1F3F9;
-  --bg-surface-hover: #E8ECF4;
-  --border-default: #E2E8F0;
-  --border-subtle: #F1F3F9;
+  /* Dynamically derive variables from the active theme in themes.css */
+  --bg-base: var(--base);
+  --bg-surface: var(--card);
+  --bg-surface-2: color-mix(in srgb, var(--card) 92%, var(--base));
+  --bg-surface-3: color-mix(in srgb, var(--card) 85%, var(--base));
+  --bg-surface-deep: var(--surf);
+  --bg-surface-hover: color-mix(in srgb, var(--card) 88%, var(--text));
+  --border-default: var(--border);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
 
-  /* Typography */
-  --text-primary: #0F172A;
-  --text-secondary: #475569;
-  --text-tertiary: #94A3B8;
-  --text-disabled: #CBD5E1;
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --text-tertiary: color-mix(in srgb, var(--text) 55%, transparent);
+  --text-disabled: color-mix(in srgb, var(--text) 30%, transparent);
 
-  /* Brand */
-  --brand-primary: #7C3AED;
-  --brand-primary-hover: #6D28D9;
-  --brand-primary-muted: rgba(124, 58, 237, 0.12);
-  --brand-secondary: #4F46E5;
+  --brand-primary: var(--pri);
+  --brand-primary-hover: var(--sec);
+  --brand-primary-muted: color-mix(in srgb, var(--pri) 8%, transparent);
+  --brand-secondary: var(--sec);
   
   /* Semantic */
-  --success: #10B981;
-  --success-muted: rgba(16, 185, 129, 0.12);
-  --warning: #F59E0B;
-  --warning-muted: rgba(245, 158, 11, 0.12);
-  --danger: #EF4444;
-  --danger-muted: rgba(239, 68, 68, 0.12);
-  --info: #3B82F6;
-  --info-muted: rgba(59, 130, 246, 0.12);
+  --success: var(--success);
+  --success-muted: color-mix(in srgb, var(--success) 14%, transparent);
+  --warning: var(--warn);
+  --warning-muted: color-mix(in srgb, var(--warn) 14%, transparent);
+  --danger: var(--dan);
+  --danger-muted: color-mix(in srgb, var(--dan) 16%, transparent);
+  --info: var(--acc);
+  --info-muted: color-mix(in srgb, var(--acc) 14%, transparent);
 
   /* Sidebar */
-  --sidebar-bg: #FFFFFF;
-  --sidebar-border: #E2E8F0;
+  --sidebar-bg: var(--base);
+  --sidebar-border: var(--border);
   --sidebar-item-active-bg: var(--brand-primary-muted);
   --sidebar-item-active-border: var(--brand-primary);
-  --sidebar-item-hover-bg: #F8F9FC;
+  --sidebar-item-hover-bg: color-mix(in srgb, var(--card) 95%, var(--text));
 
   /* Map ALL shadcn CSS variables to these custom tokens */
   --background: var(--bg-base);
   --card: var(--bg-surface);
-  --popover: var(--bg-surface);
+  --popover: var(--bg-surface-2);
   --border: var(--border-default);
   --foreground: var(--text-primary);
   --muted-foreground: var(--text-secondary);
   --primary: var(--brand-primary);
-  --primary-foreground: #FFFFFF;
-
-  /* Compatibility mappings for existing theme variables */
-  --base: var(--bg-base);
-  --surf: var(--bg-surface);
-  --text: var(--text-primary);
-  --muted: var(--text-secondary);
-  --pri: var(--brand-primary);
-  --sec: var(--brand-secondary);
-  --success-color: var(--success);
-  --warn: var(--warning);
-  --dan: var(--danger);
+  --primary-foreground: var(--bg-base);
   --radius: 0.75rem;
-}
-
-.dark {
-  /* Backgrounds - dark mode */
-  --bg-base: #0D0F1A;
-  --bg-surface: #161927;
-  --bg-surface-2: #1E2235;
-  --bg-surface-hover: #252840;
-  --border-default: #2A2F4A;
-  --border-subtle: #1E2235;
-
-  /* Typography */
-  --text-primary: #F1F5F9;
-  --text-secondary: #94A3B8;
-  --text-tertiary: #64748B;
-  --text-disabled: #475569;
-
-  /* Brand stays the same */
-  --brand-primary: #7C3AED;
-  --brand-primary-hover: #8B5CF6;
-  --brand-primary-muted: rgba(124, 58, 237, 0.15);
-  --brand-secondary: #6366F1;
-
-  /* Semantic */
-  --success: #10B981;
-  --success-muted: rgba(16, 185, 129, 0.15);
-  --warning: #F59E0B;
-  --warning-muted: rgba(245, 158, 11, 0.15);
-  --danger: #EF4444;
-  --danger-muted: rgba(239, 68, 68, 0.15);
-  --info: #3B82F6;
-  --info-muted: rgba(59, 130, 246, 0.15);
-
-  /* Sidebar */
-  --sidebar-bg: #0D0F1A;
-  --sidebar-border: #1E2235;
-  --sidebar-item-active-bg: var(--brand-primary-muted);
-  --sidebar-item-active-border: var(--brand-primary);
-  --sidebar-item-hover-bg: #1E2235;
-
-  /* Map ALL shadcn CSS variables to these custom tokens */
-  --background: var(--bg-base);
-  --card: var(--bg-surface);
-  --popover: var(--bg-surface);
-  --border: var(--border-default);
-  --foreground: var(--text-primary);
-  --muted-foreground: var(--text-secondary);
-  --primary: var(--brand-primary);
-  --primary-foreground: #FFFFFF;
-
-  /* Compatibility mappings for existing theme variables */
-  --base: var(--bg-base);
-  --surf: var(--bg-surface);
-  --text: var(--text-primary);
-  --muted: var(--text-secondary);
-  --pri: var(--brand-primary);
-  --sec: var(--brand-secondary);
-  --success-color: var(--success);
-  --warn: var(--warning);
-  --dan: var(--danger);
 }
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
 
 @layer base {
   body {

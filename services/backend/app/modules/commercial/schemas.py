@@ -93,28 +93,7 @@ class StaffRoleOut(BaseModel):
     role_name: str
     description: Optional[str]
 
-# Staff Rate
-class StaffRateCreate(BaseModel):
-    role_id: uuid.UUID
-    region: str = Field(min_length=1, max_length=50)
-    hourly_rate: float = Field(ge=0.0)
-    daily_rate: float = Field(ge=0.0)
-    overtime_rate: float = Field(ge=0.0)
-    currency: str = Field(default="USD", min_length=3, max_length=3)
-    effective_from: datetime
-    effective_to: datetime
 
-class StaffRateOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
-    role_id: uuid.UUID
-    region: str
-    hourly_rate: float
-    daily_rate: float
-    overtime_rate: float
-    currency: str
-    effective_from: datetime
-    effective_to: datetime
 
 # Staff Skill
 class StaffSkillCreate(BaseModel):

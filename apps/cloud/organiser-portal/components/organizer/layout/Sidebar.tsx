@@ -9,14 +9,13 @@ import {
   LayoutDashboard, Settings, Home, FileSpreadsheet,
   Users, Calendar, MapPin, FileVideo, Mail,
   MonitorPlay, BarChart3, SlidersHorizontal,
-  PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
-  Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
-  Code, ShieldCheck
+  ChevronLeft, ChevronRight, LogOut,
+  Bell, FileText, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
+  ShieldCheck
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
-import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useEvent } from "@/hooks/useEvents";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -25,7 +24,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const { eventId } = useParams();
   const { isSidebarCollapsed: isCollapsed, toggleSidebar } = useUIStore();
-  const { user } = useAuthStore();
+  const { user, logout } = useAuthStore();
 
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
 
@@ -36,41 +35,40 @@ export function Sidebar() {
   const isEventWorkspace = !!eventId;
 
   const platformRoutes = [
-    { label: "Dashboard", icon: Home, href: "/dashboard" },
-    { label: "Events", icon: Calendar, href: "/events", permission: PERMISSIONS.EVENTS_VIEW },
-    { label: "Plans & Add-ons", icon: Banknote, href: "/billing" },
-    { label: "Analytics", icon: BarChart3, href: "/analytics", permission: PERMISSIONS.ANALYTICS_VIEW },
-    { label: "User Management", icon: Users, href: "/users", permission: PERMISSIONS.USERS_VIEW },
+    { label: "Dashboard",        icon: Home,       href: "/dashboard" },
+    { label: "Events",           icon: Calendar,   href: "/events",    permission: PERMISSIONS.EVENTS_VIEW },
+    { label: "Plans & Add-ons",  icon: Banknote,   href: "/billing" },
+    { label: "Analytics",        icon: BarChart3,  href: "/analytics", permission: PERMISSIONS.ANALYTICS_VIEW },
+    { label: "User Management",  icon: Users,      href: "/users",     permission: PERMISSIONS.USERS_VIEW },
     {
       label: "TECH SERVICES",
       icon: Settings,
       subItems: [
-        { label: "Overview Dashboard", icon: Home, href: "/technology-services/dashboard" },
-        { label: "Requests Catalog", icon: ClipboardList, href: "/technology-services/requests", permission: PERMISSIONS.TECHNOLOGY_REQUEST_VIEW },
-        { label: "Pricing Quotes", icon: Banknote, href: "/technology-services/quotes", permission: PERMISSIONS.TECHNOLOGY_QUOTE_VIEW },
-        { label: "Delivery Status", icon: ShieldCheck, href: "/technology-services/status", permission: PERMISSIONS.TECHNOLOGY_STATUS_VIEW }
-      ]
-    }
+        { label: "Overview Dashboard", icon: Home,          href: "/technology-services/dashboard" },
+        { label: "Requests Catalog",   icon: ClipboardList, href: "/technology-services/requests",  permission: PERMISSIONS.TECHNOLOGY_REQUEST_VIEW },
+        { label: "Pricing Quotes",     icon: Banknote,      href: "/technology-services/quotes",    permission: PERMISSIONS.TECHNOLOGY_QUOTE_VIEW },
+        { label: "Delivery Status",    icon: ShieldCheck,   href: "/technology-services/status",    permission: PERMISSIONS.TECHNOLOGY_STATUS_VIEW },
+      ],
+    },
   ];
 
   const { checkPermission } = usePermissions(eventId as string);
   const { data: event } = useEvent(eventId as string);
   const speakerEnabled = event?.speaker_settings?.enabled ?? true;
-  const regEnabled = event?.registration_settings?.enabled ?? true;
+  const regEnabled     = event?.registration_settings?.enabled ?? true;
 
-  const filterRoutesByPermissions = (routes: any[]) => {
-    return routes
+  const filterRoutesByPermissions = (routes: any[]) =>
+    routes
       .map(route => {
         if (route.subItems) {
-          const allowedSubItems = route.subItems.filter((sub: any) => !sub.permission || checkPermission(sub.permission));
-          if (allowedSubItems.length === 0) return null;
-          return { ...route, subItems: allowedSubItems };
+          const allowed = route.subItems.filter((s: any) => !s.permission || checkPermission(s.permission));
+          if (allowed.length === 0) return null;
+          return { ...route, subItems: allowed };
         }
         if (route.permission && !checkPermission(route.permission)) return null;
         return route;
       })
       .filter(Boolean);
-  };
 
   const eventRoutes = [
     { label: "Overview", icon: Home, href: `/events/${eventId}/speaker/dashboard` },
@@ -78,43 +76,43 @@ export function Sidebar() {
       label: "PROGRAM",
       icon: Calendar,
       subItems: [
-        { label: "Sessions", icon: Calendar, href: `/events/${eventId}/speaker/sessions`, permission: PERMISSIONS.SESSIONS_VIEW },
-        { label: "Rooms", icon: MapPin, href: `/events/${eventId}/speaker/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
-      ]
+        { label: "Sessions",  icon: Calendar, href: `/events/${eventId}/speaker/sessions`, permission: PERMISSIONS.SESSIONS_VIEW },
+        { label: "Rooms",     icon: MapPin,   href: `/events/${eventId}/speaker/rooms`,    permission: PERMISSIONS.ROOMS_MANAGE },
+      ],
     },
     {
       label: "SPEAKERS",
       icon: Users,
       subItems: [
-        { label: "Speakers", icon: Users, href: `/events/${eventId}/speaker/speakers`, permission: PERMISSIONS.SPEAKERS_VIEW },
-        { label: "File Monitoring", icon: FileVideo, href: `/events/${eventId}/speaker/files`, permission: PERMISSIONS.FILES_VIEW },
-        { label: "Posters", icon: MonitorPlay, href: `/events/${eventId}/speaker/eposters`, permission: PERMISSIONS.POSTERS_VIEW },
-      ]
+        { label: "Speakers",         icon: Users,       href: `/events/${eventId}/speaker/speakers`,  permission: PERMISSIONS.SPEAKERS_VIEW },
+        { label: "File Monitoring",  icon: FileVideo,   href: `/events/${eventId}/speaker/files`,     permission: PERMISSIONS.FILES_VIEW },
+        { label: "Posters",          icon: MonitorPlay, href: `/events/${eventId}/speaker/eposters`,  permission: PERMISSIONS.POSTERS_VIEW },
+      ],
     },
     {
       label: "COMMUNICATION",
       icon: Mail,
       subItems: [
-        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/speaker/emails`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/speaker/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Notifications", icon: Bell, href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
-      ]
+        { label: "Campaigns",      icon: Mail,     href: `/events/${eventId}/speaker/emails`,        permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Announcements",  icon: Megaphone, href: `/events/${eventId}/speaker/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Notifications",  icon: Bell,     href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
+      ],
     },
     {
       label: "DESIGN STUDIO",
       icon: Palette,
       subItems: [
-        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/speaker/theme`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/speaker/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
-      ]
+        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/speaker/theme`,          permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Email Designer", icon: Mail,    href: `/events/${eventId}/speaker/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
+      ],
     },
     {
       label: "AUTOMATION",
       icon: ClipboardList,
       subItems: [
         { label: "Workflows", icon: ClipboardList, href: `/events/${eventId}/speaker/workflows` },
-      ]
-    }
+      ],
+    },
   ];
 
   const isRegistrationWorkspace = !!(eventId && pathname?.includes(`/events/${eventId}/registration`));
@@ -125,56 +123,56 @@ export function Sidebar() {
       label: "ATTENDEES",
       icon: Users,
       subItems: [
-        { label: "Participants", icon: Users, href: `/events/${eventId}/registration/participants` },
-        { label: "Review Queue", icon: ClipboardList, href: `/events/${eventId}/registration/review` },
-      ]
+        { label: "Participants",  icon: Users,      href: `/events/${eventId}/registration/participants` },
+        { label: "Review Queue",  icon: ClipboardList, href: `/events/${eventId}/registration/review` },
+      ],
     },
     {
       label: "DESIGN STUDIO",
       icon: Palette,
       subItems: [
-        { label: "Form Builder", icon: SlidersHorizontal, href: `/events/${eventId}/registration/form-builder` },
-        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/registration/theme` },
-        { label: "Template Designer", icon: Layout, href: `/events/${eventId}/registration/template-designer` },
-        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/registration/email-designer` },
-      ]
+        { label: "Form Builder",        icon: SlidersHorizontal, href: `/events/${eventId}/registration/form-builder` },
+        { label: "Theme Designer",      icon: Palette,           href: `/events/${eventId}/registration/theme` },
+        { label: "Template Designer",   icon: Layout,            href: `/events/${eventId}/registration/template-designer` },
+        { label: "Email Designer",      icon: Mail,              href: `/events/${eventId}/registration/email-designer` },
+      ],
     },
     {
       label: "COMMUNICATION",
       icon: Mail,
       subItems: [
-        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
+        { label: "Campaigns",     icon: Mail,     href: `/events/${eventId}/registration/emails` },
         { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/registration/announcements` },
-      ]
+      ],
     },
     {
       label: "FINANCE",
       icon: Banknote,
       subItems: [
         { label: "Financials", icon: Banknote, href: `/events/${eventId}/registration/financials` },
-      ]
-    }
+      ],
+    },
   ];
 
-  const filteredPlatformRoutes = filterRoutesByPermissions(platformRoutes);
-  const filteredEventRoutes = filterRoutesByPermissions(eventRoutes);
+  const filteredPlatformRoutes     = filterRoutesByPermissions(platformRoutes);
+  const filteredEventRoutes        = filterRoutesByPermissions(eventRoutes);
   const filteredRegistrationRoutes = filterRoutesByPermissions(registrationRoutes);
 
   const bottomRoutes = isRegistrationWorkspace
     ? [
-      { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
-      { label: "Documentation", icon: FileText, href: "/docs" },
-    ]
+        { label: "Settings",      icon: Settings, href: `/events/${eventId}/registration/settings` },
+        { label: "Documentation", icon: FileText, href: "/docs" },
+      ]
     : [
-      { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
-      { label: "Documentation", icon: FileText, href: "/docs" },
-    ];
+        { label: "Settings",      icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
+        { label: "Documentation", icon: FileText, href: "/docs" },
+      ];
 
   const currentRoutes = isRegistrationWorkspace
     ? (regEnabled ? filteredRegistrationRoutes : [])
     : (isEventWorkspace ? (speakerEnabled ? filteredEventRoutes : []) : filteredPlatformRoutes);
 
-
+  // Auto-open the parent menu that contains the active child
   useEffect(() => {
     if (!pathname) return;
     const newOpen: Record<string, boolean> = {};
@@ -183,129 +181,200 @@ export function Sidebar() {
         newOpen[route.label] = true;
       }
     });
-    
     setOpenMenus(prev => {
       const needsUpdate = Object.keys(newOpen).some(key => !prev[key]);
-      if (needsUpdate) {
-        return { ...prev, ...newOpen };
-      }
-      return prev;
+      return needsUpdate ? { ...prev, ...newOpen } : prev;
     });
   }, [pathname]);
 
+  // ── User initials for avatar ──
+  const userInitials = user?.full_name
+    ? user.full_name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
+    : (user?.email?.[0] || "U").toUpperCase();
 
   return (
     <motion.aside
       initial={false}
-      animate={{ width: isCollapsed ? 80 : 288 }}
-      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="relative flex h-full flex-col border-r border-[var(--border)] rounded-none z-40 bg-[var(--surf)] overflow-hidden"
+      animate={{ width: isCollapsed ? 72 : 256 }}
+      transition={{ type: "spring", stiffness: 340, damping: 32 }}
+      className="relative flex h-full flex-col z-40 overflow-hidden"
+      style={{
+        background: "var(--color-surface-2)",
+        borderRight: "1px solid var(--color-border)",
+        boxShadow: "1px 0 0 var(--color-border-subtle), 4px 0 16px color-mix(in srgb, var(--color-bg) 60%, transparent)",
+      }}
     >
-      <div className="flex flex-col h-full px-4 py-8 overflow-hidden">
-        {/* Logo Section */}
-        <div className={cn(
-          "mb-10 flex items-center px-2",
-          isCollapsed ? "flex-col gap-4 justify-center" : "flex-row justify-between"
-        )}>
-          <div className="flex items-center gap-3">
-            {/* Custom Logo Image */}
-            <div className="relative shrink-0 flex items-center">
-              {isCollapsed ? (
-                <img 
-                  src="/logo-icon.png" 
-                  alt="Logo" 
-                  className="h-8 w-8 object-contain"
-                  onError={(e) => {
-                    e.currentTarget.src = "/logo/1.png";
-                  }}
-                />
-              ) : (
-                <img 
-                  src="/logo.png" 
-                  alt="Logo" 
-                  className="h-8 w-auto max-w-[160px] object-contain"
-                  onError={(e) => {
-                    e.currentTarget.src = "/logo/1.png";
-                  }}
-                />
-              )}
-            </div>
-          </div>
+      {/* ── Top gradient accent ── */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 h-[180px] opacity-30"
+        style={{
+          background: "radial-gradient(ellipse at 50% -20%, rgba(124, 58, 237, 0.35), transparent 70%)",
+        }}
+      />
 
+      <div className="relative flex flex-col h-full px-3 py-5 overflow-hidden">
+
+        {/* ── Logo / Collapse toggle ── */}
+        <div className={cn(
+          "mb-8 flex items-center",
+          isCollapsed ? "justify-center" : "justify-between px-1"
+        )}>
+          {!isCollapsed && (
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))",
+                  boxShadow: "var(--shadow-glow-primary)",
+                }}
+              >
+                <img
+                  src="/logo-icon.png"
+                  alt="Logo"
+                  className="h-5 w-5 object-contain"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                />
+              </div>
+              <img
+                src="/logo.png"
+                alt="Eventos"
+                className="h-6 w-auto max-w-[120px] object-contain"
+                onError={(e) => {
+                  const el = e.currentTarget as HTMLImageElement;
+                  el.style.display = "none";
+                  el.insertAdjacentHTML("afterend", `<span style="font-size:15px;font-weight:800;color:var(--color-text-primary);letter-spacing:-0.03em">Eventos</span>`);
+                }}
+              />
+            </div>
+          )}
+
+          {isCollapsed && (
+            <div
+              className="h-9 w-9 rounded-lg flex items-center justify-center"
+              style={{
+                background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))",
+                boxShadow: "var(--shadow-glow-primary)",
+              }}
+            >
+              <img
+                src="/logo-icon.png"
+                alt="E"
+                className="h-5 w-5 object-contain"
+                onError={(e) => {
+                  const el = e.currentTarget as HTMLImageElement;
+                  el.style.display = "none";
+                }}
+              />
+            </div>
+          )}
+
+          {/* Collapse toggle button */}
           <motion.button
-            whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.05)" }}
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
             onClick={toggleSidebar}
             className={cn(
-              "h-7 w-7 flex items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] transition-all bg-[var(--card)]/40 shadow-inner",
-              isCollapsed ? "mt-2" : ""
+              "h-7 w-7 flex items-center justify-center rounded-full transition-all",
+              isCollapsed ? "mt-0" : ""
             )}
-            title={isCollapsed ? "Open sidebar" : "Close sidebar"}
+            style={{
+              background: "var(--color-surface-3)",
+              border: "1px solid var(--color-border)",
+              color: "var(--color-text-muted)",
+            }}
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {isCollapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
+            {isCollapsed
+              ? <ChevronRight className="h-3.5 w-3.5" />
+              : <ChevronLeft className="h-3.5 w-3.5" />
+            }
           </motion.button>
         </div>
 
-        {/* Navigation Items */}
-        <div className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar py-2">
-          {currentRoutes.map((route: any) => {
+        {/* ── Navigation Items ── */}
+        <div className="flex-1 space-y-0.5 overflow-y-auto no-scrollbar">
+          {(currentRoutes as any[]).map((route: any, index: number) => {
             const hasSubItems = !!route.subItems;
-            
-            // If it has sub-items, render collapsible folder
-            if (hasSubItems && route.subItems) {
-              const isAnySubActive = route.subItems.some((sub: any) => pathname === sub.href);
+
+            if (hasSubItems) {
+              const isAnySubActive = route.subItems.some((sub: any) => pathname === sub.href || pathname?.startsWith(sub.href + "/"));
               const isOpen = !!openMenus[route.label];
-              
+
               return (
-                <div key={route.label} className="space-y-1 w-full">
-                  {/* Parent Toggle Button */}
+                <div key={route.label} className="space-y-0.5">
+                  {/* Section header / toggle */}
                   <div className="group relative">
                     <motion.button
-                      whileHover={{ x: isCollapsed ? 0 : 2 }}
+                      whileHover={{ x: isCollapsed ? 0 : 1 }}
                       onClick={() => !isCollapsed && toggleMenu(route.label)}
                       className={cn(
-                        "relative flex items-center h-10 w-full rounded-xl px-3 transition-all duration-300 preserve-3d text-left",
-                        isCollapsed
-                          ? "hover:bg-white/5"
-                          : "mt-4 mb-2"
+                        "relative flex items-center h-8 w-full rounded-lg px-2.5 transition-all duration-150 text-left",
+                        isCollapsed ? "justify-center hover:bg-white/5" : "mt-5 mb-1"
                       )}
                     >
                       {isCollapsed ? (
-                        /* Collapsed Mode Folder Icon */
                         <route.icon className={cn(
-                          "h-5 w-5 shrink-0 mx-auto transition-all duration-300",
-                          isAnySubActive ? "text-[var(--pri)] drop-shadow-[0_0_8px_color-mix(in_srgb,var(--pri)_40%,transparent)]" : "text-[var(--muted)] group-hover:text-[var(--text)]"
+                          "h-4 w-4 shrink-0 mx-auto transition-colors",
+                          isAnySubActive
+                            ? "text-[var(--color-primary-end)]"
+                            : "text-[var(--color-text-muted)] group-hover:text-[var(--color-text-secondary)]"
                         )} />
                       ) : (
-                        /* Expanded Mode: Section Header Label with Chevron */
                         <div className="flex items-center justify-between flex-1">
-                          <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[var(--muted)]/60 hover:text-[var(--text)] transition-colors">
+                          <span
+                            className="text-[10px] font-bold uppercase tracking-[0.15em]"
+                            style={{ color: isAnySubActive ? "var(--color-primary-mid)" : "var(--color-text-muted)" }}
+                          >
                             {route.label}
                           </span>
                           <motion.div
                             animate={{ rotate: isOpen ? 180 : 0 }}
                             transition={{ duration: 0.2 }}
                           >
-                            <ChevronDown className="h-3 w-3 text-[var(--muted)]/80" />
+                            <ChevronDown
+                              className="h-3 w-3"
+                              style={{ color: "var(--color-text-muted)" }}
+                            />
                           </motion.div>
                         </div>
                       )}
 
-                      {/* Tooltip + Dropdown for collapsed mode */}
+                      {/* Collapsed tooltip + submenu */}
                       {isCollapsed && (
-                        <div className="absolute left-20 z-[70] invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-all duration-300 p-2 rounded-xl text-[11px] font-bold shadow-2xl border border-[var(--border)] bg-[var(--surf)] min-w-[165px] space-y-1 text-left flex flex-col pointer-events-auto">
-                          <span className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--pri)] px-2 py-1 border-b border-[var(--border)] mb-1 block">
+                        <div
+                          className="absolute left-[72px] z-[70] invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-all duration-200 p-2.5 rounded-xl min-w-[175px] space-y-1 pointer-events-auto"
+                          style={{
+                            background: "var(--color-surface-1)",
+                            border: "1px solid var(--color-border)",
+                            boxShadow: "var(--shadow-dropdown)",
+                            backdropFilter: "blur(16px)",
+                          }}
+                        >
+                          <span
+                            className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 border-b block mb-1"
+                            style={{
+                              color: "var(--color-primary-mid)",
+                              borderColor: "var(--color-border)",
+                            }}
+                          >
                             {route.label}
                           </span>
                           {route.subItems.map((sub: any) => (
-                            <Link key={sub.href} href={sub.href} className={cn(
-                              "block px-2.5 py-2 rounded-lg transition-all text-xs font-bold",
-                              pathname === sub.href ? "bg-[var(--pri)]/10 text-[var(--pri)]" : "text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--text)]"
-                            )}>
+                            <Link
+                              key={sub.href}
+                              href={sub.href}
+                              className={cn(
+                                "block px-2.5 py-1.5 rounded-lg transition-all text-[11px] font-semibold",
+                                pathname === sub.href
+                                  ? "text-[var(--color-primary-end)]"
+                                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                              )}
+                              style={
+                                pathname === sub.href
+                                  ? { background: "var(--color-surface-4)" }
+                                  : {}
+                              }
+                            >
                               {sub.label}
                             </Link>
                           ))}
@@ -314,30 +383,42 @@ export function Sidebar() {
                     </motion.button>
                   </div>
 
-                  {/* Subitems container */}
+                  {/* Sub-items */}
                   <AnimatePresence initial={false}>
                     {!isCollapsed && isOpen && (
                       <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="overflow-hidden pl-3 space-y-1"
+                        transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                        className="overflow-hidden space-y-0.5 pl-2"
                       >
                         {route.subItems.map((sub: any) => {
-                          const isSubActive = pathname === sub.href;
+                          const isSubActive = pathname === sub.href || pathname?.startsWith(sub.href + "/");
                           return (
-                            <Link key={sub.href} href={sub.href} className="block group/sub">
-                              <div className={cn(
-                                "flex items-center h-10 px-3 rounded-xl text-[12px] font-bold tracking-wide transition-all duration-250",
-                                isSubActive
-                                  ? "bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-white shadow-[0_4px_12px_color-mix(in_srgb,var(--pri)_20%,transparent)]"
-                                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--card)]/30"
-                              )}>
-                                <sub.icon className={cn(
-                                  "h-4 w-4 shrink-0 mr-3 transition-colors duration-200",
-                                  isSubActive ? "text-white" : "text-[var(--muted)] group-hover/sub:text-[var(--text)]"
-                                )} />
+                            <Link key={sub.href} href={sub.href} className="block">
+                              <div
+                                className={cn(
+                                  "flex items-center h-9 px-3 rounded-lg text-[12px] font-medium transition-all duration-150 relative",
+                                  isSubActive
+                                    ? "font-semibold"
+                                    : "hover:bg-[var(--color-surface-3)]"
+                                )}
+                                style={
+                                  isSubActive
+                                    ? {
+                                        background: "var(--color-surface-4)",
+                                        color: "var(--color-text-primary)",
+                                        borderLeft: "2px solid var(--color-primary-end)",
+                                        paddingLeft: "10px",
+                                      }
+                                    : { color: "var(--color-text-muted)" }
+                                }
+                              >
+                                <sub.icon
+                                  className="h-3.5 w-3.5 shrink-0 mr-2.5 transition-colors"
+                                  style={isSubActive ? { color: "var(--color-primary-end)" } : {}}
+                                />
                                 <span>{sub.label}</span>
                               </div>
                             </Link>
@@ -350,39 +431,66 @@ export function Sidebar() {
               );
             }
 
-            // Normal Route rendering
-            const isActive = pathname === route.href;
+            // Normal route
+            const isActive = pathname === route.href || pathname?.startsWith(route.href + "/");
             return (
               <Link key={route.href} href={route.href || "#"} className="block group">
                 <motion.div
-                  whileHover={{ x: isCollapsed ? 0 : 4 }}
+                  whileHover={{ x: isCollapsed ? 0 : 2 }}
+                  transition={{ duration: 0.12 }}
                   className={cn(
-                    "relative flex items-center h-11 rounded-xl px-3 transition-all duration-300 preserve-3d",
-                    isActive
-                      ? "bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-white shadow-[0_4px_15px_color-mix(in_srgb,var(--pri)_25%,transparent)] font-semibold"
-                      : "text-[var(--muted)] hover:bg-[var(--card)]/30 hover:text-[var(--text)]"
+                    "relative flex items-center h-10 rounded-lg px-2.5 transition-all duration-150",
+                    isCollapsed ? "justify-center" : "",
+                    isActive ? "font-semibold" : ""
                   )}
+                  style={
+                    isActive
+                      ? {
+                          background: "var(--color-surface-4)",
+                          color: "var(--color-text-primary)",
+                          borderLeft: "3px solid var(--color-primary-end)",
+                          paddingLeft: isCollapsed ? undefined : "9px",
+                        }
+                      : {
+                          color: "var(--color-text-muted)",
+                        }
+                  }
+                  onMouseEnter={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)";
+                      (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)";
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLElement).style.background = "";
+                      (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
+                    }
+                  }}
                 >
-                  <route.icon className={cn(
-                    "h-4 w-4 shrink-0 transition-colors duration-300",
-                    isCollapsed ? "mx-auto" : "mr-4",
-                    isActive ? "text-white" : "text-[var(--muted)] group-hover:text-[var(--text)]"
-                  )} />
+                  <route.icon
+                    className={cn(
+                      "h-4 w-4 shrink-0 transition-colors",
+                      isCollapsed ? "mx-auto" : "mr-3",
+                    )}
+                    style={isActive ? { color: "var(--color-primary-end)" } : {}}
+                  />
 
                   {!isCollapsed && (
-                    <div className="flex items-center justify-between flex-1">
-                      <span className="text-[12.5px] font-bold tracking-wide">
-                        {route.label}
-                      </span>
-                      {(route as any).isNew && (
-                        <span className="bg-[var(--pri)] text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-tighter">New</span>
-                      )}
-                    </div>
+                    <span className="text-[13px] tracking-wide">{route.label}</span>
                   )}
 
-                  {/* Tooltip for collapsed mode */}
+                  {/* Collapsed tooltip */}
                   {isCollapsed && (
-                    <div className="absolute left-20 z-50 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-all duration-300 px-3 py-2 bg-[var(--surf)] border border-[var(--border)] rounded-lg text-[11px] font-bold text-[var(--text)] whitespace-nowrap shadow-2xl">
+                    <div
+                      className="absolute left-[72px] z-50 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-all duration-200 px-3 py-2 rounded-lg text-[11px] font-semibold whitespace-nowrap"
+                      style={{
+                        background: "var(--color-surface-1)",
+                        border: "1px solid var(--color-border)",
+                        color: "var(--color-text-primary)",
+                        boxShadow: "var(--shadow-dropdown)",
+                      }}
+                    >
                       {route.label}
                     </div>
                   )}
@@ -392,45 +500,114 @@ export function Sidebar() {
           })}
         </div>
 
-        {/* Bottom Navigation (Settings & Docs) */}
-        <div className="mt-auto space-y-1.5 border-t border-[var(--border)] pt-4 pb-4">
+        {/* ── Bottom Section ── */}
+        <div
+          className="mt-auto pt-4 space-y-0.5"
+          style={{ borderTop: "1px solid var(--color-border)" }}
+        >
+          {/* Bottom routes */}
           {bottomRoutes.map((route) => {
             const isActive = pathname === route.href;
             return (
               <Link key={route.href} href={route.href} className="block group">
-                <motion.div
-                  whileHover={{ x: isCollapsed ? 0 : 4 }}
+                <div
                   className={cn(
-                    "relative flex items-center h-11 rounded-xl px-3 transition-all duration-300",
+                    "flex items-center h-9 rounded-lg px-2.5 transition-all duration-150",
+                    isCollapsed ? "justify-center" : "",
+                    isActive ? "font-semibold" : ""
+                  )}
+                  style={
                     isActive
-                      ? "bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-white shadow-[0_4px_12px_color-mix(in_srgb,var(--pri)_20%,transparent)]"
-                      : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--card)]/30"
-                  )}
+                      ? { background: "var(--color-surface-4)", color: "var(--color-text-primary)", borderLeft: "3px solid var(--color-primary-end)", paddingLeft: isCollapsed ? undefined : "9px" }
+                      : { color: "var(--color-text-muted)" }
+                  }
+                  onMouseEnter={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)";
+                      (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)";
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLElement).style.background = "";
+                      (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
+                    }
+                  }}
                 >
-                  <route.icon className={cn(
-                    "h-4 w-4 shrink-0 transition-colors duration-200",
-                    isCollapsed ? "mx-auto" : "mr-4",
-                    isActive ? "text-white" : "text-[var(--muted)] group-hover:text-[var(--text)]"
-                  )} />
-                  {!isCollapsed && (
-                    <span className="text-[12px] font-bold tracking-wide">{route.label}</span>
+                  <route.icon className={cn("h-4 w-4 shrink-0 transition-colors", isCollapsed ? "mx-auto" : "mr-3")} />
+                  {!isCollapsed && <span className="text-[12px] tracking-wide">{route.label}</span>}
+                  {isCollapsed && (
+                    <div
+                      className="absolute left-[72px] z-50 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-all duration-200 px-3 py-2 rounded-lg text-[11px] font-semibold whitespace-nowrap"
+                      style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", boxShadow: "var(--shadow-dropdown)" }}
+                    >
+                      {route.label}
+                    </div>
                   )}
-                </motion.div>
+                </div>
               </Link>
             );
           })}
+
+
+          {/* User profile strip */}
+          {!isCollapsed && (
+            <div
+              className="mt-3 p-3 rounded-xl flex items-center gap-3"
+              style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)" }}
+            >
+              <div
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-[11px] font-bold text-white shrink-0 overflow-hidden"
+                style={{ background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))" }}
+              >
+                {user?.avatar_url ? (
+                  <img src={user.avatar_url} alt="User" className="h-full w-full object-cover" />
+                ) : (
+                  <img
+                    src={`https://api.dicebear.com/7.x/lorelei/svg?seed=${user?.email || 'default'}`}
+                    alt="Avatar"
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      const el = e.currentTarget as HTMLImageElement;
+                      el.style.display = "none";
+                      (el.parentElement as HTMLElement).textContent = userInitials;
+                    }}
+                  />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-bold truncate" style={{ color: "var(--color-text-primary)" }}>
+                  {user?.full_name || user?.first_name || 'Account'}
+                </p>
+                <p className="text-[10px] font-medium uppercase tracking-widest truncate" style={{ color: "var(--color-text-muted)" }}>
+                  {user?.role?.replace(/_/g, ' ') || 'Member'}
+                </p>
+              </div>
+              <button
+                onClick={logout}
+                className="h-6 w-6 rounded-md flex items-center justify-center transition-all hover:text-[var(--color-danger)]"
+                style={{ color: "var(--color-text-muted)" }}
+                title="Sign Out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {isCollapsed && (
+            <button
+              onClick={logout}
+              className="w-full flex items-center justify-center h-9 rounded-lg transition-all mt-1 group"
+              style={{ color: "var(--color-text-muted)" }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--color-danger)"; (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)"; (e.currentTarget as HTMLElement).style.background = ""; }}
+              title="Sign Out"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
-
-      <style jsx global>{`
-        aside, .no-scrollbar {
-          scrollbar-width: none;
-          -ms-overflow-style: none;
-        }
-        aside::-webkit-scrollbar, .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-      `}</style>
     </motion.aside>
   );
 }

@@ -10,7 +10,6 @@ from sqlalchemy.pool import NullPool
 from app.worker import celery_app
 from app.config import settings
 from app.modules.website_builder.models import Site, Page, SiteDomain
-from app.modules.templates.models import MarketplaceListing
 
 def _run_async(coro):
     """Run an async coroutine from a sync Celery task."""

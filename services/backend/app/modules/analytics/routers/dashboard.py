@@ -455,3 +455,328 @@ async def get_upcoming_deadlines(
     })
 
     return deadlines
+
+
+# =============================================================
+# Super Admin Platform Dashboard Endpoints
+# Added below existing event-scoped routes.
+# All three endpoints require SUPER_ADMIN via require_super_admin.
+# =============================================================
+
+from app.modules.superadmin.dependencies import require_super_admin
+from app.modules.analytics.schemas.analytics import (
+    PlatformOverviewResponse,
+    MrrDataPoint,
+    PlatformActivityItem,
+)
+
+
+@router.get(
+    "/superadmin/overview",
+    response_model=PlatformOverviewResponse,
+    summary="Super Admin — Platform KPI Overview",
+    tags=["superadmin-dashboard"],
+)
+async def get_superadmin_overview(
+    _: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns platform-wide KPIs for the Super Admin command center dashboard:
+    org counts, user counts, MRR/ARR, events this month, open support tickets.
+
+    Queries:
+      - platform.organizations
+      - billing.organization_subscriptions + billing.subscription_transactions
+      - identity.users
+      - events.events
+      - support.support_tickets (if populated)
+    """
+    from app.modules.platform.models.organization import Organization
+    from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionTransaction
+    from app.modules.support.models.ticket import SupportTicket
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    thirty_days_ago = now - timedelta(days=30)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # ── Org counts ─────────────────────────────────────────────
+    total_orgs = (await db.scalar(select(func.count(Organization.id)))) or 0
+    active_orgs = (await db.scalar(
+        select(func.count(Organization.id)).where(Organization.is_active.is_(True))
+    )) or 0
+    trial_orgs = (await db.scalar(
+        select(func.count(Organization.id)).where(Organization.plan == "trial")
+    )) or 0
+    suspended_orgs = (await db.scalar(
+        select(func.count(Organization.id)).where(Organization.is_active.is_(False))
+    )) or 0
+
+    # ── User counts ────────────────────────────────────────────
+    from app.modules.identity.models.user import User as UserModel
+    total_users = (await db.scalar(
+        select(func.count(UserModel.id)).where(UserModel.deleted_at.is_(None))
+    )) or 0
+    active_users_30d = (await db.scalar(
+        select(func.count(UserModel.id)).where(
+            UserModel.deleted_at.is_(None),
+            UserModel.last_login_at >= thirty_days_ago,
+        )
+    )) or 0
+
+    # ── Event counts ───────────────────────────────────────────
+    total_events = (await db.scalar(
+        select(func.count(Event.id)).where(Event.deleted_at.is_(None))
+    )) or 0
+    events_this_month = (await db.scalar(
+        select(func.count(Event.id)).where(
+            Event.deleted_at.is_(None),
+            Event.created_at >= month_start,
+        )
+    )) or 0
+
+    # ── Support tickets ────────────────────────────────────────
+    try:
+        tickets_open = (await db.scalar(
+            select(func.count(SupportTicket.id)).where(SupportTicket.status == "OPEN")
+        )) or 0
+    except Exception:
+        tickets_open = 0
+
+    # ── MRR — sum active subscription transaction amounts ──────
+    # Use SubscriptionTransaction as the source of truth since
+    # billing.revenue_metrics may be empty (it's an optional cache).
+    # MRR = sum of latest successful transactions per org.
+    # We approximate with the sum of all SUCCESS transactions in the
+    # current calendar month / 12 for ARR representation.
+    # For a more accurate MRR we use per-org latest transaction amount.
+    try:
+        # Subquery: latest transaction per org
+        from sqlalchemy import and_
+        latest_txn_subq = (
+            select(
+                SubscriptionTransaction.organization_id,
+                func.max(SubscriptionTransaction.created_at).label("latest_at"),
+            )
+            .where(SubscriptionTransaction.status == "SUCCESS")
+            .group_by(SubscriptionTransaction.organization_id)
+            .subquery()
+        )
+        mrr_result = await db.execute(
+            select(func.coalesce(func.sum(SubscriptionTransaction.amount), 0.0))
+            .join(
+                latest_txn_subq,
+                and_(
+                    SubscriptionTransaction.organization_id == latest_txn_subq.c.organization_id,
+                    SubscriptionTransaction.created_at == latest_txn_subq.c.latest_at,
+                ),
+            )
+            .where(SubscriptionTransaction.status == "SUCCESS")
+        )
+        mrr = float(mrr_result.scalar() or 0.0)
+
+        # Previous month MRR: same logic but transactions before this month
+        prev_month_end = month_start - timedelta(seconds=1)
+        prev_month_start = prev_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_txn_subq = (
+            select(
+                SubscriptionTransaction.organization_id,
+                func.max(SubscriptionTransaction.created_at).label("latest_at"),
+            )
+            .where(
+                SubscriptionTransaction.status == "SUCCESS",
+                SubscriptionTransaction.created_at <= prev_month_end,
+            )
+            .group_by(SubscriptionTransaction.organization_id)
+            .subquery()
+        )
+        mrr_prev_result = await db.execute(
+            select(func.coalesce(func.sum(SubscriptionTransaction.amount), 0.0))
+            .join(
+                prev_txn_subq,
+                and_(
+                    SubscriptionTransaction.organization_id == prev_txn_subq.c.organization_id,
+                    SubscriptionTransaction.created_at == prev_txn_subq.c.latest_at,
+                ),
+            )
+            .where(SubscriptionTransaction.status == "SUCCESS")
+        )
+        mrr_prev_month = float(mrr_prev_result.scalar() or 0.0)
+
+        # Revenue today
+        revenue_today_result = await db.execute(
+            select(func.coalesce(func.sum(SubscriptionTransaction.amount), 0.0)).where(
+                SubscriptionTransaction.status == "SUCCESS",
+                SubscriptionTransaction.created_at >= today_start,
+            )
+        )
+        revenue_today = float(revenue_today_result.scalar() or 0.0)
+
+    except Exception:
+        mrr = mrr_prev_month = revenue_today = 0.0
+
+    # ── Churn rate ─────────────────────────────────────────────
+    try:
+        cancelled_count = (await db.scalar(
+            select(func.count(OrganizationSubscription.id)).where(
+                OrganizationSubscription.status == "CANCELLED"
+            )
+        )) or 0
+        active_sub_count = (await db.scalar(
+            select(func.count(OrganizationSubscription.id)).where(
+                OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"])
+            )
+        )) or 0
+        churn_denom = active_sub_count + cancelled_count
+        churn_rate = round(cancelled_count / churn_denom * 100, 2) if churn_denom > 0 else 0.0
+    except Exception:
+        churn_rate = 0.0
+
+    return PlatformOverviewResponse(
+        total_orgs=total_orgs,
+        active_orgs=active_orgs,
+        trial_orgs=trial_orgs,
+        suspended_orgs=suspended_orgs,
+        total_users=total_users,
+        total_events=total_events,
+        events_this_month=events_this_month,
+        tickets_open=tickets_open,
+        mrr=mrr,
+        arr=mrr * 12,
+        mrr_prev_month=mrr_prev_month,
+        active_users_30d=active_users_30d,
+        churn_rate=churn_rate,
+        revenue_today=revenue_today,
+    )
+
+
+@router.get(
+    "/superadmin/mrr-history",
+    response_model=List[MrrDataPoint],
+    summary="Super Admin — MRR/ARR Monthly History",
+    tags=["superadmin-dashboard"],
+)
+async def get_superadmin_mrr_history(
+    months: int = Query(default=12, ge=1, le=36, description="Number of months of history"),
+    _: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns monthly MRR and ARR history for the platform-level area chart.
+
+    Strategy:
+      1. Try billing.revenue_metrics table first (pre-aggregated, accurate).
+      2. If empty, compute from billing.subscription_transactions grouped by month.
+    """
+    from app.modules.billing.models.subscription import RevenueMetric, SubscriptionTransaction
+    from sqlalchemy import text as sql_text
+
+    # Try pre-aggregated revenue_metrics first
+    rm_rows = await db.execute(
+        select(
+            RevenueMetric.period,
+            func.sum(RevenueMetric.mrr).label("mrr"),
+            func.sum(RevenueMetric.arr).label("arr"),
+        )
+        .group_by(RevenueMetric.period)
+        .order_by(RevenueMetric.period.desc())
+        .limit(months)
+    )
+    rm_data = rm_rows.all()
+
+    if rm_data:
+        result = []
+        for row in reversed(rm_data):  # chronological order
+            # period is stored as "2026-06" format
+            try:
+                from datetime import date as date_cls
+                year, month_num = int(row.period[:4]), int(row.period[5:7])
+                month_label = date_cls(year, month_num, 1).strftime("%b %Y")
+            except Exception:
+                month_label = row.period
+            result.append(MrrDataPoint(
+                month=month_label,
+                period=row.period,
+                mrr=float(row.mrr or 0.0),
+                arr=float(row.arr or 0.0),
+            ))
+        return result
+
+    # Fallback: compute from subscription_transactions grouped by calendar month
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=months * 31)
+
+    txn_rows = await db.execute(
+        select(
+            func.to_char(SubscriptionTransaction.created_at, "YYYY-MM").label("period"),
+            func.sum(SubscriptionTransaction.amount).label("total"),
+        )
+        .where(
+            SubscriptionTransaction.status == "SUCCESS",
+            SubscriptionTransaction.created_at >= cutoff,
+        )
+        .group_by(sql_text("period"))
+        .order_by(sql_text("period"))
+    )
+    txn_data = txn_rows.all()
+
+    result = []
+    for row in txn_data:
+        try:
+            from datetime import date as date_cls
+            year, month_num = int(row.period[:4]), int(row.period[5:7])
+            month_label = date_cls(year, month_num, 1).strftime("%b %Y")
+        except Exception:
+            month_label = row.period
+        mrr_val = float(row.total or 0.0)
+        result.append(MrrDataPoint(
+            month=month_label,
+            period=row.period,
+            mrr=mrr_val,
+            arr=mrr_val * 12,
+        ))
+    return result
+
+
+@router.get(
+    "/superadmin/activity-feed",
+    response_model=List[PlatformActivityItem],
+    summary="Super Admin — Platform Activity Feed",
+    tags=["superadmin-dashboard"],
+)
+async def get_superadmin_activity_feed(
+    limit: int = Query(default=20, ge=1, le=100, description="Number of activity items"),
+    _: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns recent platform-level activity from ActivityFeed.
+    Uses the existing ActivityService / platform_activity models.
+    No org filter is applied — super admins see all orgs' activity.
+    """
+    from app.modules.platform_activity.models import ActivityFeed
+    from sqlalchemy import desc as sql_desc
+
+    stmt = (
+        select(ActivityFeed)
+        .order_by(sql_desc(ActivityFeed.created_at))
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+
+    return [
+        PlatformActivityItem(
+            id=str(item.id),
+            entity_type=item.entity_type,
+            entity_id=str(item.entity_id),
+            activity_type=item.activity_type,
+            title=item.title,
+            description=item.description,
+            icon=item.icon,
+            metadata=item.metadata_data,
+            created_at=item.created_at,
+        )
+        for item in items
+    ]

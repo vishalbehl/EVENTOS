@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
-
 import { cn } from "@/lib/utils"
 
 const Tabs = TabsPrimitive.Root
@@ -14,9 +13,14 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-12 items-center justify-center rounded-2xl bg-white/5 p-1 text-muted-foreground",
+      "inline-flex items-center justify-center p-1 gap-1",
       className
     )}
+    style={{
+      background: "var(--color-surface-3)",
+      border: "1px solid var(--color-border)",
+      borderRadius: "var(--radius-md)",
+    }}
     {...props}
   />
 ))
@@ -29,9 +33,28 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-xl px-8 py-2 text-[11px] font-black uppercase tracking-widest transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[var(--pri)] data-[state=active]:text-white data-[state=active]:shadow-lg",
+      "inline-flex items-center justify-center whitespace-nowrap px-4 py-1.5",
+      "text-[12px] font-semibold uppercase tracking-[0.08em]",
+      "transition-all duration-200 focus-visible:outline-none",
+      "disabled:pointer-events-none disabled:opacity-50",
+      "data-[state=active]:text-white data-[state=active]:shadow-glow-primary",
+      "data-[state=inactive]:text-[var(--color-text-muted)]",
+      "data-[state=inactive]:hover:text-[var(--color-text-primary)]",
       className
     )}
+    style={{
+      borderRadius: "var(--radius-sm)",
+    }}
+    onMouseEnter={e => {
+      if ((e.currentTarget as HTMLElement).dataset.state !== 'active') {
+        (e.currentTarget as HTMLElement).style.background = "var(--color-surface-4)";
+      }
+    }}
+    onMouseLeave={e => {
+      if ((e.currentTarget as HTMLElement).dataset.state !== 'active') {
+        (e.currentTarget as HTMLElement).style.background = "";
+      }
+    }}
     {...props}
   />
 ))
@@ -44,7 +67,7 @@ const TabsContent = React.forwardRef<
   <TabsPrimitive.Content
     ref={ref}
     className={cn(
-      "mt-8 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+      "mt-6 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 animate-fade-in",
       className
     )}
     {...props}

@@ -32,39 +32,41 @@ class InventoryService:
     @staticmethod
     async def create_hardware_item(
         db: AsyncSession,
-        organization_id: Optional[uuid.UUID],
         category_id: uuid.UUID,
         asset_code: str,
         name: str,
         brand: str,
         model: str,
-        serial_number: str,
-        purchase_date: Optional[datetime] = None,
+        renting_price: float = 0.0,
         purchase_cost: float = 0.0,
-        replacement_cost: float = 0.0,
         status: str = "AVAILABLE",
-        condition: str = "GOOD",
-        location: Optional[str] = None,
-        notes: Optional[str] = None
+        pricing_unit: str = "PER_EVENT",
+        description: Optional[str] = None,
+        tax_category: str = "GST_18",
+        **kwargs
     ) -> HardwareItem:
         """Record a new individual hardware asset in catalog, and initialize stock."""
+        if "replacement_cost" in kwargs and renting_price == 0.0:
+            renting_price = kwargs["replacement_cost"]
+
         item = HardwareItem(
             id=uuid.uuid4(),
-            organization_id=organization_id,
             category_id=category_id,
             asset_code=asset_code,
             name=name,
             brand=brand,
             model=model,
-            serial_number=serial_number,
-            purchase_date=purchase_date or datetime.now(timezone.utc),
             purchase_cost=purchase_cost,
-            replacement_cost=replacement_cost,
+            renting_price=renting_price,
             status=status,
-            condition=condition,
-            location=location,
-            notes=notes
+            pricing_unit=pricing_unit,
+            description=description,
+            tax_category=tax_category
         )
+        if "location" in kwargs:
+            item.location = kwargs["location"]
+        if "condition" in kwargs:
+            item.condition = kwargs["condition"]
         db.add(item)
         await db.flush()
 
@@ -77,26 +79,12 @@ class InventoryService:
             available_quantity=1
         )
         db.add(stock)
-
-        # Log purchase movement
-        movement = HardwareMovement(
-            id=uuid.uuid4(),
-            organization_id=organization_id,
-            hardware_id=item.id,
-            type="Purchase",
-            quantity=1,
-            from_location=None,
-            to_location=location,
-            notes="Initial asset purchase record",
-            created_at=datetime.now(timezone.utc)
-        )
-        db.add(movement)
         await db.flush()
 
         return item
 
     @staticmethod
-    async def get_hardware_items(
+    async def list_hardware_items(
         db: AsyncSession,
         organization_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
@@ -106,8 +94,6 @@ class InventoryService:
         """Fetch all hardware items."""
         stmt = select(HardwareItem)
         filters = []
-        if organization_id:
-            filters.append(or_(HardwareItem.organization_id == organization_id, HardwareItem.organization_id.is_(None)))
         if status:
             filters.append(HardwareItem.status == status.upper())
         if filters:
@@ -148,7 +134,7 @@ class InventoryService:
             hardware_id=hardware_id,
             type="Assignment",
             quantity=1,
-            from_location=item.location,
+            from_location=item.location or "Base inventory",
             to_location=to_location,
             notes=notes or f"Allocated to {to_location}",
             created_at=datetime.now(timezone.utc)
@@ -192,8 +178,8 @@ class InventoryService:
             hardware_id=hardware_id,
             type="Return",
             quantity=1,
-            from_location=old_location,
-            to_location=return_location,
+            from_location=old_location or return_location,
+            to_location="Base inventory",
             notes=notes or "Returned to base inventory",
             created_at=datetime.now(timezone.utc)
         )

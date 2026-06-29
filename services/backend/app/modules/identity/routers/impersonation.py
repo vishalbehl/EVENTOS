@@ -44,7 +44,8 @@ async def start_impersonation(
         target_user_id=payload.target_user_id,
         reason=payload.reason,
         ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent")
+        user_agent=request.headers.get("User-Agent"),
+        session_expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
     )
     db.add(log)
     await db.commit()
@@ -68,3 +69,73 @@ async def start_impersonation(
         "target_organization": target_org.name,
         "expires_in": 3600
     }
+
+
+# =============================================================
+# Super Admin Security — Impersonation Log Endpoints
+# =============================================================
+from app.modules.superadmin.dependencies import require_super_admin
+from sqlalchemy import select, desc, func
+
+
+@router.get("/superadmin/security/impersonation/logs", tags=["superadmin-security"])
+async def superadmin_impersonation_logs(
+    limit: int = 50,
+    offset: int = 0,
+    _=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """All impersonation logs for super admin. Splits active vs ended sessions."""
+    all_logs = (await db.execute(
+        select(ImpersonationLog)
+        .order_by(desc(ImpersonationLog.started_at))
+        .limit(limit).offset(offset)
+    )).scalars().all()
+
+    total = (await db.scalar(select(func.count(ImpersonationLog.id)))) or 0
+    active_count = (await db.scalar(
+        select(func.count(ImpersonationLog.id))
+        .where(ImpersonationLog.terminated_at.is_(None))
+    )) or 0
+
+    items = [
+        {
+            "id": str(log.id),
+            "organization_id": str(log.target_organization_id) if log.target_organization_id else None,
+            "admin_user_id": str(log.super_admin_id) if log.super_admin_id else None,
+            "target_user_id": str(log.target_user_id) if log.target_user_id else None,
+            "reason": log.reason,
+            "started_at": log.started_at.isoformat(),
+            "ended_at": log.terminated_at.isoformat() if log.terminated_at else None,
+            "actions_count": 0,
+        }
+        for log in all_logs
+    ]
+    return {
+        "items": items,
+        "total": total,
+        "active_count": active_count,
+        "summary": {
+            "active_sessions": active_count,
+            "total_sessions": total,
+        },
+    }
+
+
+@router.delete("/superadmin/security/impersonation/{session_id}", tags=["superadmin-security"])
+async def superadmin_end_impersonation_session(
+    session_id: uuid.UUID,
+    _=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """End an active impersonation session by setting terminated_at."""
+    from datetime import datetime, timezone
+    log = await db.get(ImpersonationLog, session_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Impersonation session not found.")
+    if log.terminated_at is not None:
+        raise HTTPException(status_code=400, detail="Session already ended.")
+    log.terminated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"status": "success", "session_id": str(session_id),
+            "ended_at": log.terminated_at.isoformat()}

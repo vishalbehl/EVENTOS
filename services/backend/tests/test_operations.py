@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from tests.conftest import auth_headers
 
-from app.modules.jobs.models.job import BackgroundJob, JobExecution, JobFailure
 
 @pytest.mark.asyncio
 async def test_platform_health_endpoint(client: AsyncClient, super_admin):
@@ -67,54 +66,6 @@ async def test_platform_database_stats_endpoint(client: AsyncClient, super_admin
     assert "cache_hit_ratio" in data
     assert "database_size_bytes" in data
     assert "dead_tuples" in data
-
-@pytest.mark.asyncio
-async def test_platform_background_jobs_endpoint(client: AsyncClient, super_admin, db: AsyncSession):
-    headers = auth_headers(super_admin)
-
-    # 1. Create a dummy BackgroundJob and JobExecution
-    job = BackgroundJob(name="test_analytics_run", task_path="app.tasks.run_analytics", is_active=True)
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    execution = JobExecution(
-        job_id=job.id,
-        status="success",
-        started_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-        finished_at=datetime.now(timezone.utc) - timedelta(minutes=4)
-    )
-    db.add(execution)
-    await db.commit()
-
-    # Get background jobs (no filter)
-    response = await client.get("/platform/operations/jobs", headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert "summary" in data
-    assert len(data["items"]) >= 1
-    
-    item = data["items"][0]
-    assert item["job_name"] == "test_analytics_run"
-    assert item["status"] == "success"
-    assert "completed_at" in item
-    assert "duration_ms" in item
-    
-    # Check stats summary
-    summary = data["summary"]
-    assert "running" in summary
-    assert "pending" in summary
-    assert "completed_24h" in summary
-    assert "failed_24h" in summary
-    assert "success_rate" in summary
-    assert "avg_duration_ms" in summary
-    
-    # Test filters
-    response_filtered = await client.get("/platform/operations/jobs?status=COMPLETED", headers=headers)
-    assert response_filtered.status_code == 200
-    data_filtered = response_filtered.json()
-    assert len(data_filtered["items"]) >= 1
 
 @pytest.mark.asyncio
 async def test_operations_endpoints_require_admin(client: AsyncClient, organizer):

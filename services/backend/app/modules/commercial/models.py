@@ -71,27 +71,14 @@ class StaffRole(Base):
     __tablename__ = "staff_roles"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    role_code: Mapped[str] = mapped_column(String(50), nullable=False, default="OPS-ROLE")
+    role_name: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
+    team_category: Mapped[str] = mapped_column(String(100), nullable=False, default="General Operations")
+    grade: Mapped[str] = mapped_column(String(50), nullable=False, default="L1")
+    cost_per_day: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    selling_per_day: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    available_count: Mapped[int] = mapped_column(default=10)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="ACTIVE")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
-class StaffRate(Base):
-    __tablename__ = "staff_rates"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("commercial.staff_roles.id", ondelete="CASCADE"), nullable=False)
-    region: Mapped[str] = mapped_column(String(50), nullable=False)
-    hourly_rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    daily_rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    overtime_rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), default="USD")
-    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    effective_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class StaffSkill(Base):
-    __tablename__ = "staff_skills"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("commercial.staff_roles.id", ondelete="CASCADE"), nullable=False)
-    skill_name: Mapped[str] = mapped_column(String(100), nullable=False)

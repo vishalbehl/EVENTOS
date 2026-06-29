@@ -20,8 +20,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
   return (
     <SuperAdminGuard>
       <div className="relative h-screen overflow-hidden bg-[var(--base)] text-foreground">
-        <div className="pointer-events-none absolute inset-0 bg-app-wallpaper opacity-85" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_74%_14%,color-mix(in_srgb,var(--pri)_12%,transparent),transparent_24%),linear-gradient(color-mix(in_srgb,var(--base)_72%,transparent),color-mix(in_srgb,var(--base)_92%,transparent))]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_-12%,rgba(59,158,255,0.16),transparent_32rem),radial-gradient(circle_at_12%_4%,rgba(34,255,153,0.08),transparent_28rem)]" />
         
         <aside
           className={cn(
@@ -40,8 +39,8 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
         >
           <Header />
           
-          <div className="flex-1 min-h-0 px-4 py-5 md:px-6 flex flex-col">
-            <div className="flex-1 rounded-[14px] border border-default bg-[color-mix(in_srgb,var(--base)_80%,transparent)] p-5 shadow-[0_24px_80px_color-mix(in_srgb,var(--base)_28%,transparent)] backdrop-blur-md md:p-6 flex flex-col min-h-0 overflow-y-auto custom-scrollbar">
+          <div className="flex min-h-0 flex-1 flex-col px-4 py-4 md:px-6">
+            <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_78%,transparent)] p-5 backdrop-blur-md md:p-6">
               {children}
             </div>
           </div>

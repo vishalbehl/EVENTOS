@@ -192,3 +192,47 @@ class MainEventDashboardData(BaseModel):
     upcoming_sessions: List[UpcomingSession] = []
     upcoming_deadlines: List[UpcomingDeadline] = []
 
+
+
+# =============================================================
+# Super Admin Platform Dashboard Schemas
+# Added: platform-level KPI endpoints for the command center
+# =============================================================
+
+class PlatformOverviewResponse(BaseModel):
+    """KPI snapshot for the Super Admin dashboard overview cards."""
+    total_orgs: int
+    active_orgs: int
+    trial_orgs: int
+    suspended_orgs: int
+    total_users: int
+    total_events: int
+    events_this_month: int
+    tickets_open: int
+    mrr: float                 # sum of all active subscription amounts (INR)
+    arr: float                 # mrr * 12
+    mrr_prev_month: float      # for trend delta
+    active_users_30d: int      # users with last_login_at in last 30 days
+    churn_rate: float          # cancelled / (active + cancelled) * 100
+    revenue_today: float       # transactions today
+
+
+class MrrDataPoint(BaseModel):
+    """Single month data point for the MRR history chart."""
+    month: str          # e.g. "Jun 2026"
+    period: str         # e.g. "2026-06" (for sorting)
+    mrr: float
+    arr: float
+
+
+class PlatformActivityItem(BaseModel):
+    """Single item from the platform-level activity feed."""
+    id: str
+    entity_type: str
+    entity_id: str
+    activity_type: str
+    title: str
+    description: str
+    icon: Optional[str] = None
+    metadata: Optional[Dict] = None
+    created_at: datetime

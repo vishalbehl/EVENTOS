@@ -9,10 +9,10 @@ const Button = React.forwardRef<
   }
 >(({ className, variant = 'primary', size = 'default', ...props }, ref) => {
   const variants = {
-    primary: "btn-primary border border-transparent hover:opacity-90",
-    secondary: "btn-secondary bg-[color-mix(in_srgb,var(--card)_70%,transparent)] hover:bg-[color-mix(in_srgb,var(--sec)_10%,transparent)]",
-    outline: "border border-default bg-transparent text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--pri)_8%,transparent)]",
-    ghost: "btn-ghost border border-transparent hover:bg-[color-mix(in_srgb,var(--pri)_8%,transparent)]",
+    primary: "btn-primary border border-[var(--pri)] hover:bg-[var(--brand-primary-hover)]",
+    secondary: "btn-secondary bg-[var(--card)] hover:bg-[var(--bg-surface-hover)]",
+    outline: "border border-default bg-transparent text-[var(--text)] hover:bg-[var(--bg-surface-hover)]",
+    ghost: "btn-ghost border border-transparent hover:bg-[var(--bg-surface-hover)]",
     destructive: "btn-danger border border-transparent hover:bg-[color-mix(in_srgb,var(--dan)_18%,transparent)]",
   }
   
@@ -27,7 +27,7 @@ const Button = React.forwardRef<
     <button
       ref={ref}
       className={cn(
-        "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--text)]/20 focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50",
         variants[variant],
         sizes[size],
         className

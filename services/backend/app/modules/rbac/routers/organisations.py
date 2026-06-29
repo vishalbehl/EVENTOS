@@ -4,7 +4,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr, Field
@@ -936,3 +936,436 @@ async def get_billing_history(
     ]
 
 
+
+
+# =============================================================
+# Super Admin Organization Endpoints
+# Added below existing platform admin routes.
+# All four endpoints require SUPER_ADMIN via require_super_admin.
+# =============================================================
+
+from app.modules.superadmin.dependencies import require_super_admin
+from app.modules.rbac.schemas.organization import (
+    EnrichedOrgResponse,
+    PaginatedOrgsResponse,
+    FeatureOverrideItem,
+    FeatureOverrideUpsert,
+    OrgUserRow,
+    PaginatedOrgUsersResponse,
+)
+from app.modules.rbac.services.health_service import OrganizationHealthService
+from app.modules.analytics.models.usage import OrganizationUsage
+
+
+@router.get(
+    "/superadmin/organisations",
+    response_model=PaginatedOrgsResponse,
+    summary="Super Admin — Paginated enriched organization list",
+    tags=["superadmin-organisations"],
+)
+async def superadmin_list_organisations(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    search: Optional[str] = Query(default=None, description="Filter by name, slug, or billing_email"),
+    plan: Optional[str] = Query(default=None, description="Filter by plan name (trial, basic, professional, enterprise)"),
+    status: Optional[str] = Query(default=None, description="Filter by subscription status (ACTIVE, TRIAL, SUSPENDED, EXPIRED)"),
+    country: Optional[str] = Query(default=None, description="Filter by country ISO code"),
+    sort_by: str = Query(default="created_at", description="Sort field: created_at | name | health_score | mrr"),
+    _: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> PaginatedOrgsResponse:
+    """
+    Paginated, filterable, sortable organization list for the Super Admin registry.
+    Enriches each row with health score, live usage counts, subscription status, and MRR.
+    """
+    from app.modules.billing.models.subscription import (
+        OrganizationSubscription, SubscriptionTransaction,
+    )
+    from app.modules.platform.models.health import OrganizationHealth
+    from sqlalchemy import and_, or_, desc, asc
+
+    # ── Base query ─────────────────────────────────────────────
+    q = select(Organization)
+
+    if search:
+        term = f"%{search}%"
+        q = q.where(
+            or_(
+                Organization.name.ilike(term),
+                Organization.slug.ilike(term),
+                Organization.billing_email.ilike(term),
+            )
+        )
+    if plan:
+        q = q.where(Organization.plan.ilike(plan))
+    if country:
+        q = q.where(Organization.country.ilike(country))
+    if status:
+        # status is on OrganizationSubscription, handled post-fetch
+        pass
+
+    # Sort: name and created_at can be applied at SQL level
+    if sort_by == "name":
+        q = q.order_by(asc(Organization.name))
+    else:
+        q = q.order_by(desc(Organization.created_at))
+
+    # Count total (before pagination)
+    count_q = select(func.count(Organization.id))
+    if search:
+        term = f"%{search}%"
+        count_q = count_q.where(
+            or_(
+                Organization.name.ilike(term),
+                Organization.slug.ilike(term),
+                Organization.billing_email.ilike(term),
+            )
+        )
+    if plan:
+        count_q = count_q.where(Organization.plan.ilike(plan))
+    if country:
+        count_q = count_q.where(Organization.country.ilike(country))
+
+    total_unfiltered = (await db.scalar(count_q)) or 0
+
+    # Paginate
+    offset = (page - 1) * page_size
+    q = q.offset(offset).limit(page_size)
+    orgs = (await db.execute(q)).scalars().all()
+
+    # ── Enrich each org ────────────────────────────────────────
+    items: list[EnrichedOrgResponse] = []
+    for org in orgs:
+        # Subscription status
+        sub = (await db.execute(
+            select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org.id)
+        )).scalar_one_or_none()
+        sub_status = sub.status if sub else "TRIAL"
+
+        # Filter by status if requested
+        if status and sub_status.upper() != status.upper():
+            continue
+
+        # Health (from cache table, no recompute on list)
+        health_rec = await db.get(OrganizationHealth, org.id)
+        health_score = health_rec.health_score if health_rec else 100
+        health_status = health_rec.status if health_rec else "HEALTHY"
+
+        # Usage
+        usage_rec = await db.get(OrganizationUsage, org.id)
+        storage_bytes = usage_rec.storage_used_bytes if usage_rec else 0
+        user_count = usage_rec.active_users_count if usage_rec else 0
+        event_count_val = usage_rec.active_events_count if usage_rec else 0
+
+        # MRR: latest successful transaction amount
+        latest_txn = (await db.execute(
+            select(SubscriptionTransaction.amount)
+            .where(
+                SubscriptionTransaction.organization_id == org.id,
+                SubscriptionTransaction.status == "SUCCESS",
+            )
+            .order_by(desc(SubscriptionTransaction.created_at))
+            .limit(1)
+        )).scalar()
+        mrr = float(latest_txn or 0.0)
+
+        items.append(EnrichedOrgResponse(
+            id=org.id,
+            name=org.name,
+            slug=org.slug,
+            logo_url=org.logo_url,
+            plan=org.plan,
+            country=org.country,
+            timezone=org.timezone,
+            billing_email=org.billing_email,
+            custom_domain=org.custom_domain,
+            is_active=org.is_active,
+            suspension_reason=org.suspension_reason,
+            created_at=org.created_at,
+            subscription_status=sub_status,
+            health_score=health_score,
+            health_status=health_status,
+            user_count=user_count,
+            event_count=event_count_val,
+            storage_used_bytes=storage_bytes,
+            mrr=mrr,
+        ))
+
+    # Sort enriched items for health_score and mrr (cannot be done at SQL level)
+    if sort_by == "health_score":
+        items.sort(key=lambda x: x.health_score, reverse=True)
+    elif sort_by == "mrr":
+        items.sort(key=lambda x: x.mrr, reverse=True)
+
+    # Recalculate total accounting for status filter
+    total = len(items) if status else total_unfiltered
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    return PaginatedOrgsResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get(
+    "/superadmin/organisations/{org_id}/feature-overrides",
+    response_model=List[FeatureOverrideItem],
+    summary="Super Admin — Get feature overrides for an organization",
+    tags=["superadmin-organisations"],
+)
+async def superadmin_get_feature_overrides(
+    org_id: uuid.UUID,
+    _: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> List[FeatureOverrideItem]:
+    """
+    Returns all features from the catalog with:
+    - The plan default (whether this org's current plan enables it)
+    - Any override set specifically for this org
+    - The effective resolved value
+
+    Joins:
+      platform.feature_catalog
+      billing.plan_features (for plan default)
+      billing.organization_feature_overrides (for org-specific override)
+    """
+    from app.modules.platform.models.feature import FeatureCatalog
+    from app.modules.billing.models.subscription import (
+        OrganizationSubscription, PlanFeature, OrganizationFeature,
+    )
+
+    # Get org's current plan
+    sub = (await db.execute(
+        select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
+    )).scalar_one_or_none()
+    plan_id = sub.plan_id if sub else None
+
+    # Load all features
+    features = (await db.execute(
+        select(FeatureCatalog).where(FeatureCatalog.is_active.is_(True)).order_by(
+            FeatureCatalog.category_order.asc(), FeatureCatalog.feature_order.asc()
+        )
+    )).scalars().all()
+
+    # Plan features enabled set
+    plan_enabled: set[uuid.UUID] = set()
+    if plan_id:
+        pf_rows = (await db.execute(
+            select(PlanFeature.feature_id).where(
+                PlanFeature.plan_id == plan_id, PlanFeature.enabled.is_(True)
+            )
+        )).scalars().all()
+        plan_enabled = set(pf_rows)
+
+    # Org-level overrides
+    org_overrides: dict[uuid.UUID, bool] = {}
+    ov_rows = (await db.execute(
+        select(OrganizationFeature).where(OrganizationFeature.organization_id == org_id)
+    )).scalars().all()
+    for ov in ov_rows:
+        org_overrides[ov.feature_id] = ov.is_enabled
+
+    result = []
+    for f in features:
+        plan_default = f.id in plan_enabled
+        override = org_overrides.get(f.id)  # None if not set
+        effective = override if override is not None else plan_default
+
+        result.append(FeatureOverrideItem(
+            feature_id=f.id,
+            feature_key=f.key,
+            feature_name=f.name,
+            category=f.category,
+            description=f.description,
+            is_addon=False,  # Could extend with Addon join if needed
+            plan_default=plan_default,
+            override=override,
+            effective_value=effective,
+        ))
+    return result
+
+
+@router.put(
+    "/superadmin/organisations/{org_id}/feature-overrides",
+    response_model=FeatureOverrideItem,
+    summary="Super Admin — Upsert a feature override for an organization",
+    tags=["superadmin-organisations"],
+)
+async def superadmin_upsert_feature_override(
+    org_id: uuid.UUID,
+    payload: FeatureOverrideUpsert,
+    current_user: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> FeatureOverrideItem:
+    """
+    Upsert a feature override for a specific organization.
+
+    Body: { feature_key, override: true | false | null }
+    - null → removes override, restores plan default
+    - true → force-enables regardless of plan
+    - false → force-disables regardless of plan
+    """
+    from app.modules.platform.models.feature import FeatureCatalog
+    from app.modules.billing.models.subscription import (
+        OrganizationSubscription, PlanFeature, OrganizationFeature,
+    )
+    from sqlalchemy import delete as sql_delete
+
+    # Resolve feature by key
+    feature = (await db.execute(
+        select(FeatureCatalog).where(FeatureCatalog.key == payload.feature_key)
+    )).scalar_one_or_none()
+    if not feature:
+        raise HTTPException(status_code=404, detail=f"Feature '{payload.feature_key}' not found.")
+
+    # Get plan default for this org
+    sub = (await db.execute(
+        select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
+    )).scalar_one_or_none()
+    plan_default = False
+    if sub:
+        pf = (await db.execute(
+            select(PlanFeature).where(
+                PlanFeature.plan_id == sub.plan_id,
+                PlanFeature.feature_id == feature.id,
+                PlanFeature.enabled.is_(True),
+            )
+        )).scalar_one_or_none()
+        plan_default = pf is not None
+
+    if payload.override is None:
+        # Remove the override entirely — revert to plan default
+        await db.execute(
+            sql_delete(OrganizationFeature).where(
+                OrganizationFeature.organization_id == org_id,
+                OrganizationFeature.feature_id == feature.id,
+            )
+        )
+        await db.commit()
+        override_val = None
+    else:
+        # Upsert the override
+        existing = (await db.execute(
+            select(OrganizationFeature).where(
+                OrganizationFeature.organization_id == org_id,
+                OrganizationFeature.feature_id == feature.id,
+            )
+        )).scalar_one_or_none()
+
+        if existing:
+            existing.is_enabled = payload.override
+            existing.override_by = current_user.id
+            from datetime import datetime, timezone as tz
+            existing.override_at = datetime.now(tz.utc)
+        else:
+            db.add(OrganizationFeature(
+                organization_id=org_id,
+                feature_id=feature.id,
+                is_enabled=payload.override,
+                override_by=current_user.id,
+            ))
+        await db.commit()
+        override_val = payload.override
+
+    effective = override_val if override_val is not None else plan_default
+
+    return FeatureOverrideItem(
+        feature_id=feature.id,
+        feature_key=feature.key,
+        feature_name=feature.name,
+        category=feature.category,
+        description=feature.description,
+        is_addon=False,
+        plan_default=plan_default,
+        override=override_val,
+        effective_value=effective,
+    )
+
+
+@router.get(
+    "/superadmin/organisations/{org_id}/users",
+    response_model=PaginatedOrgUsersResponse,
+    summary="Super Admin — List users for an organization",
+    tags=["superadmin-organisations"],
+)
+async def superadmin_list_org_users(
+    org_id: uuid.UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    role: Optional[str] = Query(default=None, description="Filter by role"),
+    is_active: Optional[bool] = Query(default=None, description="Filter by active status"),
+    search: Optional[str] = Query(default=None, description="Filter by name or email"),
+    _: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> PaginatedOrgUsersResponse:
+    """
+    Returns paginated users belonging to the given organization.
+    Includes role, last_login_at, and 2FA status for the users tab.
+    """
+    from sqlalchemy import or_, desc
+
+    q = select(User).where(
+        User.organization_id == org_id,
+        User.deleted_at.is_(None),
+    )
+
+    if role:
+        q = q.where(User.role == role)
+    if is_active is not None:
+        q = q.where(User.is_active.is_(is_active))
+    if search:
+        term = f"%{search}%"
+        q = q.where(
+            or_(
+                User.email.ilike(term),
+                User.first_name.ilike(term),
+                User.last_name.ilike(term),
+            )
+        )
+
+    # Count total
+    count_q = select(func.count(User.id)).where(
+        User.organization_id == org_id,
+        User.deleted_at.is_(None),
+    )
+    if role:
+        count_q = count_q.where(User.role == role)
+    if is_active is not None:
+        count_q = count_q.where(User.is_active.is_(is_active))
+    if search:
+        term = f"%{search}%"
+        count_q = count_q.where(
+            or_(
+                User.email.ilike(term),
+                User.first_name.ilike(term),
+                User.last_name.ilike(term),
+            )
+        )
+    total = (await db.scalar(count_q)) or 0
+
+    # Apply ordering and pagination
+    q = q.order_by(desc(User.created_at)).offset((page - 1) * page_size).limit(page_size)
+    users = (await db.execute(q)).scalars().all()
+
+    return PaginatedOrgUsersResponse(
+        items=[
+            OrgUserRow(
+                id=u.id,
+                email=u.email,
+                first_name=u.first_name,
+                last_name=u.last_name,
+                role=u.role,
+                is_active=u.is_active,
+                is_2fa_enabled=u.is_2fa_enabled,
+                last_login_at=u.last_login_at,
+                created_at=u.created_at,
+            )
+            for u in users
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

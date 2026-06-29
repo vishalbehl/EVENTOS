@@ -12,7 +12,7 @@ from celery.exceptions import Retry
 from app.worker import celery_app
 from app.config import settings
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.audit.models.api_request_log import WorkerJobLog
+from app.modules.audit.models.api_request_log import WorkerJobLog, APIRequestLog
 
 
 def _run_async(coro):
@@ -181,4 +181,57 @@ async def _log_worker_failure(self_task, audit_data: dict, exc: Exception) -> No
             finished_at=now,
         )
         db.add(worker_log)
+        await db.commit()
+
+
+@celery_app.task(name="app.tasks.write_api_request_log", bind=True, max_retries=3, default_retry_delay=5)
+def write_api_request_log(self, api_data: dict) -> None:
+    logger.info(f"[Celery] Processing write_api_request_log task: {self.request.id}")
+    try:
+        _run_async(_write_api_request_log_async(api_data))
+    except Exception as exc:
+        logger.warning(f"[Celery] Error writing API request log: {exc}")
+        try:
+            self.retry(exc=exc)
+        except Retry as retry_exc:
+            raise retry_exc
+        except Exception as final_exc:
+            logger.error(f"[Celery] Permanent failure writing API request log: {final_exc}")
+
+
+async def _write_api_request_log_async(api_data: dict) -> None:
+    task_engine = create_async_engine(
+        settings.async_database_url,
+        echo=settings.debug,
+        poolclass=NullPool,
+    )
+    
+    TaskSessionLocal = async_sessionmaker(
+        bind=task_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+    
+    async with TaskSessionLocal() as db:
+        occurred_at_val = api_data.get("occurred_at")
+        occurred_at = datetime.fromisoformat(occurred_at_val) if occurred_at_val else datetime.now(timezone.utc)
+        
+        log_entry = APIRequestLog(
+            id=uuid.UUID(api_data["id"]) if api_data.get("id") else uuid.uuid4(),
+            request_id=uuid.UUID(api_data["request_id"]) if api_data.get("request_id") else uuid.uuid4(),
+            correlation_id=uuid.UUID(api_data["correlation_id"]) if api_data.get("correlation_id") else None,
+            method=api_data.get("method"),
+            path=api_data.get("path"),
+            status_code=api_data.get("status_code"),
+            duration_ms=api_data.get("duration_ms", 0.0),
+            ip_address=api_data.get("ip_address"),
+            user_id=uuid.UUID(api_data["user_id"]) if api_data.get("user_id") else None,
+            user_agent=api_data.get("user_agent"),
+            request_size_bytes=api_data.get("request_size_bytes", 0),
+            response_size_bytes=api_data.get("response_size_bytes", 0),
+            occurred_at=occurred_at,
+        )
+        db.add(log_entry)
         await db.commit()

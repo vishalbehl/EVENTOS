@@ -7,7 +7,7 @@ from sqlalchemy import select, delete, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.ai.models.ai import (
-    AiAssistant, AiConversation, AiMessage, AiAction, AiUsage, AiCostTracking, AiEmbedding
+    AiAssistant, AiConversation, AiMessage, AiUsage, AiCostTracking, AiEmbedding
 )
 from app.modules.events.models.event import Event
 from app.modules.events.models.session import Session

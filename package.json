@@ -16,6 +16,7 @@
     "build": "echo \"Define monorepo build orchestration\""
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "resend": "^6.12.3"
   }
 }

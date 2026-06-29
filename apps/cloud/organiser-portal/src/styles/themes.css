@@ -1,66 +1,58 @@
+/* ============================================================
+   EVENTOS — Theme Definitions
+   Only two themes: dark (default) and light
+   Token application is in globals.css via .dark class
+   ============================================================ */
+
+/* Dark mode surfaces (applied via .dark on <html>) */
+/* All dark tokens are defined in globals.css .dark block */
+
+/* Light mode surfaces (applied via removing .dark from <html>) */
+/* All light tokens are defined in globals.css :root block */
+
+/* Legacy data-theme attribute — kept for backward compat, maps to dark only */
 :root,
-[data-theme="void-indigo"] {
-  --base:#080912; --surf:#0F1228; --card:#171B38; --border:rgba(255,255,255,0.07);
-  --text:#E8EAFF; --muted:rgba(232,234,255,0.45);
-  --pri:#6366F1; --sec:#818CF8; --acc:#34D399; --warn:#FBBF24; --dan:#F87171; --success:#34D399;
-}
-
-[data-theme="obsidian-rose"] {
-  --base:#0D0810; --surf:#160D18; --card:#1F1025; --border:rgba(255,255,255,0.07);
-  --text:#F5E8FF; --muted:rgba(245,232,255,0.45);
-  --pri:#C084FC; --sec:#E879F9; --acc:#67E8F9; --warn:#FCD34D; --dan:#FB7185; --success:#67E8F9;
-}
-
-[data-theme="carbon-teal"] {
-  --base:#050A09; --surf:#0A1410; --card:#0F1E19; --border:rgba(255,255,255,0.06);
-  --text:#D6FFF4; --muted:rgba(214,255,244,0.4);
-  --pri:#14B8A6; --sec:#2DD4BF; --acc:#818CF8; --warn:#FCD34D; --dan:#FB7185; --success:#2DD4BF;
-}
-
-[data-theme="amber-noir"] {
-  --base:#0C0900; --surf:#141000; --card:#1C1600; --border:rgba(255,255,255,0.07);
-  --text:#FFF8E1; --muted:rgba(255,248,225,0.45);
-  --pri:#F59E0B; --sec:#FCD34D; --acc:#34D399; --warn:#F97316; --dan:#EF4444; --success:#34D399;
-}
-
-[data-theme="slate-aurora"] {
-  --base:#060A12; --surf:#0C1220; --card:#111C2E; --border:rgba(255,255,255,0.07);
-  --text:#E0F2FE; --muted:rgba(224,242,254,0.45);
-  --pri:#38BDF8; --sec:#7DD3FC; --acc:#A78BFA; --warn:#FCD34D; --dan:#FB7185; --success:#38BDF8;
-}
-
-[data-theme="forest-ink"] {
-  --base:#030907; --surf:#071210; --card:#0C1D17; --border:rgba(255,255,255,0.06);
-  --text:#DCFCE7; --muted:rgba(220,252,231,0.45);
-  --pri:#22C55E; --sec:#4ADE80; --acc:#F472B6; --warn:#FCD34D; --dan:#FB7185; --success:#4ADE80;
-}
-
-[data-theme="copper-oxide"] {
-  --base:#0A0805; --surf:#140F08; --card:#1C150C; --border:rgba(255,255,255,0.07);
-  --text:#FEF3C7; --muted:rgba(254,243,199,0.45);
-  --pri:#D97706; --sec:#B45309; --acc:#5EEAD4; --warn:#F97316; --dan:#FB7185; --success:#5EEAD4;
-}
-
-[data-theme="plasma-violet"] {
-  --base:#06030F; --surf:#0D0620; --card:#130A2E; --border:rgba(255,255,255,0.07);
-  --text:#EDE9FE; --muted:rgba(237,233,254,0.45);
-  --pri:#8B5CF6; --sec:#A78BFA; --acc:#F0ABFC; --warn:#FCD34D; --dan:#FB7185; --success:#A78BFA;
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --base:#F7F8FC; --surf:#FFFFFF; --card:#FFFFFF; --border:rgba(0,0,0,0.08);
-  --text:#0E0F1A; --muted:rgba(14,15,26,0.5);
-  --pri:#6366F1; --sec:#4F46E5; --acc:#10B981; --warn:#D97706; --dan:#EF4444; --success:#10B981;
+  color-scheme: light;
 }
 
-:root {
-  --theme-void-indigo-base:#080912; --theme-void-indigo-pri:#6366F1;
-  --theme-obsidian-rose-base:#0D0810; --theme-obsidian-rose-pri:#C084FC;
-  --theme-carbon-teal-base:#050A09; --theme-carbon-teal-pri:#14B8A6;
-  --theme-amber-noir-base:#0C0900; --theme-amber-noir-pri:#F59E0B;
-  --theme-slate-aurora-base:#060A12; --theme-slate-aurora-pri:#38BDF8;
-  --theme-forest-ink-base:#030907; --theme-forest-ink-pri:#22C55E;
-  --theme-copper-oxide-base:#0A0805; --theme-copper-oxide-pri:#D97706;
-  --theme-plasma-violet-base:#06030F; --theme-plasma-violet-pri:#8B5CF6;
-  --theme-light-base:#F7F8FC; --theme-light-pri:#6366F1;
+/* App wallpaper / radial gradient overlays — controlled by JS */
+[data-wallpaper="on"] .bg-app-wallpaper {
+  opacity: 1;
+}
+[data-wallpaper="off"] .bg-app-wallpaper {
+  opacity: 0;
+}
+
+/* Global select native dropdown theming */
+select {
+  background-color: var(--color-surface-2) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--color-text-primary) !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 500 !important;
+  outline: none !important;
+  transition: all var(--duration-base) var(--ease-smooth) !important;
+  cursor: pointer !important;
+}
+
+select:hover {
+  border-color: color-mix(in srgb, var(--color-text-primary) 20%, var(--color-border)) !important;
+}
+
+select:focus {
+  border-color: var(--color-primary-end) !important;
+  box-shadow: 0 0 0 3px var(--color-primary-glow) !important;
+}
+
+select option,
+select optgroup {
+  background-color: var(--color-surface-1) !important;
+  color: var(--color-text-primary) !important;
+  font-weight: 500 !important;
 }

@@ -6,8 +6,8 @@ import { FloatingToolbar } from "@/components/organizer/FloatingToolbar";
 import { ImpersonationBanner } from "@/components/organizer/ImpersonationBanner";
 
 export const metadata: Metadata = {
-  title: "EventOS | Organiser Console",
-  description: "Comprehensive management terminal for event organisers.",
+  title: "Eventos | Organiser Portal",
+  description: "Enterprise event management platform for professional organizers.",
 };
 
 export default function RootLayout({
@@ -16,21 +16,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
+        {/* Inline script: apply theme immediately before paint to avoid flash */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 try {
-                  var themes = ['void-indigo','obsidian-rose','carbon-teal','amber-noir','slate-aurora','forest-ink','copper-oxide','plasma-violet','light'];
                   var saved = localStorage.getItem('eventos-theme');
-                  var theme = themes.indexOf(saved) >= 0 ? saved : 'void-indigo';
-                  document.documentElement.setAttribute('data-theme', theme);
-                  if (theme !== 'light') {
-                    document.documentElement.classList.add('dark');
+                  var root = document.documentElement;
+                  if (saved === 'light') {
+                    root.classList.remove('dark');
+                    root.setAttribute('data-theme', 'light');
                   } else {
-                    document.documentElement.classList.remove('dark');
+                    root.classList.add('dark');
+                    root.setAttribute('data-theme', 'dark');
                   }
                 } catch (e) {}
               })();
@@ -38,7 +39,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="min-h-screen">
+      <body className="min-h-screen antialiased">
         <Providers>
           <ImpersonationBanner />
           {children}

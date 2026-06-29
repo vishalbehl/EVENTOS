@@ -12,7 +12,7 @@ from starlette.types import ASGIApp
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.modules.platform_audit.models import ApiActivityLog
+from app.modules.audit.models.api_request_log import APIRequestLog
 
 def _extract_jwt_claims(authorization: Optional[str]) -> Tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
     """Decodes the Bearer JWT and returns (user_id, organization_id)"""
@@ -82,45 +82,65 @@ class RequestLoggingMiddleware:
             authorization = request.headers.get("Authorization")
             user_id, org_id = _extract_jwt_claims(authorization)
             
-            # Since organization_id is NOT NULL, if we don't have a JWT org, we extract it from path or headers, or default
-            if not org_id:
-                uuids = re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", path.lower())
-                if uuids:
-                    org_id = uuid.UUID(uuids[0])
-                else:
-                    # System Org fallback
-                    org_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
+            corr_id_hdr = request.headers.get("X-Correlation-ID")
+            correlation_id = None
+            if corr_id_hdr:
+                try:
+                    correlation_id = uuid.UUID(corr_id_hdr)
+                except ValueError:
+                    pass
+
+            req_id_hdr = request.headers.get("X-Request-ID")
+            request_id = None
+            if req_id_hdr:
+                try:
+                    request_id = uuid.UUID(req_id_hdr)
+                except ValueError:
+                    pass
+            if not request_id:
+                request_id = uuid.uuid4()
             
+            ip_address = _get_client_ip(request)
+            user_agent = request.headers.get("User-Agent")
+
             api_data = {
                 "id": str(uuid.uuid4()),
-                "organization_id": str(org_id),
-                "user_id": str(user_id) if user_id else None,
+                "request_id": str(request_id),
+                "correlation_id": str(correlation_id) if correlation_id else None,
                 "method": method,
-                "endpoint": path,
-                "request_payload": payload_data,
-                "response_code": status_code[0],
-                "latency_ms": elapsed_ms,
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "path": path,
+                "status_code": status_code[0],
+                "duration_ms": float(elapsed_ms),
+                "ip_address": ip_address,
+                "user_id": str(user_id) if user_id else None,
+                "user_agent": user_agent,
+                "request_size_bytes": 0,
+                "response_size_bytes": 0,
+                "occurred_at": datetime.now(timezone.utc).isoformat()
             }
 
             if settings.environment == "testing":
                 async with AsyncSessionLocal() as db:
-                    entry = ApiActivityLog(
+                    entry = APIRequestLog(
                         id=uuid.UUID(api_data["id"]),
-                        organization_id=uuid.UUID(api_data["organization_id"]),
-                        user_id=uuid.UUID(api_data["user_id"]) if api_data["user_id"] else None,
+                        request_id=uuid.UUID(api_data["request_id"]),
+                        correlation_id=uuid.UUID(api_data["correlation_id"]) if api_data["correlation_id"] else None,
                         method=api_data["method"],
-                        endpoint=api_data["endpoint"],
-                        request_payload=api_data["request_payload"],
-                        response_code=api_data["response_code"],
-                        latency_ms=api_data["latency_ms"],
-                        created_at=datetime.fromisoformat(api_data["created_at"])
+                        path=api_data["path"],
+                        status_code=api_data["status_code"],
+                        duration_ms=api_data["duration_ms"],
+                        ip_address=api_data["ip_address"],
+                        user_id=uuid.UUID(api_data["user_id"]) if api_data["user_id"] else None,
+                        user_agent=api_data["user_agent"],
+                        request_size_bytes=api_data["request_size_bytes"],
+                        response_size_bytes=api_data["response_size_bytes"],
+                        occurred_at=datetime.fromisoformat(api_data["occurred_at"])
                     )
                     db.add(entry)
                     await db.commit()
             else:
-                from app.tasks.platform_audit_tasks import write_api_activity_log
-                write_api_activity_log.delay(api_data)
+                from app.tasks.audit_tasks import write_api_request_log
+                write_api_request_log.delay(api_data)
 
         except Exception as exc:
             logger.warning(f"[RequestLoggingMiddleware] Failed to log API activity: {exc}")

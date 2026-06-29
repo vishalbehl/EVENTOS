@@ -7,8 +7,6 @@ from sqlalchemy import select
 from app.modules.blueprints.models import (
     EventBlueprint, BlueprintTemplate, BlueprintInstallation, BlueprintStep
 )
-from app.modules.templates.models import Template, TemplateCategory
-from app.modules.templates.services import TemplateService
 from app.modules.website_builder.services import WebsiteBuilderService
 
 class BlueprintService:

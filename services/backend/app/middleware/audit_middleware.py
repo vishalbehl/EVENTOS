@@ -13,8 +13,7 @@ from starlette.types import ASGIApp
 
 from app.config import settings
 from app.database import Base, AsyncSessionLocal
-from app.modules.audit.services.audit_service import AuditContext
-from app.modules.platform_audit.services import AuditService
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 
 
 # Regex for UUIDs in paths

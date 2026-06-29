@@ -6,6 +6,7 @@
 
 import { useQuery, useMutation, useQueryClient, QueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { toast } from "sonner";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,54 +20,58 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 // ── Types ─────────────────────────────────────────────────────
 
 export interface ActivityItem {
-  org_id: string;
-  org_name: string;
-  action: string;
-  amount: number | null;
-  occurred_at: string;
+  org_id: string
+  org_name: string
+  org_slug?: string
+  action: string
+  amount: number | null
+  occurred_at: string
 }
 
 export interface TrialExpiring {
-  org_id: string;
-  org_name: string;
-  plan_name: string;
-  trial_ends_at: string;
-  days_remaining: number;
+  org_id: string
+  org_name: string
+  plan_name: string
+  trial_ends_at: string
+  days_remaining: number
+}
+
+export interface TopOrgByMrr {
+  org_id: string
+  org_name: string
+  mrr: number
+  plan_name: string
 }
 
 export interface DashboardMetrics {
-  total_organizations: number;
-  active_organizations: number;
-  trial_organizations: number;
-  total_users: number;
-  total_events: number;
-  total_active_events: number;
-  total_registrations: number;
-  storage_used_bytes: number;
-  current_mrr: number;
-  mrr_current: number;
-  arr_current: number;
-  venue_servers_online: number;
-  active_users_30d: number;
-  churn_rate: number;
-  nps_score: number;
-  open_tickets: number;
-  events_this_month: number;
-  revenue_today: number;
-  orgs_trend: number[];
-  users_trend: number[];
-  mrr_trend: number[];
-  events_trend: number[];
-  subscriptions_active: number;
-  subscriptions_trial: number;
-  subscriptions_grace: number;
-  subscriptions_suspended: number;
-  subscriptions_expired: number;
-  subscriptions_cancelled: number;
-  recent_activity: ActivityItem[];
-  trials_expiring: TrialExpiring[];
-  platform_status: "healthy" | "degraded" | "down";
-  services_degraded: number;
+  total_organizations: number
+  active_organizations: number
+  trial_organizations: number
+  total_users: number
+  mrr_current: number
+  arr_current: number
+  active_users_30d: number
+  events_this_month: number
+  open_tickets: number
+  revenue_today_inr: number
+  churn_rate: number
+  nps_score: number
+  orgs_trend: number[]
+  users_trend: number[]
+  mrr_trend: number[]
+  events_trend: number[]
+  revenue_trend: number[]
+  subscriptions_active: number
+  subscriptions_trial: number
+  subscriptions_grace: number
+  subscriptions_suspended: number
+  subscriptions_expired: number
+  subscriptions_cancelled: number
+  recent_activity: ActivityItem[]
+  trials_expiring: TrialExpiring[]
+  top_orgs_by_mrr: TopOrgByMrr[]
+  platform_status: 'healthy' | 'degraded' | 'down'
+  services_degraded: number
 }
 
 export interface AdminOrg {
@@ -216,12 +221,15 @@ export interface Subscription {
   org_slug: string
   plan_name: string
   plan_id: string
+  plan_color_hex: string
   status: 'ACTIVE' | 'TRIAL' | 'GRACE_PERIOD' | 'SUSPENDED' | 'EXPIRED' | 'CANCELLED'
   trial_ends_at: string | null
   current_period_end: string | null
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   mrr: number
+  mrr_inr: number
+  days_until_trial_end: number | null
 }
 
 export interface Invoice {
@@ -231,21 +239,27 @@ export interface Invoice {
   organization_name?: string; // compatibility
   plan_name: string;
   amount: number;
+  amount_inr: number;
+  gst_amount: number;
+  total_amount_inr: number;
+  invoice_number: string;
   currency: string;
   status: string;
   stripe_invoice_id: string | null;
-  due_date: string;
+  due_date: string | null;
   paid_at: string | null;
-  created_at?: string;
+  created_at: string;
   issued_at?: string; // compatibility
 }
 
 export interface RevenueAnalytics {
   mrr_by_month: { period: string; mrr: number; arr: number }[]
-  mrr_by_plan: { plan: string; mrr: number; orgs: number }[]
+  mrr_by_plan: { plan: string; color_hex?: string; mrr: number; orgs: number }[]
   upgrades_this_month: number
+  downgrades_this_month?: number
+  arpu_inr?: number
   arpu: number
-  summary: { mrr: number; arr: number }
+  summary: { mrr: number; arr: number; net_new_mrr?: number; churned_mrr?: number; expansion_mrr?: number }
   
   // Compatibility fields for existing page:
   metrics?: {
@@ -1439,7 +1453,11 @@ export const useSubscriptions = (params?: {
   useQuery({
     queryKey: ["admin-subscriptions", params],
     queryFn: () =>
-      apiClient.get<{ items: Subscription[]; total: number }>("/platform/subscriptions", {
+      apiClient.get<{
+        items: Subscription[];
+        total: number;
+        summary: { total_mrr_inr: number; at_risk_count: number };
+      }>("/platform/subscriptions", {
         params,
       }),
     staleTime: 30_000,
@@ -1465,7 +1483,7 @@ export const useInvoices = (params?: {
   useQuery({
     queryKey: ["admin-invoices", params],
     queryFn: () =>
-      apiClient.get<{ items: Invoice[]; summary: any }>("/platform/invoices", {
+      apiClient.get<{ items: Invoice[]; summary: any; total: number }>("/platform/invoices", {
         params,
       }),
     staleTime: 30_000,
@@ -1538,6 +1556,932 @@ export const useSaveFeatureOverrides = () =>
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
   });
+
+
+// Helper functions — add at bottom of service file
+export const formatINR = (value: number | undefined | null): string => {
+  if (value === undefined || value === null || isNaN(value)) return "₹0"
+  if (value >= 10_000_000) return `₹${(value/10_000_000).toFixed(2)}Cr`
+  if (value >= 100_000) return `₹${(value/100_000).toFixed(2)}L`
+  if (value >= 1_000) return `₹${(value/1_000).toFixed(1)}K`
+  return `₹${value.toFixed(0)}`
+}
+
+export const formatMRR = (value: number | undefined | null): string => {
+  if (value === undefined || value === null || isNaN(value)) return "₹0"
+  return `₹${(value/1000).toFixed(0)}K`
+}
+
+export const calcDelta = (trend: number[]): number => {
+  if (!trend || trend.length < 2) return 0
+  const last = trend[trend.length - 1]
+  const prev = trend[trend.length - 2]
+  if (prev === 0) return 0
+  return Math.round(((last - prev) / prev) * 100 * 10) / 10
+}
+
+// ── Phase 4 Hooks ─────────────────────────────────
+
+export interface PaymentGateway {
+  id: string
+  name: string
+  provider: string
+  mode: 'LIVE' | 'TEST'
+  is_active: boolean
+  success_rate: number
+  transactions_count: number
+  volume_mtd_inr: number
+  last_checked_at: string | null
+}
+
+export interface TaxRule {
+  id: string
+  name: string
+  tax_type: string
+  rate: number
+  state_region: string
+  is_active: boolean
+}
+
+export interface PricingRule {
+  id: string
+  name: string
+  value: number
+  is_active: boolean
+}
+
+export interface TaxConfigResponse {
+  tax_rules: TaxRule[]
+  pricing_rules: PricingRule[]
+  tax_summary_distribution: { type: string; value: number }[]
+}
+
+export interface FinancialTransaction {
+  id: string
+  organization_id: string
+  org_name: string
+  amount_inr: number
+  gateway: string
+  status: 'COMPLETED' | 'FAILED' | 'REFUNDED' | 'PENDING'
+  created_at: string
+}
+
+export interface FinancialAuditTrailEntry {
+  id: string
+  organization_id: string
+  org_name: string
+  activity_type: string
+  performed_by_name: string
+  amount: number | null
+  occurred_at: string
+}
+
+export interface AIDashboardResponse {
+  total_requests: number
+  tokens_used: number
+  total_cost_inr: number
+  avg_cost_per_1k_tokens: number
+  success_rate: number
+  requests_over_time: { date: string; successful: number; failed: number }[]
+  tokens_over_time: { date: string; model: string; tokens: number }[]
+  usage_by_model: { model: string; value: number }[]
+  cost_trend: { date: string; cost: number }[]
+  top_use_cases: { use_case: string; requests: number; cost: number }[]
+}
+
+export interface AIPrompt {
+  id: string
+  name: string
+  category: string
+  use_case: string
+  model: string
+  usage_count: number
+  success_rate: number
+  last_used_at: string | null
+  created_by_name: string
+}
+
+export interface AIModel {
+  name: string
+  provider: string
+  type: string
+  context: string
+  cost_in: number
+  cost_out: number
+  status: 'ACTIVE' | 'INACTIVE'
+  usage_7d: number
+}
+
+export const usePaymentGateways = () =>
+  useQuery({
+    queryKey: ['payment-gateways'],
+    queryFn: () => apiClient.get<{ items: PaymentGateway[]; trend: any[] }>('/platform/financial/gateways'),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+
+export const useTaxConfig = () =>
+  useQuery({
+    queryKey: ['tax-config'],
+    queryFn: () => apiClient.get<TaxConfigResponse>('/platform/financial/tax-config'),
+    staleTime: 60_000,
+  })
+
+export const useFinancialTransactions = (params?: { skip?: number; limit?: number; status?: string }) =>
+  useQuery({
+    queryKey: ['financial-transactions', params],
+    queryFn: () => apiClient.get<{ items: FinancialTransaction[]; total: number; summary: any }>('/platform/financial/transactions', { params }),
+    staleTime: 30_000,
+  })
+
+export const useFinancialAuditTrail = (params?: { date_from?: string; date_to?: string; activity_type?: string; org_id?: string; skip?: number; limit?: number }) =>
+  useQuery({
+    queryKey: ['financial-audit-trail', params],
+    queryFn: () => apiClient.get<{ items: FinancialAuditTrailEntry[]; total: number }>('/platform/financial/audit-trail', { params }),
+    staleTime: 30_000,
+  })
+
+export const useQueueStats = () =>
+  useQuery({
+    queryKey: ['queue-stats'],
+    queryFn: () => apiClient.get<any[]>('/platform/operations/queues'),
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+  })
+
+export const useAIDashboard = () =>
+  useQuery({
+    queryKey: ['ai-dashboard'],
+    queryFn: () => apiClient.get<AIDashboardResponse>('/platform/ai/dashboard'),
+    staleTime: 30_000,
+  })
+
+export const usePromptLibrary = () =>
+  useQuery({
+    queryKey: ['prompt-library'],
+    queryFn: () => apiClient.get<AIPrompt[]>('/platform/ai/prompts'),
+    staleTime: 30_000,
+  })
+
+export const useModelManagement = () =>
+  useQuery({
+    queryKey: ['model-management'],
+    queryFn: () => apiClient.get<{ models: AIModel[]; auto_routing: boolean; routing_strategy: string; fallback_model: string }>('/platform/ai/models'),
+    staleTime: 30_000,
+  })
+
+
+// --- COMMERCIAL CATALOG CATALOG HOOKS & INTERFACES ---
+
+export interface HardwareItem {
+  id: string
+  item_code: string
+  name: string
+  category_name: string
+  pricing_unit: string      // 'PER_EVENT' | 'PER_DAY'
+  cost_price: number
+  selling_price: number
+  inventory_count: number | null
+  status: string
+  is_active: boolean
+  created_at: string
+  category_id: string
+  [key: string]: any        // allow extra cols from DB
+}
+
+export interface StaffRole {
+  id: string
+  role_code: string
+  name: string
+  grade?: string            // G1/G2/G3/G4 if column exists
+  cost_per_day: number
+  selling_per_day: number
+  margin_pct: number
+  availability_count?: number
+  is_active: boolean
+  [key: string]: any
+}
+
+export interface PricingRule {
+  id: string
+  name: string
+  rule_code?: string
+  is_default: boolean
+  hardware_markup_pct: number
+  staffing_markup_pct: number
+  management_fee_pct: number
+  contingency_pct: number
+  gst_pct: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  description?: string
+  [key: string]: any
+}
+
+export interface SimulationResult {
+  hardware_subtotal: number
+  staffing_subtotal: number
+  markup_fees: number
+  management_fee: number
+  contingency: number
+  pre_gst_total: number
+  gst_amount: number
+  total_amount: number
+  line_items: {
+    name: string; quantity: number; days: number
+    unit_cost: number; total: number
+  }[]
+}
+
+export const useHardwareCatalog = (params?: {
+  category?: string; status?: string; search?: string; pricing_unit?: string
+  skip?: number; limit?: number
+}) =>
+  useQuery({
+    queryKey: ['hardware-catalog', params],
+    queryFn: () =>
+      apiClient.get<{
+        items: HardwareItem[]
+        total: number
+        summary: any
+        active_categories: string[]
+        active_pricing_units: string[]
+        next_item_code?: string
+      }>(
+        '/inventory/superadmin/catalog/hardware', { params }
+      ),
+    staleTime: 60_000,
+  })
+
+export const useHardwareCategories = () =>
+  useQuery({
+    queryKey: ['hardware-categories'],
+    queryFn: () =>
+      apiClient.get<any[]>('/inventory/superadmin/catalog/hardware/categories'),
+    staleTime: 5_000,
+  })
+
+export const useStaffCatalog = (params?: {
+  search?: string; skip?: number; limit?: number
+}) =>
+  useQuery({
+    queryKey: ['staff-catalog', params],
+    queryFn: () =>
+      apiClient.get<{ items: StaffRole[]; total: number; summary: any }>(
+        '/commercial/superadmin/catalog/staff', { params }
+      ),
+    staleTime: 60_000,
+  })
+
+export const usePricingRules = () =>
+  useQuery({
+    queryKey: ['pricing-rules'],
+    queryFn: () =>
+      apiClient.get<PricingRule[]>('/pricing/superadmin/catalog/pricing-rules'),
+    staleTime: 120_000,
+  })
+
+export const useRunPricingSimulation = () =>
+  useMutation({
+    mutationFn: (body: {
+      pricing_rule_id: string
+      event_city_tier: string
+      event_days: number
+      attendee_count: number
+      room_count: number
+      counter_count: number
+      srr_stations: number
+      selected_hardware: { hardware_item_id: string; quantity: number }[]
+      selected_staff: { staff_role_id: string; quantity: number; days: number }[]
+    }) =>
+      apiClient.post<SimulationResult>(
+        '/pricing/superadmin/catalog/pricing-simulator/run', body
+      ),
+  })
+
+export const useCatalogTemplates = () =>
+  useQuery({
+    queryKey: ['catalog-templates'],
+    queryFn: () =>
+      apiClient.get<{
+        room_templates: any[]
+        registration_templates: any[]
+        srr_templates: any[]
+        network_templates: any[]
+      }>('/pricing/superadmin/catalog/templates'),
+    staleTime: 300_000,
+  })
+
+export const useCreateTemplate = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: any) =>
+      apiClient.post('/pricing/superadmin/catalog/templates', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      toast.success('Template created successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdateTemplate = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ slug, ...body }: { slug: string; [key: string]: any }) =>
+      apiClient.put(`/pricing/superadmin/catalog/templates/${slug}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      toast.success('Template updated successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useDuplicateTemplate = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slug: string) =>
+      apiClient.post(`/pricing/superadmin/catalog/templates/${slug}/duplicate`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      toast.success('Template duplicated successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useSetDefaultTemplate = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slug: string) =>
+      apiClient.post(`/pricing/superadmin/catalog/templates/${slug}/default`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      toast.success('Default template set successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useDeleteTemplate = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slug: string) =>
+      apiClient.delete(`/pricing/superadmin/catalog/templates/${slug}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      toast.success('Template deleted successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useCreateHardwareItem = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<HardwareItem>) =>
+      apiClient.post('/inventory/superadmin/catalog/hardware', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
+      toast.success('Hardware item created')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdateHardwareItem = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<HardwareItem> & { id: string }) =>
+      apiClient.patch(`/inventory/superadmin/catalog/hardware/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
+      toast.success('Hardware item updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useImportHardwareExcel = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (formData: FormData) =>
+      apiClient.post('/inventory/superadmin/catalog/hardware/import', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
+      toast.success(`Imported ${res?.data?.count || 0} hardware items successfully`)
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useCreateStaffRole = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: any) =>
+      apiClient.post('/commercial/superadmin/catalog/staff', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['staff-catalog'] })
+      toast.success('Staff role created')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdateStaffRole = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: any) =>
+      apiClient.patch(`/commercial/superadmin/catalog/staff/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['staff-catalog'] })
+      toast.success('Staff role updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useCreatePricingRule = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: any) =>
+      apiClient.post('/pricing/superadmin/catalog/pricing-rules', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pricing-rules'] })
+      toast.success('Pricing rule created')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdatePricingRule = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: any) =>
+      apiClient.patch(`/pricing/superadmin/catalog/pricing-rules/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pricing-rules'] })
+      toast.success('Pricing rule updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useImportStaffExcel = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (formData: FormData) =>
+      apiClient.post('/commercial/superadmin/catalog/staff/import', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['staff-catalog'] })
+      toast.success(`Imported ${res?.data?.count || 0} staff roles successfully`)
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const usePricingSimulations = () =>
+  useQuery({
+    queryKey: ['pricing-simulations'],
+    queryFn: () =>
+      apiClient.get<any[]>('/pricing/simulations'),
+    staleTime: 30_000,
+  })
+
+export const useDeletePricingSimulation = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/pricing/simulations/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pricing-simulations'] })
+      toast.success('Simulation run deleted successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+// ── Service Requests Workflow Hooks ─────────────────────────────────
+
+export const useServiceRequestsKpi = (eventId: string) =>
+  useQuery({
+    queryKey: ['service-requests-kpi', eventId],
+    queryFn: () => apiClient.get(`/service-requests/kpi-strip?event_id=${eventId}`).then((r: any) => r.data),
+    enabled: !!eventId,
+  })
+
+export const useServiceRequestsKanban = (eventId: string, limit = 10, offset = 0) =>
+  useQuery({
+    queryKey: ['service-requests-kanban', eventId, limit, offset],
+    queryFn: () => apiClient.get(`/service-requests/kanban-columns?event_id=${eventId}&limit=${limit}&offset=${offset}`).then((r: any) => r.data),
+    enabled: !!eventId,
+  })
+
+export const useCreateServiceRequest = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ eventId, ...body }: { eventId: string; title: string; description?: string; priority?: string; request_type?: string }) =>
+      apiClient.post(`/service-requests?event_id=${eventId}`, body).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
+      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
+      toast.success('Service Request created successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdateServiceRequest = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; title?: string; description?: string; priority?: string; status?: string }) =>
+      apiClient.patch(`/service-requests/${id}`, body).then((r: any) => r.data),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
+      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
+      qc.invalidateQueries({ queryKey: ['service-request-overview', vars.id] })
+      qc.invalidateQueries({ queryKey: ['service-request-history', vars.id] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', vars.id] })
+      toast.success('Service Request updated successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useSubmitServiceRequest = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/service-requests/${id}/submit`).then((r: any) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
+      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
+      qc.invalidateQueries({ queryKey: ['service-request-overview', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-history', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      toast.success('Service Request submitted successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useApproveServiceRequest = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/service-requests/${id}/approve`).then((r: any) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
+      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
+      qc.invalidateQueries({ queryKey: ['service-request-overview', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-history', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      toast.success('Service Request approved successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useServiceRequestHistory = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-history', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/history`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useServiceRequestOverview = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-overview', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/overview`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useServiceRequestRequirements = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-requirements', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/requirements`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useUpdateServiceRequestRequirements = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { requirement_type: string; requirement_data: any }) =>
+      apiClient.patch(`/service-requests/${id}/requirements`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-request-requirements', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      toast.success('Requirements updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useServiceRequestRemarks = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-remarks', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/remarks`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useAddServiceRequestRemark = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { remark_text: string }) =>
+      apiClient.post(`/service-requests/${id}/remarks`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-request-remarks', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      toast.success('Remark added')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useServiceRequestAttachments = (id: string, reqType: string) =>
+  useQuery({
+    queryKey: ['service-request-attachments', id, reqType],
+    queryFn: () => apiClient.get(`/service-requests/${id}/attachments?requirement_type=${reqType}`).then((r: any) => r.data),
+    enabled: !!id && !!reqType,
+  })
+
+export const useAddServiceRequestAttachment = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { requirement_type: string; filename: string; file_size: number }) =>
+      apiClient.post(`/service-requests/${id}/attachments`, payload).then((r: any) => r.data),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['service-request-attachments', id, vars.requirement_type] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      toast.success('Attachment uploaded')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useServiceRequestPlanning = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-planning', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/resource-planning`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useRecalculateServiceRequestPlanning = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiClient.post(`/service-requests/${id}/resource-planning/recalculate`).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
+      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      toast.success('Resource plan recalculated successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdateHardwareQuantity = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { id: string; quantity: number }) =>
+      apiClient.patch(`/service-requests/${id}/resource-planning/hardware`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
+      toast.success('Hardware quantity updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useUpdateStaffQuantity = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { id: string; quantity: number; days: number }) =>
+      apiClient.patch(`/service-requests/${id}/resource-planning/staff`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
+      toast.success('Staff role configuration updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useServiceRequestQuotes = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-quotes', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/quotes`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useServiceRequestDocuments = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-documents', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/documents`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+export const useServiceRequestActivityLogs = (id: string) =>
+  useQuery({
+    queryKey: ['service-request-activity', id],
+    queryFn: () => apiClient.get(`/service-requests/${id}/activity-logs`).then((r: any) => r.data),
+    enabled: !!id,
+  })
+
+// ── B2B Quoting & Proposals React Query Hooks ───────────────────────
+
+export const useAllQuotes = (requestId?: string, status?: string) =>
+  useQuery({
+    queryKey: ['all-quotes', requestId, status],
+    queryFn: () => apiClient.get(`/service-requests/all-quotes`, {
+      params: { request_id: requestId, status }
+    }).then((r: any) => r.data),
+  })
+
+export const useQuoteDetail = (quoteId: string) =>
+  useQuery({
+    queryKey: ['quote-detail', quoteId],
+    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}`).then((r: any) => r.data),
+    enabled: !!quoteId,
+  })
+
+export const useCreateQuote = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: any) => apiClient.post(`/service-requests/quotes`, payload).then((r: any) => r.data),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      toast.success('Quote generated successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useUpdateQuote = (quoteId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: any) => apiClient.patch(`/service-requests/quotes/${quoteId}`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
+      qc.invalidateQueries({ queryKey: ['quote-cost-breakdown', quoteId] })
+      toast.success('Quote updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useQuoteCostBreakdown = (quoteId: string) =>
+  useQuery({
+    queryKey: ['quote-cost-breakdown', quoteId],
+    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}/cost-breakdown`).then((r: any) => r.data),
+    enabled: !!quoteId,
+  })
+
+export const useQuoteRevisions = (quoteId: string) =>
+  useQuery({
+    queryKey: ['quote-revisions', quoteId],
+    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}/revisions`).then((r: any) => r.data),
+    enabled: !!quoteId,
+  })
+
+export const useCreateQuoteRevision = (quoteId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { notes: string[] }) => apiClient.post(`/service-requests/quotes/${quoteId}/revisions`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['quote-revisions', quoteId] })
+      qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
+      toast.success('Quote revision created successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useQuoteApproval = (quoteId: string) =>
+  useQuery({
+    queryKey: ['quote-approval', quoteId],
+    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}/approval`).then((r: any) => r.data),
+    enabled: !!quoteId,
+  })
+
+export const useActionApprovalStep = (quoteId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ stepId, action, comment }: { stepId: string; action: string; comment?: string }) =>
+      apiClient.post(`/service-requests/quotes/${quoteId}/approval/steps/${stepId}/action`, { action, comment }).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['quote-approval', quoteId] })
+      qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
+      toast.success('Approval step updated successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useAllProposals = (requestId?: string, status?: string) =>
+  useQuery({
+    queryKey: ['all-proposals', requestId, status],
+    queryFn: () => apiClient.get(`/service-requests/proposals/list`, {
+      params: { request_id: requestId, status }
+    }).then((r: any) => r.data),
+  })
+
+export const useProposalDetail = (propId: string) =>
+  useQuery({
+    queryKey: ['proposal-detail', propId],
+    queryFn: () => apiClient.get(`/service-requests/proposals/${propId}`).then((r: any) => r.data),
+    enabled: !!propId,
+  })
+
+export const useCreateProposal = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: any) => apiClient.post(`/service-requests/proposals`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['all-proposals'] })
+      toast.success('Proposal created successfully')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useUpdateProposal = (propId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: any) => apiClient.patch(`/service-requests/proposals/${propId}`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['all-proposals'] })
+      qc.invalidateQueries({ queryKey: ['proposal-detail', propId] })
+      toast.success('Proposal updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useProposalDocuments = (propId: string) =>
+  useQuery({
+    queryKey: ['proposal-documents', propId],
+    queryFn: () => apiClient.get(`/service-requests/proposals/${propId}/documents`).then((r: any) => r.data),
+    enabled: !!propId,
+  })
+
+export const useGenerateProposalDocuments = (propId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiClient.post(`/service-requests/proposals/${propId}/documents/generate`).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['proposal-documents', propId] })
+      toast.success('Document generation triggered asynchronously')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const useProposalVersionHistory = (propId: string) =>
+  useQuery({
+    queryKey: ['proposal-version-history', propId],
+    queryFn: () => apiClient.get(`/service-requests/proposals/${propId}/version-history`).then((r: any) => r.data),
+    enabled: !!propId,
+  })
+
+export const useCreateProposalVersion = (propId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { description: string; changes_count?: number }) =>
+      apiClient.post(`/service-requests/proposals/${propId}/versions`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['proposal-version-history', propId] })
+      qc.invalidateQueries({ queryKey: ['proposal-detail', propId] })
+      toast.success('Proposal version successfully created')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+}
+
+export const usePricingRulesCatalog = () =>
+  useQuery({
+    queryKey: ['pricing-rules-catalog'],
+    queryFn: () => apiClient.get(`/service-requests/pricing-rules-catalog`).then((r: any) => r.data),
+  })
+
+export const useCreateProposalShareLink = (propId: string) =>
+  useMutation({
+    mutationFn: (payload: { expires_in_hours: number }) =>
+      apiClient.post(`/service-requests/proposals/${propId}/share`, payload).then((r: any) => r.data),
+    onSuccess: () => {
+      toast.success('Configurable public share link copied')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+  })
+
+
 
 
 

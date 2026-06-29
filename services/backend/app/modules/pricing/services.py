@@ -9,7 +9,7 @@ from app.modules.pricing.models import (
     DiscountRule, TaxRule, CurrencyRate, PricingSimulation, CostFormula,
     MarginPolicy, RevenueForecast
 )
-from app.modules.commercial.models import Service, StaffRate
+from app.modules.commercial.models import Service, StaffRole
 from app.modules.inventory.models import HardwareItem
 
 class PricingService:
@@ -216,21 +216,17 @@ class CostEngineService:
         hours: float
     ) -> float:
         """Calculate staff labor costs including base daily/hourly rates and overtime."""
-        stmt = select(StaffRate).where(
-            and_(
-                StaffRate.role_id == role_id,
-                StaffRate.region == region
-            )
-        )
-        rate = (await db.execute(stmt)).scalar_one_or_none()
-        if not rate:
+        stmt = select(StaffRole).where(StaffRole.id == role_id)
+        role = (await db.execute(stmt)).scalar_one_or_none()
+        if not role:
             return hours * 25.0 # fallback $25/hr
         
         # Calculate daily (8hr block) or hourly
-        base_rate = float(rate.hourly_rate)
+        base_rate = float(role.cost_per_day) / 8.0
         if hours > 8:
             overtime_hrs = hours - 8
-            cost = (base_rate * 8) + (overtime_hrs * float(rate.overtime_rate))
+            overtime_rate = base_rate * 1.5
+            cost = (base_rate * 8) + (overtime_hrs * overtime_rate)
         else:
             cost = base_rate * hours
         return cost

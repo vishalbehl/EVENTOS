@@ -23,7 +23,7 @@ class BlueprintTemplate(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     blueprint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("blueprints.event_blueprints.id", ondelete="CASCADE"), index=True)
-    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"))
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
 
 class BlueprintInstallation(Base):
     __tablename__ = "blueprint_installations"

@@ -11,7 +11,8 @@ import {
   MonitorPlay, BarChart3, SlidersHorizontal,
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
   Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
-  Code, ShieldCheck, Building2, CreditCard, Shield, Activity, Database, Search, Terminal, Share2
+  Code, ShieldCheck, Building2, CreditCard, Shield, Activity, Database, Search, Terminal, Share2,
+  Brain, Landmark, DollarSign, Percent, Sparkles, History, Calculator, Network, Grid, Library
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
@@ -28,82 +29,122 @@ export function Sidebar() {
   };
 
   const platformRoutes = [
-    { label: "Overview", icon: LayoutDashboard, href: "/overview" },
-    { label: "Organizations", icon: Building2, href: "/organizations" },
-    { 
-      label: "Commercial", 
+    {
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      subItems: [
+        { label: "Overview", icon: LayoutDashboard, href: "/dashboard/overview" },
+        { label: "Platform Health", icon: Activity, href: "/dashboard/platform-health" },
+        { label: "Live Activity", icon: Bell, href: "/dashboard/live-activity" },
+      ]
+    },
+    {
+      label: "Organizations",
+      icon: Building2,
+      href: "/organizations"
+    },
+    {
+      label: "Business",
       icon: Banknote,
       subItems: [
-        { label: "Revenue", icon: BarChart3, href: "/commercial/revenue" },
-        { label: "Plans & Limits", icon: SlidersHorizontal, href: "/commercial/plans" },
-        { label: "Subscriptions", icon: CreditCard, href: "/commercial/subscriptions" },
-        { label: "Invoices", icon: FileSpreadsheet, href: "/commercial/invoices" },
+        { label: "Dashboard", icon: LayoutDashboard, href: "/business/dashboard" },
+        { label: "Sales", type: "subheader" },
+        { label: "Service Requests", icon: ClipboardList, href: "/business/sales/service-requests" },
+        { label: "Quotes", icon: Calculator, href: "/business/sales/quotes/create" },
+        { label: "Proposals", icon: FileText, href: "/business/sales/proposals/create" },
+        { label: "Pricing", type: "subheader" },
+        { label: "Pricing Simulator", icon: Calculator, href: "/business/pricing/pricing-simulator" },
+        { label: "Saved Simulations", icon: History, href: "/business/pricing/saved-simulations" },
+        { label: "Templates", icon: Library, href: "/business/pricing/templates" },
+        { label: "Hardware Catalog", icon: Box, href: "/business/pricing/hardware-catalog" },
+        { label: "Staff Catalog", icon: Users, href: "/business/pricing/staff-catalog" },
+        { label: "Subscription", type: "subheader" },
+        { label: "Plans", icon: SlidersHorizontal, href: "/business/subscription/plans" },
+        { label: "Add-ons", icon: CreditCard, href: "/business/subscription/add-ons" },
+        { type: "divider" },
+        { label: "Revenue", icon: BarChart3, href: "/business/revenue" }
       ]
     },
-    { label: "Events Control", icon: Calendar, href: "/events" },
-    { 
-      label: "Applications", 
-      icon: Box,
+    {
+      label: "Finance",
+      icon: Landmark,
       subItems: [
-        { label: "Registry", icon: Layout, href: "/applications/registry" },
-        { label: "Feature Flags", icon: Code, href: "/applications/feature-flags" },
+        { label: "Invoices", icon: FileSpreadsheet, href: "/finance/invoices" },
+        { label: "Transactions", icon: DollarSign, href: "/finance/transactions" },
+        { label: "Payments", icon: CreditCard, href: "/finance/payments" },
+        { label: "Refunds", icon: DollarSign, href: "/finance/transactions" },
+        { label: "Taxes", icon: Percent, href: "/finance/taxes" },
       ]
     },
-    { 
-      label: "Operations", 
+    {
+      label: "Operations Center",
       icon: Settings,
       subItems: [
-        { label: "Ops Overview", icon: LayoutDashboard, href: "/operations" },
-        { label: "Requests Triage", icon: FileText, href: "/operations/requests" },
-        { label: "Gantt Scheduler", icon: Calendar, href: "/operations/projects" },
-        { label: "Crew Scheduler", icon: Users, href: "/operations/resources" },
-        { label: "On-Site Runbooks", icon: ClipboardList, href: "/operations/deployments" },
-        { label: "Readiness Center", icon: Activity, href: "/operations/readiness" },
-        { label: "Risk Register", icon: Shield, href: "/operations/risks" },
-        { label: "Operational Analytics", icon: BarChart3, href: "/operations/analytics" },
-        { label: "System Health", icon: Activity, href: "/operations/health" },
-        { label: "Background Jobs", icon: ClipboardList, href: "/operations/jobs" },
-        { label: "Database", icon: Database, href: "/operations/database" },
-        { label: "Storage Vault", icon: Box, href: "/operations/storage" },
-        { label: "Search Index", icon: Search, href: "/operations/search" },
+        { label: "Requests", icon: FileText, href: "/operations-center/requests" },
+        { label: "Projects", icon: Calendar, href: "/operations-center/projects" },
+        { label: "Resources", icon: Users, href: "/operations-center/resources" },
+        { label: "Deployments", icon: ClipboardList, href: "/operations-center/deployments" },
+        { label: "Venue Readiness", icon: Activity, href: "/operations-center/venue-readiness" },
+        { label: "Risk Analysis", icon: Shield, href: "/operations-center/risk-analysis" },
+        { label: "Jobs", icon: ClipboardList, href: "/operations-center/jobs" },
+        { label: "Database", icon: Database, href: "/operations-center/database" },
+        { label: "Storage", icon: Box, href: "/operations-center/storage" },
+        { label: "Search", icon: Search, href: "/operations-center/search" },
+        { label: "Analytics", icon: BarChart3, href: "/operations-center/analytics" },
       ]
     },
-    { 
-      label: "Security", 
+    {
+      label: "Identity & Security",
       icon: ShieldCheck,
       subItems: [
-        { label: "Global Users", icon: Users, href: "/security/users" },
-        { label: "Audit Trails", icon: FileText, href: "/security/audit" },
-        { label: "System Events", icon: Bell, href: "/security/events" },
-        { label: "Impersonation", icon: User, href: "/security/impersonation" },
+        { label: "Users", icon: Users, href: "/identity-security/users" },
+        { label: "Roles", icon: ShieldCheck, href: "/identity-security/users" },
+        { label: "Permissions", icon: Shield, href: "/identity-security/users" },
+        { label: "Audit Logs", icon: FileText, href: "/identity-security/audit-logs" },
+        { label: "Security Events", icon: Bell, href: "/identity-security/security-events" },
+        { label: "Impersonation", icon: User, href: "/identity-security/impersonation" },
       ]
     },
-    { 
-      label: "Developer", 
+    {
+      label: "Developer Platform",
       icon: Terminal,
       subItems: [
-        { label: "API Analytics", icon: BarChart3, href: "/developer/analytics" },
-        { label: "Webhooks", icon: Megaphone, href: "/developer/webhooks" },
-        { label: "Integrations", icon: Share2, href: "/developer/integrations" },
-        { label: "Rate Limits", icon: SlidersHorizontal, href: "/developer/rate-limits" },
+        { label: "APIs", icon: BarChart3, href: "/developer-platform/apis" },
+        { label: "API Keys", icon: SlidersHorizontal, href: "/developer-platform/api-keys" },
+        { label: "Webhooks", icon: Megaphone, href: "/developer-platform/webhooks" },
+        { label: "Integrations", icon: Share2, href: "/developer-platform/integrations" },
+        { label: "Logs", icon: FileText, href: "/developer-platform/logs" },
       ]
     },
-    { 
-      label: "Support", 
+    {
+      label: "AI Workspace",
+      icon: Brain,
+      subItems: [
+        { label: "Dashboard", icon: LayoutDashboard, href: "/ai-workspace/dashboard" },
+        { label: "Models", icon: SlidersHorizontal, href: "/ai-workspace/models" },
+        { label: "Agents", icon: ClipboardList, href: "/ai-workspace/agents" },
+        { label: "Prompt Library", icon: ClipboardList, href: "/ai-workspace/prompt-library" },
+        { label: "Automation", icon: SlidersHorizontal, href: "/ai-workspace/automation" },
+      ]
+    },
+    {
+      label: "Support Center",
       icon: Info,
       subItems: [
-        { label: "Ticket Queue", icon: ClipboardList, href: "/support/tickets" },
-        { label: "SLA Management", icon: Shield, href: "/support/sla" },
+        { label: "Tickets", icon: ClipboardList, href: "/support-center/tickets" },
+        { label: "Knowledge Base", icon: Shield, href: "/support-center/knowledge-base" },
+        { label: "Announcements", icon: Bell, href: "/support-center/announcements" },
       ]
     },
-    { 
-      label: "System Settings", 
+    {
+      label: "Platform Settings",
       icon: Palette,
       subItems: [
-        { label: "General", icon: Settings, href: "/settings/general" },
-        { label: "Platform Security", icon: ShieldCheck, href: "/settings/security" },
-        { label: "Email Templates", icon: Mail, href: "/settings/email-templates" },
-        { label: "Feature Catalog", icon: Layout, href: "/settings/feature-catalog" },
+        { label: "General", icon: Settings, href: "/platform-settings/general" },
+        { label: "Branding", icon: Palette, href: "/platform-settings/branding" },
+        { label: "Localization", icon: Info, href: "/platform-settings/localization" },
+        { label: "Notifications", icon: Mail, href: "/platform-settings/notifications" },
+        { label: "Authentication", icon: ShieldCheck, href: "/platform-settings/authentication" },
       ]
     },
   ];
@@ -118,11 +159,11 @@ export function Sidebar() {
     if (!pathname) return;
     const newOpen: Record<string, boolean> = {};
     currentRoutes.forEach((route: any) => {
-      if (route.subItems && route.subItems.some((sub: any) => pathname.startsWith(sub.href))) {
+      if (route.subItems && route.subItems.some((sub: any) => sub.href && pathname.startsWith(sub.href))) {
         newOpen[route.label] = true;
       }
     });
-    
+
     setOpenMenus(prev => {
       const needsUpdate = Object.keys(newOpen).some(key => !prev[key]);
       if (needsUpdate) {
@@ -138,7 +179,7 @@ export function Sidebar() {
       initial={false}
       animate={{ width: isCollapsed ? 80 : 288 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="relative flex h-full flex-col border-r border-[var(--border)] rounded-none z-40 bg-[var(--surf)] overflow-hidden"
+      className="relative flex h-full flex-col border-r border-[var(--sidebar-border)] rounded-none z-40 bg-[var(--sidebar-bg)] overflow-hidden"
     >
       <div className="flex flex-col h-full px-4 py-8 overflow-hidden">
         {/* Logo Section */}
@@ -150,18 +191,18 @@ export function Sidebar() {
             {/* Custom Logo Image */}
             <div className="relative shrink-0 flex items-center">
               {isCollapsed ? (
-                <img 
-                  src="/logo-icon.png" 
-                  alt="Logo" 
+                <img
+                  src="/logo-icon.png"
+                  alt="Logo"
                   className="h-8 w-8 object-contain"
                   onError={(e) => {
                     e.currentTarget.src = "/logo/1.png";
                   }}
                 />
               ) : (
-                <img 
-                  src="/logo.png" 
-                  alt="Logo" 
+                <img
+                  src="/logo.png"
+                  alt="Logo"
                   className="h-8 w-auto max-w-[160px] object-contain"
                   onError={(e) => {
                     e.currentTarget.src = "/logo/1.png";
@@ -172,11 +213,11 @@ export function Sidebar() {
           </div>
 
           <motion.button
-            whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.05)" }}
+            whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.06)" }}
             whileTap={{ scale: 0.95 }}
             onClick={toggleSidebar}
             className={cn(
-              "h-7 w-7 flex items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] transition-all bg-[var(--card)]/40 shadow-inner",
+              "flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)]/70 text-[var(--muted)] transition-all hover:text-[var(--text)]",
               isCollapsed ? "mt-2" : ""
             )}
             title={isCollapsed ? "Open sidebar" : "Close sidebar"}
@@ -193,12 +234,12 @@ export function Sidebar() {
         <div className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar py-2">
           {currentRoutes.map((route: any) => {
             const hasSubItems = !!route.subItems;
-            
+
             // If it has sub-items, render collapsible folder
             if (hasSubItems && route.subItems) {
-              const isAnySubActive = route.subItems.some((sub: any) => pathname === sub.href);
+              const isAnySubActive = route.subItems.some((sub: any) => sub.href && pathname === sub.href);
               const isOpen = !!openMenus[route.label];
-              
+
               return (
                 <div key={route.label} className="space-y-1 w-full">
                   {/* Parent Toggle Button */}
@@ -240,7 +281,7 @@ export function Sidebar() {
                           <span className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--pri)] px-2 py-1 border-b border-[var(--border)] mb-1 block">
                             {route.label}
                           </span>
-                          {route.subItems.map((sub: any) => (
+                          {route.subItems.filter((sub: any) => !sub.type).map((sub: any) => (
                             <Link key={sub.href} href={sub.href} className={cn(
                               "block px-2.5 py-2 rounded-lg transition-all text-xs font-bold",
                               pathname === sub.href ? "bg-[var(--pri)]/10 text-[var(--pri)]" : "text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--text)]"
@@ -263,19 +304,31 @@ export function Sidebar() {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden pl-3 space-y-1"
                       >
-                        {route.subItems.map((sub: any) => {
+                        {route.subItems.map((sub: any, idx: number) => {
+                          if (sub.type === "subheader") {
+                            return (
+                              <div key={sub.label} className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--muted)]/50 pl-3 pt-3 pb-1">
+                                {sub.label}
+                              </div>
+                            );
+                          }
+                          if (sub.type === "divider") {
+                            return (
+                              <div key={`div-${idx}`} className="h-[1px] bg-border/20 my-2" />
+                            );
+                          }
                           const isSubActive = pathname === sub.href;
                           return (
                             <Link key={sub.href} href={sub.href} className="block group/sub">
                               <div className={cn(
                                 "flex items-center h-10 px-3 rounded-xl text-[12px] font-bold tracking-wide transition-all duration-250",
                                 isSubActive
-                                  ? "bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-white shadow-[0_4px_12px_color-mix(in_srgb,var(--pri)_20%,transparent)]"
-                                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--card)]/30"
+                                  ? "bg-[var(--sidebar-item-active-bg)] border border-[var(--sidebar-item-active-border)]/20 text-[var(--text)]"
+                                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--sidebar-item-hover-bg)]/50"
                               )}>
                                 <sub.icon className={cn(
                                   "h-4 w-4 shrink-0 mr-3 transition-colors duration-200",
-                                  isSubActive ? "text-white" : "text-[var(--muted)] group-hover/sub:text-[var(--text)]"
+                                  isSubActive ? "text-[var(--text)]" : "text-[var(--muted)] group-hover/sub:text-[var(--text)]"
                                 )} />
                                 <span>{sub.label}</span>
                               </div>
@@ -298,14 +351,14 @@ export function Sidebar() {
                   className={cn(
                     "relative flex items-center h-11 rounded-xl px-3 transition-all duration-300 preserve-3d",
                     isActive
-                      ? "bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-white shadow-[0_4px_15px_color-mix(in_srgb,var(--pri)_25%,transparent)] font-semibold"
-                      : "text-[var(--muted)] hover:bg-[var(--card)]/30 hover:text-[var(--text)]"
+                      ? "bg-[var(--sidebar-item-active-bg)] border border-[var(--sidebar-item-active-border)]/20 text-[var(--text)] font-semibold"
+                      : "text-[var(--muted)] hover:bg-[var(--sidebar-item-hover-bg)]/50 hover:text-[var(--text)]"
                   )}
                 >
                   <route.icon className={cn(
                     "h-4 w-4 shrink-0 transition-colors duration-300",
                     isCollapsed ? "mx-auto" : "mr-4",
-                    isActive ? "text-white" : "text-[var(--muted)] group-hover:text-[var(--text)]"
+                    isActive ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]"
                   )} />
 
                   {!isCollapsed && (

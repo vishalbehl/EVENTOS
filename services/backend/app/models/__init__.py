@@ -16,6 +16,9 @@ from app.modules.platform.departments.models import Department, DepartmentMember
 from app.modules.platform.teams.models import Team, TeamMember
 from app.modules.platform.roles.models import DepartmentRole, UserAssignment
 from app.modules.platform.permissions.models import PlatformPermission, PlatformRolePermission
+# Phase 1 — Super Admin Console platform models
+from app.modules.platform.models.maintenance_window import MaintenanceWindow
+from app.modules.platform.models.platform_integration import PlatformIntegration
 
 from app.modules.billing.models.subscription import (
     SubscriptionPlan, OrganizationSubscription, PlanFeature,
@@ -24,9 +27,14 @@ from app.modules.billing.models.subscription import (
 )
 from app.modules.billing.models.event_activation import EventActivation
 from app.modules.billing.models.billing_domain_tables import (
-    Invoice, InvoiceItem, PaymentMethod, MarketplaceSubscription as BillingMarketplaceSubscription,
-    MarketplaceTransaction as BillingMarketplaceTransaction
+    Invoice, InvoiceItem, PaymentMethod
 )
+# Phase 1 — Super Admin Console billing models
+from app.modules.billing.models.subscription_analytics import SubscriptionAnalytics
+from app.modules.billing.models.org_credits import OrgCredit
+from app.modules.billing.models.payment_gateway import PaymentGateway
+from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
+from app.modules.billing.models.credit_notes import CreditNote
 
 from app.modules.support.models.ticket import SupportTicket, TicketComment
 from app.modules.support.models.support_domain_tables import (
@@ -35,19 +43,16 @@ from app.modules.support.models.support_domain_tables import (
 
 from app.modules.identity.models.user import User
 from app.modules.identity.models.refresh_token import RefreshToken
-from app.modules.identity.models.security_event import SecurityEvent, SystemErrorLog
+from app.modules.identity.models.security_event import SecurityEvent
 from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.identity.models.identity_domain_tables import (
-    MfaDevice, UserSession, PasswordHistory, LoginAttempt, UserApiKey,
+    MfaDevice, UserSession, PasswordHistory, LoginAttempt,
     PasswordResetToken, TrustedDevice, UserPreference, SsoIdentity
 )
 
-from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, UserAccessNode, ScopedPermission, RoleInheritanceMap
+from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, ScopedPermission, RoleInheritanceMap
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.rbac.models.organization_member import OrganizationMember
-from app.modules.rbac.models.rbac_domain_tables import (
-    PermissionGroup, PermissionSet, ApplicationPermission, FeaturePermission
-)
 UserOrganizationMembership = OrganizationMember
 
 from app.modules.events.models.event import Event
@@ -58,7 +63,7 @@ from app.modules.events.models.speaker import Speaker
 from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.events.models.events_domain_tables import (
-    Track, Agenda, AgendaItem, SessionTemplate, RoomAllocation, EventSetting, EventAsset
+    Track, Agenda, AgendaItem, SessionTemplate, EventSetting, EventAsset
 )
 
 from app.modules.presentations.models.presentation_file import PresentationFile
@@ -115,8 +120,7 @@ from app.modules.communications.models.communications_domain_tables import (
 from app.modules.integrations.models.webhook import Webhook
 from app.modules.integrations.models.integrations_domain_tables import (
     IntegrationProvider, IntegrationConnection, IntegrationOAuthConnection,
-    IntegrationSyncJob, IntegrationSyncHistory, IntegrationWebhookDelivery,
-    IntegrationExternalResource, IntegrationLog, IntegrationSetting, IntegrationMarketplaceApp
+    IntegrationWebhookDelivery, IntegrationExternalResource, IntegrationLog, IntegrationSetting
 )
 
 from app.modules.analytics.models.attendance_log import AttendanceLog
@@ -128,49 +132,29 @@ UsageMetric = OrganizationUsage
 
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.api_request_log import APIRequestLog, WorkerJobLog
-from app.modules.audit.models.audit_domain_tables import SecurityLog, DataExport, SystemChange, AccessReview, ImpersonationLog, PermissionAuditLog
+from app.modules.audit.models.audit_domain_tables import DataExport, SystemChange, AccessReview, ImpersonationLog, PermissionAuditLog
 
 from app.modules.applications.models.app_registry import AppRegistry, AppVersion, OrganizationApp, MobileConfiguration
 from app.modules.applications.models.applications_domain_tables import (
-    AppFeature, AppPermission, DeviceApp, AppRelease, AppConfiguration, PushNotificationConfig, AppAuditLog
+    AppRelease, AppConfiguration, PushNotificationConfig
 )
 
 from app.modules.developer.models.developer_registry import ApiKey, OAuthClient, RateLimit
 from app.modules.developer.models.developer_domain_tables import (
-    DeveloperApiScope, DeveloperApiUsage, DeveloperApiProduct, DeveloperApiSubscription,
-    DeveloperOAuthAuthorization, DeveloperOAuthToken, DeveloperSdkVersion, DeveloperApiAuditLog
+    DeveloperApiScope, DeveloperApiProduct, DeveloperApiSubscription,
+    DeveloperOAuthAuthorization, DeveloperOAuthToken
 )
 
 from app.modules.crm.models.core import Account, Contact, Lead
 from app.modules.crm.models.crm_domain_tables import (
-    PipelineStage, Opportunity, Task, Activity, Note, Contract, Proposal, CustomerHealth, Renewal, Interaction
-)
-
-from app.modules.marketplace.models.core import MarketplaceApp, MarketplaceReview, MarketplaceInstallation
-from app.modules.marketplace.models.marketplace_domain_tables import (
-    MarketplaceCategory, MarketplacePermission, MarketplaceAppSubscription,
-    MarketplaceAppTransaction, MarketplaceVersionHistory, MarketplacePackage
+    PipelineStage, Opportunity, Task, Activity, Note, Contract, Proposal, CustomerHealth, Renewal
 )
 
 from app.modules.workflow.models.workflow import (
     Workflow, WorkflowStep, WorkflowInstance, WorkflowTask, WorkflowAssignment, WorkflowHistory
 )
-from app.modules.platform_workflows.workflows.models import (
-    ApprovalWorkflow, ApprovalWorkflowStep, ApprovalStepApprover
-)
-from app.modules.platform_workflows.conditions.models import ApprovalWorkflowCondition
-from app.modules.platform_workflows.instances.models import (
-    ApprovalInstance, ApprovalInstanceStep, ApprovalAttachment
-)
-from app.modules.platform_workflows.comments.models import ApprovalComment
-from app.modules.platform_workflows.delegations.models import ApprovalDelegation
-from app.modules.platform_workflows.escalations.models import ApprovalEscalation
-from app.modules.platform_workflows.history.models import ApprovalHistory
 from app.modules.files.models.file import (
     Asset, AssetVersion, AssetTag, AssetPermission, StorageLocation, UploadSession, VirusScan
-)
-from app.modules.jobs.models.job import (
-    BackgroundJob, JobExecution, JobFailure, JobSchedule, JobLock
 )
 from app.modules.search.models.search import (
     SearchIndex, SearchDocument, SearchJob
@@ -184,45 +168,16 @@ from app.modules.mobile.models.mobile import (
 )
 
 from app.modules.ai.models.ai import (
-    AiAssistant, AiPrompt, AiPromptVersion, AiConversation, AiMessage, AiAction, AiUsage, AiCostTracking, AiFeedback, AiEmbedding
+    AiAssistant, AiPrompt, AiPromptVersion, AiConversation, AiMessage, AiUsage, AiCostTracking, AiFeedback, AiEmbedding
 )
 
 # platform_notifications models
-from app.modules.platform_notifications.events.models import NotificationEvent as PlatformNotificationEvent
 from app.modules.platform_notifications.templates.models import NotificationTemplate
-from app.modules.platform_notifications.preferences.models import NotificationPreference as PlatformNotificationPreference
-from app.modules.platform_notifications.queue.models import NotificationQueue as PlatformNotificationQueue
-from app.modules.platform_notifications.deliveries.models import (
-    NotificationDelivery, InAppNotification, NotificationAttachment
-)
-from app.modules.platform_notifications.announcements.models import SystemAnnouncement
-from app.modules.platform_notifications.webhooks.models import NotificationWebhook
-from app.modules.platform_notifications.subscriptions.models import (
-    NotificationGroup, NotificationGroupMember, NotificationSubscription
-)
-from app.modules.platform_notifications.digests.models import NotificationDigest
-from app.modules.platform_notifications.logs.models import NotificationLog
-
-# platform_audit models
-from app.modules.platform_audit.models import (
-    PlatformAuditLog, EntityHistory, LoginHistory, ApiActivityLog,
-    ExportLog, PlatformImpersonationLog, DataAccessLog
-)
-
-# platform_activity models
-from app.modules.platform_activity.models import (
-    UserActivityLog, ActivityFeed, ActivitySubscription
-)
-
-# platform_compliance models
-from app.modules.platform_compliance.models import (
-    PlatformSecurityEvent, ComplianceReport, RetentionPolicy
-)
 
 # commercial models
 from app.modules.commercial.models import (
     ServiceCategory, Service, ServiceFeature, ServicePackage,
-    PackageService, StaffRole, StaffRate, StaffSkill
+    PackageService, StaffRole
 )
 
 # inventory models
@@ -244,9 +199,7 @@ from app.modules.procurement.models import (
 
 # templates models
 from app.modules.templates.models import (
-    TemplateCategory, Template, TemplateVersion, TemplateDependency,
-    TemplateInstallation, TemplateUsage, TemplateReview,
-    TemplateMarketplaceCategory, MarketplaceListing, MarketplacePurchase, MarketplaceFavorite
+    TemplateCategory, RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
 )
 
 # website_builder models
@@ -255,19 +208,9 @@ from app.modules.website_builder.models import (
     NavigationMenu, MenuItem, Blog, SiteDomain
 )
 
-# design_system models
-from app.modules.design_system.models import (
-    DesignToken, ThemePreset, ComponentLibrary
-)
-
-# theme_engine models
-from app.modules.theme_engine.models import (
-    Theme, ThemeAsset
-)
-
 # blueprints models
 from app.modules.blueprints.models import (
-    EventBlueprint, BlueprintTemplate, BlueprintInstallation, BlueprintStep
+    EventBlueprint, BlueprintTemplate, BlueprintStep
 )
 
 # technology_services models
@@ -280,8 +223,7 @@ from app.modules.technology_services.models import (
 # operations_planning models
 from app.modules.operations_planning.models import (
     Project, Milestone, ProjectTask, TaskDependency,
-    ProjectTemplate, ProjectTemplateTask, EventTimeline, TimelineMilestone, TimelineDependency,
-    ProjectVendor, VendorAssignment, ProjectDependency, ProjectBlocker
+    ProjectTemplate, ProjectTemplateTask, EventTimeline, ProjectVendor, ProjectBlocker
 )
 
 # resource_management models
@@ -294,8 +236,7 @@ from app.modules.resource_management.models import (
 from app.modules.deployment_management.models import (
     Deployment, DeploymentChecklist, DeploymentLog, ReadinessScore, Risk,
     DeploymentRunbook, DeploymentStep, Issue, RiskAction, RiskEscalation, RiskComment,
-    ProjectCost, ProjectActual, ProjectProfitability, ProjectActualCost,
-    ServiceMetric, ProjectMetric, ResourceMetric, DeploymentMetric
+    ProjectCost, ProjectActual, ProjectProfitability
 )
 
 

@@ -37,17 +37,17 @@ export function DataTable<TData>({
   const pageCount = table.getPageCount();
 
   return (
-    <div className="flex flex-col min-h-0 w-full space-y-4">
-      <div className="relative rounded-xl border border-border bg-surface overflow-hidden flex-1 min-h-0">
-        <div className="w-full overflow-x-auto min-h-[300px]">
+    <div className="space-y-4 w-full">
+      <div className="rounded-xl border border-border bg-surface overflow-hidden w-full">
+        <div className="w-full overflow-auto max-h-[calc(100vh-420px)] min-h-[300px]">
           <table className="w-full text-left border-collapse">
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
-                <tr key={headerGroup.id} className="border-b border-border/80 bg-surface-2/40">
+                <tr key={headerGroup.id} className="border-b border-border/80">
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="h-10 px-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-tertiary)] select-none align-middle"
+                      className="sticky top-0 z-10 h-10 px-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-[var(--bg-surface-2)] border-b border-border select-none align-middle"
                       style={{ width: header.getSize() }}
                     >
                       {header.isPlaceholder
@@ -96,7 +96,7 @@ export function DataTable<TData>({
                       {emptyState?.actionLabel && emptyState?.onAction && (
                         <button
                           onClick={emptyState.onAction}
-                          className="px-4 py-2 rounded-xl bg-[var(--brand-primary)] text-white text-xs font-semibold hover:bg-[var(--brand-primary-hover)] transition-all duration-200"
+                          className="px-4 py-2 rounded-xl bg-[var(--brand-primary)] text-[var(--primary-foreground)] text-xs font-semibold hover:bg-[var(--brand-primary-hover)] transition-all duration-200"
                         >
                           {emptyState.actionLabel}
                         </button>
@@ -133,10 +133,10 @@ export function DataTable<TData>({
         </div>
       </div>
 
-      {/* Pagination row */}
+      {/* Pagination row as a separate card below the table canvas */}
       {pageCount > 1 && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-1 py-1">
-          <p className="text-xs text-[var(--text-secondary)]">
+        <div className="rounded-xl border border-border bg-surface px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <p className="text-xs text-[var(--text-secondary)] font-medium">
             Showing <span className="font-semibold text-[var(--text-primary)]">{fromRow}</span> to{" "}
             <span className="font-semibold text-[var(--text-primary)]">{toRow}</span> of{" "}
             <span className="font-semibold text-[var(--text-primary)]">{totalRows}</span> results
@@ -162,7 +162,7 @@ export function DataTable<TData>({
                     className={cn(
                       "w-7 h-7 text-xs font-semibold rounded-lg flex items-center justify-center transition-all duration-150",
                       isCurrent
-                        ? "bg-[var(--brand-primary)] text-white"
+                        ? "bg-[var(--brand-primary)] text-[var(--primary-foreground)]"
                         : "text-[var(--text-secondary)] hover:bg-surface-2 hover:text-[var(--text-primary)] border border-transparent hover:border-border"
                     )}
                   >

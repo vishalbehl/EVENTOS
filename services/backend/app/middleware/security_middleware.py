@@ -10,8 +10,37 @@ from starlette.types import ASGIApp
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.modules.platform_compliance.models import PlatformSecurityEvent
-from app.modules.platform_compliance.security_services import SecurityEventService
+from app.modules.identity.models.security_event import SecurityEvent
+
+async def record_security_event(
+    db,
+    user_id: Optional[uuid.UUID],
+    event_type: str,
+    severity: str,
+    ip_address: Optional[str],
+    user_agent: Optional[str],
+    evidence: dict
+) -> None:
+    severity_map = {
+        "LOW": (2.0, "LOW"),
+        "MEDIUM": (5.0, "MEDIUM"),
+        "HIGH": (7.5, "HIGH"),
+        "CRITICAL": (9.0, "CRITICAL")
+    }
+    score, risk = severity_map.get(severity, (0.0, "LOW"))
+    
+    event = SecurityEvent(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        event_type=event_type,
+        severity_score=score,
+        risk_level=risk,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        evidence=evidence,
+        occurred_at=datetime.now(timezone.utc)
+    )
+    db.add(event)
 
 # Simple regexes to detect SQL injection patterns in query string/path
 SQLI_PATTERN = re.compile(
@@ -80,14 +109,14 @@ class SecurityMiddleware:
             # Write SQLi Alert
             async with AsyncSessionLocal() as db:
                 try:
-                    await SecurityEventService.record_security_event(
+                    await record_security_event(
                         db=db,
-                        organization_id=org_id,
+                        user_id=user_id,
                         event_type="SQL_INJECTION_ATTEMPT",
                         severity="CRITICAL",
-                        title="SQL Injection Pattern Detected",
-                        description=f"Request from IP {request.client.host if request.client else 'unknown'} matched SQLi regex. Content: {detected_payload}",
-                        metadata={"path": path, "query": query_string, "method": method}
+                        ip_address=request.client.host if request.client else None,
+                        user_agent=request.headers.get("User-Agent"),
+                        evidence={"path": path, "query": query_string, "method": method, "detected_payload": detected_payload}
                     )
                     await db.commit()
                 except Exception as e:
@@ -106,14 +135,14 @@ class SecurityMiddleware:
         if status_code[0] == 401 and "login" in path.lower():
             async with AsyncSessionLocal() as db:
                 try:
-                    await SecurityEventService.record_security_event(
+                    await record_security_event(
                         db=db,
-                        organization_id=org_id,
+                        user_id=user_id,
                         event_type="FAILED_LOGIN_ANOMALY",
                         severity="MEDIUM",
-                        title="Failed Login Attempt Detected",
-                        description=f"Authentication failure on {path} from IP {request.client.host if request.client else 'unknown'}.",
-                        metadata={"path": path, "user_id": str(user_id) if user_id else None}
+                        ip_address=request.client.host if request.client else None,
+                        user_agent=request.headers.get("User-Agent"),
+                        evidence={"path": path}
                     )
                     await db.commit()
                 except Exception as e:
@@ -123,14 +152,14 @@ class SecurityMiddleware:
         elif status_code[0] == 403:
             async with AsyncSessionLocal() as db:
                 try:
-                    await SecurityEventService.record_security_event(
+                    await record_security_event(
                         db=db,
-                        organization_id=org_id,
+                        user_id=user_id,
                         event_type="PERMISSION_VIOLATION",
                         severity="HIGH",
-                        title="Unauthorized Access Attempt",
-                        description=f"User {user_id or 'Anonymous'} was denied access (403 Forbidden) to endpoint {method} {path}.",
-                        metadata={"path": path, "method": method, "user_id": str(user_id) if user_id else None}
+                        ip_address=request.client.host if request.client else None,
+                        user_agent=request.headers.get("User-Agent"),
+                        evidence={"path": path, "method": method}
                     )
                     await db.commit()
                 except Exception as e:

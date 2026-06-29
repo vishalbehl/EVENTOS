@@ -1,30 +1,96 @@
-import * as React from "react"
-import { cn } from "@/lib/utils"
+import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "@/lib/utils";
 
-const Badge = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { variant?: 'default' | 'secondary' | 'outline' | 'destructive' | 'success' }
->(({ className, variant = 'default', ...props }, ref) => {
-  const variants = {
-    default: "border-[color-mix(in_srgb,var(--pri)_35%,transparent)] bg-[color-mix(in_srgb,var(--pri)_20%,transparent)] text-[var(--sec)]",
-    secondary: "border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] text-muted",
-    outline: "border-default text-[var(--text)]",
-    destructive: "border-[color-mix(in_srgb,var(--dan)_30%,transparent)] bg-[color-mix(in_srgb,var(--dan)_12%,transparent)] text-[var(--dan)]",
-    success: "border-[color-mix(in_srgb,var(--success)_35%,transparent)] bg-[color-mix(in_srgb,var(--success)_15%,transparent)] text-[var(--success)]",
+const badgeVariants = cva(
+  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-wide transition-all duration-150 select-none border",
+  {
+    variants: {
+      variant: {
+        default: "",
+        secondary: "",
+        outline: "",
+        destructive: "",
+        success: "",
+        warning: "",
+        info: "",
+        muted: "",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
   }
-  
+);
+
+export interface BadgeProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof badgeVariants> {}
+
+function Badge({ className, variant, style, ...props }: BadgeProps) {
+  const variantStyles: React.CSSProperties = (() => {
+    switch (variant) {
+      case "default":
+      case undefined:
+        return {
+          background: "color-mix(in srgb, var(--color-primary-start) 15%, transparent)",
+          color: "var(--color-primary-mid)",
+          borderColor: "color-mix(in srgb, var(--color-primary-start) 30%, transparent)",
+        };
+      case "secondary":
+        return {
+          background: "var(--color-surface-3)",
+          color: "var(--color-text-secondary)",
+          borderColor: "var(--color-border)",
+        };
+      case "outline":
+        return {
+          background: "transparent",
+          color: "var(--color-text-secondary)",
+          borderColor: "var(--color-border)",
+        };
+      case "destructive":
+        return {
+          background: "var(--color-danger-muted)",
+          color: "var(--color-danger)",
+          borderColor: "color-mix(in srgb, var(--color-danger) 25%, transparent)",
+        };
+      case "success":
+        return {
+          background: "var(--color-success-muted)",
+          color: "var(--color-success)",
+          borderColor: "color-mix(in srgb, var(--color-success) 25%, transparent)",
+        };
+      case "warning":
+        return {
+          background: "var(--color-warning-muted)",
+          color: "var(--color-warning)",
+          borderColor: "color-mix(in srgb, var(--color-warning) 25%, transparent)",
+        };
+      case "info":
+        return {
+          background: "var(--color-info-muted)",
+          color: "var(--color-info)",
+          borderColor: "color-mix(in srgb, var(--color-info) 25%, transparent)",
+        };
+      case "muted":
+        return {
+          background: "var(--color-surface-3)",
+          color: "var(--color-text-muted)",
+          borderColor: "var(--color-border)",
+        };
+      default:
+        return {};
+    }
+  })();
+
   return (
     <div
-      ref={ref}
-      className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-        variants[variant],
-        className
-      )}
+      className={cn(badgeVariants({ variant }), className)}
+      style={{ ...variantStyles, ...style }}
       {...props}
     />
-  )
-})
-Badge.displayName = "Badge"
+  );
+}
 
-export { Badge }
+export { Badge, badgeVariants };

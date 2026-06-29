@@ -10,7 +10,7 @@ class NotificationTemplate(Base, SoftDeleteMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=True, index=True)
-    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform_notifications.notification_events.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     channel: Mapped[str] = mapped_column(String(50), index=True)
     name: Mapped[str] = mapped_column(String(200))
     subject: Mapped[str] = mapped_column(String(200), nullable=True)

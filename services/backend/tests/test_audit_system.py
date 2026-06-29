@@ -57,8 +57,11 @@ async def test_audit_log_row_hashing(db: AsyncSession, super_admin):
     assert log.row_hash is not None
 
     # Calculate expected hash manually
-    state_str = json.dumps(state, sort_keys=True)
-    payload = f"{action}:{res_id}:{actor_id}:{occurred.isoformat()}:{state_str}"
+    schema_name = "audit"
+    table_name = "logs"
+    record_id = str(res_id)
+    timestamp = occurred.isoformat()
+    payload = f"{schema_name}:{table_name}:{record_id}:{action}:{timestamp}"
     expected_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     assert log.row_hash == expected_hash

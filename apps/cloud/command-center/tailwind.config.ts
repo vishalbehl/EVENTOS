@@ -31,7 +31,11 @@ const config: Config = {
           foreground: "white",
         },
         secondary: {
-          DEFAULT: "var(--sec)",
+          DEFAULT: "var(--text-secondary)",
+          foreground: "var(--text)",
+        },
+        tertiary: {
+          DEFAULT: "var(--text-tertiary)",
           foreground: "var(--text)",
         },
         destructive: {
