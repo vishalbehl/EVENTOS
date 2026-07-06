@@ -141,6 +141,7 @@ export interface SubscriptionPlan {
   currency: string;
   price_per_event_min?: number;
   price_per_event_max?: number;
+  price_per_event?: number;
   price_display: string;
   max_events: number;
   max_users: number;
@@ -151,6 +152,7 @@ export interface SubscriptionPlan {
   max_ticket_categories?: number;
   max_badge_templates?: number;
   max_certificate_templates?: number;
+  max_emails_per_event?: number;
   storage_quota_mb: number;
   display_order: number;
   is_popular: boolean;
@@ -179,11 +181,35 @@ export interface FeatureMatrixCategory {
   features: FeatureMatrixItem[];
 }
 
+export interface FeatureCatalogItem {
+  id: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  category: string;
+  category_order: number;
+  feature_order: number;
+  is_active: boolean;
+}
+
+export interface FeatureCatalogPayload {
+  key: string;
+  name: string;
+  description?: string | null;
+  category: string;
+  category_order?: number | null;
+  feature_order?: number | null;
+  is_active: boolean;
+}
+
 export interface Addon {
   id: string;
   key: string;
   name: string;
   description?: string;
+  addon_type: "PLAN" | "VENUE";
+  short_description?: string;
+  image_url?: string;
   price_inr?: number;
   min_price_inr?: number;
   max_price_inr?: number;
@@ -195,6 +221,12 @@ export interface Addon {
   created_at: string;
   feature_ids?: string[];
   features_spec?: { category: string; feature: string; value: string; price?: number }[];
+  hardware_spec?: { item_id: string; quantity: number; days: number }[];
+  staff_spec?: { role_id: string; quantity: number; days: number }[];
+  inclusions?: string[];
+  exclusions?: string[];
+  consumables_cost?: number;
+  template_types?: ("registration" | "srr" | "room" | "other")[];
 }
 
 
@@ -385,7 +417,6 @@ export interface OrgFeature {
   key: string;
   name: string;
   is_enabled: boolean;
-  is_addon: boolean;
 }
 
 export interface SearchJob {
@@ -543,7 +574,7 @@ export const adminApi = {
     }),
 
   updateOrgStatus: (id: string, isActive: boolean, reason?: string) =>
-    apiClient.patch(`/platform/organizations/${id}/status`, {
+    apiClient.patch<any>(`/platform/organizations/${id}/status`, {
       is_active: isActive,
       suspension_reason: reason,
     }),
@@ -556,13 +587,13 @@ export const adminApi = {
     apiClient.get<SubscriptionPlan[]>("/platform/subscription-plans"),
 
   createPlan: (data: Partial<SubscriptionPlan>) =>
-    apiClient.post("/platform/subscription-plans", data),
+    apiClient.post<any>("/platform/subscription-plans", data),
 
   updatePlan: (id: string, data: Partial<SubscriptionPlan>) =>
-    apiClient.patch(`/platform/subscription-plans/${id}`, data),
+    apiClient.patch<any>(`/platform/subscription-plans/${id}`, data),
 
   getFeaturesCatalog: () =>
-    apiClient.get<any[]>("/platform/features"),
+    apiClient.get<FeatureCatalogItem[]>("/platform/features"),
 
   getFeatureMatrix: () =>
     apiClient.get<FeatureMatrixCategory[]>("/platform/features/matrix"),
@@ -571,10 +602,13 @@ export const adminApi = {
     apiClient.get<Addon[]>("/platform/addons"),
 
   createAddon: (data: any) =>
-    apiClient.post("/platform/addons", data),
+    apiClient.post<any>("/platform/addons", data),
 
   patchAddon: (addonId: string, data: any) =>
-    apiClient.patch(`/platform/addons/${addonId}`, data),
+    apiClient.patch<any>(`/platform/addons/${addonId}`, data),
+
+  deleteAddon: (addonId: string) =>
+    apiClient.delete(`/platform/addons/${addonId}`),
 
   getPlanFeatures: (planId: string) =>
     apiClient.get<string[]>(`/platform/subscription-plans/${planId}/features`),
@@ -630,7 +664,7 @@ export const adminApi = {
     apiClient.get<TicketComment[]>(`/support/tickets/${ticketId}/comments`),
 
   addTicketComment: (ticketId: string, content: string) =>
-    apiClient.post(`/support/tickets/${ticketId}/comments`, { content }),
+    apiClient.post<any>(`/support/tickets/${ticketId}/comments`, { content }),
 
   getGlobalSettings: () =>
     apiClient.get<GlobalSettings>("/global-settings"),
@@ -638,14 +672,20 @@ export const adminApi = {
   updateGlobalSettings: (data: Partial<GlobalSettings>) =>
     apiClient.patch<GlobalSettings>("/global-settings", data),
 
-  createFeatureCatalogItem: (data: any) =>
-    apiClient.post("/platform/features", data),
+  createFeatureCatalogItem: (data: FeatureCatalogPayload) =>
+    apiClient.post<FeatureCatalogItem>("/platform/features", data),
 
-  updateFeatureCatalogItem: (id: string, data: any) =>
-    apiClient.patch(`/platform/features/${id}`, data),
+  updateFeatureCatalogItem: (id: string, data: FeatureCatalogPayload) =>
+    apiClient.patch<FeatureCatalogItem>(`/platform/features/${id}`, data),
 
   deleteFeatureCatalogItem: (id: string) =>
     apiClient.delete(`/platform/features/${id}`),
+
+  reorderFeatureCategories: (categories: string[]) =>
+    apiClient.patch("/platform/feature-categories/reorder", { categories }),
+
+  reorderFeatures: (category: string, featureIds: string[]) =>
+    apiClient.patch("/platform/feature-orders/reorder", { category, feature_ids: featureIds }),
 
   getHealth: () =>
     apiClient.get<any>("/platform/health"),
@@ -654,13 +694,13 @@ export const adminApi = {
     apiClient.get<StatusCounts>("/platform/subscriptions/health-summary"),
 
   changeOrgPlan: (orgId: string, planId: string) =>
-    apiClient.patch(`/platform/organizations/${orgId}/subscription/plan`, { plan_id: planId }),
+    apiClient.patch<any>(`/platform/organizations/${orgId}/subscription/plan`, { plan_id: planId }),
 
   extendTrial: (orgId: string, days: number, reason: string) =>
-    apiClient.patch(`/platform/organizations/${orgId}/trial/extend`, { days, reason }),
+    apiClient.patch<any>(`/platform/organizations/${orgId}/trial/extend`, { days, reason }),
 
   applyCredit: (orgId: string, amount: number, currency: string, reason: string) =>
-    apiClient.post(`/platform/organizations/${orgId}/apply-credit`, { amount, currency, reason }),
+    apiClient.post<any>(`/platform/organizations/${orgId}/apply-credit`, { amount, currency, reason }),
 
   reset2FA: (userId: string) =>
     apiClient.delete(`/platform/users/${userId}/2fa`),
@@ -681,7 +721,7 @@ export const adminApi = {
     apiClient.delete(`/platform/organizations/${orgId}/domains/${domainId}`),
 
   verifyOrgDomain: (orgId: string, domainId: string) =>
-    apiClient.post(`/platform/organizations/${orgId}/domains/${domainId}/verify`),
+    apiClient.post<any>(`/platform/organizations/${orgId}/domains/${domainId}/verify`),
 
   getOrgEvents: (orgId: string) =>
     apiClient.get<OrgEvent[]>(`/platform/organizations/${orgId}/events`),
@@ -702,7 +742,7 @@ export const adminApi = {
     apiClient.delete(`/platform/organizations/${orgId}`),
 
   updateUserStatus: (userId: string, isActive: boolean) =>
-    apiClient.patch(`/platform/users/${userId}/status`, { is_active: isActive }),
+    apiClient.patch<any>(`/platform/users/${userId}/status`, { is_active: isActive }),
 
   deleteOrgFeatureOverride: (orgId: string, featureId: string) =>
     apiClient.delete(`/platform/organizations/${orgId}/features/overrides/${featureId}`),
@@ -719,34 +759,34 @@ export const adminApi = {
     apiClient.get<{ items: any[]; next_cursor: string | null; has_next: boolean }>("/platform/audit", { params }),
 
   patchPlanLimits: (planId: string, data: any) =>
-    apiClient.patch(`/platform/plans/${planId}`, data),
+    apiClient.patch<any>(`/platform/plans/${planId}`, data),
 
   updatePlanFeaturesBulk: (planId: string, featureKeys: string[]) =>
     apiClient.put(`/platform/plans/${planId}/features`, { feature_keys: featureKeys }),
 
   bulkExtendTrial: (data: { org_ids: string[]; days: number; reason: string }) =>
-    apiClient.post(`/platform/subscriptions/bulk-extend`, data),
+    apiClient.post<any>(`/platform/subscriptions/bulk-extend`, data),
 
   bulkChangePlan: (data: { org_ids: string[]; plan_id: string }) =>
-    apiClient.post(`/platform/subscriptions/bulk-change-plan`, data),
+    apiClient.post<any>(`/platform/subscriptions/bulk-change-plan`, data),
 
   cancelSubscription: (subId: string) =>
-    apiClient.post(`/platform/subscriptions/${subId}/cancel`),
+    apiClient.post<any>(`/platform/subscriptions/${subId}/cancel`),
 
   reactivateSubscription: (subId: string) =>
-    apiClient.post(`/platform/subscriptions/${subId}/reactivate`),
+    apiClient.post<any>(`/platform/subscriptions/${subId}/reactivate`),
 
   getInvoiceItems: (invoiceId: string) =>
     apiClient.get<any[]>(`/platform/invoices/${invoiceId}/items`),
 
   markInvoicePaid: (invoiceId: string) =>
-    apiClient.post(`/platform/invoices/${invoiceId}/mark-paid`),
+    apiClient.post<any>(`/platform/invoices/${invoiceId}/mark-paid`),
 
   sendInvoiceReminder: (invoiceId: string) =>
-    apiClient.post(`/platform/invoices/${invoiceId}/send-reminder`),
+    apiClient.post<any>(`/platform/invoices/${invoiceId}/send-reminder`),
 
   voidInvoice: (invoiceId: string) =>
-    apiClient.post(`/platform/invoices/${invoiceId}/void`),
+    apiClient.post<any>(`/platform/invoices/${invoiceId}/void`),
 
   getRevenueAnalytics: () =>
     apiClient.get<any>("/platform/revenue/analytics"),
@@ -755,16 +795,16 @@ export const adminApi = {
     apiClient.delete(`/platform/users/${userId}/sessions`),
 
   exportAuditLogs: (payload: any) =>
-    apiClient.post(`/platform/audit/export`, payload),
+    apiClient.post<any>(`/platform/audit/export`, payload),
 
   retryJobExecution: (executionId: string) =>
-    apiClient.post(`/jobs/executions/${executionId}/retry`),
+    apiClient.post<any>(`/jobs/executions/${executionId}/retry`),
 
   cancelJobExecution: (executionId: string) =>
     apiClient.delete(`/jobs/executions/${executionId}`),
 
   endImpersonationSession: (sessionId: string) =>
-    apiClient.post(`/platform/impersonation/${sessionId}/end`),
+    apiClient.post<any>(`/platform/impersonation/${sessionId}/end`),
 
   getJobFailures: (executionId: string) =>
     apiClient.get<any>(`/jobs/executions/${executionId}/failures`),
@@ -855,6 +895,14 @@ export const useUpdateAddon = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: adminKeys.addons });
     },
+  });
+};
+
+export const useDeleteAddon = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (addonId: string) => adminApi.deleteAddon(addonId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.addons }),
   });
 };
 
@@ -1409,7 +1457,7 @@ export const useEndImpersonationSession = () => {
 export const useCreateFeatureCatalogItem = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => adminApi.createFeatureCatalogItem(data),
+    mutationFn: (data: FeatureCatalogPayload) => adminApi.createFeatureCatalogItem(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
     },
@@ -1419,7 +1467,7 @@ export const useCreateFeatureCatalogItem = () => {
 export const useUpdateFeatureCatalogItem = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => adminApi.updateFeatureCatalogItem(id, data),
+    mutationFn: ({ id, data }: { id: string; data: FeatureCatalogPayload }) => adminApi.updateFeatureCatalogItem(id, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
     },
@@ -1430,6 +1478,27 @@ export const useDeleteFeatureCatalogItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => adminApi.deleteFeatureCatalogItem(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
+    },
+  });
+};
+
+export const useReorderFeatureCategories = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (categories: string[]) => adminApi.reorderFeatureCategories(categories),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
+    },
+  });
+};
+
+export const useReorderFeatures = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ category, featureIds }: { category: string; featureIds: string[] }) =>
+      adminApi.reorderFeatures(category, featureIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.featuresCatalog });
     },
@@ -1846,6 +1915,7 @@ export const useRunPricingSimulation = () =>
   useMutation({
     mutationFn: (body: {
       pricing_rule_id: string
+      name?: string
       event_city_tier: string
       event_days: number
       attendee_count: number
@@ -1854,6 +1924,7 @@ export const useRunPricingSimulation = () =>
       srr_stations: number
       selected_hardware: { hardware_item_id: string; quantity: number }[]
       selected_staff: { staff_role_id: string; quantity: number; days: number }[]
+      snapshot?: Record<string, any>
     }) =>
       apiClient.post<SimulationResult>(
         '/pricing/superadmin/catalog/pricing-simulator/run', body
@@ -1868,7 +1939,6 @@ export const useCatalogTemplates = () =>
         room_templates: any[]
         registration_templates: any[]
         srr_templates: any[]
-        network_templates: any[]
       }>('/pricing/superadmin/catalog/templates'),
     staleTime: 300_000,
   })
@@ -1877,7 +1947,7 @@ export const useCreateTemplate = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: any) =>
-      apiClient.post('/pricing/superadmin/catalog/templates', body),
+      apiClient.post<any>('/pricing/superadmin/catalog/templates', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['catalog-templates'] })
       toast.success('Template created successfully')
@@ -1903,7 +1973,7 @@ export const useDuplicateTemplate = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (slug: string) =>
-      apiClient.post(`/pricing/superadmin/catalog/templates/${slug}/duplicate`),
+      apiClient.post<any>(`/pricing/superadmin/catalog/templates/${slug}/duplicate`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['catalog-templates'] })
       toast.success('Template duplicated successfully')
@@ -1916,7 +1986,7 @@ export const useSetDefaultTemplate = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (slug: string) =>
-      apiClient.post(`/pricing/superadmin/catalog/templates/${slug}/default`),
+      apiClient.post<any>(`/pricing/superadmin/catalog/templates/${slug}/default`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['catalog-templates'] })
       toast.success('Default template set successfully')
@@ -1942,7 +2012,7 @@ export const useCreateHardwareItem = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Partial<HardwareItem>) =>
-      apiClient.post('/inventory/superadmin/catalog/hardware', body),
+      apiClient.post<any>('/inventory/superadmin/catalog/hardware', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
       toast.success('Hardware item created')
@@ -1955,7 +2025,7 @@ export const useUpdateHardwareItem = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<HardwareItem> & { id: string }) =>
-      apiClient.patch(`/inventory/superadmin/catalog/hardware/${id}`, body),
+      apiClient.patch<any>(`/inventory/superadmin/catalog/hardware/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
       toast.success('Hardware item updated')
@@ -1968,7 +2038,7 @@ export const useImportHardwareExcel = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (formData: FormData) =>
-      apiClient.post('/inventory/superadmin/catalog/hardware/import', formData, {
+      apiClient.post<any>('/inventory/superadmin/catalog/hardware/import', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -1985,7 +2055,7 @@ export const useCreateStaffRole = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: any) =>
-      apiClient.post('/commercial/superadmin/catalog/staff', body),
+      apiClient.post<any>('/commercial/superadmin/catalog/staff', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff-catalog'] })
       toast.success('Staff role created')
@@ -1998,7 +2068,7 @@ export const useUpdateStaffRole = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: any) =>
-      apiClient.patch(`/commercial/superadmin/catalog/staff/${id}`, body),
+      apiClient.patch<any>(`/commercial/superadmin/catalog/staff/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff-catalog'] })
       toast.success('Staff role updated')
@@ -2011,7 +2081,7 @@ export const useCreatePricingRule = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: any) =>
-      apiClient.post('/pricing/superadmin/catalog/pricing-rules', body),
+      apiClient.post<any>('/pricing/superadmin/catalog/pricing-rules', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pricing-rules'] })
       toast.success('Pricing rule created')
@@ -2024,7 +2094,7 @@ export const useUpdatePricingRule = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: any) =>
-      apiClient.patch(`/pricing/superadmin/catalog/pricing-rules/${id}`, body),
+      apiClient.patch<any>(`/pricing/superadmin/catalog/pricing-rules/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pricing-rules'] })
       toast.success('Pricing rule updated')
@@ -2037,7 +2107,7 @@ export const useImportStaffExcel = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (formData: FormData) =>
-      apiClient.post('/commercial/superadmin/catalog/staff/import', formData, {
+      apiClient.post<any>('/commercial/superadmin/catalog/staff/import', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -2076,14 +2146,14 @@ export const useDeletePricingSimulation = () => {
 export const useServiceRequestsKpi = (eventId: string) =>
   useQuery({
     queryKey: ['service-requests-kpi', eventId],
-    queryFn: () => apiClient.get(`/service-requests/kpi-strip?event_id=${eventId}`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/kpi-strip?event_id=${eventId}`),
     enabled: !!eventId,
   })
 
 export const useServiceRequestsKanban = (eventId: string, limit = 10, offset = 0) =>
   useQuery({
     queryKey: ['service-requests-kanban', eventId, limit, offset],
-    queryFn: () => apiClient.get(`/service-requests/kanban-columns?event_id=${eventId}&limit=${limit}&offset=${offset}`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/kanban-columns?event_id=${eventId}&limit=${limit}&offset=${offset}`),
     enabled: !!eventId,
   })
 
@@ -2091,7 +2161,7 @@ export const useCreateServiceRequest = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ eventId, ...body }: { eventId: string; title: string; description?: string; priority?: string; request_type?: string }) =>
-      apiClient.post(`/service-requests?event_id=${eventId}`, body).then((r: any) => r.data),
+      apiClient.post<any>(`/service-requests?event_id=${eventId}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
       qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
@@ -2105,7 +2175,7 @@ export const useUpdateServiceRequest = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; title?: string; description?: string; priority?: string; status?: string }) =>
-      apiClient.patch(`/service-requests/${id}`, body).then((r: any) => r.data),
+      apiClient.patch<any>(`/service-requests/${id}`, body),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
       qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
@@ -2121,7 +2191,7 @@ export const useUpdateServiceRequest = () => {
 export const useSubmitServiceRequest = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/service-requests/${id}/submit`).then((r: any) => r.data),
+    mutationFn: (id: string) => apiClient.post<any>(`/service-requests/${id}/submit`),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
       qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
@@ -2137,7 +2207,7 @@ export const useSubmitServiceRequest = () => {
 export const useApproveServiceRequest = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/service-requests/${id}/approve`).then((r: any) => r.data),
+    mutationFn: (id: string) => apiClient.post<any>(`/service-requests/${id}/approve`),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
       qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
@@ -2153,21 +2223,21 @@ export const useApproveServiceRequest = () => {
 export const useServiceRequestHistory = (id: string) =>
   useQuery({
     queryKey: ['service-request-history', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/history`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/history`),
     enabled: !!id,
   })
 
 export const useServiceRequestOverview = (id: string) =>
   useQuery({
     queryKey: ['service-request-overview', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/overview`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/overview`),
     enabled: !!id,
   })
 
 export const useServiceRequestRequirements = (id: string) =>
   useQuery({
     queryKey: ['service-request-requirements', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/requirements`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/requirements`),
     enabled: !!id,
   })
 
@@ -2175,7 +2245,7 @@ export const useUpdateServiceRequestRequirements = (id: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: { requirement_type: string; requirement_data: any }) =>
-      apiClient.patch(`/service-requests/${id}/requirements`, payload).then((r: any) => r.data),
+      apiClient.patch<any>(`/service-requests/${id}/requirements`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-request-requirements', id] })
       qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
@@ -2188,7 +2258,7 @@ export const useUpdateServiceRequestRequirements = (id: string) => {
 export const useServiceRequestRemarks = (id: string) =>
   useQuery({
     queryKey: ['service-request-remarks', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/remarks`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/remarks`),
     enabled: !!id,
   })
 
@@ -2196,7 +2266,7 @@ export const useAddServiceRequestRemark = (id: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: { remark_text: string }) =>
-      apiClient.post(`/service-requests/${id}/remarks`, payload).then((r: any) => r.data),
+      apiClient.post<any>(`/service-requests/${id}/remarks`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-request-remarks', id] })
       qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
@@ -2209,7 +2279,7 @@ export const useAddServiceRequestRemark = (id: string) => {
 export const useServiceRequestAttachments = (id: string, reqType: string) =>
   useQuery({
     queryKey: ['service-request-attachments', id, reqType],
-    queryFn: () => apiClient.get(`/service-requests/${id}/attachments?requirement_type=${reqType}`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/attachments?requirement_type=${reqType}`),
     enabled: !!id && !!reqType,
   })
 
@@ -2217,7 +2287,7 @@ export const useAddServiceRequestAttachment = (id: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: { requirement_type: string; filename: string; file_size: number }) =>
-      apiClient.post(`/service-requests/${id}/attachments`, payload).then((r: any) => r.data),
+      apiClient.post<any>(`/service-requests/${id}/attachments`, payload),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['service-request-attachments', id, vars.requirement_type] })
       qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
@@ -2230,14 +2300,14 @@ export const useAddServiceRequestAttachment = (id: string) => {
 export const useServiceRequestPlanning = (id: string) =>
   useQuery({
     queryKey: ['service-request-planning', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/resource-planning`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/resource-planning`),
     enabled: !!id,
   })
 
 export const useRecalculateServiceRequestPlanning = (id: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => apiClient.post(`/service-requests/${id}/resource-planning/recalculate`).then((r: any) => r.data),
+    mutationFn: () => apiClient.post<any>(`/service-requests/${id}/resource-planning/recalculate`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
       qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
@@ -2251,7 +2321,7 @@ export const useUpdateHardwareQuantity = (id: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: { id: string; quantity: number }) =>
-      apiClient.patch(`/service-requests/${id}/resource-planning/hardware`, payload).then((r: any) => r.data),
+      apiClient.patch<any>(`/service-requests/${id}/resource-planning/hardware`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
       toast.success('Hardware quantity updated')
@@ -2264,7 +2334,7 @@ export const useUpdateStaffQuantity = (id: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: { id: string; quantity: number; days: number }) =>
-      apiClient.patch(`/service-requests/${id}/resource-planning/staff`, payload).then((r: any) => r.data),
+      apiClient.patch<any>(`/service-requests/${id}/resource-planning/staff`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
       toast.success('Staff role configuration updated')
@@ -2276,21 +2346,21 @@ export const useUpdateStaffQuantity = (id: string) => {
 export const useServiceRequestQuotes = (id: string) =>
   useQuery({
     queryKey: ['service-request-quotes', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/quotes`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/quotes`),
     enabled: !!id,
   })
 
 export const useServiceRequestDocuments = (id: string) =>
   useQuery({
     queryKey: ['service-request-documents', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/documents`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/documents`),
     enabled: !!id,
   })
 
 export const useServiceRequestActivityLogs = (id: string) =>
   useQuery({
     queryKey: ['service-request-activity', id],
-    queryFn: () => apiClient.get(`/service-requests/${id}/activity-logs`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/${id}/activity-logs`),
     enabled: !!id,
   })
 
@@ -2299,22 +2369,22 @@ export const useServiceRequestActivityLogs = (id: string) =>
 export const useAllQuotes = (requestId?: string, status?: string) =>
   useQuery({
     queryKey: ['all-quotes', requestId, status],
-    queryFn: () => apiClient.get(`/service-requests/all-quotes`, {
+    queryFn: () => apiClient.get<any>(`/service-requests/all-quotes`, {
       params: { request_id: requestId, status }
-    }).then((r: any) => r.data),
+    }),
   })
 
 export const useQuoteDetail = (quoteId: string) =>
   useQuery({
     queryKey: ['quote-detail', quoteId],
-    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}`),
     enabled: !!quoteId,
   })
 
 export const useCreateQuote = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: any) => apiClient.post(`/service-requests/quotes`, payload).then((r: any) => r.data),
+    mutationFn: (payload: any) => apiClient.post<any>(`/service-requests/quotes`, payload),
     onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ['all-quotes'] })
       toast.success('Quote generated successfully')
@@ -2326,7 +2396,7 @@ export const useCreateQuote = () => {
 export const useUpdateQuote = (quoteId: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: any) => apiClient.patch(`/service-requests/quotes/${quoteId}`, payload).then((r: any) => r.data),
+    mutationFn: (payload: any) => apiClient.patch<any>(`/service-requests/quotes/${quoteId}`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-quotes'] })
       qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
@@ -2340,21 +2410,21 @@ export const useUpdateQuote = (quoteId: string) => {
 export const useQuoteCostBreakdown = (quoteId: string) =>
   useQuery({
     queryKey: ['quote-cost-breakdown', quoteId],
-    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}/cost-breakdown`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}/cost-breakdown`),
     enabled: !!quoteId,
   })
 
 export const useQuoteRevisions = (quoteId: string) =>
   useQuery({
     queryKey: ['quote-revisions', quoteId],
-    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}/revisions`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}/revisions`),
     enabled: !!quoteId,
   })
 
 export const useCreateQuoteRevision = (quoteId: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { notes: string[] }) => apiClient.post(`/service-requests/quotes/${quoteId}/revisions`, payload).then((r: any) => r.data),
+    mutationFn: (payload: { notes: string[] }) => apiClient.post<any>(`/service-requests/quotes/${quoteId}/revisions`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['quote-revisions', quoteId] })
       qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
@@ -2367,7 +2437,7 @@ export const useCreateQuoteRevision = (quoteId: string) => {
 export const useQuoteApproval = (quoteId: string) =>
   useQuery({
     queryKey: ['quote-approval', quoteId],
-    queryFn: () => apiClient.get(`/service-requests/quotes/${quoteId}/approval`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}/approval`),
     enabled: !!quoteId,
   })
 
@@ -2375,7 +2445,7 @@ export const useActionApprovalStep = (quoteId: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ stepId, action, comment }: { stepId: string; action: string; comment?: string }) =>
-      apiClient.post(`/service-requests/quotes/${quoteId}/approval/steps/${stepId}/action`, { action, comment }).then((r: any) => r.data),
+      apiClient.post<any>(`/service-requests/quotes/${quoteId}/approval/steps/${stepId}/action`, { action, comment }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['quote-approval', quoteId] })
       qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
@@ -2388,22 +2458,22 @@ export const useActionApprovalStep = (quoteId: string) => {
 export const useAllProposals = (requestId?: string, status?: string) =>
   useQuery({
     queryKey: ['all-proposals', requestId, status],
-    queryFn: () => apiClient.get(`/service-requests/proposals/list`, {
+    queryFn: () => apiClient.get<any>(`/service-requests/proposals/list`, {
       params: { request_id: requestId, status }
-    }).then((r: any) => r.data),
+    }),
   })
 
 export const useProposalDetail = (propId: string) =>
   useQuery({
     queryKey: ['proposal-detail', propId],
-    queryFn: () => apiClient.get(`/service-requests/proposals/${propId}`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/proposals/${propId}`),
     enabled: !!propId,
   })
 
 export const useCreateProposal = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: any) => apiClient.post(`/service-requests/proposals`, payload).then((r: any) => r.data),
+    mutationFn: (payload: any) => apiClient.post<any>(`/service-requests/proposals`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-proposals'] })
       toast.success('Proposal created successfully')
@@ -2415,7 +2485,7 @@ export const useCreateProposal = () => {
 export const useUpdateProposal = (propId: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: any) => apiClient.patch(`/service-requests/proposals/${propId}`, payload).then((r: any) => r.data),
+    mutationFn: (payload: any) => apiClient.patch<any>(`/service-requests/proposals/${propId}`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-proposals'] })
       qc.invalidateQueries({ queryKey: ['proposal-detail', propId] })
@@ -2428,14 +2498,14 @@ export const useUpdateProposal = (propId: string) => {
 export const useProposalDocuments = (propId: string) =>
   useQuery({
     queryKey: ['proposal-documents', propId],
-    queryFn: () => apiClient.get(`/service-requests/proposals/${propId}/documents`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/proposals/${propId}/documents`),
     enabled: !!propId,
   })
 
 export const useGenerateProposalDocuments = (propId: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => apiClient.post(`/service-requests/proposals/${propId}/documents/generate`).then((r: any) => r.data),
+    mutationFn: () => apiClient.post<any>(`/service-requests/proposals/${propId}/documents/generate`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['proposal-documents', propId] })
       toast.success('Document generation triggered asynchronously')
@@ -2447,7 +2517,7 @@ export const useGenerateProposalDocuments = (propId: string) => {
 export const useProposalVersionHistory = (propId: string) =>
   useQuery({
     queryKey: ['proposal-version-history', propId],
-    queryFn: () => apiClient.get(`/service-requests/proposals/${propId}/version-history`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/proposals/${propId}/version-history`),
     enabled: !!propId,
   })
 
@@ -2455,7 +2525,7 @@ export const useCreateProposalVersion = (propId: string) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: { description: string; changes_count?: number }) =>
-      apiClient.post(`/service-requests/proposals/${propId}/versions`, payload).then((r: any) => r.data),
+      apiClient.post<any>(`/service-requests/proposals/${propId}/versions`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['proposal-version-history', propId] })
       qc.invalidateQueries({ queryKey: ['proposal-detail', propId] })
@@ -2468,13 +2538,13 @@ export const useCreateProposalVersion = (propId: string) => {
 export const usePricingRulesCatalog = () =>
   useQuery({
     queryKey: ['pricing-rules-catalog'],
-    queryFn: () => apiClient.get(`/service-requests/pricing-rules-catalog`).then((r: any) => r.data),
+    queryFn: () => apiClient.get<any>(`/service-requests/pricing-rules-catalog`),
   })
 
 export const useCreateProposalShareLink = (propId: string) =>
   useMutation({
     mutationFn: (payload: { expires_in_hours: number }) =>
-      apiClient.post(`/service-requests/proposals/${propId}/share`, payload).then((r: any) => r.data),
+      apiClient.post<any>(`/service-requests/proposals/${propId}/share`, payload),
     onSuccess: () => {
       toast.success('Configurable public share link copied')
     },

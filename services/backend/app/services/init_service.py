@@ -388,21 +388,8 @@ async def ensure_plans_and_features():
                 {"key": "FEAT_24x7_SUPPORT", "name": "24×7 Support", "category": "SUPPORT", "category_order": 7, "feature_order": 5, "description": "Round-the-clock support availability", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
                 {"key": "FEAT_SLA", "name": "SLA Commitment", "category": "SUPPORT", "category_order": 7, "feature_order": 6, "description": "Formal service level agreement", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
 
-                {"key": "FEAT_MOBILE_APP", "name": "Mobile App Support", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 1, "description": "Mobile app access for attendees", "display_value_basic": "❌", "display_value_professional": "External App Support", "display_value_enterprise": "Full Mobile App"},
-                {"key": "FEAT_EVENT_APP_BRANDING", "name": "Event App Branding", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 2, "description": "Branded mobile app experience", "display_value_basic": "❌", "display_value_professional": "Basic", "display_value_enterprise": "Fully Branded"},
-                {"key": "FEAT_API_ACCESS", "name": "API Access", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 3, "description": "REST API for integrations", "display_value_basic": "❌", "display_value_professional": "Limited", "display_value_enterprise": "Full"},
-                {"key": "FEAT_WEBHOOKS", "name": "Webhooks", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 4, "description": "Event-driven webhook notifications", "display_value_basic": "❌", "display_value_professional": "Limited", "display_value_enterprise": "Full"},
-                {"key": "FEAT_THIRD_PARTY_INTEGRATIONS", "name": "Third-Party Integrations", "category": "MOBILE_INTEGRATIONS", "category_order": 8, "feature_order": 5, "description": "Connect with external tools and services", "display_value_basic": "❌", "display_value_professional": "Basic", "display_value_enterprise": "Enterprise"},
-
-                {"key": "FEAT_VENUE_SUPPORT", "name": "Venue Support", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 1, "description": "Onsite venue operational support", "display_value_basic": "On Demand", "display_value_professional": "On Demand", "display_value_enterprise": "Priority"},
-                {"key": "FEAT_READY_ROOM", "name": "Ready Room Operations", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 2, "description": "Speaker ready room check-in and management", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_SPEAKER_CHECKIN", "name": "Speaker Check-In", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 3, "description": "Venue SRR station speaker check-in", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_SESSION_QUEUE", "name": "Session Queue Management", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 4, "description": "Presentation queue and scheduling display", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_DEVICE_MONITORING", "name": "Device Monitoring", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 5, "description": "Venue device health and status monitoring", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_DIGITAL_SIGNAGE", "name": "Digital Signage", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 6, "description": "Digital display management system", "display_value_basic": "❌", "display_value_professional": "Optional", "display_value_enterprise": "✅"},
-                {"key": "FEAT_EPOSTER_MGMT", "name": "ePoster Management", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 7, "description": "Electronic poster session management", "display_value_basic": "❌", "display_value_professional": "Optional", "display_value_enterprise": "✅"},
-                {"key": "FEAT_VENUE_SYNC", "name": "Venue Sync Services", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 8, "description": "File synchronization to venue devices", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_ONSITE_TECH_SUPPORT", "name": "Onsite Technical Support", "category": "VENUE_OPERATIONS", "category_order": 9, "feature_order": 9, "description": "Technical team present at venue during event", "display_value_basic": "Paid", "display_value_professional": "Paid", "display_value_enterprise": "Included Option"}
+                # Mobile integrations and venue-operations entitlements are intentionally excluded.
+                # They are no longer seeded into the canonical feature catalog.
             ]
             
             # Clean up obsolete features in catalog that are no longer in our seed list
@@ -430,9 +417,6 @@ async def ensure_plans_and_features():
                         category_order=f_data["category_order"],
                         feature_order=f_data["feature_order"],
                         description=f_data["description"],
-                        display_value_basic=f_data["display_value_basic"],
-                        display_value_professional=f_data["display_value_professional"],
-                        display_value_enterprise=f_data["display_value_enterprise"],
                         is_active=True
                     )
                     db.add(feat)
@@ -445,9 +429,6 @@ async def ensure_plans_and_features():
                     feat.category_order = f_data["category_order"]
                     feat.feature_order = f_data["feature_order"]
                     feat.description = f_data["description"]
-                    feat.display_value_basic = f_data["display_value_basic"]
-                    feat.display_value_professional = f_data["display_value_professional"]
-                    feat.display_value_enterprise = f_data["display_value_enterprise"]
             
             await db.flush()
             
@@ -481,7 +462,7 @@ async def ensure_plans_and_features():
                 },
                 {
                     "name": "Professional",
-                    "tagline": "Registration + Speaker + Campaigns + Venue Operations",
+                    "tagline": "Registration + Speaker + Campaigns",
                     "description": "For scaling events needing advanced workflows and badge printing.",
                     "billing_model": "PER_EVENT",
                     "currency": "INR",
@@ -573,7 +554,24 @@ async def ensure_plans_and_features():
                     # Plan exists. We don't overwrite its customized configuration details or feature mappings.
                     pass
 
-            # 3. Seed Addons
+            # Remove legacy seed-driven add-ons so the catalog stays manual-only.
+            legacy_addon_keys = {
+                "ADDON_WHATSAPP",
+                "ADDON_EPOSTER",
+                "ADDON_DIGITAL_SIGNAGE",
+                "ADDON_VENUE_READY_ROOM",
+                "ADDON_ONSITE_TECH",
+                "ADDON_WHITE_LABEL",
+                "ADDON_MOBILE_APP",
+            }
+            legacy_addons_res = await db.execute(select(Addon).where(Addon.key.in_(legacy_addon_keys)))
+            for legacy_addon in legacy_addons_res.scalars().all():
+                logger.info(f"Deleting legacy seeded add-on: {legacy_addon.key}")
+                await db.delete(legacy_addon)
+            await db.flush()
+
+            """
+            # 3. Seed Addons (legacy reference only)
             addons = [
                 {
                     "name": "WhatsApp Integration",
@@ -783,6 +781,7 @@ async def ensure_plans_and_features():
                     # Addon exists. We don't overwrite its customized configuration details.
                     pass
 
+            """
             # 4. Seed Addon ↔ Feature Mappings
             addon_feature_mappings = {
                 "ADDON_WHATSAPP": ["FEAT_WHATSAPP"],

@@ -19,22 +19,6 @@ class FeatureCatalog(Base):
     category_order: Mapped[int] = mapped_column(Integer, default=0)
     feature_order: Mapped[int] = mapped_column(Integer, default=0)
     
-    is_addon: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_billable: Mapped[bool] = mapped_column(Boolean, default=False)
-    required_plan: Mapped[Optional[str]] = mapped_column(String(50))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
-    display_value_basic: Mapped[Optional[str]] = mapped_column(String(200))
-    display_value_professional: Mapped[Optional[str]] = mapped_column(String(200))
-    display_value_enterprise: Mapped[Optional[str]] = mapped_column(String(200))
-    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    @property
-    def display_by_plan(self) -> dict:
-        return {
-            "BASIC": self.display_value_basic or "",
-            "PROFESSIONAL": self.display_value_professional or "",
-            "ENTERPRISE": self.display_value_enterprise or ""
-        }
-

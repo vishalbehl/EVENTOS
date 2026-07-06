@@ -33,9 +33,6 @@ class FeatureEntitlement(str, Enum):
     ENT_INCIDENT_MGMT = "ENT:INCIDENT_MGMT"
     ENT_AI_TOOLS = "ENT:AI_TOOLS"
     
-    # Add-Ons (Decoupled)
-    ADDON_VENUE_OPERATIONS = "ADDON:VENUE_OPERATIONS"
-
 # Mapping of Plan to included Feature Entitlements
 PLAN_FEATURES = {
     PlanTier.REGISTRATION: [

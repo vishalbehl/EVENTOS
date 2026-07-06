@@ -39,6 +39,8 @@ select {
   outline: none !important;
   transition: all var(--duration-base) var(--ease-smooth) !important;
   cursor: pointer !important;
+  caret-color: var(--color-primary-mid) !important;
+  -webkit-text-fill-color: var(--color-text-primary) !important;
 }
 
 select:hover {
@@ -52,7 +54,12 @@ select:focus {
 
 select option,
 select optgroup {
-  background-color: var(--color-surface-1) !important;
+  background-color: var(--color-surface-2) !important;
   color: var(--color-text-primary) !important;
   font-weight: 500 !important;
+}
+
+select option:checked {
+  background: linear-gradient(135deg, rgba(224, 255, 0, 0.18), rgba(224, 255, 0, 0.08)) !important;
+  color: var(--color-text-primary) !important;
 }

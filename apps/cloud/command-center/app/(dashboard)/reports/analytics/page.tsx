@@ -16,8 +16,7 @@ export default function ReportsAnalyticsPage() {
     const room = templatesData?.room_templates?.length ?? 0
     const reg = templatesData?.registration_templates?.length ?? 0
     const srr = templatesData?.srr_templates?.length ?? 0
-    const net = templatesData?.network_templates?.length ?? 0
-    const totalTpls = room + reg + srr + net
+    const totalTpls = room + reg + srr
 
     const totalValue = simulations.reduce((acc: number, s: any) => acc + (s.output_data?.total_amount || 0), 0)
     const avgMargin = totalSims > 0 ? "17.5%" : "0%"

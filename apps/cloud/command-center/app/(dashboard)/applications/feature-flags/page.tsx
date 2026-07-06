@@ -84,11 +84,6 @@ export default function FeatureFlagsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-[12px] font-bold text-white/70">{f.name}</p>
-                  {f.is_addon && (
-                    <span className="text-[8px] font-black uppercase tracking-widest text-amber-400/60 px-1.5 py-0.5 rounded border border-amber-500/20 bg-amber-500/5">
-                      ADDON
-                    </span>
-                  )}
                 </div>
                 <p className="text-[10px] text-white/25 font-mono truncate">{f.key}</p>
               </div>

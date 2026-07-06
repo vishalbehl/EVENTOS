@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Integer, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -27,20 +27,26 @@ class RoomTemplate(Base, SoftDeleteMixin):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[str] = mapped_column(String(50), default="v1.0")
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
+    short_description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    total_estimated_cost: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    consumables_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    inclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
+    exclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
 
     # Specs
     default_capacity: Mapped[int] = mapped_column(Integer, default=150)
     room_type: Mapped[str] = mapped_column(String(100), default="Conference Room")
+    podiums: Mapped[int] = mapped_column(Integer, default=0)
     setup_time: Mapped[float] = mapped_column(Numeric(10, 2), default=2.00)
     teardown_time: Mapped[float] = mapped_column(Numeric(10, 2), default=1.00)
 
     # Allocations
     hardware_allocation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=list)
     staff_allocation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=list)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
 class RegistrationTemplate(Base, SoftDeleteMixin):
     __tablename__ = "registration_templates"
     __table_args__ = {"schema": "templates"}
@@ -54,6 +60,11 @@ class RegistrationTemplate(Base, SoftDeleteMixin):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[str] = mapped_column(String(50), default="v1.0")
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
+    short_description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    total_estimated_cost: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    consumables_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    inclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
+    exclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
 
     # Specs
     registration_type: Mapped[str] = mapped_column(String(100), default="Onsite")
@@ -74,10 +85,10 @@ class RegistrationTemplate(Base, SoftDeleteMixin):
     # Allocations
     hardware_allocation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=list)
     staff_allocation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=list)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
 class SrrTemplate(Base, SoftDeleteMixin):
     __tablename__ = "srr_templates"
     __table_args__ = {"schema": "templates"}
@@ -91,6 +102,11 @@ class SrrTemplate(Base, SoftDeleteMixin):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[str] = mapped_column(String(50), default="v1.0")
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
+    short_description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    total_estimated_cost: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    consumables_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    inclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
+    exclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
 
     # Specs
     srr_type: Mapped[str] = mapped_column(String(100), default="Large")
@@ -109,49 +125,104 @@ class SrrTemplate(Base, SoftDeleteMixin):
     # Allocations
     hardware_allocation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=list)
     staff_allocation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=list)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-class NetworkTemplate(Base, SoftDeleteMixin):
-    __tablename__ = "network_templates"
+class Template(Base, SoftDeleteMixin):
+    __tablename__ = "templates"
     __table_args__ = {"schema": "templates"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="SET NULL"), nullable=True)
+    category_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.template_categories.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(50), default="ACTIVE", index=True)
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    version: Mapped[str] = mapped_column(String(50), default="v1.0")
-    usage_count: Mapped[int] = mapped_column(Integer, default=0)
-
-    # Specs
-    venue_capacity: Mapped[str] = mapped_column(String(100), default="500-2000")
-    internet_links: Mapped[int] = mapped_column(Integer, default=2)
-    network_capacity: Mapped[str] = mapped_column(String(100), default="1 Gbps")
-    isp_type: Mapped[str] = mapped_column(String(100), default="Dual Fiber Active-Passive")
-    primary_router: Mapped[str] = mapped_column(String(100), default="Cisco Catalyst 8300")
-    backup_router: Mapped[str] = mapped_column(String(100), default="Cisco Catalyst 8200")
-    firewall: Mapped[str] = mapped_column(String(100), default="FortiGate 100F")
-    core_switches: Mapped[int] = mapped_column(Integer, default=1)
-    dist_switches: Mapped[int] = mapped_column(Integer, default=2)
-    access_switches: Mapped[int] = mapped_column(Integer, default=4)
-    access_points: Mapped[int] = mapped_column(Integer, default=12)
-    controllers: Mapped[str] = mapped_column(String(100), default="Cloud Controller")
-    reg_vlan: Mapped[str] = mapped_column(String(255), default="")
-    srr_vlan: Mapped[str] = mapped_column(String(255), default="")
-    org_vlan: Mapped[str] = mapped_column(String(255), default="")
-    prod_vlan: Mapped[str] = mapped_column(String(255), default="")
-    guest_wifi: Mapped[str] = mapped_column(String(255), default="")
-    exhibitor_network: Mapped[str] = mapped_column(String(255), default="")
-    streaming_network: Mapped[str] = mapped_column(String(255), default="")
-    monitoring_tool: Mapped[str] = mapped_column(String(100), default="Zabbix / Grafana")
-    alerts: Mapped[str] = mapped_column(String(100), default="Slack + SMS Notifications")
-    logging: Mapped[str] = mapped_column(String(100), default="Syslog Server")
-    redundancy: Mapped[str] = mapped_column(String(100), default="High (Dual ISP + Dual Router)")
-    failover_time: Mapped[str] = mapped_column(String(100), default="< 3 seconds")
-
+    template_type: Mapped[str] = mapped_column(String(50), default="WEBSITE", index=True)
+    status: Mapped[str] = mapped_column(String(50), default="DRAFT", index=True)
+    visibility: Mapped[str] = mapped_column(String(50), default="PRIVATE", index=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_marketplace: Mapped[bool] = mapped_column(Boolean, default=False)
+    current_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+class TemplateVersion(Base):
+    __tablename__ = "template_versions"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    content: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=dict)
+    assets: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, default=dict)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    published_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
+
+class TemplateInstallation(Base):
+    __tablename__ = "template_installations"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), index=True)
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"))
+    installed_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.template_versions.id", ondelete="CASCADE"))
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class TemplateUsage(Base):
+    __tablename__ = "template_usage"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"), index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True)
+    usage_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class TemplateReview(Base):
+    __tablename__ = "template_reviews"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"))
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    review: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class MarketplaceListing(Base):
+    __tablename__ = "marketplace_listings"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"), index=True)
+    price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.00)
+    status: Mapped[str] = mapped_column(String(50), default="ACTIVE", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class MarketplacePurchase(Base):
+    __tablename__ = "marketplace_purchases"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    listing_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.marketplace_listings.id", ondelete="CASCADE"), index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
+    price_paid: Mapped[float] = mapped_column(Numeric(12, 2), default=0.00)
+    purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class MarketplaceFavorite(Base):
+    __tablename__ = "marketplace_favorites"
+    __table_args__ = {"schema": "templates"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
+    template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("templates.templates.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { GlobalModal } from "@/components/organizer/modals/GlobalModal";
-import { FloatingToolbar } from "@/components/organizer/FloatingToolbar";
 import { ImpersonationBanner } from "@/components/organizer/ImpersonationBanner";
 
 export const metadata: Metadata = {
@@ -16,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* Inline script: apply theme immediately before paint to avoid flash */}
         <script
@@ -24,15 +23,9 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  var saved = localStorage.getItem('eventos-theme');
                   var root = document.documentElement;
-                  if (saved === 'light') {
-                    root.classList.remove('dark');
-                    root.setAttribute('data-theme', 'light');
-                  } else {
-                    root.classList.add('dark');
-                    root.setAttribute('data-theme', 'dark');
-                  }
+                  root.classList.add('dark');
+                  root.setAttribute('data-theme', 'dark');
                 } catch (e) {}
               })();
             `,
@@ -44,7 +37,6 @@ export default function RootLayout({
           <ImpersonationBanner />
           {children}
           <GlobalModal />
-          <FloatingToolbar />
         </Providers>
       </body>
     </html>

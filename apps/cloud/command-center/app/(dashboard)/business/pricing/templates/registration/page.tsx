@@ -1,16 +1,21 @@
 "use client"
-import { useState, useMemo, Fragment } from "react"
-import { useCatalogTemplates, useCreateTemplate, useUpdateTemplate,
-         useDuplicateTemplate, useSetDefaultTemplate, useDeleteTemplate,
-         useHardwareCatalog, useStaffCatalog, formatINR } from "@/services/super-admin-service"
+import { useState, useMemo, Fragment, useRef } from "react"
+import {
+  useCatalogTemplates, useCreateTemplate, useUpdateTemplate,
+  useDuplicateTemplate, useSetDefaultTemplate, useDeleteTemplate,
+  useHardwareCatalog, useStaffCatalog, formatINR
+} from "@/services/super-admin-service"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
 import { MetricRow } from "@/components/super-admin/ui/MetricRow"
-import { Badge } from "@/components/ui/badge"
+import { PremiumTemplateCard } from "@/components/super-admin/ui/PremiumTemplateCard"
+import { TemplateDetailSheet } from "@/components/super-admin/ui/TemplateDetailSheet"
+import { TemplateCommercialFields } from "@/components/super-admin/ui/TemplateCommercialFields"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Users, Plus, Search, Edit, Copy, Check, Trash2, X, Activity, ArrowLeft } from "lucide-react"
+import { Users, Plus, Search, Edit, Copy, Check, Trash2, X, ArrowLeft, ImagePlus } from "lucide-react"
 import { useDebounce } from "@/hooks/use-debounce"
+import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock"
 import Link from "next/link"
 
 export default function RegistrationTemplatesPage() {
@@ -18,7 +23,10 @@ export default function RegistrationTemplatesPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<any>(null)
   const [showActionsFor, setShowActionsFor] = useState<any>(null)
-  
+  const [detailTemplate, setDetailTemplate] = useState<any>(null)
+
+  useBodyScrollLock(Boolean(showActionsFor || showCreateModal || editingTemplate))
+
   const debouncedSearch = useDebounce(search, 300)
 
   const { data, isLoading } = useCatalogTemplates()
@@ -56,8 +64,8 @@ export default function RegistrationTemplatesPage() {
   // Filter templates
   const templates = useMemo(() => {
     if (!debouncedSearch) return rawTemplates
-    return rawTemplates.filter(t => 
-      t.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || 
+    return rawTemplates.filter(t =>
+      t.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
       (t.description && t.description.toLowerCase().includes(debouncedSearch.toLowerCase()))
     )
   }, [rawTemplates, debouncedSearch])
@@ -79,7 +87,7 @@ export default function RegistrationTemplatesPage() {
   return (
     <PageContainer>
       <div className="mb-4">
-        <Link href="/commercial/templates" className="inline-flex items-center gap-1.5 text-xs text-secondary hover:text-primary transition-colors font-bold uppercase tracking-wider">
+        <Link href="/business/pricing/templates" className="inline-flex items-center gap-1.5 text-xs text-secondary hover:text-primary transition-colors font-bold uppercase tracking-wider">
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to Templates Library
         </Link>
@@ -124,222 +132,150 @@ export default function RegistrationTemplatesPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {templates.map((tpl: any) => {
-            // Dynamic cost calculations
-            const hardwareCost = (tpl.hardware_allocation || []).reduce((acc: number, a: any) => {
-              const price = hardwarePricesMap[a.hardware_item_id] || 0
-              return acc + (a.quantity * price)
-            }, 0)
-
-            const staffCost = (tpl.staff_allocation || []).reduce((acc: number, a: any) => {
-              const price = staffPricesMap[a.staff_role_id] || 0
-              return acc + (a.quantity * price)
-            }, 0)
-
-            const badgePrice = parseFloat(tpl.badge_per_piece_cost) || 0
-            const minBadgeCost = (tpl.min_attendees || 0) * badgePrice
-            const maxBadgeCost = (tpl.max_attendees || 0) * badgePrice
-
-            const minOpCost = hardwareCost + staffCost + minBadgeCost
-            const maxOpCost = hardwareCost + staffCost + maxBadgeCost
-
             return (
-              <div
+              <PremiumTemplateCard
                 key={tpl.slug}
-                className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-5 shadow-sm flex flex-col justify-between hover:border-brand-primary/45 transition-colors relative"
-              >
-                <div className="space-y-4">
-                  <div className="flex justify-between items-start gap-2">
-                    <div>
-                      <h4 className="text-xs font-extrabold text-primary uppercase tracking-wide">{tpl.name}</h4>
-                      <span className="text-[10px] text-tertiary font-medium">Version {tpl.version}</span>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      {tpl.is_default && (
-                        <Badge className="bg-success-muted/20 text-success border border-success/30 text-[9px] px-1 py-0 font-bold">
-                          Default
-                        </Badge>
-                      )}
-                      {tpl.is_single_kiosk && (
-                        <Badge className="bg-brand-primary/20 text-brand-primary border border-brand-primary/30 text-[9px] px-1 py-0 font-bold">
-                          Single Kiosk Unit
-                        </Badge>
-                      )}
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border
-                        ${tpl.is_active ? 'bg-success-muted/20 text-success border-success/30' : 'bg-surface-2 text-tertiary border-border'}`}>
-                        {tpl.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {tpl.description && (
-                    <p className="text-xs text-secondary line-clamp-2 leading-relaxed">{tpl.description}</p>
-                  )}
-
-                  <div className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-2xl p-3 space-y-2 text-xs font-medium">
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Registration Type</span>
-                      <span className="text-primary font-bold">{tpl.registration_type || "Onsite"}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Expected Event Size</span>
-                      <span className="text-primary font-bold font-mono">
-                        {tpl.min_attendees?.toLocaleString() || 0} - {tpl.max_attendees?.toLocaleString() || 0} pax
-                      </span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Operating Capacity</span>
-                      <span className="text-success font-extrabold font-mono">{tpl.checkins_per_hour || 0} checkins/hr</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Counters / Kiosks</span>
-                      <span className="text-primary font-bold font-mono">{tpl.reg_counters || 0} C / {tpl.kiosks || 0} K</span>
-                    </div>
-                    
-                    <div className="h-px bg-border my-1.5" />
-                    
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Total Hardware Cost</span>
-                      <span className="text-secondary font-mono font-bold">{formatINR(hardwareCost)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Total Crew Cost</span>
-                      <span className="text-secondary font-mono font-bold">{formatINR(staffCost)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-secondary">Badge Printing Cost</span>
-                      <span className="text-secondary font-mono font-bold">
-                        {formatINR(minBadgeCost)} - {formatINR(maxBadgeCost)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between py-1 bg-success/5 px-2 rounded-lg border border-success/15 mt-1.5">
-                      <span className="text-success font-extrabold text-[11px]">Total Op Cost</span>
-                      <span className="text-success font-extrabold font-mono text-[11px]">
-                        {formatINR(minOpCost)} - {formatINR(maxOpCost)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex justify-between items-center">
-                  <span className="text-[10px] text-tertiary font-mono">Used {tpl.usage_count || 0} times</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setShowActionsFor(tpl)}
-                    className="text-xs h-8 font-bold border-border text-secondary hover:text-primary bg-surface-2"
-                  >
-                    Manage
-                  </Button>
-                </div>
-              </div>
+                template={tpl}
+                category="registration"
+                Icon={Users}
+                hardwarePricesMap={hardwarePricesMap}
+                staffPricesMap={staffPricesMap}
+                isRecommended={tpl.is_default}
+                recommendationLabel="Default"
+                secondaryActionLabel="View"
+                primaryActionLabel="Manage"
+                onViewDetails={() => setDetailTemplate(tpl)}
+                onUseTemplate={() => setShowActionsFor(tpl)}
+              />
             )
+
           })}
         </div>
-      )}
+      )
+      }
+
+      <TemplateDetailSheet
+        template={detailTemplate}
+        category="registration"
+        Icon={Users}
+        hardwarePricesMap={hardwarePricesMap}
+        staffPricesMap={staffPricesMap}
+        open={Boolean(detailTemplate)}
+        onOpenChange={(open) => !open && setDetailTemplate(null)}
+        actionLabel="Manage Template"
+        onUseTemplate={() => {
+          setShowActionsFor(detailTemplate)
+          setDetailTemplate(null)
+        }}
+      />
 
       {/* Pop-up Actions Dialog box */}
-      {showActionsFor && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-6 w-full max-w-sm space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-border">
-              <h3 className="text-sm font-extrabold text-primary uppercase tracking-wider">Template Actions</h3>
-              <button onClick={() => setShowActionsFor(null)} className="text-secondary hover:text-primary">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+      {
+        showActionsFor && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-6 w-full max-w-sm space-y-4">
+              <div className="flex justify-between items-center pb-2 border-b border-border">
+                <h3 className="text-sm font-extrabold text-primary uppercase tracking-wider">Template Actions</h3>
+                <button onClick={() => setShowActionsFor(null)} className="text-secondary hover:text-primary">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-            <div className="flex flex-col gap-2">
-              <Button
-                onClick={() => {
-                  setEditingTemplate(showActionsFor)
-                  setShowActionsFor(null)
-                }}
-                variant="outline"
-                className="w-full text-xs font-bold gap-2 justify-start h-10 border-border text-secondary hover:text-primary"
-              >
-                <Edit className="h-4 w-4" />
-                Edit Template Configuration
-              </Button>
-
-              <Button
-                onClick={async () => {
-                  await duplicateTemplate.mutateAsync(showActionsFor.slug)
-                  setShowActionsFor(null)
-                }}
-                variant="outline"
-                className="w-full text-xs font-bold gap-2 justify-start h-10 border-border text-secondary hover:text-primary"
-              >
-                <Copy className="h-4 w-4" />
-                Duplicate Preset
-              </Button>
-
-              {!showActionsFor.is_default && (
+              <div className="flex flex-col gap-2">
                 <Button
-                  onClick={async () => {
-                    await setDefaultTemplate.mutateAsync(showActionsFor.slug)
+                  onClick={() => {
+                    setEditingTemplate(showActionsFor)
                     setShowActionsFor(null)
                   }}
                   variant="outline"
                   className="w-full text-xs font-bold gap-2 justify-start h-10 border-border text-secondary hover:text-primary"
                 >
-                  <Check className="h-4 w-4" />
-                  Set as Organization Default
+                  <Edit className="h-4 w-4" />
+                  Edit Template Configuration
                 </Button>
-              )}
 
-              <Button
-                onClick={async () => {
-                  if (confirm("Are you sure you want to delete this template?")) {
-                    await deleteTemplate.mutateAsync(showActionsFor.slug)
+                <Button
+                  onClick={async () => {
+                    await duplicateTemplate.mutateAsync(showActionsFor.slug)
                     setShowActionsFor(null)
-                  }
-                }}
-                variant="outline"
-                className="w-full text-xs font-bold gap-2 justify-start h-10 border-danger/30 text-danger hover:bg-danger/5"
-              >
-                <Trash2 className="h-4 w-4" />
-                Archive / Delete Preset
-              </Button>
-            </div>
+                  }}
+                  variant="outline"
+                  className="w-full text-xs font-bold gap-2 justify-start h-10 border-border text-secondary hover:text-primary"
+                >
+                  <Copy className="h-4 w-4" />
+                  Duplicate Preset
+                </Button>
 
-            <div className="pt-2 border-t border-border flex justify-end">
-              <Button onClick={() => setShowActionsFor(null)} variant="ghost" className="text-xs text-secondary">
-                Cancel
-              </Button>
+                {!showActionsFor.is_default && (
+                  <Button
+                    onClick={async () => {
+                      await setDefaultTemplate.mutateAsync(showActionsFor.slug)
+                      setShowActionsFor(null)
+                    }}
+                    variant="outline"
+                    className="w-full text-xs font-bold gap-2 justify-start h-10 border-border text-secondary hover:text-primary"
+                  >
+                    <Check className="h-4 w-4" />
+                    Set as Organization Default
+                  </Button>
+                )}
+
+                <Button
+                  onClick={async () => {
+                    if (confirm("Are you sure you want to delete this template?")) {
+                      await deleteTemplate.mutateAsync(showActionsFor.slug)
+                      setShowActionsFor(null)
+                    }
+                  }}
+                  variant="outline"
+                  className="w-full text-xs font-bold gap-2 justify-start h-10 border-danger/30 text-danger hover:bg-danger/5"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Archive / Delete Preset
+                </Button>
+              </div>
+
+              <div className="pt-2 border-t border-border flex justify-end">
+                <Button onClick={() => setShowActionsFor(null)} variant="ghost" className="text-xs text-secondary">
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Pop-up window: Create/Edit Modal Dialog Box */}
-      {(showCreateModal || !!editingTemplate) && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl relative">
-            <TemplateForm
-              item={editingTemplate}
-              hardwareList={hardwareList}
-              staffList={staffList}
-              onSubmit={async (formData) => {
-                if (editingTemplate) {
-                  await updateTemplate.mutateAsync({ slug: editingTemplate.slug, ...formData })
-                } else {
-                  await createTemplate.mutateAsync(formData)
-                }
-                setShowCreateModal(false)
-                setEditingTemplate(null)
-              }}
-              onClose={() => {
-                setShowCreateModal(false)
-                setEditingTemplate(null)
-              }}
-              isLoading={createTemplate.isPending || updateTemplate.isPending}
-            />
+      {
+        (showCreateModal || !!editingTemplate) && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl relative">
+              <TemplateForm
+                item={editingTemplate}
+                hardwareList={hardwareList}
+                staffList={staffList}
+                onSubmit={async (formData) => {
+                  if (editingTemplate) {
+                    await updateTemplate.mutateAsync({ slug: editingTemplate.slug, ...formData })
+                  } else {
+                    await createTemplate.mutateAsync(formData)
+                  }
+                  setShowCreateModal(false)
+                  setEditingTemplate(null)
+                }}
+                onClose={() => {
+                  setShowCreateModal(false)
+                  setEditingTemplate(null)
+                }}
+                isLoading={createTemplate.isPending || updateTemplate.isPending}
+              />
+            </div>
           </div>
-        </div>
-      )}
-    </PageContainer>
+        )
+      }
+    </PageContainer >
   )
 }
 
@@ -347,6 +283,7 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
   item: any; hardwareList: any[]; staffList: any[]; onSubmit: (d: any) => Promise<void>
   onClose: () => void; isLoading: boolean
 }) {
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState({
     name: item?.name ?? '',
     version: item?.version ?? 'v1.0',
@@ -375,7 +312,13 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
 
     // Allocations arrays
     hardware_allocation: item?.hardware_allocation ?? [],
-    staff_allocation: item?.staff_allocation ?? []
+    staff_allocation: item?.staff_allocation ?? [],
+    image_url: item?.image_url ?? '',
+    short_description: item?.short_description ?? '',
+    total_estimated_cost: item?.total_estimated_cost ?? '0',
+    consumables_cost: item?.consumables_cost ?? '0',
+    inclusions: Array.isArray(item?.inclusions) ? item.inclusions : [],
+    exclusions: Array.isArray(item?.exclusions) ? item.exclusions : []
   })
 
   // Dynamic cost helper maps for inline price feedback
@@ -395,9 +338,18 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
     return m
   }, [staffList])
 
-  const [activeFormTab, setActiveFormTab] = useState<'general' | 'infrastructure' | 'hardware' | 'staff'>('general')
+  const [activeFormTab, setActiveFormTab] = useState<'general' | 'commercial' | 'infrastructure' | 'hardware' | 'staff'>('general')
 
-  const set = (k: string, v: any) => setForm(f => ({...f, [k]: v}))
+  const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
+
+  // Image upload handler
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => { set('image_url', ev.target?.result as string) }
+    reader.readAsDataURL(file)
+  }
 
   // Dynamic selector group mappings
   const groupedHardware = useMemo(() => {
@@ -482,7 +434,13 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
       version: form.version,
       is_default: form.is_default,
       specs,
-      status: form.status
+      status: form.status,
+      image_url: form.image_url,
+      short_description: form.short_description.trim(),
+      total_estimated_cost: parseFloat(String(form.total_estimated_cost)) || 0,
+      consumables_cost: parseFloat(String(form.consumables_cost)) || 0,
+      inclusions: form.inclusions.map((item: string) => item.trim()).filter(Boolean),
+      exclusions: form.exclusions.map((item: string) => item.trim()).filter(Boolean)
     })
   }
 
@@ -498,9 +456,10 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
       </div>
 
       {/* Form Tabs */}
-      <div className="flex border-b border-border">
+      <div className="flex overflow-x-auto border-b border-border">
         {[
           { id: 'general', label: 'General & Size' },
+          { id: 'commercial', label: 'Purchase Details' },
           { id: 'infrastructure', label: 'Infrastructure & Ops' },
           { id: 'hardware', label: 'Hardware Allocation' },
           { id: 'staff', label: 'Crew Allocation' }
@@ -519,6 +478,31 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
 
       {activeFormTab === 'general' && (
         <div className="space-y-4">
+          {/* Image Upload */}
+          <div>
+            <label className="text-xs text-secondary mb-2 block font-semibold">Template Image</label>
+            <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+            {form.image_url ? (
+              <div className="relative w-full h-40 rounded-xl overflow-hidden border border-border group">
+                <img src={form.image_url} alt="Template preview" className="h-full w-full bg-black object-contain" />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                  <button type="button" onClick={() => imageInputRef.current?.click()} className="bg-white text-black text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                    <ImagePlus className="h-3.5 w-3.5" /> Change
+                  </button>
+                  <button type="button" onClick={() => set('image_url', '')} className="bg-danger text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                    <X className="h-3.5 w-3.5" /> Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={() => imageInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 hover:border-brand-primary/50 hover:bg-brand-primary/5 transition-colors text-tertiary">
+                <ImagePlus className="h-7 w-7" />
+                <span className="text-xs font-semibold">Click to upload template image</span>
+                <span className="text-[10px]">PNG, JPG, WebP supported</span>
+              </button>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-secondary mb-1 block font-semibold">Template Name *</label>
@@ -573,6 +557,17 @@ function TemplateForm({ item, hardwareList, staffList, onSubmit, onClose, isLoad
             <label htmlFor="is_single_kiosk" className="text-xs text-secondary font-semibold cursor-pointer">Set as Single Kiosk Unit Template</label>
           </div>
         </div>
+      )}
+
+      {activeFormTab === 'commercial' && (
+        <TemplateCommercialFields
+          shortDescription={form.short_description}
+          totalEstimatedCost={form.total_estimated_cost}
+          consumablesCost={form.consumables_cost}
+          inclusions={form.inclusions}
+          exclusions={form.exclusions}
+          onChange={set}
+        />
       )}
 
       {activeFormTab === 'infrastructure' && (

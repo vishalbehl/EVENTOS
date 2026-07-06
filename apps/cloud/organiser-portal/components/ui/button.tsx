@@ -63,26 +63,27 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         case null:
           return {
             background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))",
-            color: "white",
-            border: "none",
+            color: "var(--color-text-inverse)",
+            border: "1px solid rgba(224, 255, 0, 0.2)",
+            boxShadow: "0 14px 32px rgba(224, 255, 0, 0.14)",
           };
         case "secondary":
           return {
-            background: "var(--color-surface-3)",
-            border: "1px solid var(--color-border)",
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.1)",
             color: "var(--color-text-primary)",
           };
         case "outline":
           return {
             background: "transparent",
-            border: "1px solid var(--color-border)",
+            border: "1px solid rgba(255,255,255,0.12)",
             color: "var(--color-text-primary)",
           };
         case "ghost":
           return {
             background: "transparent",
             border: "none",
-            color: "var(--color-text-muted)",
+            color: "var(--color-text-secondary)",
           };
         case "danger":
         case "destructive":

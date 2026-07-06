@@ -21,8 +21,7 @@ async def test_get_feature_overrides(client: AsyncClient, super_admin, organizat
         key="test_feature",
         name="Test Feature",
         category="general",
-        description="A test feature",
-        is_addon=False
+        description="A test feature"
     )
     db.add(feature)
     
@@ -86,8 +85,7 @@ async def test_put_feature_overrides(client: AsyncClient, super_admin, organizat
         key="test_feature_2",
         name="Test Feature 2",
         category="general",
-        description="Another test feature",
-        is_addon=False
+        description="Another test feature"
     )
     db.add(feature)
     await db.commit()

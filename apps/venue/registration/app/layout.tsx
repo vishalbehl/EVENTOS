@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { GlobalModal } from "@/components/modals/GlobalModal";
-import { FloatingToolbar } from "@/components/FloatingToolbar";
 
 export const metadata: Metadata = {
   title: "EventOS | Ecosystem Control",
@@ -41,7 +40,6 @@ export default function RootLayout({
         <Providers>
           {children}
           <GlobalModal />
-          <FloatingToolbar />
         </Providers>
       </body>
     </html>

@@ -9,6 +9,7 @@ from app.database import Base
 
 class EventBlueprint(Base):
     __tablename__ = "event_blueprints"
+    __table_args__ = {"schema": "blueprints"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -20,6 +21,7 @@ class EventBlueprint(Base):
 
 class BlueprintTemplate(Base):
     __tablename__ = "blueprint_templates"
+    __table_args__ = {"schema": "blueprints"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     blueprint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("blueprints.event_blueprints.id", ondelete="CASCADE"), index=True)
@@ -27,6 +29,7 @@ class BlueprintTemplate(Base):
 
 class BlueprintInstallation(Base):
     __tablename__ = "blueprint_installations"
+    __table_args__ = {"schema": "blueprints"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
@@ -36,6 +39,7 @@ class BlueprintInstallation(Base):
 
 class BlueprintStep(Base):
     __tablename__ = "blueprint_steps"
+    __table_args__ = {"schema": "blueprints"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     blueprint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("blueprints.event_blueprints.id", ondelete="CASCADE"), index=True)

@@ -1,5 +1,6 @@
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,12 +105,22 @@ async def get_forecast(
 
 # ── SUPER ADMIN PRICING & TEMPLATES CATALOG ENDPOINTS ─────────────────────────
 
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 from sqlalchemy import func, text
 from datetime import datetime, timezone, timedelta
 import json
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.pricing.models import PricingRule, PricingSimulation
+
+def _template_commercial_fields(template):
+    return {
+        "short_description": template.short_description or "",
+        "total_estimated_cost": float(template.total_estimated_cost or 0),
+        "consumables_cost": float(template.consumables_cost or 0),
+        "inclusions": template.inclusions or [],
+        "exclusions": template.exclusions or [],
+    }
 
 async def seed_pricing_rules_if_empty(db: AsyncSession):
     pass
@@ -149,6 +160,7 @@ class SelectedStaffItem(BaseModel):
 
 class PricingSimulationRunRequest(BaseModel):
     pricing_rule_id: uuid.UUID
+    name: Optional[str] = None
     event_city_tier: str
     event_days: int = 1
     attendee_count: int = 0
@@ -157,6 +169,7 @@ class PricingSimulationRunRequest(BaseModel):
     srr_stations: int = 0
     selected_hardware: List[SelectedHardwareItem] = []
     selected_staff: List[SelectedStaffItem] = []
+    snapshot: Optional[Dict[str, Any]] = None
 
 @router.get("/superadmin/catalog/pricing-rules")
 async def superadmin_get_pricing_rules(
@@ -493,7 +506,8 @@ async def superadmin_run_simulation(
         "pre_gst_total": pre_gst,
         "gst_amount": gst,
         "total_amount": total,
-        "line_items": line_items
+        "line_items": line_items,
+        "quote_snapshot": body.snapshot or {},
     }
     
     # Save simulation run
@@ -501,7 +515,7 @@ async def superadmin_run_simulation(
         id=uuid.uuid4(),
         organization_id=current_user.organization_id,
         user_id=current_user.id,
-        name=f"Simulation - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        name=body.name or f"Simulation - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         input_data=body.model_dump(mode="json"),
         output_data=output_data,
         created_at=datetime.now(timezone.utc)
@@ -516,7 +530,7 @@ async def superadmin_get_templates(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # Get room templates
     room_res = await db.execute(select(RoomTemplate))
@@ -535,7 +549,11 @@ async def superadmin_get_templates(
             "setup_time": float(r.setup_time),
             "teardown_time": float(r.teardown_time),
             "hardware_allocation": r.hardware_allocation or [],
-            "staff_allocation": r.staff_allocation or []
+            "staff_allocation": r.staff_allocation or [],
+            "podiums": r.podiums or 0,
+            "image_url": r.image_url,
+            "template_type": "room",
+            **_template_commercial_fields(r),
         })
 
     # Get registration templates
@@ -565,7 +583,10 @@ async def superadmin_get_templates(
             "teardown_time": float(r.teardown_time),
             "hardware_allocation": r.hardware_allocation or [],
             "staff_allocation": r.staff_allocation or [],
-            "is_single_kiosk": r.is_single_kiosk
+            "is_single_kiosk": r.is_single_kiosk,
+            "image_url": r.image_url,
+            "template_type": "registration",
+            **_template_commercial_fields(r),
         })
 
     # Get SRR templates
@@ -593,52 +614,16 @@ async def superadmin_get_templates(
             "teardown_time": float(r.teardown_time),
             "hardware_allocation": r.hardware_allocation or [],
             "staff_allocation": r.staff_allocation or [],
-            "is_single_station": r.is_single_station
-        })
-
-    # Get network templates
-    net_res = await db.execute(select(NetworkTemplate))
-    network_templates = []
-    for r in net_res.scalars().all():
-        network_templates.append({
-            "name": r.name,
-            "slug": r.slug,
-            "description": r.description or "",
-            "version": r.version,
-            "is_default": r.is_default,
-            "is_active": r.status == "ACTIVE",
-            "usage_count": r.usage_count,
-            "venue_capacity": r.venue_capacity,
-            "internet_links": r.internet_links,
-            "network_capacity": r.network_capacity,
-            "isp_type": r.isp_type,
-            "primary_router": r.primary_router,
-            "backup_router": r.backup_router,
-            "firewall": r.firewall,
-            "core_switches": r.core_switches,
-            "dist_switches": r.dist_switches,
-            "access_switches": r.access_switches,
-            "access_points": r.access_points,
-            "controllers": r.controllers,
-            "reg_vlan": r.reg_vlan,
-            "srr_vlan": r.srr_vlan,
-            "org_vlan": r.org_vlan,
-            "prod_vlan": r.prod_vlan,
-            "guest_wifi": r.guest_wifi,
-            "exhibitor_network": r.exhibitor_network,
-            "streaming_network": r.streaming_network,
-            "monitoring_tool": r.monitoring_tool,
-            "alerts": r.alerts,
-            "logging": r.logging,
-            "redundancy": r.redundancy,
-            "failover_time": r.failover_time
+            "is_single_station": r.is_single_station,
+            "image_url": r.image_url,
+            "template_type": "srr",
+            **_template_commercial_fields(r),
         })
 
     return {
         "room_templates": room_templates,
         "registration_templates": registration_templates,
-        "srr_templates": srr_templates,
-        "network_templates": network_templates
+        "srr_templates": srr_templates
     }
 
 class SuperAdminTemplateInput(BaseModel):
@@ -649,6 +634,12 @@ class SuperAdminTemplateInput(BaseModel):
     is_default: Optional[bool] = False
     specs: Optional[dict] = None
     status: Optional[str] = "ACTIVE"
+    image_url: Optional[str] = None
+    short_description: Optional[str] = None
+    total_estimated_cost: Optional[float] = None
+    consumables_cost: Optional[float] = None
+    inclusions: Optional[List[str]] = None
+    exclusions: Optional[List[str]] = None
 
 @router.post("/superadmin/catalog/templates")
 async def superadmin_create_template(
@@ -658,7 +649,7 @@ async def superadmin_create_template(
 ):
     import uuid
     import re
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
     from sqlalchemy import update
     
     # Generate slug from name
@@ -674,8 +665,6 @@ async def superadmin_create_template(
         model_class = RegistrationTemplate
     elif t_type == "srr":
         model_class = SrrTemplate
-    elif t_type == "network":
-        model_class = NetworkTemplate
     else:
         raise HTTPException(status_code=400, detail=f"Invalid template type: {body.template_type}")
 
@@ -711,7 +700,16 @@ async def superadmin_create_template(
     for k, v in specs.items():
         if hasattr(tpl_obj, k):
             setattr(tpl_obj, k, v)
-            
+
+    for k in ["short_description", "total_estimated_cost", "consumables_cost", "inclusions", "exclusions"]:
+        v = getattr(body, k)
+        if v is not None and hasattr(tpl_obj, k):
+            setattr(tpl_obj, k, v)
+
+    # Set image_url directly (not via specs)
+    if body.image_url is not None and hasattr(tpl_obj, 'image_url'):
+        tpl_obj.image_url = body.image_url
+
     db.add(tpl_obj)
     await db.commit()
     return {"status": "success", "slug": slug}
@@ -724,7 +722,7 @@ async def superadmin_update_template(
     db: AsyncSession = Depends(get_db)
 ):
     from sqlalchemy import update
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     t_type = body.template_type.lower()
     if t_type == "room":
@@ -733,8 +731,6 @@ async def superadmin_update_template(
         model_class = RegistrationTemplate
     elif t_type == "srr":
         model_class = SrrTemplate
-    elif t_type == "network":
-        model_class = NetworkTemplate
     else:
         raise HTTPException(status_code=400, detail=f"Invalid template type: {body.template_type}")
 
@@ -763,6 +759,15 @@ async def superadmin_update_template(
         if hasattr(tpl, k):
             setattr(tpl, k, v)
 
+    for k in ["short_description", "total_estimated_cost", "consumables_cost", "inclusions", "exclusions"]:
+        v = getattr(body, k)
+        if v is not None and hasattr(tpl, k):
+            setattr(tpl, k, v)
+
+    # Set image_url directly (not via specs)
+    if body.image_url is not None and hasattr(tpl, 'image_url'):
+        tpl.image_url = body.image_url
+
     await db.commit()
     return {"status": "success"}
 
@@ -774,12 +779,12 @@ async def superadmin_duplicate_template(
 ):
     import uuid
     import re
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
-    # Try to find the template in any of the 4 tables
+    # Try to find the template in any template table
     tpl = None
     model_class = None
-    for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate]:
+    for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate]:
         stmt = select(mc).where(mc.slug == slug)
         tpl = (await db.execute(stmt)).scalar_one_or_none()
         if tpl:
@@ -827,12 +832,12 @@ async def superadmin_set_default_template(
     db: AsyncSession = Depends(get_db)
 ):
     from sqlalchemy import update
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
-    # Try to find the template in any of the 4 tables
+    # Try to find the template in any template table
     tpl = None
     model_class = None
-    for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate]:
+    for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate]:
         stmt = select(mc).where(mc.slug == slug)
         tpl = (await db.execute(stmt)).scalar_one_or_none()
         if tpl:
@@ -859,10 +864,10 @@ async def superadmin_delete_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
-    # Try to delete from any of the 4 tables
-    for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate]:
+    # Try to delete from any template table
+    for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate]:
         stmt = select(mc).where(mc.slug == slug)
         tpl = (await db.execute(stmt)).scalar_one_or_none()
         if tpl:

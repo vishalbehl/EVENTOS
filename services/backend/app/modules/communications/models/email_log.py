@@ -31,6 +31,9 @@ class EmailLog(Base):
         nullable=True,
         index=True,
     )
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("events.speakers.id", ondelete="CASCADE"),

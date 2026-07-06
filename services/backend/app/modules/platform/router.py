@@ -1,6 +1,7 @@
 import uuid
 from uuid import UUID
 import hashlib
+import re
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -595,7 +596,6 @@ async def get_organization_features(org_id: uuid.UUID, db: AsyncSession = Depend
             "name": f.name,
             "description": f.description,
             "category": f.category,
-            "is_addon": f.is_addon,
             "plan_enabled": f.key in plan_feat_keys,
             "override_enabled": override_val, # True, False, or None
             "is_enabled": is_enabled
@@ -711,12 +711,28 @@ async def get_organization_timeline(org_id: uuid.UUID, db: AsyncSession = Depend
 
 class SubscriptionPlanIn(BaseModel):
     name: str
+    tagline: Optional[str] = None
     description: Optional[str] = None
     max_events: int = 3
     max_users: int = 10
-    max_registrations: int = 1000
-    max_rooms: int = 10
+    # None represents an unlimited plan capacity (used by Enterprise plans).
+    max_registrations: Optional[int] = 1000
+    max_speakers: Optional[int] = None
+    max_sessions: Optional[int] = None
+    max_rooms: Optional[int] = 10
+    max_ticket_categories: Optional[int] = None
+    max_badge_templates: Optional[int] = None
+    max_certificate_templates: Optional[int] = None
+    max_emails_per_event: Optional[int] = None
     storage_quota_mb: int = 10240
+    currency: str = "INR"
+    price_per_event_min: Optional[float] = None
+    price_per_event_max: Optional[float] = None
+    price_per_event: Optional[float] = None
+    billing_model: str = "PER_EVENT"
+    display_order: int = 0
+    is_popular: bool = False
+    color_hex: Optional[str] = None
     is_active: bool = True
 
 class OrgStatusUpdate(BaseModel):
@@ -768,6 +784,7 @@ async def list_subscription_plans(
             "currency": p.currency,
             "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
             "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
+            "price_per_event": float(p.price_per_event) if p.price_per_event is not None else (float(p.price_per_event_min) if p.price_per_event_min is not None else None),
             "price_display": p.price_display,
             "max_events": p.max_events,
             "max_users": p.max_users,
@@ -778,6 +795,7 @@ async def list_subscription_plans(
             "max_ticket_categories": p.max_ticket_categories,
             "max_badge_templates": p.max_badge_templates,
             "max_certificate_templates": p.max_certificate_templates,
+            "max_emails_per_event": p.max_emails_per_event,
             "storage_quota_mb": p.storage_quota_mb,
             "display_order": p.display_order,
             "is_popular": p.is_popular,
@@ -831,7 +849,7 @@ async def get_features_matrix(
                 "features": []
             }
             
-        def get_display_val(plan_name_key: str, fallback_val: str) -> str:
+        def get_display_val(plan_name_key: str) -> str:
             p = plans_map.get(plan_name_key)
             if not p:
                 return fallback_val or "❌"
@@ -864,9 +882,9 @@ async def get_features_matrix(
             "key": f.key,
             "name": f.name,
             "description": f.description,
-            "display_basic": get_display_val("BASIC", f.display_value_basic),
-            "display_professional": get_display_val("PROFESSIONAL", f.display_value_professional),
-            "display_enterprise": get_display_val("ENTERPRISE", f.display_value_enterprise)
+            "display_basic": get_display_val("BASIC"),
+            "display_professional": get_display_val("PROFESSIONAL"),
+            "display_enterprise": get_display_val("ENTERPRISE")
         })
     return list(categories.values())
 
@@ -876,6 +894,15 @@ async def ensure_addon_columns(db: AsyncSession):
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS features_spec JSONB DEFAULT '[]'::jsonb"))
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS min_price_inr NUMERIC(12, 2)"))
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS max_price_inr NUMERIC(12, 2)"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS addon_type VARCHAR(20) NOT NULL DEFAULT 'PLAN'"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS short_description VARCHAR(255)"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS image_url TEXT"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS hardware_spec JSONB DEFAULT '[]'::jsonb"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS staff_spec JSONB DEFAULT '[]'::jsonb"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS inclusions JSONB DEFAULT '[]'::jsonb"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS exclusions JSONB DEFAULT '[]'::jsonb"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS consumables_cost NUMERIC(12, 2) DEFAULT 0"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS template_types VARCHAR[] DEFAULT '{}'"))
         # Drop legacy columns if they exist
         await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS monthly_price CASCADE"))
         await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS yearly_price CASCADE"))
@@ -904,6 +931,9 @@ async def list_platform_addons(
             "key": a.key,
             "name": a.name,
             "description": a.description,
+            "addon_type": a.addon_type,
+            "short_description": a.short_description,
+            "image_url": a.image_url,
             "price_inr": float(a.price_inr) if a.price_inr is not None else None,
             "min_price_inr": float(a.min_price_inr) if a.min_price_inr is not None else None,
             "max_price_inr": float(a.max_price_inr) if a.max_price_inr is not None else None,
@@ -914,7 +944,13 @@ async def list_platform_addons(
             "is_active": a.is_active,
             "created_at": a.created_at,
             "feature_ids": [str(fid) for fid in feature_ids],
-            "features_spec": a.features_spec or []
+            "features_spec": a.features_spec or [],
+            "hardware_spec": a.hardware_spec or [],
+            "staff_spec": a.staff_spec or [],
+            "inclusions": a.inclusions or [],
+            "exclusions": a.exclusions or [],
+            "consumables_cost": float(a.consumables_cost or 0)
+            ,"template_types": a.template_types or []
         })
     return addon_list
 
@@ -932,12 +968,27 @@ async def create_subscription_plan(
     await ensure_plan_columns(db)
     plan = SubscriptionPlan(
         name=payload.name,
+        tagline=payload.tagline,
         description=payload.description,
         max_events=payload.max_events,
         max_users=payload.max_users,
         max_registrations=payload.max_registrations,
+        max_speakers=payload.max_speakers,
+        max_sessions=payload.max_sessions,
         max_rooms=payload.max_rooms,
+        max_ticket_categories=payload.max_ticket_categories,
+        max_badge_templates=payload.max_badge_templates,
+        max_certificate_templates=payload.max_certificate_templates,
+        max_emails_per_event=payload.max_emails_per_event,
         storage_quota_mb=payload.storage_quota_mb,
+        currency=payload.currency,
+        price_per_event_min=payload.price_per_event_min,
+        price_per_event_max=payload.price_per_event_max,
+        price_per_event=payload.price_per_event,
+        billing_model=payload.billing_model,
+        display_order=payload.display_order,
+        is_popular=payload.is_popular,
+        color_hex=payload.color_hex,
         is_active=payload.is_active,
     )
     db.add(plan)
@@ -976,7 +1027,14 @@ async def list_features_catalog(
     current_user: User = Depends(require_platform_admin)
 ):
     """List all feature catalog items."""
-    result = await db.execute(select(FeatureCatalog).order_by(FeatureCatalog.category.asc()))
+    result = await db.execute(
+        select(FeatureCatalog).order_by(
+            FeatureCatalog.category_order.asc(),
+            FeatureCatalog.category.asc(),
+            FeatureCatalog.feature_order.asc(),
+            FeatureCatalog.name.asc(),
+        )
+    )
     catalog = result.scalars().all()
     return [
         {
@@ -985,7 +1043,9 @@ async def list_features_catalog(
             "name": f.name,
             "description": f.description,
             "category": f.category,
-            "is_addon": f.is_addon
+            "category_order": f.category_order,
+            "feature_order": f.feature_order,
+            "is_active": f.is_active,
         }
         for f in catalog
     ]
@@ -996,9 +1056,82 @@ class FeatureCatalogIn(BaseModel):
     name: str
     description: Optional[str] = None
     category: str = "core"
-    is_addon: bool = False
-    is_billable: bool = False
-    required_plan: Optional[str] = None
+    category_order: Optional[int] = None
+    feature_order: Optional[int] = None
+    is_active: bool = True
+
+
+class FeatureCategoryReorderIn(BaseModel):
+    categories: List[str]
+
+
+class FeatureOrderReorderIn(BaseModel):
+    category: str
+    feature_ids: List[uuid.UUID]
+
+
+def _normalize_feature_key(key: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9_]", "_", key.strip().upper())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Feature key is required")
+    return normalized
+
+
+def _normalize_feature_category(category: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9_]", "_", category.strip().upper())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Category is required")
+    return normalized
+
+
+async def _resolve_category_order(
+    db: AsyncSession,
+    category: str,
+    category_order: Optional[int],
+) -> int:
+    if category_order is not None:
+        return category_order
+
+    existing_order_stmt = (
+        select(FeatureCatalog.category_order)
+        .where(FeatureCatalog.category == category)
+        .order_by(FeatureCatalog.category_order.asc())
+        .limit(1)
+    )
+    existing_order = (await db.execute(existing_order_stmt)).scalar_one_or_none()
+    if existing_order is not None:
+        return existing_order
+
+    max_order = (await db.execute(select(func.max(FeatureCatalog.category_order)))).scalar_one_or_none() or 0
+    return max_order + 1
+
+
+async def _resolve_feature_order(
+    db: AsyncSession,
+    category: str,
+    feature_order: Optional[int],
+) -> int:
+    if feature_order is not None:
+        return feature_order
+
+    max_order_stmt = select(func.max(FeatureCatalog.feature_order)).where(FeatureCatalog.category == category)
+    max_order = (await db.execute(max_order_stmt)).scalar_one_or_none() or 0
+    return max_order + 1
+
+
+def _serialize_feature_catalog_item(feature: FeatureCatalog) -> dict:
+    return {
+        "id": feature.id,
+        "key": feature.key,
+        "name": feature.name,
+        "description": feature.description,
+        "category": feature.category,
+        "category_order": feature.category_order,
+        "feature_order": feature.feature_order,
+        "is_active": feature.is_active,
+    }
 
 
 @router.post("/features", status_code=201)
@@ -1012,13 +1145,8 @@ async def create_feature_catalog_item(
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
 
-    key = payload.key.strip().upper()
-    valid_prefixes = ("CORE_", "ADV_", "ENT_", "ADDON_")
-    if not any(key.startswith(p) for p in valid_prefixes):
-        raise HTTPException(
-            status_code=400,
-            detail="Feature key must start with one of: CORE_, ADV_, ENT_, ADDON_"
-        )
+    key = _normalize_feature_key(payload.key)
+    category = _normalize_feature_category(payload.category)
 
     # Check for duplicate key
     existing_stmt = select(FeatureCatalog).where(FeatureCatalog.key == key)
@@ -1030,25 +1158,15 @@ async def create_feature_catalog_item(
         key=key,
         name=payload.name,
         description=payload.description,
-        category=payload.category,
-        is_addon=payload.is_addon,
-        is_billable=payload.is_billable,
-        required_plan=payload.required_plan
+        category=category,
+        category_order=await _resolve_category_order(db, category, payload.category_order),
+        feature_order=await _resolve_feature_order(db, category, payload.feature_order),
+        is_active=payload.is_active,
     )
     db.add(feature)
     await db.commit()
     await db.refresh(feature)
-    return {
-        "id": feature.id,
-        "key": feature.key,
-        "name": feature.name,
-        "description": feature.description,
-        "category": feature.category,
-        "is_addon": feature.is_addon,
-        "is_billable": feature.is_billable,
-        "required_plan": feature.required_plan,
-        "message": "Feature created successfully"
-    }
+    return {**_serialize_feature_catalog_item(feature), "message": "Feature created successfully"}
 
 
 @router.patch("/features/{feature_id}")
@@ -1067,13 +1185,8 @@ async def update_feature_catalog_item(
     if not feature:
         raise HTTPException(status_code=404, detail="Feature not found")
 
-    key = payload.key.strip().upper()
-    valid_prefixes = ("CORE_", "ADV_", "ENT_", "ADDON_")
-    if not any(key.startswith(p) for p in valid_prefixes):
-        raise HTTPException(
-            status_code=400,
-            detail="Feature key must start with one of: CORE_, ADV_, ENT_, ADDON_"
-        )
+    key = _normalize_feature_key(payload.key)
+    category = _normalize_feature_category(payload.category)
 
     # If key is changing, check for duplicates
     if feature.key != key:
@@ -1085,24 +1198,86 @@ async def update_feature_catalog_item(
     feature.key = key
     feature.name = payload.name
     feature.description = payload.description
-    feature.category = payload.category
-    feature.is_addon = payload.is_addon
-    feature.is_billable = payload.is_billable
-    feature.required_plan = payload.required_plan
+    feature.category = category
+    feature.category_order = await _resolve_category_order(db, category, payload.category_order)
+    feature.feature_order = await _resolve_feature_order(db, category, payload.feature_order)
+    feature.is_active = payload.is_active
 
     await db.commit()
     await db.refresh(feature)
-    return {
-        "id": feature.id,
-        "key": feature.key,
-        "name": feature.name,
-        "description": feature.description,
-        "category": feature.category,
-        "is_addon": feature.is_addon,
-        "is_billable": feature.is_billable,
-        "required_plan": feature.required_plan,
-        "message": "Feature updated successfully"
-    }
+    return {**_serialize_feature_catalog_item(feature), "message": "Feature updated successfully"}
+
+
+@router.patch("/feature-categories/reorder")
+async def reorder_feature_categories(
+    payload: FeatureCategoryReorderIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin)
+):
+    """Persist category ordering for the feature catalog."""
+    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
+    if not is_super:
+        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+
+    categories = [_normalize_feature_category(category) for category in payload.categories if category.strip()]
+    seen: set[str] = set()
+    ordered_categories: List[str] = []
+    for category in categories:
+        if category not in seen:
+            seen.add(category)
+            ordered_categories.append(category)
+
+    if not ordered_categories:
+        raise HTTPException(status_code=400, detail="At least one category is required")
+
+    for order, category in enumerate(ordered_categories, start=1):
+        await db.execute(
+            update(FeatureCatalog)
+            .where(FeatureCatalog.category == category)
+            .values(category_order=order)
+        )
+
+    await db.commit()
+    return {"message": "Category order updated successfully"}
+
+
+@router.patch("/feature-orders/reorder")
+async def reorder_features_within_category(
+    payload: FeatureOrderReorderIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin)
+):
+    """Persist feature ordering inside a category."""
+    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
+    if not is_super:
+        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+
+    category = _normalize_feature_category(payload.category)
+    if not payload.feature_ids:
+        raise HTTPException(status_code=400, detail="At least one feature is required")
+
+    feature_ids = list(dict.fromkeys(payload.feature_ids))
+    features = (
+        await db.execute(
+            select(FeatureCatalog).where(
+                FeatureCatalog.id.in_(feature_ids),
+                FeatureCatalog.category == category,
+            )
+        )
+    ).scalars().all()
+
+    if len(features) != len(feature_ids):
+        raise HTTPException(status_code=400, detail="One or more features do not belong to the selected category")
+
+    for order, feature_id in enumerate(feature_ids, start=1):
+        await db.execute(
+            update(FeatureCatalog)
+            .where(FeatureCatalog.id == feature_id, FeatureCatalog.category == category)
+            .values(feature_order=order)
+        )
+
+    await db.commit()
+    return {"message": "Feature order updated successfully"}
 
 
 @router.delete("/features/{feature_id}")
@@ -2442,7 +2617,6 @@ async def get_org_feature_overrides(
             "plan_default": plan_default,
             "override": override,  # None | True | False
             "effective_value": override if override is not None else plan_default,
-            "is_addon": feature.is_addon,
         })
     
     return result
@@ -2958,8 +3132,10 @@ class PlanPatchRequest(BaseModel):
     max_ticket_categories: Optional[int] = None
     max_badge_templates: Optional[int] = None
     max_certificate_templates: Optional[int] = None
+    max_emails_per_event: Optional[int] = None
     price_per_event_min: Optional[int] = None
     price_per_event_max: Optional[int] = None
+    price_per_event: Optional[float] = None
     currency: Optional[str] = None
     billing_model: Optional[str] = None
     display_order: Optional[int] = None
@@ -3037,6 +3213,9 @@ class AddonPostRequest(BaseModel):
     name: str
     key: str
     description: Optional[str] = None
+    addon_type: str = "PLAN"
+    short_description: Optional[str] = None
+    image_url: Optional[str] = None
     price_inr: Optional[float] = None
     min_price_inr: Optional[float] = None
     max_price_inr: Optional[float] = None
@@ -3047,11 +3226,20 @@ class AddonPostRequest(BaseModel):
     is_active: bool = True
     feature_ids: List[uuid.UUID] = []
     features_spec: List[Dict[str, Any]] = []
+    hardware_spec: List[Dict[str, Any]] = []
+    staff_spec: List[Dict[str, Any]] = []
+    inclusions: List[str] = []
+    exclusions: List[str] = []
+    consumables_cost: float = 0
+    template_types: List[str] = []
 
 class AddonPatchRequest(BaseModel):
     name: Optional[str] = None
     key: Optional[str] = None
     description: Optional[str] = None
+    addon_type: Optional[str] = None
+    short_description: Optional[str] = None
+    image_url: Optional[str] = None
     price_inr: Optional[float] = None
     min_price_inr: Optional[float] = None
     max_price_inr: Optional[float] = None
@@ -3062,6 +3250,12 @@ class AddonPatchRequest(BaseModel):
     is_active: Optional[bool] = None
     feature_ids: Optional[List[uuid.UUID]] = None
     features_spec: Optional[List[Dict[str, Any]]] = None
+    hardware_spec: Optional[List[Dict[str, Any]]] = None
+    staff_spec: Optional[List[Dict[str, Any]]] = None
+    inclusions: Optional[List[str]] = None
+    exclusions: Optional[List[str]] = None
+    consumables_cost: Optional[float] = None
+    template_types: Optional[List[str]] = None
 
 @router.post("/addons", status_code=201)
 async def create_platform_addon(
@@ -3081,11 +3275,18 @@ async def create_platform_addon(
     existing = (await db.execute(stmt)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="Add-on key already exists")
+
+    addon_type = payload.addon_type.upper()
+    hardware_spec = payload.hardware_spec if addon_type == "VENUE" else []
+    staff_spec = payload.staff_spec if addon_type == "VENUE" else []
         
     addon = Addon(
         name=payload.name,
         key=payload.key,
         description=payload.description,
+        addon_type=addon_type,
+        short_description=payload.short_description,
+        image_url=payload.image_url,
         price_inr=payload.price_inr,
         min_price_inr=payload.min_price_inr,
         max_price_inr=payload.max_price_inr,
@@ -3094,7 +3295,13 @@ async def create_platform_addon(
         is_optional_for_plan=payload.is_optional_for_plan,
         included_in_plan=payload.included_in_plan,
         is_active=payload.is_active,
-        features_spec=payload.features_spec
+        features_spec=payload.features_spec,
+        hardware_spec=hardware_spec,
+        staff_spec=staff_spec,
+        inclusions=payload.inclusions,
+        exclusions=payload.exclusions,
+        consumables_cost=payload.consumables_cost
+        ,template_types=[value.lower() for value in payload.template_types]
     )
     db.add(addon)
     await db.flush()  # To get addon.id
@@ -3125,7 +3332,14 @@ async def patch_platform_addon(
     if not addon:
         raise HTTPException(status_code=404, detail="Add-on not found")
         
-    for field, val in payload.model_dump(exclude_unset=True, exclude={"feature_ids"}).items():
+    update_data = payload.model_dump(exclude_unset=True, exclude={"feature_ids"})
+    addon_type = update_data.get("addon_type", addon.addon_type).upper() if update_data.get("addon_type") else addon.addon_type
+    if addon_type != "VENUE":
+        update_data["hardware_spec"] = []
+        update_data["staff_spec"] = []
+    for field, val in update_data.items():
+        if field == "addon_type" and isinstance(val, str):
+            val = val.upper()
         setattr(addon, field, val)
         
     # Update feature mappings if provided
@@ -3138,6 +3352,19 @@ async def patch_platform_addon(
             
     await db.commit()
     return {"message": "Add-on updated successfully", "addon": addon.name}
+
+@router.delete("/addons/{addon_id}", status_code=204)
+async def delete_platform_addon(
+    addon_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin)
+):
+    """Delete a manually managed add-on."""
+    addon = await db.get(Addon, addon_id)
+    if not addon:
+        raise HTTPException(status_code=404, detail="Add-on not found")
+    await db.delete(addon)
+    await db.commit()
 
 
 # ── Subscriptions Extensions ───────────────────────────────────

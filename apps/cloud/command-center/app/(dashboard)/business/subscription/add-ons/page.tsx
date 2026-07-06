@@ -1,589 +1,980 @@
 "use client"
-import React, { useState, useEffect } from "react"
-import {
-  useSubscriptions,
-  useSubscriptionPlans,
-  useExtendTrial,
-  useChangePlan,
-  useAdminDashboard,
-  useRevenueAnalytics,
-  formatINR,
-} from "@/services/super-admin-service"
+
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent } from "react"
+import { ArrowRight, Check, CheckCircle2, Cpu, Edit3, ImagePlus, Layers3, MapPin, Plus, Search, Trash2, Users, X } from "lucide-react"
+import { toast } from "sonner"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
 import {
-  Search,
-  FileSpreadsheet,
-  AlertTriangle,
-  Clock,
-  MoreVertical,
-  ChevronLeft,
-  ChevronRight,
-  Settings,
-} from "lucide-react"
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
-import { useRouter } from "next/navigation"
+  Addon,
+  formatINR,
+  useAddons,
+  useCreateAddon,
+  useDeleteAddon,
+  useHardwareCatalog,
+  useStaffCatalog,
+  useSubscriptionPlans,
+  useUpdateAddon,
+} from "@/services/super-admin-service"
 
-export default function SubscriptionsPage() {
-  const router = useRouter()
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL")
-  const [searchVal, setSearchVal] = useState("")
-  const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [selectedPlanId, setSelectedPlanId] = useState<string>("ALL")
-  const [page, setPage] = useState(1)
-  const limit = 8
+type Kind = "PLAN" | "VENUE"
+type Resource = { id: string; quantity: number; days: number }
 
-  // Modals / Action states
-  const [activeActionOrgId, setActiveActionOrgId] = useState<string | null>(null)
-  const [actionType, setActionType] = useState<"plan" | "trial" | null>(null)
-  const [extendDays, setExtendDays] = useState(7)
-  const [extendReason, setExtendReason] = useState("")
-  const [targetPlanId, setTargetPlanId] = useState("")
+type FormState = {
+  name: string
+  key: string
+  addon_type: Kind
+  short_description: string
+  description: string
+  image_url: string
+  billing_unit: string
+  min_price_inr: string
+  max_price_inr: string
+  available_for_plans: string[]
+  is_active: boolean
+  hardware: Resource[]
+  staff: Resource[]
+  inclusions: string[]
+  exclusions: string[]
+  consumables_cost: string
+  template_types: string[]
+}
 
-  // Debounce search
+const emptyForm = (kind: Kind): FormState => ({
+  name: "",
+  key: "",
+  addon_type: kind,
+  short_description: "",
+  description: "",
+  image_url: "",
+  billing_unit: "PER_EVENT",
+  min_price_inr: "",
+  max_price_inr: "",
+  available_for_plans: [],
+  is_active: true,
+  hardware: [],
+  staff: [],
+  inclusions: [""],
+  exclusions: [],
+  consumables_cost: "0",
+  template_types: [],
+})
+
+export default function AddonsManagementPage() {
+  const { data: addons = [], isLoading } = useAddons()
+  const { data: plans = [] } = useSubscriptionPlans()
+  const { data: hardwareData } = useHardwareCatalog({ limit: 200 })
+  const { data: staffData } = useStaffCatalog({ limit: 200 })
+  const createAddon = useCreateAddon()
+  const updateAddon = useUpdateAddon()
+  const deleteAddon = useDeleteAddon()
+
+  const [kind, setKind] = useState<Kind>("PLAN")
+  const [search, setSearch] = useState("")
+  const [editing, setEditing] = useState<Addon | null>(null)
+  const [previewAddon, setPreviewAddon] = useState<Addon | null>(null)
+  const [form, setForm] = useState<FormState | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+
+  const hardware = hardwareData?.items ?? []
+  const staff = staffData?.items ?? []
+  const hardwareMap = useMemo(() => Object.fromEntries(hardware.map((item) => [item.id, item])), [hardware])
+  const staffMap = useMemo(() => Object.fromEntries(staff.map((item) => [item.id, item])), [staff])
+  const groupedHardware = useMemo(
+    () =>
+      hardware.reduce((acc: Record<string, typeof hardware>, item) => {
+        const key = item.category_name || "Uncategorized"
+        if (!acc[key]) acc[key] = []
+        acc[key].push(item)
+        return acc
+      }, {}),
+    [hardware]
+  )
+  const groupedStaff = useMemo(
+    () =>
+      staff.reduce((acc: Record<string, typeof staff>, item) => {
+        const key = item.team_category || item.department || item.grade || "Operations"
+        if (!acc[key]) acc[key] = []
+        acc[key].push(item)
+        return acc
+      }, {}),
+    [staff]
+  )
+
+  const visible = useMemo(
+    () =>
+      addons.filter(
+        (a) =>
+          (a.addon_type || "PLAN") === kind &&
+          `${a.name} ${a.key} ${a.description || ""} ${a.short_description || ""}`
+            .toLowerCase()
+            .includes(search.toLowerCase())
+      ),
+    [addons, kind, search]
+  )
+
   useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(searchVal)
-      setPage(1)
-    }, 300)
-    return () => clearTimeout(handler)
-  }, [searchVal])
+    if (form && form.addon_type !== kind) {
+      setForm((prev) => (prev ? { ...prev, addon_type: kind } : prev))
+    }
+  }, [kind, form])
 
-  const { data: plansData = [] } = useSubscriptionPlans()
-  const { data: dashData } = useAdminDashboard()
-  const { data: revData } = useRevenueAnalytics("12m")
-
-  const { data, isLoading, error, refetch } = useSubscriptions({
-    status: selectedStatus === "ALL" ? undefined : selectedStatus,
-    plan_id: selectedPlanId === "ALL" ? undefined : selectedPlanId,
-    search: debouncedSearch || undefined,
-    skip: (page - 1) * limit,
-    limit,
-  })
-
-  const { mutate: extendTrial, isPending: isExtending } = useExtendTrial()
-  const { mutate: changePlan, isPending: isChanging } = useChangePlan()
-
-  const items = data?.items || []
-  const total = data?.total || 0
-  const totalPages = Math.ceil(total / limit) || 1
-
-  // Status mapping and counts
-  const STATUS_TABS = [
-    { label: "ALL", value: "ALL", count: total },
-    { label: "ACTIVE", value: "ACTIVE", count: dashData?.subscriptions_active || 0 },
-    { label: "TRIAL", value: "TRIAL", count: dashData?.subscriptions_trial || 0 },
-    { label: "GRACE PERIOD", value: "GRACE_PERIOD", count: dashData?.subscriptions_grace || 0 },
-    { label: "SUSPENDED", value: "SUSPENDED", count: dashData?.subscriptions_suspended || 0 },
-    { label: "EXPIRED", value: "EXPIRED", count: dashData?.subscriptions_expired || 0 },
-    { label: "CANCELLED", value: "CANCELLED", count: dashData?.subscriptions_cancelled || 0 },
-  ]
-
-  const PLAN_COLORS: Record<string, string> = {
-    Basic: "#64748B",
-    Professional: "#4F46E5",
-    Enterprise: "#7C3AED",
+  const openCreate = () => {
+    setEditing(null)
+    setForm(emptyForm(kind))
   }
 
-  // Handle Export CSV
-  const handleExportCSV = () => {
-    if (items.length === 0) return
-    const headers = ["Org Name", "Plan", "Status", "MRR (INR)", "Period End", "Trial Ends"]
-    const rows = items.map(item => [
-      item.org_name,
-      item.plan_name,
-      item.status,
-      item.mrr_inr,
-      item.current_period_end || "",
-      item.trial_ends_at || "",
-    ])
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + [headers.join(","), ...rows.map(e => e.join(","))].join("\n")
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement("a")
-    link.setAttribute("href", encodedUri)
-    link.setAttribute("download", `subscriptions_${new Date().toISOString().slice(0,10)}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  const openEdit = (a: Addon) => {
+    setEditing(a)
+    setForm({
+      name: a.name,
+      key: a.key,
+      addon_type: a.addon_type || "PLAN",
+      short_description: a.short_description || "",
+      description: a.description || "",
+      image_url: a.image_url || "",
+      billing_unit: a.billing_unit || "PER_EVENT",
+      min_price_inr: String(a.min_price_inr ?? a.price_inr ?? ""),
+      max_price_inr: String(a.max_price_inr ?? ""),
+      available_for_plans: a.available_for_plans || [],
+      is_active: a.is_active,
+      hardware: (a.hardware_spec || []).map((x) => ({ id: x.item_id, quantity: x.quantity, days: x.days })),
+      staff: (a.staff_spec || []).map((x) => ({ id: x.role_id, quantity: x.quantity, days: x.days })),
+      inclusions: a.inclusions?.length ? a.inclusions : [""],
+      exclusions: a.exclusions || [],
+      consumables_cost: String(a.consumables_cost || 0),
+      template_types: a.template_types || [],
+    })
+    setKind((a.addon_type || "PLAN") as Kind)
+  }
+
+  const setResource = (field: "hardware" | "staff", id: string, checked: boolean) =>
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            [field]: checked ? [...current[field], { id, quantity: 1, days: 1 }] : current[field].filter((r) => r.id !== id),
+          }
+        : current
+    )
+
+  const updateResource = (field: "hardware" | "staff", id: string, key: "quantity" | "days", value: number) =>
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            [field]: current[field].map((r) => (r.id === id ? { ...r, [key]: Math.max(1, value || 1) } : r)),
+          }
+        : current
+    )
+
+  const handleImageUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file || !form) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      setForm((current) => (current ? { ...current, image_url: String(ev.target?.result || "") } : current))
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const save = async () => {
+    if (!form || !form.name.trim() || !form.key.trim()) return toast.error("Name and catalog key are required")
+
+    const normalizedType = form.addon_type || kind
+    const payload = {
+      ...form,
+      addon_type: normalizedType,
+      key: form.key.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+      min_price_inr: form.min_price_inr ? Number(form.min_price_inr) : null,
+      max_price_inr: form.max_price_inr ? Number(form.max_price_inr) : null,
+      price_inr: form.min_price_inr ? Number(form.min_price_inr) : null,
+      consumables_cost: Number(form.consumables_cost || 0),
+      hardware_spec: normalizedType === "VENUE" ? form.hardware.map((r) => ({ item_id: r.id, quantity: r.quantity, days: r.days })) : [],
+      staff_spec: normalizedType === "VENUE" ? form.staff.map((r) => ({ role_id: r.id, quantity: r.quantity, days: r.days })) : [],
+      inclusions: form.inclusions.filter(Boolean),
+      exclusions: form.exclusions.filter(Boolean),
+      template_types: normalizedType === "VENUE" ? form.template_types : [],
+    }
+
+    try {
+      if (editing) {
+        await updateAddon.mutateAsync({ addonId: editing.id, data: payload })
+      } else {
+        await createAddon.mutateAsync(payload)
+      }
+      toast.success(editing ? "Add-on updated" : "Add-on created")
+      setForm(null)
+      setEditing(null)
+    } catch (error: any) {
+      toast.error(error?.response?.data?.detail || "Could not save add-on")
+    }
   }
 
   return (
     <PageContainer>
       <SectionHeader
-        title="Subscriptions"
-        description="Monitor and manage all organization subscriptions and billing states."
+        title="Add-on Catalog"
+        description="Plan add-ons stay commercial-only. Venue add-ons can include hardware and staffing details."
+        actions={
+          <Button onClick={openCreate} className="h-10 gap-2 bg-black text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90">
+            <Plus className="h-4 w-4" />
+            Create add-on
+          </Button>
+        }
       />
 
-      <div className="flex gap-6 items-start">
-        {/* ── MAIN CONTENT (TABLE + FILTERS) ────────────────── */}
-        <div className="flex-1 space-y-4 min-w-0">
-          
-          {/* Status Pills */}
-          <div className="flex flex-wrap gap-1 p-1 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-xl w-fit">
-            {STATUS_TABS.map(tab => (
-              <button
-                key={tab.value}
-                onClick={() => {
-                  setSelectedStatus(tab.value)
-                  setPage(1)
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors
-                  ${selectedStatus === tab.value
-                    ? "bg-brand-primary text-white"
-                    : "text-secondary hover:text-primary hover:bg-surface-hover"}`}
-              >
-                <span>{tab.label}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full
-                  ${selectedStatus === tab.value
-                    ? "bg-white/20 text-white"
-                    : "bg-surface-2 text-tertiary"}`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Filters Row */}
-          <div className="flex gap-3 items-center">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" />
-              <input
-                type="text"
-                placeholder="Search organizations..."
-                value={searchVal}
-                onChange={e => setSearchVal(e.target.value)}
-                className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl pl-9 pr-4 py-2 text-sm text-primary focus:outline-none focus:border-brand-primary"
-              />
-            </div>
-            
-            <select
-              value={selectedPlanId}
-              onChange={e => {
-                setSelectedPlanId(e.target.value)
-                setPage(1)
-              }}
-              className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl px-3 py-2 text-sm text-primary cursor-pointer focus:outline-none focus:border-brand-primary"
+      <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_auto]">
+        <div className="flex rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-1 shadow-sm">
+          {(
+            [
+              { id: "PLAN", label: "Plan add-ons", icon: Layers3 },
+              { id: "VENUE", label: "Venue add-ons", icon: MapPin },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setKind(tab.id)}
+              className={cn(
+                "flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-colors",
+                kind === tab.id
+                  ? "bg-black text-white shadow-sm dark:bg-white dark:text-black"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)]"
+              )}
             >
-              <option value="ALL">All Plans</option>
-              {plansData.map(plan => (
-                <option key={plan.id} value={plan.id}>{plan.name}</option>
-              ))}
-            </select>
-
-            <Button variant="outline" onClick={handleExportCSV} className="rounded-xl flex gap-1.5 text-xs py-2">
-              <FileSpreadsheet className="w-4 h-4 text-secondary" />
-              Export CSV
-            </Button>
-          </div>
-
-          {/* Subscriptions Table */}
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl overflow-hidden shadow-sm">
-            {isLoading ? (
-              <div className="divide-y divide-[var(--border-subtle)]">
-                {Array.from({ length: limit }).map((_, i) => (
-                  <div key={i} className="h-16 bg-surface-2 animate-pulse" />
-                ))}
-              </div>
-            ) : error ? (
-              <div className="flex flex-col items-center gap-2 py-16">
-                <AlertTriangle className="h-8 w-8 text-danger" />
-                <p className="text-sm text-secondary">Failed to load subscriptions</p>
-                <button onClick={() => refetch()} className="text-xs bg-brand-primary text-white px-3 py-1.5 rounded-lg">
-                  Retry
-                </button>
-              </div>
-            ) : items.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 py-16 text-center">
-                <Building2Icon className="h-10 w-10 text-tertiary" />
-                <p className="text-sm text-secondary font-medium">No subscriptions found</p>
-                <p className="text-xs text-tertiary">Try clearing your filters or changing search query</p>
-              </div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[11px] font-semibold text-secondary uppercase tracking-wider">
-                    <th className="py-3.5 px-4">Organization</th>
-                    <th className="py-3.5 px-4">Plan</th>
-                    <th className="py-3.5 px-4">Status</th>
-                    <th className="py-3.5 px-4">Trial Ends</th>
-                    <th className="py-3.5 px-4">Period End</th>
-                    <th className="py-3.5 px-4 text-right">MRR</th>
-                    <th className="py-3.5 px-4"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)] text-sm">
-                  {items.map(item => {
-                    const isExpiringSoon = item.status === "TRIAL" && item.days_until_trial_end !== null && item.days_until_trial_end <= 7
-                    return (
-                      <tr key={item.id} className="hover:bg-[var(--bg-surface-hover)] group transition-colors">
-                        {/* Org details */}
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-brand-primary-muted text-brand-primary flex items-center justify-center font-bold text-xs shrink-0">
-                              {item.org_name.slice(0,2).toUpperCase()}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="font-semibold text-primary truncate">{item.org_name}</p>
-                              <p className="text-xs text-tertiary font-mono">{item.org_slug}</p>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Plan */}
-                        <td className="py-3.5 px-4">
-                          <span
-                            className="text-xs px-2 py-0.5 rounded-md text-white font-medium"
-                            style={{ backgroundColor: item.plan_color_hex || PLAN_COLORS[item.plan_name] || "#64748B" }}
-                          >
-                            {item.plan_name}
-                          </span>
-                        </td>
-
-                        {/* Status */}
-                        <td className="py-3.5 px-4">
-                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase
-                            ${item.status === 'ACTIVE' ? 'bg-success-muted text-success border-success/20'
-                              : item.status === 'TRIAL' ? 'bg-info-muted text-info border-info/20'
-                              : item.status === 'GRACE_PERIOD' ? 'bg-warning-muted text-warning border-warning/20'
-                              : item.status === 'SUSPENDED' ? 'bg-danger-muted text-danger border-danger/20'
-                              : 'bg-surface-2 text-secondary border-border'}`}>
-                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                            {item.status.replace('_', ' ')}
-                          </span>
-                        </td>
-
-                        {/* Trial End */}
-                        <td className="py-3.5 px-4">
-                          {item.trial_ends_at ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-secondary">
-                                {new Date(item.trial_ends_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
-                              </span>
-                              {isExpiringSoon && (
-                                <span className="bg-danger-muted text-danger text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5">
-                                  <Clock className="w-3 h-3" />
-                                  {item.days_until_trial_end}d
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-tertiary">—</span>
-                          )}
-                        </td>
-
-                        {/* Period End */}
-                        <td className="py-3.5 px-4 font-mono text-secondary">
-                          {item.current_period_end ? (
-                            new Date(item.current_period_end).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })
-                          ) : (
-                            <span className="text-tertiary">—</span>
-                          )}
-                        </td>
-
-                        {/* MRR */}
-                        <td className="py-3.5 px-4 text-right font-mono font-semibold text-success">
-                          {formatINR(item.mrr_inr)}
-                        </td>
-
-                        {/* Actions */}
-                        <td className="py-3.5 px-4 text-right">
-                          <div className="relative inline-block group/menu">
-                            <button className="p-1 rounded-md hover:bg-surface-2 text-secondary">
-                              <MoreVertical className="w-4 h-4" />
-                            </button>
-                            <div className="absolute right-0 bottom-full mb-1 w-40 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl py-1 shadow-lg hidden group-hover/menu:block hover:block z-10">
-                              <button
-                                onClick={() => {
-                                  setActiveActionOrgId(item.organization_id)
-                                  setActionType("plan")
-                                  setTargetPlanId(item.plan_id)
-                                }}
-                                className="w-full text-left px-3.5 py-1.5 text-xs text-primary hover:bg-surface-hover"
-                              >
-                                Change Plan
-                              </button>
-                              {item.status === "TRIAL" && (
-                                <button
-                                  onClick={() => {
-                                    setActiveActionOrgId(item.organization_id)
-                                    setActionType("trial")
-                                    setExtendDays(7)
-                                    setExtendReason("")
-                                  }}
-                                  className="w-full text-left px-3.5 py-1.5 text-xs text-primary hover:bg-surface-hover"
-                                >
-                                  Extend Trial
-                                </button>
-                              )}
-                              <button
-                                onClick={() => router.push(`/organizations/${item.organization_id}`)}
-                                className="w-full text-left px-3.5 py-1.5 text-xs text-primary hover:bg-surface-hover"
-                              >
-                                View Detail
-                              </button>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between py-2">
-              <span className="text-xs text-secondary">
-                Showing <span className="font-semibold text-primary">{(page - 1) * limit + 1}</span> to{" "}
-                <span className="font-semibold text-primary">{Math.min(page * limit, total)}</span> of{" "}
-                <span className="font-semibold text-primary">{total}</span> subscriptions
+              <tab.icon className="h-4 w-4" />
+              {tab.label}
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", kind === tab.id ? "bg-white/10 text-white dark:bg-black/10 dark:text-black" : "bg-[var(--bg-surface-2)] text-[var(--text-secondary)]")}>
+                {addons.filter((a) => (a.addon_type || "PLAN") === tab.id).length}
               </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page === 1}
-                  onClick={() => setPage(p => p - 1)}
-                  className="h-8 rounded-lg"
-                >
-                  <ChevronLeft className="w-4 h-4 mr-1" />
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page === totalPages}
-                  onClick={() => setPage(p => p + 1)}
-                  className="h-8 rounded-lg"
-                >
-                  Next
-                  <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
-            </div>
-          )}
+            </button>
+          ))}
         </div>
 
-        {/* ── RIGHT STICKY SIDEBAR (250px) ──────────────────── */}
-        <div className="w-[260px] space-y-4 shrink-0 sticky top-4 self-start">
-          {/* Donut MRR by Plan */}
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-secondary mb-3">MRR by Plan</h4>
-            <div className="h-36 flex items-center justify-center relative">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={revData?.mrr_by_plan || []}
-                    dataKey="mrr"
-                    nameKey="plan"
-                    innerRadius={36}
-                    outerRadius={52}
-                    paddingAngle={3}
-                  >
-                    {(revData?.mrr_by_plan || []).map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={PLAN_COLORS[entry.plan] || "#64748B"} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => formatINR(v)} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-[10px] text-tertiary font-medium uppercase tracking-wide">Total</span>
-                <span className="text-xs font-bold text-primary font-mono mt-0.5">
-                  {formatINR(revData?.summary?.mrr || 0)}
-                </span>
-              </div>
-            </div>
-            {/* Legend */}
-            <div className="space-y-1.5 mt-2">
-              {(revData?.mrr_by_plan || []).map(entry => (
-                <div key={entry.plan} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: PLAN_COLORS[entry.plan] || "#64748B" }} />
-                    <span className="text-secondary font-medium">{entry.plan}</span>
-                  </div>
-                  <span className="font-mono text-primary font-semibold">{formatINR(entry.mrr)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Trials Expiring Soon */}
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-secondary mb-3">Expiring Trials</h4>
-            <div className="space-y-3">
-              {(dashData?.trials_expiring || []).slice(0, 4).map(trial => (
-                <div key={trial.org_id} className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2 last:border-0 last:pb-0">
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-primary truncate">{trial.org_name}</p>
-                    <p className="text-[10px] text-tertiary">{trial.plan_name}</p>
-                  </div>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0
-                    ${trial.days_remaining <= 3 ? "bg-danger-muted text-danger"
-                      : trial.days_remaining <= 7 ? "bg-warning-muted text-warning"
-                      : "bg-info-muted text-info"}`}>
-                    {trial.days_remaining}d
-                  </span>
-                </div>
-              ))}
-              {(dashData?.trials_expiring || []).length === 0 && (
-                <p className="text-xs text-tertiary text-center py-4">No expiring trials</p>
-              )}
-            </div>
-          </div>
+        <div className="relative min-w-72">
+          <Search className="absolute left-3 top-3.5 h-4 w-4 text-[var(--text-tertiary)]" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search catalog…"
+            className="h-12 border-[var(--border-default)] bg-[var(--bg-surface)] pl-10"
+          />
         </div>
       </div>
 
-      {/* ── ACTION MODAL / BOXES ──────────────────────────── */}
-      {activeActionOrgId && actionType && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-5 w-full max-w-sm shadow-xl space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-[var(--border-subtle)]">
-              <h4 className="font-bold text-primary text-sm uppercase tracking-wide">
-                {actionType === "plan" ? "Migrate Plan Tier" : "Extend Sandbox Trial"}
-              </h4>
-              <button
-                onClick={() => {
-                  setActiveActionOrgId(null)
-                  setActionType(null)
-                }}
-                className="text-secondary hover:text-primary text-xs"
-              >
-                ✕
-              </button>
-            </div>
-
-            {actionType === "plan" ? (
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-secondary">Target Billing Plan</label>
-                  <select
-                    value={targetPlanId}
-                    onChange={e => setTargetPlanId(e.target.value)}
-                    className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-brand-primary"
-                  >
-                    <option value="" disabled>Select plan...</option>
-                    {plansData.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex gap-2 justify-end pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setActiveActionOrgId(null)
-                      setActionType(null)
-                    }}
-                    className="rounded-xl text-xs h-9"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      if (!targetPlanId) return
-                      changePlan(
-                        { orgId: activeActionOrgId, planId: targetPlanId },
-                        {
-                          onSuccess: () => {
-                            setActiveActionOrgId(null)
-                            setActionType(null)
-                            refetch()
-                          },
-                        }
-                      )
-                    }}
-                    disabled={isChanging || !targetPlanId}
-                    className="bg-brand-primary text-white rounded-xl text-xs h-9"
-                  >
-                    {isChanging ? "Saving..." : "Transition Plan"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex gap-2 items-center">
-                    <label className="text-[10px] uppercase font-bold text-secondary">Days to Add</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={90}
-                      value={extendDays}
-                      onChange={e => setExtendDays(Number(e.target.value))}
-                      className="w-16 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg text-center py-1 text-sm focus:outline-none focus:border-brand-primary"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-secondary block">Extension Justification</label>
-                    <textarea
-                      placeholder="Reason for trial extension..."
-                      rows={3}
-                      value={extendReason}
-                      onChange={e => setExtendReason(e.target.value)}
-                      className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl p-2.5 text-xs text-primary focus:outline-none focus:border-brand-primary resize-none"
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-2 justify-end pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setActiveActionOrgId(null)
-                      setActionType(null)
-                    }}
-                    className="rounded-xl text-xs h-9"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      if (extendReason.length < 5) return
-                      extendTrial(
-                        { orgId: activeActionOrgId, days: extendDays, reason: extendReason },
-                        {
-                          onSuccess: () => {
-                            setActiveActionOrgId(null)
-                            setActionType(null)
-                            refetch()
-                          },
-                        }
-                      )
-                    }}
-                    disabled={isExtending || extendReason.length < 5}
-                    className="bg-brand-primary text-white rounded-xl text-xs h-9"
-                  >
-                    {isExtending ? "Extending..." : "Confirm Extension"}
-                  </Button>
-                </div>
-              </div>
-            )}
+      {isLoading ? (
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-80 animate-pulse rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface-2)]" />
+          ))}
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-[var(--border-default)] bg-[var(--bg-surface)]/60 text-center">
+          <div className="mb-4 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 shadow-sm">
+            <Layers3 className="h-7 w-7 text-[var(--text-secondary)]" />
           </div>
+          <h3 className="text-lg font-semibold text-[var(--text-primary)]">No {kind.toLowerCase()} add-ons yet</h3>
+          <p className="mt-1 max-w-md text-sm text-[var(--text-secondary)]">
+            This catalog starts empty by design. Create the first add-on with pricing, images, and the right commercial details.
+          </p>
+          <Button onClick={openCreate} className="mt-5 bg-black text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90">
+            <Plus className="mr-2 h-4 w-4" />
+            Create add-on
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {visible.map((addon) => (
+            <AddonCard
+              key={addon.id}
+              addon={addon}
+              hardwareMap={hardwareMap}
+              staffMap={staffMap}
+              onOpen={() => setPreviewAddon(addon)}
+              onEdit={() => openEdit(addon)}
+              onDelete={async () => {
+                if (!confirm(`Delete ${addon.name}?`)) return
+                await deleteAddon.mutateAsync(addon.id)
+                toast.success("Add-on deleted")
+              }}
+            />
+          ))}
         </div>
       )}
+
+      <Dialog open={!!form} onOpenChange={(open) => !open && setForm(null)}>
+        <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto border-[var(--border-default)] bg-[var(--bg-surface)] p-0 text-[var(--text-primary)]">
+          <DialogHeader className="sticky top-0 z-20 border-b border-[var(--border-default)] bg-[var(--bg-surface)]/95 px-6 py-5 backdrop-blur">
+            <DialogTitle>{editing ? "Edit add-on" : "Create add-on"}</DialogTitle>
+            <DialogDescription className="text-xs text-[var(--text-secondary)]">
+              Build a manual catalog entry for either plan extensions or venue packages.
+            </DialogDescription>
+          </DialogHeader>
+
+          {form && (
+            <div className="space-y-8 p-6">
+              <section className="grid gap-4 md:grid-cols-2">
+                <Field label="Add-on name">
+                  <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                </Field>
+                <Field label="Catalog key">
+                  <Input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="ADDON_PRIORITY_SUPPORT" />
+                </Field>
+                <Field label="Catalog type">
+                  <select
+                    value={form.addon_type}
+                    onChange={(e) => setForm({ ...form, addon_type: e.target.value as Kind })}
+                    className="h-10 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-sm"
+                  >
+                    <option value="PLAN">Plan add-on</option>
+                    <option value="VENUE">Venue add-on</option>
+                  </select>
+                </Field>
+                <Field label="Card description">
+                  <Input value={form.short_description} onChange={(e) => setForm({ ...form, short_description: e.target.value })} />
+                </Field>
+                <Field label="Detailed description" wide>
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className="min-h-24 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-3 text-sm"
+                  />
+                </Field>
+              </section>
+
+              <section className="rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface-2)]/40 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-[var(--text-primary)]">Visual identity</h3>
+                    <p className="text-xs text-[var(--text-secondary)]">Use an image so the card feels more like a commercial product tile.</p>
+                  </div>
+                  {form.image_url ? (
+                    <Button type="button" variant="outline" onClick={() => setForm({ ...form, image_url: "" })} className="text-xs">
+                      Remove image
+                    </Button>
+                  ) : null}
+                </div>
+                <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                {form.image_url ? (
+                  <div className="relative h-56 overflow-hidden rounded-2xl border border-[var(--border-default)] bg-black">
+                    <img src={form.image_url} alt="Add-on preview" className="h-full w-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+                    <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-3">
+                      <div className="text-white">
+                        <p className="text-[10px] uppercase tracking-[0.28em] text-white/60">Preview</p>
+                        <p className="text-lg font-semibold">{form.name || "Add-on card image"}</p>
+                      </div>
+                      <Button type="button" onClick={() => imageInputRef.current?.click()} className="bg-white text-black hover:bg-white/90">
+                        Change image
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="flex h-56 w-full flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-surface-2)]"
+                  >
+                    <ImagePlus className="h-8 w-8" />
+                    <span className="mt-2 text-sm font-semibold">Upload add-on image</span>
+                    <span className="mt-1 text-[10px] uppercase tracking-[0.25em]">PNG, JPG, WebP</span>
+                  </button>
+                )}
+              </section>
+
+              <Section title="Commercial settings" subtitle="Set the sell range and plan availability.">
+                <div className="grid gap-4 md:grid-cols-4">
+                  <Field label="Billing unit">
+                    <select
+                      value={form.billing_unit}
+                      onChange={(e) => setForm({ ...form, billing_unit: e.target.value })}
+                      className="h-10 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-sm"
+                    >
+                      <option value="PER_EVENT">Per event</option>
+                      <option value="PER_DAY">Per day</option>
+                      <option value="PER_MONTH">Per month</option>
+                      <option value="CUSTOM">Custom quote</option>
+                    </select>
+                  </Field>
+                  <Field label="Minimum price">
+                    <Input type="number" value={form.min_price_inr} onChange={(e) => setForm({ ...form, min_price_inr: e.target.value })} />
+                  </Field>
+                  <Field label="Maximum price">
+                    <Input type="number" value={form.max_price_inr} onChange={(e) => setForm({ ...form, max_price_inr: e.target.value })} />
+                  </Field>
+                  <Field label="Consumables">
+                    <Input type="number" value={form.consumables_cost} onChange={(e) => setForm({ ...form, consumables_cost: e.target.value })} />
+                  </Field>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {plans.map((plan) => (
+                    <button
+                      key={plan.id}
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          available_for_plans: form.available_for_plans.includes(plan.name)
+                            ? form.available_for_plans.filter((x) => x !== plan.name)
+                            : [...form.available_for_plans, plan.name],
+                        })
+                      }
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                        form.available_for_plans.includes(plan.name)
+                          ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                          : "border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-2)]"
+                      )}
+                    >
+                      {plan.name}
+                    </button>
+                  ))}
+                </div>
+              </Section>
+
+              {form.addon_type === "VENUE" ? (
+                <>
+                  <Section title="Template targeting" subtitle="Choose the simulator/template steps where this venue add-on is available.">
+                    <div className="flex flex-wrap gap-2">{["registration","srr","room","other"].map(type=><button type="button" key={type} onClick={()=>setForm({...form,template_types:form.template_types.includes(type)?form.template_types.filter(value=>value!==type):[...form.template_types,type]})} className={cn("rounded-full border px-3 py-2 text-xs font-semibold capitalize",form.template_types.includes(type)?"border-black bg-black text-white dark:border-white dark:bg-white dark:text-black":"border-[var(--border-default)]")}>{type === "srr" ? "SRR" : type}</button>)}</div>
+                  </Section>
+                  <ResourcePickerGrouped
+                    title="Hardware selection"
+                    icon={Cpu}
+                    items={hardware.map((x) => ({
+                      id: x.id,
+                      name: x.name,
+                      meta: `${x.category_name} · ${formatINR(x.selling_price)}/${String(x.pricing_unit || "").toLowerCase().replace("per_", "")}`,
+                    }))}
+                    groupedItems={Object.fromEntries(
+                      Object.entries(groupedHardware).map(([group, entries]) => [
+                        group,
+                        entries.map((x) => ({
+                          id: x.id,
+                          name: x.name,
+                          meta: `${x.category_name} · ${formatINR(x.selling_price)}/${String(x.pricing_unit || "").toLowerCase().replace("per_", "")}`,
+                        })),
+                      ])
+                    )}
+                    selected={form.hardware}
+                    onToggle={(id: string, checked: boolean) => setResource("hardware", id, checked)}
+                    onUpdate={(id: string, key: "quantity" | "days", value: number) => updateResource("hardware", id, key, value)}
+                  />
+                  <ResourcePickerGrouped
+                    title="Staffing selection"
+                    icon={Users}
+                    items={staff.map((x) => ({
+                      id: x.id,
+                      name: x.name,
+                      meta: `${x.grade || "Crew"} · ${formatINR(x.selling_per_day)}/day`,
+                    }))}
+                    groupedItems={Object.fromEntries(
+                      Object.entries(groupedStaff).map(([group, entries]) => [
+                        group,
+                        entries.map((x) => ({
+                          id: x.id,
+                          name: x.name,
+                          meta: `${x.grade || "Crew"} · ${formatINR(x.selling_per_day)}/day`,
+                        })),
+                      ])
+                    )}
+                    selected={form.staff}
+                    onToggle={(id: string, checked: boolean) => setResource("staff", id, checked)}
+                    onUpdate={(id: string, key: "quantity" | "days", value: number) => updateResource("staff", id, key, value)}
+                  />
+                </>
+              ) : (
+                <section className="rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface-2)]/40 p-5">
+                  <h3 className="font-semibold text-[var(--text-primary)]">Plan add-on scope</h3>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                    Plan add-ons keep their catalog focused on pricing and commercial details. Hardware and staffing belong to venue add-ons only.
+                  </p>
+                </section>
+              )}
+
+              <div className="grid gap-6 md:grid-cols-2">
+                <ListEditor label="Inclusions" items={form.inclusions} onChange={(next) => setForm({ ...form, inclusions: next })} />
+                <ListEditor label="Exclusions" items={form.exclusions} onChange={(next) => setForm({ ...form, exclusions: next })} />
+              </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--border-default)] pt-5">
+                <div className="flex items-center gap-3">
+                  <Switch checked={form.is_active} onCheckedChange={(checked) => setForm({ ...form, is_active: checked })} />
+                  <span className="text-sm font-medium text-[var(--text-primary)]">Available for sale</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setForm(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={save}
+                    disabled={createAddon.isPending || updateAddon.isPending}
+                    className="bg-black text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90"
+                  >
+                    {createAddon.isPending || updateAddon.isPending ? "Saving…" : "Save add-on"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AddonDetailSheet
+        addon={previewAddon}
+        hardwareMap={hardwareMap}
+        staffMap={staffMap}
+        open={!!previewAddon}
+        onOpenChange={(open) => !open && setPreviewAddon(null)}
+        onEdit={() => {
+          if (!previewAddon) return
+          setPreviewAddon(null)
+          openEdit(previewAddon)
+        }}
+      />
     </PageContainer>
   )
 }
 
-function Building2Icon(props: React.SVGProps<SVGSVGElement>) {
+function getAdjustedAddonPriceLabel(addon: Addon, hardwareMap: Record<string, any>, staffMap: Record<string, any>) {
+  if (addon.billing_unit === "CUSTOM") return "Custom quote"
+  const minPrice = Number(addon.min_price_inr ?? addon.price_inr ?? addon.max_price_inr ?? 0)
+  const maxPrice = Math.max(minPrice, Number(addon.max_price_inr ?? addon.price_inr ?? addon.min_price_inr ?? 0))
+  const hardwareCost = (addon.hardware_spec || []).reduce((sum, row) => {
+    const item = hardwareMap[row.item_id]
+    return sum + Number(row.quantity || 0) * Number(row.days || 1) * Number(item?.selling_price || 0)
+  }, 0)
+  const staffCost = (addon.staff_spec || []).reduce((sum, row) => {
+    const item = staffMap[row.role_id]
+    return sum + Number(row.quantity || 0) * Number(row.days || 1) * Number(item?.selling_per_day || 0)
+  }, 0)
+  const totalMin = minPrice + hardwareCost + staffCost
+  const totalMax = maxPrice + hardwareCost + staffCost
+  return totalMin === totalMax ? formatINR(totalMin) : `${formatINR(totalMin)} - ${formatINR(totalMax)}`
+}
+
+function getAddonPriceLabel(addon: Addon) {
+  if (addon.billing_unit === "CUSTOM") return "Custom quote"
+  const minPrice = Number(addon.min_price_inr || addon.price_inr || 0)
+  const maxPrice = Number(addon.max_price_inr || 0)
+  return `${formatINR(minPrice)}${maxPrice ? ` – ${formatINR(maxPrice)}` : ""}`
+}
+
+function getAddonMeta(addon: Addon, hardwareMap: Record<string, any>, staffMap: Record<string, any>) {
+  const isVenue = (addon.addon_type || "PLAN") === "VENUE"
+  const hardware = isVenue ? (addon.hardware_spec || []).reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0) : 0
+  const crew = isVenue ? (addon.staff_spec || []).reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0) : 0
+  const targets = addon.template_types?.length ? addon.template_types.map((item) => (item === "srr" ? "SRR" : item)).join(" · ") : "Other"
+
+  return { isVenue, hardware, crew, targets, price: getAdjustedAddonPriceLabel(addon, hardwareMap, staffMap) }
+}
+
+function AddonCard({ addon, hardwareMap, staffMap, onOpen, onEdit, onDelete }: any) {
+  const { isVenue, hardware, crew, targets, price } = getAddonMeta(addon, hardwareMap, staffMap)
+  const imageUrl = typeof addon.image_url === "string" && addon.image_url.trim() ? addon.image_url.trim() : undefined
+  const description = addon.short_description || addon.description || "Commercial add-on package."
+  const __legacyPrice =
+    addon.billing_unit === "CUSTOM"
+      ? "Custom quote"
+      : `${formatINR(Number(addon.min_price_inr || addon.price_inr || 0))}${addon.max_price_inr ? ` – ${formatINR(Number(addon.max_price_inr))}` : ""}`
+
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-      {...props}
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+      className="group relative flex min-h-[520px] cursor-pointer flex-col overflow-hidden rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md"
     >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21h10.5V3.75A1.125 1.125 0 0 0 16.125 2.625H7.875a1.125 1.125 0 0 0-1.125 1.125V21Z"
-      />
-    </svg>
+      <div className="relative h-[260px] flex-shrink-0 overflow-hidden border-b border-[var(--border-default)] bg-black">
+        {imageUrl ? (
+          <img src={imageUrl} alt={addon.name} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,.14),transparent_36%),linear-gradient(135deg,#050505,#1a1a1a)]">
+            <div className="rounded-full border border-white/10 bg-white/5 p-4 text-white/55">
+              {isVenue ? <MapPin className="h-7 w-7" /> : <Layers3 className="h-7 w-7" />}
+            </div>
+          </div>
+        )}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent px-4 pb-4 pt-12 text-white">
+          <div className="flex items-center justify-between gap-3">
+            <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]">
+              {isVenue ? "Venue package" : "Plan extension"}
+            </span>
+            <span className={cn("rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]", addon.is_active ? "bg-white text-black" : "bg-white/10 text-white/55")}>
+              {addon.is_active ? "Active" : "Draft"}
+            </span>
+          </div>
+          <h3 className="mt-3 truncate text-lg font-semibold">{addon.name}</h3>
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col p-4">
+        <p className="line-clamp-2 min-h-10 text-xs leading-5 text-[var(--text-secondary)]">{description}</p>
+
+        <div className="mt-3 grid grid-cols-3 border-y border-[var(--border-default)] py-3">
+          <div className="min-w-0 border-r border-[var(--border-default)] px-1 text-center">
+            <div className="truncate text-[9px] text-[var(--text-tertiary)]">Billing</div>
+            <div className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">{String(addon.billing_unit || "PER_EVENT").replaceAll("_", " ")}</div>
+          </div>
+          <div className="min-w-0 border-r border-[var(--border-default)] px-1 text-center">
+            <div className="truncate text-[9px] text-[var(--text-tertiary)]">{isVenue ? "Hardware" : "Access"}</div>
+            <div className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">{isVenue ? hardware : ((addon.available_for_plans || []).length ? "Scoped" : "Open")}</div>
+          </div>
+          <div className="min-w-0 px-1 text-center">
+            <div className="truncate text-[9px] text-[var(--text-tertiary)]">{isVenue ? "Staff" : "Type"}</div>
+            <div className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">{isVenue ? crew : "Plan"}</div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-end justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[9px] uppercase text-[var(--text-tertiary)]">{isVenue ? "Price range" : "Commercial range"}</div>
+            <div className="mt-1 truncate text-lg font-semibold text-[var(--text-primary)]">{price}</div>
+          </div>
+          <CheckCircle2 className="h-4 w-4 text-[var(--text-primary)] opacity-0 transition-opacity group-hover:opacity-100" />
+        </div>
+
+        <div className="mt-3 min-h-6">
+          {isVenue ? <p className="line-clamp-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">{targets}</p> : null}
+        </div>
+
+        <div className="mt-auto grid grid-cols-[1fr_auto_auto] gap-2 pt-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpen()
+            }}
+            className="h-10 rounded-md border-[var(--border-default)] bg-transparent text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)]"
+          >
+            View Details
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation()
+              onEdit()
+            }}
+            aria-label={`Edit ${addon.name}`}
+            className="h-10 w-10 rounded-md border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)]"
+          >
+            <Edit3 className="h-4 w-4" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation()
+              onDelete()
+            }}
+            aria-label={`Delete ${addon.name}`}
+            className="h-10 w-10 rounded-md border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-red-500/10 hover:text-red-500"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function Field({ label, wide, children }: { label: string; wide?: boolean; children: any }) {
+  return (
+    <label className={wide ? "md:col-span-2" : ""}>
+      <span className="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function Section({ title, subtitle, children }: { title: string; subtitle: string; children: any }) {
+  return (
+    <section className="rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface-2)]/40 p-5">
+      <h3 className="font-semibold text-[var(--text-primary)]">{title}</h3>
+      <p className="mb-4 text-xs text-[var(--text-secondary)]">{subtitle}</p>
+      {children}
+    </section>
+  )
+}
+
+function ResourcePicker({ title, icon: Icon, items, groupedItems = {}, selected, onToggle, onUpdate }: any) {
+  const available = items.filter((item: any) => !selected.some((row: any) => row.id === item.id))
+  return (
+    <Section title={title} subtitle="Select catalog resources and set the delivery quantity and duration.">
+      <div className="space-y-2">
+        {selected.map((row: any) => { const item = items.find((entry:any)=>entry.id===row.id); return <div key={row.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-2"><Icon className="h-4 w-4 text-[var(--text-secondary)]"/><select value={row.id} onChange={event=>{onToggle(row.id,false);onToggle(event.target.value,true)}} className="min-w-56 flex-1 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 py-2 text-xs"><option value={row.id}>{item?.name || "Catalog item"} · {item?.meta}</option>{available.map((entry:any)=><option key={entry.id} value={entry.id}>{entry.name} · {entry.meta}</option>)}</select><Input type="number" min={1} value={row.quantity} onChange={e=>onUpdate(row.id,"quantity",+e.target.value)} aria-label="Quantity" className="h-9 w-20"/><Input type="number" min={1} value={row.days} onChange={e=>onUpdate(row.id,"days",+e.target.value)} aria-label="Days" className="h-9 w-20"/><Button type="button" size="icon" variant="ghost" onClick={()=>onToggle(row.id,false)}><Trash2 className="h-4 w-4"/></Button></div> })}
+        {available.length > 0 && <Button type="button" variant="outline" onClick={()=>onToggle(available[0].id,true)}><Plus className="mr-2 h-4 w-4"/>Add {title.toLowerCase().replace(" selection","")}</Button>}
+        {items.length === 0 && <p className="py-6 text-center text-xs text-[var(--text-secondary)]">No catalog resources are available yet. Add hardware or staff in the pricing catalogs first.</p>}
+      </div>
+    </Section>
+  )
+}
+
+function ResourcePickerGrouped({ title, icon: Icon, items, groupedItems = {}, selected, onToggle, onUpdate }: any) {
+  const available = items.filter((item: any) => !selected.some((row: any) => row.id === item.id))
+
+  return (
+    <Section title={title} subtitle="Select catalog resources and set the delivery quantity and duration.">
+      <div className="space-y-2">
+        {selected.map((row: any) => {
+          const item = items.find((entry: any) => entry.id === row.id)
+          return (
+            <div key={row.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-2">
+              <Icon className="h-4 w-4 text-[var(--text-secondary)]" />
+              <select
+                value={row.id}
+                onChange={(event) => {
+                  onToggle(row.id, false)
+                  onToggle(event.target.value, true)
+                }}
+                className="min-w-56 flex-1 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 py-2 text-xs"
+              >
+                <option value={row.id}>{item?.name || "Catalog item"} · {item?.meta}</option>
+                {Object.keys(groupedItems).sort().map((group) => (
+                  <optgroup key={group} label={group}>
+                    {(groupedItems[group] || [])
+                      .filter((entry: any) => entry.id !== row.id && available.some((candidate: any) => candidate.id === entry.id))
+                      .map((entry: any) => (
+                        <option key={entry.id} value={entry.id}>{entry.name} · {entry.meta}</option>
+                      ))}
+                  </optgroup>
+                ))}
+              </select>
+              <Input type="number" min={1} value={row.quantity} onChange={e => onUpdate(row.id, "quantity", +e.target.value)} aria-label="Quantity" className="h-9 w-20" />
+              <Input type="number" min={1} value={row.days} onChange={e => onUpdate(row.id, "days", +e.target.value)} aria-label="Days" className="h-9 w-20" />
+              <Button type="button" size="icon" variant="ghost" onClick={() => onToggle(row.id, false)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          )
+        })}
+
+        {available.length > 0 && (
+          <Button type="button" variant="outline" onClick={() => onToggle(available[0].id, true)}>
+            <Plus className="mr-2 h-4 w-4" />Add {title.toLowerCase().replace(" selection", "")}
+          </Button>
+        )}
+
+        {items.length === 0 && <p className="py-6 text-center text-xs text-[var(--text-secondary)]">No catalog resources are available yet. Add hardware or staff in the pricing catalogs first.</p>}
+      </div>
+    </Section>
+  )
+}
+
+function parsePastedList(raw: string) {
+  const normalized = raw.replace(/\r/g, "").trim()
+  if (!normalized) return []
+
+  const source = normalized.includes("\n")
+    ? normalized.split("\n")
+    : normalized.split(/\s*[;,]\s+/)
+
+  return source
+    .map((item) =>
+      item
+        .replace(/^\s*(?:[-*]|\u2022|\u25CF|\u25AA|\u25E6)\s*/, "")
+        .replace(/^\s*\d+[\).\-\s]+/, "")
+        .trim()
+    )
+    .filter(Boolean)
+}
+
+function ListEditor({ label, items, onChange }: { label: string; items: string[]; onChange: (v: string[]) => void }) {
+  const handlePaste = (index: number, event: ClipboardEvent<HTMLInputElement>) => {
+    const parsed = parsePastedList(event.clipboardData.getData("text"))
+    if (parsed.length <= 1) return
+
+    event.preventDefault()
+    const next = [...items]
+    next.splice(index, 1, ...parsed)
+    onChange(next)
+  }
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--text-primary)]">{label}</h3>
+        <Button size="sm" variant="outline" onClick={() => onChange([...items, ""])}>
+          <Plus className="mr-1 h-3 w-3" />
+          Add
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <div key={index} className="flex gap-2">
+            <Input
+              value={item}
+              onChange={(e) => onChange(items.map((value, itemIndex) => (itemIndex === index ? e.target.value : value)))}
+              onPaste={(event) => handlePaste(index, event)}
+            />
+            <Button size="icon" variant="ghost" onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${label} item`}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AddonDetailSheet({
+  addon,
+  hardwareMap,
+  staffMap,
+  open,
+  onOpenChange,
+  onEdit,
+}: {
+  addon: Addon | null
+  hardwareMap: Record<string, any>
+  staffMap: Record<string, any>
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onEdit: () => void
+}) {
+  const imageUrl = typeof addon?.image_url === "string" && addon.image_url.trim() ? addon.image_url.trim() : undefined
+  const isVenue = (addon?.addon_type || "PLAN") === "VENUE"
+  const hardwareRows = addon?.hardware_spec || []
+  const staffRows = addon?.staff_spec || []
+  const inclusions = (addon?.inclusions || []).filter(Boolean)
+  const exclusions = (addon?.exclusions || []).filter(Boolean)
+
+  const hardwareCost = hardwareRows.reduce((sum, row) => {
+    const item = hardwareMap[row.item_id]
+    return sum + Number(row.quantity || 0) * Number(row.days || 1) * Number(item?.selling_price || 0)
+  }, 0)
+  const crewCost = staffRows.reduce((sum, row) => {
+    const item = staffMap[row.role_id]
+    return sum + Number(row.quantity || 0) * Number(row.days || 1) * Number(item?.selling_per_day || 0)
+  }, 0)
+  const consumables = Number(addon?.consumables_cost || 0)
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] sm:max-w-[560px]">
+        {addon && (
+          <>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="relative h-[40dvh] min-h-[280px] w-full overflow-hidden border-b border-[var(--border-default)] bg-black">
+                {imageUrl ? (
+                  <img src={imageUrl} alt={addon.name} className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center">
+                    {isVenue ? <MapPin className="h-14 w-14 text-white/35" /> : <Layers3 className="h-14 w-14 text-white/35" />}
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-black/20" />
+              </div>
+
+              <div className="space-y-4 p-5">
+                <SheetHeader className="pr-8">
+                  <div className="mb-1 flex items-center gap-2 text-[9px] uppercase text-[var(--text-tertiary)]">
+                    <span>{addon.is_active === false ? "Inactive" : "Active"}</span>
+                    <span>•</span>
+                    <span>{isVenue ? "Venue package" : "Plan extension"}</span>
+                  </div>
+                  <SheetTitle className="text-xl">{addon.name}</SheetTitle>
+                  <SheetDescription className="line-clamp-none text-xs leading-5 text-[var(--text-secondary)]">
+                    {addon.description || addon.short_description || "Commercial add-on details."}
+                  </SheetDescription>
+                </SheetHeader>
+
+                <section className="border-y border-[var(--border-default)] py-3">
+                  <h3 className="mb-2 text-[10px] font-semibold uppercase text-[var(--text-tertiary)]">Detailed view</h3>
+                  <div className="grid grid-cols-4 divide-x divide-[var(--border-default)]">
+                    <div className="min-w-0 px-2 first:pl-0">
+                      <div className="truncate text-[8px] text-[var(--text-tertiary)]">Billing</div>
+                      <div className="mt-1 truncate text-xs font-semibold text-[var(--text-primary)]">{String(addon.billing_unit || "PER_EVENT").replaceAll("_", " ")}</div>
+                    </div>
+                    <div className="min-w-0 px-2">
+                      <div className="truncate text-[8px] text-[var(--text-tertiary)]">Price</div>
+                      <div className="mt-1 truncate text-xs font-semibold text-[var(--text-primary)]">{getAdjustedAddonPriceLabel(addon, hardwareMap, staffMap)}</div>
+                    </div>
+                    <div className="min-w-0 px-2">
+                      <div className="truncate text-[8px] text-[var(--text-tertiary)]">{isVenue ? "Hardware" : "Plans"}</div>
+                      <div className="mt-1 truncate text-xs font-semibold text-[var(--text-primary)]">{isVenue ? hardwareRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0) : (addon.available_for_plans || []).length}</div>
+                    </div>
+                    <div className="min-w-0 px-2">
+                      <div className="truncate text-[8px] text-[var(--text-tertiary)]">{isVenue ? "Staff" : "Type"}</div>
+                      <div className="mt-1 truncate text-xs font-semibold text-[var(--text-primary)]">{isVenue ? staffRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0) : "Plan"}</div>
+                    </div>
+                  </div>
+                </section>
+
+                <div className="grid grid-cols-2 gap-5 border-b border-[var(--border-default)] pb-4">
+                  <section>
+                    <h3 className="mb-2.5 text-xs font-semibold text-[var(--text-primary)]">Inclusions</h3>
+                    <DetailList items={inclusions} type="included" />
+                  </section>
+                  <section className="border-l border-[var(--border-default)] pl-5">
+                    <h3 className="mb-2.5 text-xs font-semibold text-[var(--text-primary)]">Exclusions</h3>
+                    <DetailList items={exclusions} type="excluded" />
+                  </section>
+                </div>
+
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold text-[var(--text-primary)]">Cost breakdown</h3>
+                  <div className="divide-y divide-[var(--border-default)] border-y border-[var(--border-default)]">
+                    {[
+                      ["Hardware", hardwareCost],
+                      ["Crew", crewCost],
+                      ["Consumables", consumables],
+                    ].map(([label, value]) => (
+                      <div key={String(label)} className="flex items-center justify-between py-2 text-xs">
+                        <span className="text-[var(--text-secondary)]">{label}</span>
+                        <span className="font-mono font-semibold text-[var(--text-primary)]">{formatINR(Number(value))}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between py-3 text-sm font-semibold">
+                      <span>Total range (commercial + hardware + staff)</span>
+                      <span className="font-mono">{getAdjustedAddonPriceLabel(addon, hardwareMap, staffMap)}</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <SheetFooter className="border-[var(--border-default)] bg-[var(--bg-surface)] p-4">
+              <Button type="button" onClick={onEdit} className="h-11 w-full rounded-md bg-black text-sm font-semibold text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/85">
+                Edit add-on
+                <ArrowRight className="ml-1 h-3 w-3" />
+              </Button>
+            </SheetFooter>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function DetailList({ items, type }: { items: string[]; type: "included" | "excluded" }) {
+  const ItemIcon = type === "included" ? Check : X
+
+  if (items.length === 0) {
+    return <p className="text-[10px] leading-4 text-[var(--text-tertiary)]">No items configured.</p>
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {items.map((item) => (
+        <div key={item} className="flex gap-2 text-[11px] leading-4 text-[var(--text-secondary)]">
+          <ItemIcon className="mt-0.5 h-3 w-3 flex-shrink-0 text-[var(--text-secondary)]" />
+          <span>{item}</span>
+        </div>
+      ))}
+    </div>
   )
 }

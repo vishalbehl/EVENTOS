@@ -9,9 +9,9 @@ const Card = React.forwardRef<
     ref={ref}
     className={cn("flex flex-col", className)}
     style={{
-      background: "var(--color-surface-2)",
+      background: "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)), var(--color-surface-2)",
       border: "1px solid var(--color-border)",
-      borderRadius: "var(--radius-lg)",
+      borderRadius: "24px",
       boxShadow: "var(--shadow-card)",
       transition: "transform 200ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms cubic-bezier(0.4,0,0.2,1), border-color 200ms cubic-bezier(0.4,0,0.2,1)",
       ...style,

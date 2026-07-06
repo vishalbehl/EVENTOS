@@ -199,7 +199,19 @@ from app.modules.procurement.models import (
 
 # templates models
 from app.modules.templates.models import (
-    TemplateCategory, RoomTemplate, RegistrationTemplate, SrrTemplate, NetworkTemplate
+    TemplateCategory, RoomTemplate, RegistrationTemplate, SrrTemplate,
+    Template, TemplateVersion, TemplateInstallation, TemplateUsage, TemplateReview,
+    MarketplaceListing, MarketplacePurchase, MarketplaceFavorite
+)
+
+# theme_engine models
+from app.modules.theme_engine.models import (
+    Theme, ThemeAsset
+)
+
+# design_system models
+from app.modules.design_system.models import (
+    DesignToken, ThemePreset, ComponentLibrary
 )
 
 # website_builder models

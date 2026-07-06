@@ -50,11 +50,17 @@ api_router.include_router(pricing_router)
 api_router.include_router(procurement_router)
 
 # ── Phase 6: Enterprise Template System, Website Builder & Blueprint Engine ────
+from app.modules.templates.router import router as templates_router
 from app.modules.website_builder.router import router as website_builder_router
 from app.modules.blueprints.router import router as blueprints_router
+from app.modules.theme_engine.router import router as theme_engine_router
+from app.modules.marketplace.router import router as marketplace_router
 
+api_router.include_router(templates_router)
 api_router.include_router(website_builder_router)
 api_router.include_router(blueprints_router)
+api_router.include_router(theme_engine_router)
+api_router.include_router(marketplace_router)
 
 api_router.include_router(auth.router)
 api_router.include_router(impersonation.router)

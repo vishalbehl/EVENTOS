@@ -44,6 +44,11 @@ export function Sidebar() {
       href: "/organizations"
     },
     {
+      label: "Website Builder",
+      icon: Layout,
+      href: "/super-admin/builder/sites"
+    },
+    {
       label: "Business",
       icon: Banknote,
       subItems: [
@@ -98,8 +103,8 @@ export function Sidebar() {
       icon: ShieldCheck,
       subItems: [
         { label: "Users", icon: Users, href: "/identity-security/users" },
-        { label: "Roles", icon: ShieldCheck, href: "/identity-security/users" },
-        { label: "Permissions", icon: Shield, href: "/identity-security/users" },
+        { label: "Roles", icon: ShieldCheck, href: "/identity-security/roles" },
+        { label: "Permissions", icon: Shield, href: "/identity-security/permissions" },
         { label: "Audit Logs", icon: FileText, href: "/identity-security/audit-logs" },
         { label: "Security Events", icon: Bell, href: "/identity-security/security-events" },
         { label: "Impersonation", icon: User, href: "/identity-security/impersonation" },
@@ -282,7 +287,7 @@ export function Sidebar() {
                             {route.label}
                           </span>
                           {route.subItems.filter((sub: any) => !sub.type).map((sub: any) => (
-                            <Link key={sub.href} href={sub.href} className={cn(
+                            <Link key={`${sub.label}-${sub.href}`} href={sub.href} className={cn(
                               "block px-2.5 py-2 rounded-lg transition-all text-xs font-bold",
                               pathname === sub.href ? "bg-[var(--pri)]/10 text-[var(--pri)]" : "text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--text)]"
                             )}>
@@ -319,7 +324,7 @@ export function Sidebar() {
                           }
                           const isSubActive = pathname === sub.href;
                           return (
-                            <Link key={sub.href} href={sub.href} className="block group/sub">
+                            <Link key={`${sub.label}-${sub.href}`} href={sub.href} className="block group/sub">
                               <div className={cn(
                                 "flex items-center h-10 px-3 rounded-xl text-[12px] font-bold tracking-wide transition-all duration-250",
                                 isSubActive

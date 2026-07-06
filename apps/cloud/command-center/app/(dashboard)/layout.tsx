@@ -4,7 +4,6 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { useUIStore } from "@/store/useUIStore";
 import { cn } from "@/lib/utils";
-import { AiFloatingAssistant } from "@/components/ui/AiFloatingAssistant";
 import { SuperAdminGuard } from "@/components/super-admin/SuperAdminGuard";
 import { useState, useEffect } from "react";
 
@@ -45,7 +44,6 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
             </div>
           </div>
         </main>
-        <AiFloatingAssistant />
       </div>
     </SuperAdminGuard>
   );

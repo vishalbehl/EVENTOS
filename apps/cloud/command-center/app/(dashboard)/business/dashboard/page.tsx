@@ -19,9 +19,8 @@ export default function CommercialDashboardPage() {
     const room = templatesData?.room_templates?.length ?? 0
     const reg = templatesData?.registration_templates?.length ?? 0
     const srr = templatesData?.srr_templates?.length ?? 0
-    const net = templatesData?.network_templates?.length ?? 0
     return {
-      totalTemplates: room + reg + srr + net,
+      totalTemplates: room + reg + srr,
       activeRules: rules.length,
       simulationsCount: simulations.length,
       revenueForecast: simulations.reduce((acc: number, s: any) => acc + (s.output_data?.total_amount || 0), 0)
@@ -58,9 +57,9 @@ export default function CommercialDashboardPage() {
             <h3 className="text-sm font-extrabold uppercase tracking-widest text-secondary flex items-center gap-2">
               <Calculator className="h-4 w-4 text-brand-primary" /> Quote Calculation Sandbox History
             </h3>
-            <Link href="/commercial/pricing-simulator">
+            <Link href="/business/sales/quotes">
               <Button size="sm" className="bg-brand-primary text-white text-xs font-bold gap-1">
-                Launch Simulator <ArrowRight className="h-3.5 w-3.5" />
+                Open Quote Workspace <ArrowRight className="h-3.5 w-3.5" />
               </Button>
             </Link>
           </div>
@@ -81,7 +80,7 @@ export default function CommercialDashboardPage() {
               </ResponsiveContainer>
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-tertiary text-xs">
-                No recent simulations found. Create quotes in the pricing simulator to see charts.
+                No recent quotes found. Create one in the quote workspace to see charts.
               </div>
             )}
           </div>
@@ -95,10 +94,10 @@ export default function CommercialDashboardPage() {
             </h3>
             <div className="space-y-3">
               {[
-                { label: "Templates Library", desc: "Manage rooms, check-in, networking templates", href: "/commercial/templates", icon: Library },
-                { label: "Saved Simulation Drafts", desc: "View and load past simulation summaries", href: "/commercial/saved-simulations", icon: FileText },
-                { label: "Proposal Generator", desc: "Export simulations into B2B proposals", href: "/commercial/proposal-generator", icon: FileText },
-                { label: "Margin Rules Configuration", desc: "Set markups, contingency, overhead %", href: "/commercial/margin-rules", icon: Percent }
+                { label: "Templates Library", desc: "Manage rooms, check-in, and SRR templates", href: "/business/pricing/templates", icon: Library },
+                { label: "Saved Quotes", desc: "View and load past quote summaries", href: "/business/sales/saved-quotes", icon: FileText },
+                { label: "Proposal Generator", desc: "Export simulations into B2B proposals", href: "/business/sales/proposal-generator", icon: FileText },
+                { label: "Margin Rules Configuration", desc: "Set markups, contingency, overhead %", href: "/business/pricing/margin-rules", icon: Percent }
               ].map((mod) => (
                 <Link href={mod.href} key={mod.label} className="flex gap-3 items-center p-3 rounded-2xl bg-surface-2/40 border border-border/40 hover:border-brand-primary/45 hover:bg-surface-hover/10 transition-colors">
                   <div className="p-2.5 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-brand-primary">

@@ -28,7 +28,7 @@ export default function AdminLoginPage() {
     if (isAuthenticated && accessToken && user) {
       const isAdmin = user.platform_role === "SUPER_ADMIN" || user.is_platform_admin || user.role === "super_admin";
       if (isAdmin) {
-        router.push("/overview");
+        router.push("/dashboard/overview");
       }
     }
   }, [isAuthenticated, accessToken, user, router]);
@@ -54,7 +54,7 @@ export default function AdminLoginPage() {
       toast.success("Identity verified. Accessing Control Plane.");
       setStep(2);
       setTimeout(() => {
-        router.push("/overview");
+        router.push("/dashboard/overview");
       }, 2000);
     } catch (error: any) {
       toast.error(error.message || "Authentication failed.");

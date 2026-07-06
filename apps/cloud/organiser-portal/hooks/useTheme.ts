@@ -5,18 +5,18 @@ import { useEffect, useState } from 'react';
 export type Theme = 'dark' | 'light';
 
 export const THEMES: { name: Theme; label: string }[] = [
-  { name: 'dark',  label: 'Dark' },
   { name: 'light', label: 'Light' },
+  { name: 'dark',  label: 'Dark' },
 ];
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>('dark');
+  const [theme, setThemeState] = useState<Theme>('light');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    // On mount, read from localStorage — default to dark
+    // On mount, read from localStorage — default to light
     const saved = localStorage.getItem('eventos-theme') as Theme;
-    const resolved: Theme = saved === 'light' ? 'light' : 'dark';
+    const resolved: Theme = saved === 'dark' ? 'dark' : 'light';
     applyTheme(resolved);
     setThemeState(resolved);
     setMounted(true);

@@ -8,7 +8,7 @@ import { DataTable } from "@/components/super-admin/ui/DataTable"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Users, Plus, Search, FileSpreadsheet, SlidersHorizontal, RotateCcw, X, Upload } from "lucide-react"
+import { Users, Plus, Search, FileSpreadsheet, RotateCcw, X, Upload } from "lucide-react"
 import { useDebounce } from "@/hooks/use-debounce"
 import { useReactTable, getCoreRowModel } from "@tanstack/react-table"
 import { useDropzone } from "react-dropzone"
@@ -20,7 +20,6 @@ export default function StaffCatalogPage() {
   const [page, setPage] = useState(0)
   const [showCreatePanel, setShowCreatePanel] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
-  const [showFilterPanel, setShowFilterPanel] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
   const limit = 20
 
@@ -209,6 +208,25 @@ export default function StaffCatalogPage() {
     return cnt
   }, [departmentFilter, gradeFilter])
 
+  const teamCategoryOptions = useMemo(() => {
+    const values = new Set<string>()
+    ;(data?.items ?? []).forEach((item) => {
+      const value = item.team_category || item.department
+      if (value) values.add(value)
+    })
+    if (departmentFilter) values.add(departmentFilter)
+    return Array.from(values).sort((a, b) => a.localeCompare(b))
+  }, [data?.items, departmentFilter])
+
+  const gradeOptions = useMemo(() => {
+    const values = new Set<string>()
+    ;(data?.items ?? []).forEach((item) => {
+      if (item.grade) values.add(item.grade)
+    })
+    if (gradeFilter) values.add(gradeFilter)
+    return Array.from(values).sort((a, b) => a.localeCompare(b))
+  }, [data?.items, gradeFilter])
+
   return (
     <PageContainer>
       <SectionHeader
@@ -256,8 +274,8 @@ export default function StaffCatalogPage() {
       ]} />
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-[var(--bg-surface)] border border-[var(--border-default)] p-4 rounded-2xl">
-        <div className="relative w-full sm:max-w-xs">
+      <div className="flex flex-wrap items-center gap-3 bg-[var(--bg-surface)] border border-[var(--border-default)] p-4 rounded-2xl">
+        <div className="relative w-full sm:max-w-xs flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-tertiary" />
           <Input
             placeholder="Search roles, code..."
@@ -267,27 +285,44 @@ export default function StaffCatalogPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          {activeFiltersCount > 0 && (
+        <div className="w-full sm:w-56">
+          <select
+            value={departmentFilter}
+            onChange={e => { setDepartmentFilter(e.target.value); setPage(0) }}
+            className="w-full h-9 px-3 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
+          >
+            <option value="">All Team Categories</option>
+            {teamCategoryOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="w-full sm:w-40">
+          <select
+            value={gradeFilter}
+            onChange={e => { setGradeFilter(e.target.value); setPage(0) }}
+            className="w-full h-9 px-3 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
+          >
+            <option value="">All Grades</option>
+            {gradeOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+
+        {activeFiltersCount > 0 && (
+          <div className="ml-auto">
             <Button
               variant="ghost"
               onClick={resetFilters}
               className="text-xs h-9 text-tertiary hover:text-primary gap-1"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              Reset Filters
+              Reset
             </Button>
-          )}
-
-          <Button
-            onClick={() => setShowFilterPanel(true)}
-            variant="outline"
-            className="border-border text-secondary h-9 text-xs gap-2 font-bold bg-surface-2 hover:bg-surface-hover"
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-            Filter Crew {activeFiltersCount > 0 ? `(${activeFiltersCount})` : ""}
-          </Button>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Form Dialog Modal */}
@@ -372,80 +407,6 @@ export default function StaffCatalogPage() {
                   Download Sample Template (.csv)
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Filter Side Panel */}
-      {showFilterPanel && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowFilterPanel(false)} />
-          <div className="relative w-full max-w-md bg-[var(--bg-surface)] border-l border-[var(--border-default)] shadow-2xl p-6 overflow-y-auto h-full z-50 flex flex-col justify-between">
-            <div className="space-y-6">
-              <div className="flex justify-between items-center pb-2 border-b border-border">
-                <h3 className="text-sm font-extrabold text-primary uppercase tracking-wider">Filter Crew Directory</h3>
-                <button onClick={() => setShowFilterPanel(false)} className="text-secondary hover:text-primary">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Team Category Filter */}
-              <div className="space-y-2">
-                <label className="text-[10px] text-tertiary uppercase font-bold tracking-wider">Team Category</label>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    onClick={() => setDepartmentFilter("")}
-                    className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors
-                      ${!departmentFilter ? 'bg-brand-primary text-white border-brand-primary' : 'bg-surface-2 text-secondary border-border hover:bg-surface-hover'}`}
-                  >
-                    All Categories
-                  </button>
-                  {["Speaker Ready Room (SRR)", "Session & Presentation Rooms", "Registration & Check-in", "IT & Networking", "General Operations"].map((dept) => (
-                    <button
-                      key={dept}
-                      onClick={() => setDepartmentFilter(dept)}
-                      className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors
-                        ${departmentFilter === dept ? 'bg-brand-primary text-white border-brand-primary' : 'bg-surface-2 text-secondary border-border hover:bg-surface-hover'}`}
-                    >
-                      {dept}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Grade Filter */}
-              <div className="space-y-2">
-                <label className="text-[10px] text-tertiary uppercase font-bold tracking-wider">Grades</label>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    onClick={() => setGradeFilter("")}
-                    className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors
-                      ${!gradeFilter ? 'bg-brand-primary text-white border-brand-primary' : 'bg-surface-2 text-secondary border-border hover:bg-surface-hover'}`}
-                  >
-                    All Grades
-                  </button>
-                  {["L1", "L2", "L3", "L4", "Manager"].map((gr) => (
-                    <button
-                      key={gr}
-                      onClick={() => setGradeFilter(gr)}
-                      className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors
-                        ${gradeFilter === gr ? 'bg-brand-primary text-white border-brand-primary' : 'bg-surface-2 text-secondary border-border hover:bg-surface-hover'}`}
-                    >
-                      {gr}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-border flex gap-2">
-              <Button onClick={() => setShowFilterPanel(false)} className="bg-brand-primary text-white text-xs font-bold flex-1">
-                Apply Filters
-              </Button>
-              <Button variant="ghost" onClick={resetFilters} className="text-xs text-secondary flex-1">
-                Clear All
-              </Button>
             </div>
           </div>
         </div>

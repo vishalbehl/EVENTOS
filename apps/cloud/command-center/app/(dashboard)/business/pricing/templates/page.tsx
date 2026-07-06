@@ -7,7 +7,7 @@ import { MetricRow } from "@/components/super-admin/ui/MetricRow"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Layout, Users, Grid, Network, ArrowRight, Library, Settings, CheckCircle2 } from "lucide-react"
+import { Layout, Users, Grid, ArrowRight, Library, Settings, CheckCircle2 } from "lucide-react"
 import Link from "next/link"
 
 export default function TemplatesLibraryDashboard() {
@@ -16,44 +16,40 @@ export default function TemplatesLibraryDashboard() {
   const roomCount = data?.room_templates?.length ?? 0
   const regCount = data?.registration_templates?.length ?? 0
   const srrCount = data?.srr_templates?.length ?? 0
-  const netCount = data?.network_templates?.length ?? 0
 
-  const totalTemplates = roomCount + regCount + srrCount + netCount
+  const totalTemplates = roomCount + regCount + srrCount
 
   const recentTemplates = useMemo(() => {
     if (!data) return []
     const all = [
-      ...(data.room_templates ?? []).map(t => ({ ...t, type: 'Room Setup' })),
-      ...(data.registration_templates ?? []).map(t => ({ ...t, type: 'Registration counter' })),
-      ...(data.srr_templates ?? []).map(t => ({ ...t, type: 'Speaker Ready Room' })),
-      ...(data.network_templates ?? []).map(t => ({ ...t, type: 'Network infrastructure' }))
+      ...(data.room_templates ?? []).map(t => ({ ...t, type: "Room Setup" })),
+      ...(data.registration_templates ?? []).map(t => ({ ...t, type: "Registration counter" })),
+      ...(data.srr_templates ?? []).map(t => ({ ...t, type: "Speaker Ready Room" })),
     ]
-    return all.slice(0, 5) // Return up to 5
+    return all.slice(0, 5)
   }, [data])
 
   return (
     <PageContainer>
       <SectionHeader
         title="Deployment Templates Library"
-        description="Standardized presets for room planning, attendee registration desks, Speaker Ready Stations, and networking topographies"
+        description="Standardized presets for room planning, attendee registration desks, and Speaker Ready Stations"
       />
 
-      {/* KPI Cards */}
       <MetricRow metrics={[
-        { label: 'Total Reusable Presets', value: totalTemplates },
-        { label: 'Room Setups', value: roomCount },
-        { label: 'Registration Counters', value: regCount },
-        { label: 'Speaker Ready Rooms', value: srrCount },
-        { label: 'Network Topologies', value: netCount },
+        { label: "Total Reusable Presets", value: totalTemplates },
+        { label: "Room Setups", value: roomCount },
+        { label: "Registration Counters", value: regCount },
+        { label: "Speaker Ready Rooms", value: srrCount },
       ]} />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
         {[
           {
             title: "Room Templates",
             desc: "Standard room deployment setups, podium counts, confidence monitors and seating styles.",
             count: roomCount,
-            href: "/commercial/templates/room",
+            href: "/business/pricing/templates/room",
             icon: Layout,
             color: "text-purple-400 bg-purple-500/10 border-purple-500/20"
           },
@@ -61,7 +57,7 @@ export default function TemplatesLibraryDashboard() {
             title: "Registration Templates",
             desc: "Complete registration desk area designs, counter ratios, printers and self check-in kiosks.",
             count: regCount,
-            href: "/commercial/templates/registration",
+            href: "/business/pricing/templates/registration",
             icon: Users,
             color: "text-blue-400 bg-blue-500/10 border-blue-500/20"
           },
@@ -69,18 +65,10 @@ export default function TemplatesLibraryDashboard() {
             title: "SRR Templates",
             desc: "Speaker Ready Room station configurations, operators count, computers and workflow controls.",
             count: srrCount,
-            href: "/commercial/templates/srr",
+            href: "/business/pricing/templates/srr",
             icon: Grid,
             color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20"
           },
-          {
-            title: "Network Templates",
-            desc: "Venue-wide Wi-Fi layouts, access points, core switches, redundant ISP links and failovers.",
-            count: netCount,
-            href: "/commercial/templates/network",
-            icon: Network,
-            color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-          }
         ].map((sec) => (
           <Card key={sec.title} className="p-6 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl flex flex-col justify-between hover:border-brand-primary/45 transition-all">
             <div className="space-y-4">
@@ -93,7 +81,6 @@ export default function TemplatesLibraryDashboard() {
               </div>
               <p className="text-xs text-secondary leading-relaxed">{sec.desc}</p>
             </div>
-            
             <div className="pt-6">
               <Link href={sec.href}>
                 <Button className="w-full bg-brand-primary text-white text-xs font-bold gap-2">
@@ -107,13 +94,11 @@ export default function TemplatesLibraryDashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-8">
-        {/* Recent presets */}
         <div className="lg:col-span-2 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-6 space-y-4">
           <h3 className="text-xs font-extrabold uppercase tracking-widest text-secondary flex items-center gap-2">
             <Library className="h-4 w-4 text-brand-primary" />
             Standard Presets Library Overview
           </h3>
-
           <div className="space-y-3">
             {isLoading ? (
               <div className="text-xs text-secondary text-center py-6">Loading presets...</div>
@@ -125,19 +110,13 @@ export default function TemplatesLibraryDashboard() {
                   <div className="space-y-1">
                     <div className="flex gap-2 items-center">
                       <span className="text-xs font-bold text-primary">{t.name}</span>
-                      <Badge variant="outline" className="text-[9px] px-1 py-0 border-border-subtle bg-surface-2 text-tertiary">
-                        {t.type}
-                      </Badge>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0 border-border-subtle bg-surface-2 text-tertiary">{t.type}</Badge>
                     </div>
-                    {t.description && (
-                      <span className="text-[10px] text-secondary block line-clamp-1">{t.description}</span>
-                    )}
+                    {t.description && <span className="text-[10px] text-secondary block line-clamp-1">{t.description}</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     {t.is_default && (
-                      <Badge className="bg-success-muted/10 text-success border border-success/20 text-[9px] px-1.5 py-0 font-bold">
-                        Default
-                      </Badge>
+                      <Badge className="bg-success-muted/10 text-success border border-success/20 text-[9px] px-1.5 py-0 font-bold">Default</Badge>
                     )}
                     <span className="text-[10px] font-mono text-tertiary">Version {t.version}</span>
                   </div>
@@ -147,18 +126,15 @@ export default function TemplatesLibraryDashboard() {
           </div>
         </div>
 
-        {/* Templates Info Card */}
         <div className="bg-[var(--bg-surface-2)] border border-[var(--border-default)] rounded-3xl p-6 flex flex-col justify-between">
           <div className="space-y-4">
             <h3 className="text-xs font-extrabold uppercase tracking-widest text-secondary flex items-center gap-2">
               <Settings className="h-4 w-4 text-tertiary" />
               Template Utility Ratios
             </h3>
-            
             <p className="text-xs text-secondary leading-relaxed">
               Standard deployment presets enforce architectural and pricing constraints across all corporate quote pipelines:
             </p>
-
             <div className="space-y-3 text-xs">
               <div className="flex gap-3 items-start">
                 <CheckCircle2 className="h-4 w-4 text-success shrink-0 mt-0.5" />
@@ -170,11 +146,10 @@ export default function TemplatesLibraryDashboard() {
               </div>
               <div className="flex gap-3 items-start">
                 <CheckCircle2 className="h-4 w-4 text-success shrink-0 mt-0.5" />
-                <span className="text-secondary font-medium">Integrated Wi-Fi capacity check based on attendee headcounts.</span>
+                <span className="text-secondary font-medium">Room capacity and registration throughput alignment.</span>
               </div>
             </div>
           </div>
-
           <div className="pt-6 border-t border-[var(--border-subtle)] text-[10px] text-tertiary font-mono text-center">
             System templates are read-only for planners.
           </div>

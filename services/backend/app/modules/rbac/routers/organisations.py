@@ -488,8 +488,6 @@ async def _calculate_price_logic(
             if addon:
                 if addon.included_in_plan and addon.included_in_plan.lower() == plan.name.lower():
                     price = 0.0
-                elif key in ("ADDON_VENUE_READY_ROOM", "ADDON_ONSITE_TECH"):
-                    price = 0.0
                 else:
                     price = float(addon.price_inr or 0)
                 
@@ -742,19 +740,24 @@ async def subscribe_organization(
                 )
                 db.add(org_addon)
                 
-    # Check for venue operations callback
-    venue_ops_keys = {"ADDON_VENUE_READY_ROOM", "ADDON_ONSITE_TECH"}
-    has_venue_ops = False
+    # Check for venue add-ons and create a support callback if the organiser
+    # has selected operational services that need manual coordination.
+    selected_venue_addons = []
     if payload.addon_keys:
-        has_venue_ops = any(k in venue_ops_keys for k in payload.addon_keys)
-        
-    if has_venue_ops:
+        venue_stmt = select(Addon).where(
+            Addon.key.in_(payload.addon_keys),
+            Addon.addon_type == "VENUE"
+        )
+        selected_venue_addons = (await db.execute(venue_stmt)).scalars().all()
+
+    if selected_venue_addons:
         from app.modules.support.models.ticket import SupportTicket
+        venue_addon_names = ", ".join(a.name for a in selected_venue_addons)
         callback_ticket = SupportTicket(
             organization_id=org.id,
             creator_id=current_user.id,
-            subject="Venue Operations Callback Request",
-            description=f"The organiser has subscribed to the {plan.name} plan and selected Venue Operations addons. Selected keys: {', '.join(payload.addon_keys)}. Please contact them at {payload.billing_phone} or {payload.billing_email} to discuss pricing.",
+            subject="Venue Add-on Callback Request",
+            description=f"The organiser has subscribed to the {plan.name} plan and selected venue add-ons: {venue_addon_names}. Please contact them at {payload.billing_phone} or {payload.billing_email} to discuss delivery and pricing.",
             priority="HIGH",
             status="OPEN"
         )

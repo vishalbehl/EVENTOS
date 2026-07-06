@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, Text, DateTime, ForeignKey, Index, Numeric, Date, Boolean
+from sqlalchemy import String, Text, DateTime, ForeignKey, Index, Numeric, Date, Boolean, Integer
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
@@ -110,10 +110,15 @@ class PricingSimulation(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     input_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
     output_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    min_attendees: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_attendees: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    desk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    min_speakers: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_speakers: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), 
-        primary_key=True, 
-        default=lambda: datetime.now(timezone.utc), 
+        DateTime(timezone=True),
+        primary_key=True,
+        default=lambda: datetime.now(timezone.utc),
         index=True
     )
 

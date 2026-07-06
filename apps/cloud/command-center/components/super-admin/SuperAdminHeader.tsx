@@ -307,12 +307,12 @@ export function SuperAdminHeader() {
                   </span>
                   <div className="space-y-0.5">
                     {[
-                      { title: "Dashboard Overview", url: "/overview", icon: LayoutDashboard },
+                      { title: "Dashboard Overview", url: "/dashboard/overview", icon: LayoutDashboard },
                       { title: "Organizations Registry", url: "/organizations", icon: Building2 },
-                      { title: "Commercial Subscriptions", url: "/commercial/subscriptions", icon: CreditCard },
-                      { title: "Security Users", url: "/security/users", icon: User },
-                      { title: "Operations Jobs Monitor", url: "/operations/jobs", icon: Cpu },
-                      { title: "General Settings", url: "/settings/general", icon: Settings },
+                      { title: "Commercial Subscriptions", url: "/business/subscription/add-ons", icon: CreditCard },
+                      { title: "Security Users", url: "/identity-security/users", icon: User },
+                      { title: "Operations Jobs Monitor", url: "/operations-center/jobs", icon: Cpu },
+                      { title: "General Settings", url: "/platform-settings/general", icon: Settings },
                     ]
                       .filter((p) => p.title.toLowerCase().includes(searchQuery.toLowerCase()))
                       .map((p, idx) => (

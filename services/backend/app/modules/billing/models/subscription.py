@@ -31,11 +31,13 @@ class SubscriptionPlan(Base):
     max_ticket_categories: Mapped[Optional[int]] = mapped_column(Integer)
     max_badge_templates: Mapped[Optional[int]] = mapped_column(Integer)
     max_certificate_templates: Mapped[Optional[int]] = mapped_column(Integer)
+    max_emails_per_event: Mapped[Optional[int]] = mapped_column(Integer)
     storage_quota_mb: Mapped[int] = mapped_column(BigInteger, default=10240)
     
     currency: Mapped[str] = mapped_column(String(3), default='INR')
     price_per_event_min: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     price_per_event_max: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    price_per_event: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     billing_model: Mapped[str] = mapped_column(String(20), default='PER_EVENT')
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     is_popular: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -46,6 +48,8 @@ class SubscriptionPlan(Base):
 
     @property
     def price_display(self) -> str:
+        if self.price_per_event is not None:
+            return f"â‚¹{int(self.price_per_event):,} / event"
         if self.price_per_event_max:
             return f"₹{int(self.price_per_event_min):,} - ₹{int(self.price_per_event_max):,}"
         elif self.price_per_event_min:
@@ -106,6 +110,9 @@ class Addon(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    addon_type: Mapped[str] = mapped_column(String(20), default="PLAN", nullable=False)
+    short_description: Mapped[Optional[str]] = mapped_column(String(255))
+    image_url: Mapped[Optional[str]] = mapped_column(Text)
     
     price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     min_price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
@@ -117,6 +124,12 @@ class Addon(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     features_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)
+    hardware_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)
+    staff_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)
+    inclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
+    exclusions: Mapped[Optional[List[str]]] = mapped_column(JSONB, default=list)
+    consumables_cost: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), default=0)
+    template_types: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class AddonFeature(Base):

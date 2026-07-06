@@ -115,7 +115,7 @@ export default function SuperAdminDashboard() {
           icon={Users}
           iconColor="info"
         />
-        <div onClick={() => router.push('/commercial/revenue')} className="cursor-pointer">
+        <div onClick={() => router.push('/business/revenue')} className="cursor-pointer">
           <KpiCard
             title="MRR"
             value={formatINR(data.mrr_current)}
@@ -248,7 +248,7 @@ export default function SuperAdminDashboard() {
               <button
                 key={key}
                 onClick={() => router.push(
-                  `/commercial/subscriptions?status=${key}`
+                  `/business/subscription/add-ons?status=${key}`
                 )}
                 className="flex flex-col p-3 rounded-lg bg-surface-2 hover:bg-surface-hover
                   transition-colors text-left"

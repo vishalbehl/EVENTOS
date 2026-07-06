@@ -9,6 +9,7 @@ from app.database import Base
 
 class Site(Base):
     __tablename__ = "sites"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
@@ -23,6 +24,7 @@ class Site(Base):
 
 class Page(Base):
     __tablename__ = "pages"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), index=True)
@@ -38,6 +40,7 @@ class Page(Base):
 
 class PageSection(Base):
     __tablename__ = "page_sections"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.pages.id", ondelete="CASCADE"), index=True)
@@ -47,6 +50,7 @@ class PageSection(Base):
 
 class PageComponent(Base):
     __tablename__ = "page_components"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     section_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.page_sections.id", ondelete="CASCADE"), index=True)
@@ -56,6 +60,7 @@ class PageComponent(Base):
 
 class PageAsset(Base):
     __tablename__ = "page_assets"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.pages.id", ondelete="CASCADE"), index=True)
@@ -65,6 +70,7 @@ class PageAsset(Base):
 
 class NavigationMenu(Base):
     __tablename__ = "navigation_menus"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), index=True)
@@ -73,6 +79,7 @@ class NavigationMenu(Base):
 
 class MenuItem(Base):
     __tablename__ = "menu_items"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     menu_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.navigation_menus.id", ondelete="CASCADE"), index=True)
@@ -83,6 +90,7 @@ class MenuItem(Base):
 
 class Blog(Base):
     __tablename__ = "blogs"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), index=True)
@@ -94,6 +102,7 @@ class Blog(Base):
 
 class SiteDomain(Base):
     __tablename__ = "site_domains"
+    __table_args__ = {"schema": "website_builder"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), index=True)

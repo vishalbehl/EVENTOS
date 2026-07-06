@@ -1,0 +1,811 @@
+<html lang="en"><head>
+<script>
+try{if(window.parent&&window.parent!==window){window.parent.promotekit_referral="1fd2949a-d22c-431b-92bf-02d4ad04ee24";window.parent.document.cookie="promotekit_referral=1fd2949a-d22c-431b-92bf-02d4ad04ee24;path=/;domain=.aura.build;max-age=31536000"}}catch(e){}
+</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HexOS Design System - v2.2</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+body {
+font-family: 'Inter', sans-serif;
+background-color: #050505; /* Deep Black Background */
+color: #E5E5E5;
+}
+/* --- GEOMETRY UTILS --- */
+/* Regular Hexagon Clip Path (Pointy Top)
+Ratio: Width is approx 86.6% of Height
+*/
+.clip-hex {
+clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+/* Flat Top Hexagon Clip Path */
+.clip-hex-flat {
+clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+}
+.clip-hex-right {
+clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 15% 50%);
+}
+/* --- ANIMATIONS --- */
+@keyframes spin-hex {
+0% { transform: rotate(0deg); }
+100% { transform: rotate(360deg); }
+}
+@keyframes bounce-hex {
+0%, 100% { transform: translateY(0); }
+50% { transform: translateY(-5px); }
+}
+@keyframes pulse-hex {
+0% { transform: scale(1); opacity: 1; }
+100% { transform: scale(1.5); opacity: 0; }
+}
+@keyframes reveal-scale {
+0% { transform: scale(0); opacity: 0; }
+100% { transform: scale(1); opacity: 1; }
+}
+/* New Interaction Animations */
+@keyframes ripple-out {
+0% { transform: scale(1); opacity: 0.8; stroke-width: 2px; }
+100% { transform: scale(1.6); opacity: 0; stroke-width: 0px; }
+}
+@keyframes shake-error {
+0%, 100% { transform: translateX(0); }
+20% { transform: translateX(-4px); }
+40% { transform: translateX(4px); }
+60% { transform: translateX(-2px); }
+80% { transform: translateX(2px); }
+}
+@keyframes morph-hex-square {
+0%, 100% { clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); background-color: #E0FF00; }
+50% { clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 100%, 0% 0%); background-color: #FFFFFF; }
+}
+@keyframes dash-draw {
+to { stroke-dashoffset: 0; }
+}
+.animate-spin-slow { animation: spin-hex 3s linear infinite; }
+.animate-bounce-delay-1 { animation: bounce-hex 1s infinite; animation-delay: 0.1s; }
+.animate-bounce-delay-2 { animation: bounce-hex 1s infinite; animation-delay: 0.2s; }
+.animate-bounce-delay-3 { animation: bounce-hex 1s infinite; animation-delay: 0.3s; }
+.animate-pulse-hex { animation: pulse-hex 2s infinite; }
+.animate-reveal { animation: reveal-scale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; opacity: 0; }
+.animate-shake { animation: shake-error 0.4s ease-in-out; }
+.animate-morph { animation: morph-hex-square 3s ease-in-out infinite; }
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #050505; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #444; }
+/* Utility */
+.hex-path {
+/* Strict Geometry Path for reuse */
+d: path("M12 2 L20.66 7 V17 L12 22 L3.34 17 V7 Z");
+}
+</style><link id="all-fonts-link-font-geist" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-geist">.font-geist { font-family: 'Geist', sans-serif !important; }</style><link id="all-fonts-link-font-roboto" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-roboto">.font-roboto { font-family: 'Roboto', sans-serif !important; }</style><link id="all-fonts-link-font-montserrat" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-montserrat">.font-montserrat { font-family: 'Montserrat', sans-serif !important; }</style><link id="all-fonts-link-font-poppins" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-poppins">.font-poppins { font-family: 'Poppins', sans-serif !important; }</style><link id="all-fonts-link-font-playfair" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;900&amp;display=swap"><style id="all-fonts-style-font-playfair">.font-playfair { font-family: 'Playfair Display', serif !important; }</style><link id="all-fonts-link-font-instrument-serif" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:wght@400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-instrument-serif">.font-instrument-serif { font-family: 'Instrument Serif', serif !important; }</style><link id="all-fonts-link-font-merriweather" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700;900&amp;display=swap"><style id="all-fonts-style-font-merriweather">.font-merriweather { font-family: 'Merriweather', serif !important; }</style><link id="all-fonts-link-font-bricolage" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-bricolage">.font-bricolage { font-family: 'Bricolage Grotesque', sans-serif !important; }</style><link id="all-fonts-link-font-jakarta" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&amp;display=swap"><style id="all-fonts-style-font-jakarta">.font-jakarta { font-family: 'Plus Jakarta Sans', sans-serif !important; }</style><link id="all-fonts-link-font-manrope" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&amp;display=swap"><style id="all-fonts-style-font-manrope">.font-manrope { font-family: 'Manrope', sans-serif !important; }</style><link id="all-fonts-link-font-space-grotesk" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-space-grotesk">.font-space-grotesk { font-family: 'Space Grotesk', sans-serif !important; }</style><link id="all-fonts-link-font-work-sans" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700;800&amp;display=swap"><style id="all-fonts-style-font-work-sans">.font-work-sans { font-family: 'Work Sans', sans-serif !important; }</style><link id="all-fonts-link-font-pt-serif" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&amp;display=swap"><style id="all-fonts-style-font-pt-serif">.font-pt-serif { font-family: 'PT Serif', serif !important; }</style><link id="all-fonts-link-font-geist-mono" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-geist-mono">.font-geist-mono { font-family: 'Geist Mono', monospace !important; }</style><link id="all-fonts-link-font-space-mono" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&amp;display=swap"><style id="all-fonts-style-font-space-mono">.font-space-mono { font-family: 'Space Mono', monospace !important; }</style><link id="all-fonts-link-font-quicksand" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&amp;display=swap"><style id="all-fonts-style-font-quicksand">.font-quicksand { font-family: 'Quicksand', sans-serif !important; }</style><link id="all-fonts-link-font-nunito" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&amp;display=swap"><style id="all-fonts-style-font-nunito">.font-nunito { font-family: 'Nunito', sans-serif !important; }</style></head>
+<body class="selection:bg-[#E0FF00] selection:text-[#050505] min-h-screen">
+
+    <!-- Navigation -->
+    <nav class="sticky top-0 z-50 backdrop-blur-md bg-[#050505]/80 border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <!-- Hex Logo -->
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                </svg>
+                <span class="text-sm font-semibold tracking-tight uppercase text-white">HexOS <span class="text-xs text-gray-500 font-normal normal-case ml-1">v2.2</span></span>
+            </div>
+            <div class="flex gap-6 text-xs font-medium tracking-tight text-gray-400">
+                <a href="#" class="hover:text-white transition-colors">Iconography</a>
+                <a href="#" class="hover:text-white transition-colors">Data Viz</a>
+                <a href="#" class="hover:text-white transition-colors">Interactions</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mr-auto ml-auto pt-12 pr-6 pb-12 pl-6 space-y-24">
+
+        <!-- HERO -->
+        <header class="max-w-2xl space-y-6">
+            <h1 class="text-4xl font-medium tracking-tight text-white">Hexagonal Visual Language</h1>
+            <p class="leading-relaxed text-lg font-light text-gray-400">
+                A geometry-first design system replacing circular primitives with hexagonal structures. 
+                Optimized for high-density dashboards with a strict <span class="text-white font-medium">Dark Mode</span> and <span class="bg-[#E0FF00] text-black px-1 rounded-sm">#E0FF00</span> palette.
+            </p>
+        </header>
+
+        <!-- SECTION 1: SYSTEM ICONOGRAPHY -->
+        <section class="">
+            <div class="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
+                <h2 class="text-xl font-medium tracking-tight text-white">System Icons <span class="text-gray-500 text-sm ml-2 font-normal">24px Grid / 1.5px Stroke</span></h2>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-8">
+                <!-- Icon 1: Dashboard -->
+                <div class="flex flex-col items-center gap-3 group">
+                    <div class="w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer group-hover:scale-110">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="">
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 12L12 2" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 12L20.66 7" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 12L3.34 7" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500 group-hover:text-white transition-colors">Dashboard</span>
+                </div>
+
+                <!-- Icon 2: Analytics -->
+                <div class="flex flex-col items-center gap-3 group">
+                    <div class="w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer group-hover:scale-110">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 22V12" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M18 18V8" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M6 18V14" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="opacity-20 group-hover:opacity-40 transition-opacity" d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500 group-hover:text-white transition-colors">Analytics</span>
+                </div>
+
+                <!-- Icon 3: Security -->
+                <div class="flex flex-col items-center gap-3 group">
+                    <div class="w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer group-hover:scale-110">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="">
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 2L3 7V13C3 17.5 7.5 21.5 12 22C16.5 21.5 21 17.5 21 13V7L12 2Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 8V12" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <circle cx="12" cy="15" r="1" fill="#FFFFFF" class="group-hover:fill-[#E0FF00] transition-colors duration-300"></circle>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500 group-hover:text-white transition-colors">Security</span>
+                </div>
+
+                <!-- Icon 4: Settings -->
+                <div class="flex flex-col items-center gap-3 group">
+                    <div class="w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer group-hover:scale-110">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="">
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 8L15.46 10L15.46 14L12 16L8.54 14L8.54 10L12 8Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 2L12 5" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 19L12 22" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M20.66 7L18.06 8.5" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M5.94 15.5L3.34 17" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M20.66 17L18.06 15.5" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M5.94 8.5L3.34 7" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500 group-hover:text-white transition-colors">Config</span>
+                </div>
+
+                 <!-- Icon 5: User -->
+                 <div class="flex flex-col items-center gap-3 group">
+                    <div class="w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer group-hover:scale-110">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="">
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M12 4L14.6 5.5V8.5L12 10L9.4 8.5V5.5L12 4Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M4 20C4 16 8 13 12 13C16 13 20 16 20 20" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500 group-hover:text-white transition-colors">Profile</span>
+                </div>
+
+                <!-- Icon 6: Cloud -->
+                <div class="flex flex-col items-center gap-3 group">
+                    <div class="w-12 h-12 flex items-center justify-center transition-all duration-300 cursor-pointer group-hover:scale-110">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M7 19H17" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M17 19L20 17V12L17 10" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M7 19L4 17V12L7 10" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00] transition-colors duration-300" d="M7 10L9 6H15L17 10" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500 group-hover:text-white transition-colors">Storage</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2: UTILITY ICONS (Preserved but optimized geometry) -->
+        <section class="">
+            <div class="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
+                <h2 class="text-xl font-medium tracking-tight text-white">Utility <span class="text-gray-500 text-sm ml-2 font-normal">Action &amp; Navigation</span></h2>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-6">
+                <!-- Example: Share (Using correct hex logic) -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="">
+                             <path class="group-hover:stroke-[#E0FF00]" d="M8 12L5 13.5V16.5L8 18L11 16.5V13.5L8 12Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                             <path class="group-hover:stroke-[#E0FF00]" d="M18 6L15 7.5V10.5L18 12L21 10.5V7.5L18 6Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                             <path class="group-hover:stroke-[#E0FF00]" d="M18 16L15 17.5V20.5L18 22L21 20.5V17.5L18 16Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                             <path class="group-hover:stroke-[#E0FF00]" d="M11 15L15 18" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                             <path class="group-hover:stroke-[#E0FF00]" d="M11 13.5L15 10.5" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Share</span>
+                </div>
+                <!-- Download -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="">
+                            <path class="group-hover:stroke-[#E0FF00]" d="M4 14V17L12 21L20 17V14" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M12 3V15M12 15L16 11M12 15L8 11" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Download</span>
+                </div>
+                <!-- Upload -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="">
+                            <path class="group-hover:stroke-[#E0FF00]" d="M4 17V17L12 21L20 17V17" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M12 15V3M12 3L16 7M12 3L8 7" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Upload</span>
+                </div>
+                <!-- Save -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="">
+                            <path class="group-hover:stroke-[#E0FF00]" d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M8 7H16V12H8V7Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Save</span>
+                </div>
+                 <!-- Expand -->
+                 <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                            <path class="opacity-20 group-hover:opacity-40" d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M15 9L21 3M21 3H16M21 3V8" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M9 15L3 21M3 21H8M3 21V16" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Expand</span>
+                </div>
+                 <!-- Minimize -->
+                 <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="">
+                             <path class="opacity-20 group-hover:opacity-40" d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M19 5L13 11M13 11H18M13 11V6" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M5 19L11 13M11 13H6M11 13V18" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Minimize</span>
+                </div>
+                 <!-- Copy -->
+                 <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="">
+                            <path class="group-hover:stroke-[#E0FF00]" d="M14 4L20 7.5V14.5L14 18" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 4"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M10 6L4 9.5V16.5L10 20L16 16.5V9.5L10 6Z" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Copy</span>
+                </div>
+                <!-- Link -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center transition-all duration-300 hover:scale-110 cursor-pointer group">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                            <path class="group-hover:stroke-[#E0FF00]" d="M10 13L7 14.5L4 13V9L7 7.5L10 9" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M14 11L17 9.5L20 11V15L17 16.5L14 15" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                            <path class="group-hover:stroke-[#E0FF00]" d="M8 11L16 13" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path>
+                        </svg>
+                    </div>
+                    <span class="text-xs text-gray-500">Link</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION: MICRO-INTERACTIONS LAB -->
+        
+
+        <!-- SECTION 3: DATA VISUALIZATION (Preserved) -->
+        <section class="">
+            <div class="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
+                <h2 class="text-xl font-medium tracking-tight text-white">Data Visualization <span class="text-gray-500 text-sm ml-2 font-normal">Hexagonal SVG Charts</span></h2>
+            </div>
+            <!-- ... (Keeping existing Charts structure) ... -->
+             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Chart 1: Hex Donut -->
+                <div class="p-6 border border-white/5 rounded-2xl bg-[#0F0F0F] shadow-sm hover:border-white/10 transition-colors">
+                    <h3 class="text-sm font-medium mb-6 text-gray-200">Storage Usage</h3>
+                    <div class="relative w-48 h-48 mx-auto">
+                        <svg viewBox="0 0 100 100" class="w-full h-full transform -rotate-90">
+                            <path d="M50 5 L93.3 30 L93.3 80 L50 105 L6.7 80 L6.7 30 Z" stroke="#1F1F1F" stroke-width="8" fill="none" stroke-linejoin="round" transform="translate(0, -5) scale(0.9) translate(5.5, 5.5)"></path>
+                            <path d="M50 5 L93.3 30 L93.3 80 L50 105 L6.7 80" stroke="#E0FF00" stroke-width="8" fill="none" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="250" stroke-dashoffset="50" transform="translate(0, -5) scale(0.9) translate(5.5, 5.5)"></path>
+                        </svg>
+                        <div class="absolute inset-0 flex flex-col items-center justify-center">
+                            <span class="text-2xl font-semibold tracking-tighter text-white">75%</span>
+                            <span class="text-xs text-gray-500 uppercase tracking-wide">Used</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chart 2: Hex Radar -->
+                <div class="p-6 border border-white/5 rounded-2xl bg-[#0F0F0F] shadow-sm hover:border-white/10 transition-colors">
+                    <h3 class="text-sm font-medium mb-6 text-gray-200">Performance Metrics</h3>
+                    <div class="relative w-48 h-48 mx-auto flex items-center justify-center">
+                        <svg viewBox="0 0 100 100" class="w-full h-full">
+                            <!-- Grid -->
+                            <path d="M50 10L85 30V70L50 90L15 70V30L50 10Z" stroke="#333" stroke-width="1" fill="none" class=""></path>
+                            <path d="M50 25L72 37.5V62.5L50 75L28 62.5V37.5L50 25Z" stroke="#333" stroke-width="1" fill="none"></path>
+                            <path d="M50 40L58 45V55L50 60L42 55V45L50 40Z" stroke="#333" stroke-width="1" fill="none"></path>
+                            
+                            <!-- Data Poly -->
+                            <path d="M50 15 L78 35 L72 65 L50 80 L20 65 L28 35 Z" fill="#E0FF00" fill-opacity="0.1" stroke="#E0FF00" stroke-width="1.5" stroke-linejoin="round" class=""></path>
+                            
+                            <!-- Points -->
+                            <rect x="48" y="13" width="4" height="4" fill="#FFFFFF"></rect>
+                            <rect x="76" y="33" width="4" height="4" fill="#FFFFFF"></rect>
+                            <rect x="70" y="63" width="4" height="4" fill="#FFFFFF"></rect>
+                            <rect x="48" y="78" width="4" height="4" fill="#FFFFFF"></rect>
+                            <rect x="18" y="63" width="4" height="4" fill="#FFFFFF"></rect>
+                            <rect x="26" y="33" width="4" height="4" fill="#FFFFFF"></rect>
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Chart 3: Hex Line Markers -->
+                <div class="p-6 border border-white/5 rounded-2xl bg-[#0F0F0F] shadow-sm hover:border-white/10 transition-colors">
+                    <h3 class="text-sm font-medium mb-6 text-gray-200">Traffic Trend</h3>
+                    <div class="relative w-full h-48 flex items-center justify-center">
+                        <svg viewBox="0 0 200 100" class="w-full h-full">
+                            <line x1="0" y1="20" x2="200" y2="20" stroke="#333" stroke-width="1" stroke-dasharray="4"></line>
+                            <line x1="0" y1="50" x2="200" y2="50" stroke="#333" stroke-width="1" stroke-dasharray="4"></line>
+                            <line x1="0" y1="80" x2="200" y2="80" stroke="#333" stroke-width="1" stroke-dasharray="4" class=""></line>
+                            <polyline points="10,80 50,50 90,60 130,20 180,30" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round" class=""></polyline>
+                            <path transform="translate(10, 80)" d="M0 -3 L2.6 -1.5 V1.5 L0 3 L-2.6 1.5 V-1.5 Z" fill="#0F0F0F" stroke="#FFFFFF" stroke-width="1.5"></path>
+                            <path transform="translate(50, 50)" d="M0 -3 L2.6 -1.5 V1.5 L0 3 L-2.6 1.5 V-1.5 Z" fill="#0F0F0F" stroke="#FFFFFF" stroke-width="1.5"></path>
+                            <path transform="translate(90, 60)" d="M0 -3 L2.6 -1.5 V1.5 L0 3 L-2.6 1.5 V-1.5 Z" fill="#0F0F0F" stroke="#FFFFFF" stroke-width="1.5"></path>
+                            <g transform="translate(130, 20)">
+                                <path d="M0 -5 L4.3 -2.5 V2.5 L0 5 L-4.3 2.5 V-2.5 Z" fill="#E0FF00" stroke="#E0FF00" stroke-width="1.5"></path>
+                            </g>
+                            <path transform="translate(180, 30)" d="M0 -3 L2.6 -1.5 V1.5 L0 3 L-2.6 1.5 V-1.5 Z" fill="#0F0F0F" stroke="#FFFFFF" stroke-width="1.5"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 4: PATTERNS & BACKGROUNDS -->
+        <section class="pb-24">
+            <div class="flex border-white/10 border-b mb-8 pb-4 items-center justify-between">
+                <h2 class="text-xl font-medium tracking-tight text-white">Pattern &amp; Structure</h2>
+            </div>
+
+            <!-- Honeycomb Grid Pattern -->
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 bg-white/5 border-white/5 border rounded-xl pt-8 pr-8 pb-8 pl-8 gap-x-8 gap-y-8 items-start justify-items-center">
+    
+    <!-- HEADER: LOADING -->
+    <div class="col-span-full w-full border-b border-white/10 pb-2 mb-2 flex items-center gap-2">
+        <div class="w-1.5 h-1.5 bg-[#E0FF00] rounded-full"></div>
+        <h3 class="text-[10px] font-mono tracking-widest text-gray-400 uppercase">System_Loading</h3>
+    </div>
+
+    <!-- 1. Hex Spinner -->
+    <div class="flex flex-col gap-4 gap-x-4 gap-y-4 items-center">
+        <svg class="animate-spin-slow w-[48px] h-[48px]" width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="2">
+            <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#E0FF00" stroke-width="1.5" stroke-linejoin="round" class="animate-pulse"></path>
+        </svg>
+        <span class="text-[10px] uppercase text-gray-500 tracking-wider">Spin Pulse</span>
+    </div>
+
+    <!-- 2. Hex Pulse -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="relative w-12 h-12 flex items-center justify-center">
+            <svg class="absolute inset-0 animate-ping opacity-75" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#E0FF00" stroke-width="1"></path>
+            </svg>
+            <svg class="relative z-10" width="100%" height="100%" viewBox="0 0 24 24" fill="none">
+                <path d="M12 5L18 8.5V15.5L12 19L6 15.5V8.5L12 5Z" fill="#E0FF00" class=""></path>
+            </svg>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Pulse</span>
+    </div>
+
+    <!-- 3. Hex Wave -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="flex h-12 gap-2 items-center">
+            <div class="w-8 h-8 bg-[#333] animate-[bounce_1s_infinite_0ms]" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="w-8 h-8 bg-[#666] animate-[bounce_1s_infinite_100ms]" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="w-8 h-8 bg-[#E0FF00] animate-[bounce_1s_infinite_200ms]" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Wave</span>
+    </div>
+
+    <!-- 4. Progress Path -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="relative w-12 h-12">
+            <svg class="w-full h-full -rotate-90" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#333" stroke-width="1.5"></path>
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#E0FF00" stroke-width="1.5" stroke-dasharray="60" stroke-dashoffset="60" class="animate-[dash-draw_2s_linear_infinite]"></path>
+            </svg>
+            <span class="absolute inset-0 flex items-center justify-center text-[8px] font-mono text-white">50%</span>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Progress</span>
+    </div>
+
+    <!-- 5. Cloud Upload -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="relative w-12 h-12 flex items-center justify-center overflow-hidden">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                 <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#333" stroke-width="1.5"></path>
+            </svg>
+            <div class="absolute inset-0 flex items-center justify-center animate-[bounce_1.5s_infinite]">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="#E0FF00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+            </div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Upload</span>
+    </div>
+
+    <!-- HEADER: INTERACTION -->
+    <div class="col-span-full w-full border-b border-white/10 pb-2 mb-2 mt-4 flex items-center gap-2">
+        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
+        <h3 class="text-[10px] font-mono tracking-widest text-gray-400 uppercase">Interface_Feedback</h3>
+    </div>
+
+    <!-- 6. Hover Reveal -->
+    <div class="flex flex-col gap-4 gap-x-4 gap-y-4 items-center">
+        <button class="group relative w-12 h-12 flex items-center justify-center focus:outline-none">
+            <svg class="w-full h-full transition-all duration-300" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#555" stroke-width="1.5" class="group-hover:stroke-[#E0FF00] transition-colors"></path>
+            </svg>
+            <div class="absolute inset-0 bg-[#E0FF00] opacity-0 group-hover:opacity-10 transition-opacity" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+        </button>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Hover</span>
+    </div>
+
+    <!-- 7. Selection Check -->
+    <div class="flex flex-col gap-4 gap-x-4 gap-y-4 items-center">
+    <label class="group relative w-12 h-12 flex items-center justify-center cursor-pointer">
+        <input type="checkbox" class="peer hidden">
+        <svg class="w-[48px] h-[48px] transition-all duration-300 peer-checked:[&amp;&gt;path]:fill-[#E0FF00] peer-checked:[&amp;&gt;path]:stroke-[#E0FF00]" viewBox="0 0 24 24" fill="none" stroke-width="2">
+            <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#555" stroke-width="1.5" class="transition-all duration-300"></path>
+        </svg>
+        <svg class="absolute w-5 h-5 text-[#050505] opacity-0 scale-50 transition-all duration-300 peer-checked:opacity-100 peer-checked:scale-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+    </label>
+    <span class="text-[10px] uppercase tracking-wider text-gray-500">Select</span>
+</div>
+
+    <!-- 8. Ripple Click -->
+    <div class="flex flex-col items-center gap-4">
+        <button class="group flex active:scale-95 transition-transform w-12 h-12 relative items-center justify-center">
+            <!-- Hex BG -->
+            <svg class="absolute inset-0 w-full h-full" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"></path>
+            </svg>
+            <span class="text-[8px] font-mono group-active:text-[#E0FF00] relative z-10">CLK</span>
+            <!-- Ripple Effect -->
+            <div class="absolute inset-0 opacity-0 active:animate-[ripple-out_0.5s_ease-out]" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%); border: 1px solid #E0FF00;"></div>
+        </button>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Ripple</span>
+    </div>
+
+    <!-- 9. Accordion -->
+    <div class="flex flex-col items-center gap-4">
+        <label class="relative w-12 h-12 flex items-center justify-center cursor-pointer group">
+            <input type="checkbox" class="peer hidden">
+            <!-- Hex Shape -->
+            <svg class="absolute inset-0 w-full h-full text-white/5 peer-checked:text-white/10 transition-colors" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="currentColor" stroke="rgba(255,255,255,0.1)" stroke-width="1" class=""></path>
+            </svg>
+            <svg class="w-5 h-5 text-gray-400 transition-transform duration-300 peer-checked:rotate-180 peer-checked:text-[#E0FF00] relative z-10" viewBox="0 0 24 24" fill="none">
+                <path d="M6 9L12 15L18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+        </label>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Expand</span>
+    </div>
+
+    <!-- 10. Switch Toggle -->
+    <div class="flex flex-col items-center gap-4">
+        <label class="relative w-16 h-8 flex items-center cursor-pointer">
+            <input type="checkbox" class="peer hidden">
+            <div class="relative w-full h-full z-50 group peer-checked:[&amp;_.track]:bg-[#E0FF00] peer-checked:[&amp;_.track]:border-[#E0FF00] peer-checked:[&amp;_.track]:drop-shadow-[0_0_8px_rgba(224,255,0,0.5)] peer-checked:[&amp;_.thumb]:translate-x-8 peer-checked:[&amp;_.thumb]:bg-[#1B2124] peer-checked:[&amp;_.thumb]:rotate-[30deg]" aria-hidden="true">
+    <!-- Geometric Track: Chamfered Edges -->
+    <div class="track absolute inset-0 bg-[#1B2124] border border-white/10 transition-all duration-300 ease-out shadow-inner" style="clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);"></div>
+    
+    <!-- Hexagon Thumb: Sliding & Rotating -->
+    <div class="thumb transition-all duration-300 ease-out will-change-transform bg-white w-6 h-6 absolute top-1 left-1 drop-shadow-sm active:scale-95" style="clip-path: polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%)"></div>
+</div>
+            <div class="absolute left-1 w-6 h-6 bg-gray-500 transition-all duration-300 peer-checked:translate-x-8 peer-checked:bg-[#E0FF00] flex items-center justify-center" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);">
+                <div class="w-1.5 h-1.5 bg-black rounded-full"></div>
+            </div>
+        </label>
+        <span class="text-[10px] uppercase text-gray-500 tracking-wider">Switch</span>
+    </div>
+
+    <!-- HEADER: STATUS -->
+    <div class="col-span-full w-full border-b border-white/10 pb-2 mb-2 mt-4 flex items-center gap-2">
+        <div class="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
+        <h3 class="text-[10px] font-mono tracking-widest text-gray-400 uppercase">System_Status</h3>
+    </div>
+
+    <!-- 11. Success State -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="w-12 h-12 flex items-center justify-center group cursor-pointer">
+            <svg class="w-full h-full transition-transform duration-500 group-hover:rotate-[30deg]" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="#10B981" class=""></path>
+            </svg>
+            <svg class="absolute w-5 h-5 text-black drop-shadow-sm" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class=""></path>
+            </svg>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Success</span>
+    </div>
+
+    <!-- 12. Error State -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="w-12 h-12 flex items-center justify-center animate-shake hover:animate-none cursor-pointer">
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#EF4444" stroke-width="1.5" class=""></path>
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="#EF4444" fill-opacity="0.1" class=""></path>
+            </svg>
+            <svg class="absolute w-5 h-5" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6L18 18" stroke="#EF4444" stroke-width="2" stroke-linecap="round" class=""></path>
+            </svg>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Error</span>
+    </div>
+
+    <!-- 13. Warning Wobble -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="w-12 h-12 flex items-center justify-center hover:animate-[spin_0.5s_ease-in-out_1]">
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" stroke="#F59E0B" stroke-width="1.5" class=""></path>
+            </svg>
+            <span class="absolute text-xl font-bold text-[#F59E0B]">!</span>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Warning</span>
+    </div>
+
+    <!-- 14. Pending Idle -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="w-12 h-12 flex items-center justify-center">
+            <svg class="w-full h-full animate-[pulse_2s_cubic-bezier(0.4,0,0.6,1)_infinite]" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="#3B82F6" fill-opacity="0.2" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="4 2" class=""></path>
+            </svg>
+            <div class="absolute w-2 h-2 bg-[#3B82F6] rounded-full animate-bounce"></div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Pending</span>
+    </div>
+
+    <!-- 15. Offline/Disabled -->
+    <div class="flex flex-col items-center gap-4 opacity-50 cursor-not-allowed">
+        <div class="w-12 h-12 flex items-center justify-center grayscale">
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="#1F2937" stroke="#374151" stroke-width="1.5"></path>
+            </svg>
+            <div class="absolute w-full h-[1.5px] bg-gray-500 rotate-45"></div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Disabled</span>
+    </div>
+
+    <!-- HEADER: ADVANCED -->
+    <div class="col-span-full w-full border-b border-white/10 pb-2 mb-2 mt-4 flex items-center gap-2">
+        <div class="w-1.5 h-1.5 bg-purple-500 rounded-full"></div>
+        <h3 class="text-[10px] font-mono tracking-widest text-gray-400 uppercase">Advanced_UX</h3>
+    </div>
+
+    <!-- 16. Draggable -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="relative w-12 h-12 flex items-center justify-center cursor-grab active:cursor-grabbing hover:-translate-y-1 hover:shadow-xl transition-all duration-300">
+             <svg class="w-full h-full drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)]" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" fill="#222" stroke="#555" stroke-width="1.5"></path>
+            </svg>
+            <div class="absolute flex gap-0.5">
+                <div class="w-0.5 h-3 bg-gray-500 rounded-full"></div>
+                <div class="w-0.5 h-3 bg-gray-500 rounded-full"></div>
+                <div class="w-0.5 h-3 bg-gray-500 rounded-full"></div>
+            </div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Drag</span>
+    </div>
+
+    <!-- 17. Mask Reveal -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="w-12 h-12 bg-gray-800 relative group overflow-hidden cursor-pointer" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);">
+            <img src="https://images.unsplash.com/photo-1640906152676-dace6710d24b?w=100&amp;q=80" class="w-full h-full object-cover opacity-50 group-hover:opacity-100 group-hover:scale-110 transition-all duration-500" alt="">
+            <div class="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-transparent transition-colors">
+                <svg class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+            </div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Mask</span>
+    </div>
+
+    <!-- 18. Hex Stack -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="relative w-12 h-12 flex items-center justify-center group cursor-pointer">
+            <div class="absolute inset-0 bg-[#333] translate-y-2 opacity-50 group-hover:translate-y-3 transition-transform" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="absolute inset-0 bg-[#444] translate-y-1 opacity-75 group-hover:translate-y-1.5 transition-transform" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="absolute inset-0 bg-[#555] border border-white/10 flex items-center justify-center z-10 hover:-translate-y-0.5 transition-transform" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);">
+                <span class="text-[10px] font-mono text-white">3</span>
+            </div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Stack</span>
+    </div>
+
+     <!-- 19. Breadcrumb -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="flex items-center -space-x-1">
+            <div class="w-6 h-6 bg-[#E0FF00] flex items-center justify-center z-20 shadow-lg relative" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"><div class="w-1 h-1 bg-black rounded-full"></div></div>
+            <div class="w-6 h-6 bg-[#333] flex items-center justify-center z-10 border-l border-white/10 opacity-60" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="w-6 h-6 bg-[#222] flex items-center justify-center z-0 border-l border-white/10 opacity-40" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Trail</span>
+    </div>
+
+    <!-- 20. Particle Burst (Static Rep) -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="relative w-12 h-12 flex items-center justify-center group">
+            <!-- Center -->
+            <div class="w-4 h-4 bg-[#E0FF00] relative z-10 group-hover:scale-0 transition-transform duration-300" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <!-- Particles -->
+            <div class="absolute w-2 h-2 bg-[#E0FF00] opacity-0 group-hover:opacity-100 group-hover:-translate-y-4 transition-all duration-300" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="absolute w-2 h-2 bg-[#E0FF00] opacity-0 group-hover:opacity-100 group-hover:translate-y-4 transition-all duration-300 delay-75" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+            <div class="absolute w-2 h-2 bg-[#E0FF00] opacity-0 group-hover:opacity-100 group-hover:-translate-x-4 transition-all duration-300 delay-100" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+             <div class="absolute w-2 h-2 bg-[#E0FF00] opacity-0 group-hover:opacity-100 group-hover:translate-x-4 transition-all duration-300 delay-150" style="clip-path: polygon(50% 0%, 93.301% 25%, 93.301% 75%, 50% 100%, 6.699% 75%, 6.699% 25%);"></div>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500">Burst</span>
+    </div>
+
+</div>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 bg-white/5 border-white/5 border pt-8 pr-8 pb-8 pl-8 gap-x-8 gap-y-12 items-start justify-items-center" style="clip-path: polygon(24px 0, 100% 0, 100% calc(100% - 24px), calc(100% - 24px) 100%, 0 100%, 0 24px)">
+
+    <!-- HEADER: SYSTEM TITLE -->
+    <div class="col-span-full flex w-full border-white/10 border-b pb-6 items-end justify-between">
+        <div class="flex flex-col gap-1">
+            <h2 class="text-xl font-bold tracking-tight text-white uppercase">Geometric CTA System</h2>
+            <p class="text-xs text-gray-400 font-mono uppercase tracking-wide">Faceted Architecture / v3.0</p>
+        </div>
+        <div class="hidden md:flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10" style="clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);">
+            <div class="w-1.5 h-1.5 bg-[#E0FF00]"></div>
+            <span class="text-[10px] font-mono font-bold text-gray-400 uppercase tracking-widest">Production_Ready</span>
+        </div>
+    </div>
+
+    <!-- SECTION: CONVERSION -->
+    <div class="col-span-full w-full flex items-center gap-2 border-b border-white/10 pb-2 mb-2">
+        <div class="w-1 h-1 bg-[#E0FF00]"></div>
+        <h3 class="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Conversion_Layer</h3>
+    </div>
+
+    <!-- 1. Primary Hero Button -->
+    <div class="flex flex-col items-center gap-4">
+        <!-- 45-degree Chamfered Edges -->
+        <button class="group relative px-8 py-3 bg-[#E0FF00] text-black transition-transform duration-200 ease-out hover:scale-[1.02] active:scale-[0.98] focus:outline-none" style="clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);">
+            <div class="flex items-center gap-2 font-bold text-xs uppercase tracking-tight">
+                <span class="">Get Started</span>
+                <svg class="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" class=""></path></svg>
+            </div>
+        </button>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Primary Hero</span>
+    </div>
+
+    <!-- 2. Secondary Outline -->
+    <div class="flex flex-col gap-4 gap-x-4 gap-y-4 items-center">
+        <button class="group relative px-8 py-3 bg-transparent text-white border border-white/20 hover:border-[#E0FF00] hover:text-[#E0FF00] transition-colors duration-200 ease-out focus:outline-none" style="clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);">
+            <span class="font-bold text-xs uppercase tracking-tight">Learn More</span>
+        </button>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Secondary</span>
+    </div>
+
+    <!-- 3. Tertiary Link (Geometric Underline) -->
+    <div class="flex flex-col items-center gap-4">
+        <button class="group relative py-1 flex items-center gap-1.5 text-xs font-bold text-white uppercase tracking-wider hover:text-[#E0FF00] transition-colors focus:outline-none">
+            <span class="">Explore Features</span>
+            <div class="absolute bottom-0 left-0 w-full h-[2px] bg-[#E0FF00] transform scale-x-0 group-hover:scale-x-100 transition-transform duration-200 origin-left"></div>
+            <svg class="w-3.5 h-3.5 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 17l9.2-9.2M17 17V7H7"></path></svg>
+        </button>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Tertiary Link</span>
+    </div>
+
+    <!-- 4. Form Submit Action -->
+    
+
+    <!-- SECTION: NAVIGATION -->
+    <div class="col-span-full w-full flex items-center gap-2 border-b border-white/10 pb-2 mb-2 mt-4">
+        <div class="w-1 h-1 bg-[#E0FF00]"></div>
+        <h3 class="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Navigation_Matrix</h3>
+    </div>
+
+    <!-- 5. Nav Link with Hex Icon -->
+    <div class="flex flex-col items-center gap-4">
+        <a href="#" class="group flex items-center gap-3 text-gray-400 hover:text-white transition-colors">
+            <span class="font-bold text-[10px] uppercase tracking-widest border-b border-transparent group-hover:border-[#E0FF00] pb-0.5 transition-all">Documentation</span>
+            <!-- Regular Hexagon Icon Container -->
+            <div class="w-5 h-5 bg-[#1B2124] border border-white/20 flex items-center justify-center group-hover:border-[#E0FF00] group-hover:bg-[#E0FF00] group-hover:text-black transition-all duration-200" style="clip-path: polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%);">
+                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12h14M12 5l7 7-7 7" class=""></path></svg>
+            </div>
+        </a>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Nav Anchor</span>
+    </div>
+
+    <!-- 6. Pagination (Angular Arrows) -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="flex gap-1">
+            <!-- Prev -->
+            <button class="w-9 h-9 flex items-center justify-center bg-[#1B2124] border border-white/10 hover:border-[#E0FF00] hover:text-[#E0FF00] active:bg-[#E0FF00]/10 transition-colors focus:outline-none" style="clip-path: polygon(20% 0%, 100% 0%, 80% 100%, 0% 100%);">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6" class=""></path></svg>
+            </button>
+            <!-- Next -->
+            <button class="w-9 h-9 flex items-center justify-center bg-[#1B2124] border border-white/10 hover:border-[#E0FF00] hover:text-[#E0FF00] active:bg-[#E0FF00]/10 transition-colors focus:outline-none" style="clip-path: polygon(20% 0%, 100% 0%, 80% 100%, 0% 100%);">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6" class=""></path></svg>
+            </button>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Pagination</span>
+    </div>
+
+    <!-- 7. Geometric Breadcrumb -->
+    <div class="flex flex-col gap-4 gap-x-4 gap-y-4 items-center">
+        <div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+            <a href="#" class="hover:text-[#E0FF00] transition-colors border-b border-transparent hover:border-[#E0FF00]">Home</a>
+            <!-- Rhombus Separator -->
+            <div class="w-1.5 h-1.5 bg-gray-700 transform rotate-45"></div>
+            <a href="#" class="hover:text-[#E0FF00] transition-colors border-b border-transparent hover:border-[#E0FF00]">Products</a>
+            <div class="w-1.5 h-1.5 bg-gray-700 transform rotate-45"></div>
+            <span class="text-white cursor-default">Detail</span>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Breadcrumb</span>
+    </div>
+
+    <!-- 8. Social Hex Button -->
+    <div class="flex flex-col items-center gap-4">
+        <!-- Regular Hexagon Button -->
+        <button class="flex hover:bg-[#E0FF00] hover:text-black hover:border-[#E0FF00] active:scale-95 transition-all duration-200 focus:outline-none text-gray-400 bg-[#1B2124] w-10 h-10 border-white/20 border items-center justify-center" style="clip-path: polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%)">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 3a10.9 10.9 0 0 1-3.14 1.53 4.48 4.48 0 0 0-7.86 3v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z" class=""></path></svg>
+        </button>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Social Hex</span>
+    </div>
+
+    <!-- SECTION: UTILITY -->
+    <div class="col-span-full w-full flex items-center gap-2 border-b border-white/10 pb-2 mb-2 mt-4">
+        <div class="w-1 h-1 bg-[#E0FF00]"></div>
+        <h3 class="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Utility_Constructs</h3>
+    </div>
+
+    <!-- 9. Status Badge (Angular Tag) -->
+    <div class="flex flex-col items-center gap-4">
+        <div class="group relative px-2.5 py-1 bg-[#1B2124] border border-[#E0FF00] text-[#E0FF00] hover:bg-[#E0FF00] hover:text-black transition-colors cursor-default" style="clip-path: polygon(15% 0%, 100% 0%, 85% 100%, 0% 100%);">
+            <span class="text-[9px] font-bold uppercase tracking-widest">Version_3.0</span>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Status Badge</span>
+    </div>
+
+    <!-- 10. Geometric Toggle -->
+    
+
+    <!-- 11. Card Action Footer -->
+    <div class="flex flex-col items-center gap-4 w-full max-w-[150px]">
+        <div class="group w-full bg-[#1B2124] border border-white/10 p-4 hover:border-[#E0FF00] hover:shadow-[0_0_20px_rgba(224,255,0,0.05)] transition-all duration-200 cursor-pointer" style="clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);">
+            <div class="flex justify-between items-start mb-2">
+                <div class="w-1.5 h-1.5 bg-[#E0FF00]"></div>
+                <svg class="w-3.5 h-3.5 text-gray-500 group-hover:text-[#E0FF00] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 17l9.2-9.2M17 17V7H7"></path></svg>
+            </div>
+            <span class="text-[10px] font-bold text-gray-300 group-hover:text-white transition-colors uppercase tracking-widest">Read Article</span>
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gray-500 font-mono">Card Action</span>
+    </div>
+
+    <!-- 12. Feature Status Pill -->
+    
+
+</div></section>
+
+    </main>
+
+    <footer class="border-t border-white/10 py-12 bg-[#0A0A0A]">
+        <div class="max-w-7xl mx-auto px-6 text-center text-gray-500 text-sm">
+            <p>HexOS Design System © 2023</p>
+            <div class="flex justify-center gap-4 mt-4">
+                <div class="w-2 h-2 bg-white rounded-full"></div>
+                <div class="w-2 h-2 bg-gray-700 rounded-full"></div>
+                <div class="w-2 h-2 bg-[#E0FF00] border border-gray-700 rounded-full"></div>
+            </div>
+        </div>
+    </footer>
+
+</body></html>

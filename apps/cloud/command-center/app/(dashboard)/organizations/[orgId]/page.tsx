@@ -899,9 +899,6 @@ function SettingsTab({ orgId }: { orgId: string }) {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="text-xs font-bold text-[var(--text-primary)]">{f.feature_name}</p>
-                          {f.is_addon && (
-                            <Badge variant="outline" className="border-amber-500/20 text-amber-400 bg-amber-500/5 text-[8px] font-bold">ADDON</Badge>
-                          )}
                         </div>
                         <p className="text-[9px] text-[var(--text-tertiary)] font-mono mt-0.5">{f.feature_key}</p>
                         {f.description && <p className="text-[10px] text-[var(--text-secondary)] mt-1">{f.description}</p>}

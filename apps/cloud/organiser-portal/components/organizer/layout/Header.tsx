@@ -1,32 +1,35 @@
 "use client";
 
-import { usePathname, useParams } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useParams, usePathname } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Bell, User, ChevronRight,
-  Settings, LogOut, Sun, Moon,
-  HelpCircle, Box, Wifi, WifiOff
+  Bell,
+  Box,
+  ChevronRight,
+  HelpCircle,
+  LogOut,
+  Settings,
+  User,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn, getTimezoneAbbrev } from "@/lib/utils";
-import { useState, useEffect, useRef } from "react";
-import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/use-auth-store";
-import { useUIStore } from "@/store/useUIStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import Link from "next/link";
 
 export function Header() {
   const pathname = usePathname();
-  const { eventId } = useParams();
+  const params = useParams();
+  const eventId = params?.eventId as string | undefined;
+  const isPlatformWorkspace = !eventId;
+  const { user, logout } = useAuthStore();
+  const { isConnected } = useWebSocket(eventId || "");
   const [time, setTime] = useState<Date | null>(null);
   const [timezone, setTimezone] = useState("Asia/Kolkata");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const { toggleTheme, isDark } = useTheme();
-  const { user, logout } = useAuthStore();
-  const { isSidebarCollapsed } = useUIStore();
   const userMenuRef = useRef<HTMLDivElement>(null);
-
-  const { isConnected } = useWebSocket(eventId as string);
 
   useEffect(() => {
     setTime(new Date());
@@ -35,366 +38,241 @@ export function Header() {
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const handleTzChange = () => {
-        setTimezone(localStorage.getItem("system-timezone") || "Asia/Kolkata");
-      };
-      handleTzChange();
-      window.addEventListener("system-timezone-changed", handleTzChange);
-      return () => window.removeEventListener("system-timezone-changed", handleTzChange);
-    }
+    const readTimezone = () => {
+      setTimezone(localStorage.getItem("system-timezone") || "Asia/Kolkata");
+    };
+    readTimezone();
+    window.addEventListener("system-timezone-changed", readTimezone);
+    return () => window.removeEventListener("system-timezone-changed", readTimezone);
   }, []);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const close = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
       }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  // Build breadcrumbs
-  const paths = pathname.split("/").filter(Boolean);
-  const breadcrumbs: { label: string; href: string }[] = [];
-  paths.forEach((path, i) => {
-    if (path === eventId) return;
-    const href = "/" + paths.slice(0, i + 1).join("/");
-    const label = path.replace(/-/g, " ");
-    breadcrumbs.push({ label, href });
-  });
+  const userInitials = user?.full_name
+    ? user.full_name
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : (user?.email?.[0] || "U").toUpperCase();
+
+  const pageTitle = useMemo(() => {
+    const lastSegment = pathname.split("/").filter(Boolean).pop() || "dashboard";
+    return lastSegment
+      .replace(/\[|\]/g, "")
+      .replace(/-/g, " ")
+      .replace(/\b\w/g, (value) => value.toUpperCase());
+  }, [pathname]);
+
+  const breadcrumbs = useMemo(() => {
+    return pathname
+      .split("/")
+      .filter(Boolean)
+      .filter((part) => part !== eventId)
+      .map((part, index, parts) => ({
+        label: part.replace(/-/g, " "),
+        href: `/${parts.slice(0, index + 1).join("/")}`,
+      }));
+  }, [pathname, eventId]);
 
   return (
     <header
-      className="sticky top-0 z-30 w-full flex items-center px-6 gap-6"
+      className={cn("sticky top-0 z-30 flex w-full items-center justify-between px-6", isPlatformWorkspace ? "h-[78px]" : "h-16")}
       style={{
-        height: "64px",
-        background: "var(--color-surface-2)",
-        backdropFilter: "blur(20px) saturate(180%)",
-        WebkitBackdropFilter: "blur(20px) saturate(180%)",
+        background: "rgba(5,5,5,0.78)",
         borderBottom: "1px solid var(--color-border)",
-        boxShadow: "0 1px 0 var(--color-border-subtle), 0 4px 16px color-mix(in srgb, var(--color-bg) 50%, transparent)",
+        boxShadow: "0 1px 0 var(--color-border-subtle)",
+        backdropFilter: "blur(14px)",
       }}
     >
-      {/* ── Breadcrumbs ── */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        {/* Page icon */}
-        <div
-          className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
-          style={{
-            background: "var(--color-surface-3)",
-            border: "1px solid var(--color-border)",
-          }}
-        >
-          <Box className="h-4 w-4" style={{ color: "var(--color-primary-end)" }} />
+      {isPlatformWorkspace ? (
+        <div className="min-w-0">
+          <h1 className="truncate text-[28px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
+            {pageTitle}
+          </h1>
         </div>
-
-        {/* Breadcrumb trail */}
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          {breadcrumbs.map((crumb, i) => (
-            <div key={i} className="flex items-center gap-1.5 whitespace-nowrap">
-              <ChevronRight className="h-3 w-3 shrink-0" style={{ color: "var(--color-text-muted)" }} />
-              <Link
-                href={crumb.href}
-                className={cn(
-                  "text-[11px] font-semibold uppercase tracking-widest transition-colors duration-150",
-                  i === breadcrumbs.length - 1
-                    ? "text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-end)]"
-                )}
-              >
-                {crumb.label}
-              </Link>
-            </div>
-          ))}
+      ) : (
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+            style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)" }}
+          >
+            <Box className="h-4 w-4 text-[var(--color-primary-mid)]" />
+          </div>
+          <div className="flex items-center gap-1.5 overflow-hidden">
+            {breadcrumbs.map((crumb, index) => (
+              <div key={crumb.href} className="flex items-center gap-1.5 whitespace-nowrap">
+                <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
+                <Link
+                  href={crumb.href}
+                  className={cn(
+                    "text-[11px] font-semibold uppercase tracking-widest",
+                    index === breadcrumbs.length - 1
+                      ? "text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
+                  )}
+                >
+                  {crumb.label}
+                </Link>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ── Right Controls ── */}
       <div className="flex items-center gap-3">
-
-        {/* System Clock */}
-        <div
-          className="hidden xl:flex flex-col items-end pr-4"
-          style={{ borderRight: "1px solid var(--color-border)" }}
-        >
-          <p
-            className="text-[13px] font-bold tracking-tight font-tabular leading-none mb-0.5"
-            style={{ color: "var(--color-text-primary)", fontVariantNumeric: "tabular-nums" }}
-          >
-            {time
-              ? time.toLocaleTimeString("en-IN", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                  hour12: true,
-                  timeZone: timezone,
-                })
-              : "--:--:-- --"}
-          </p>
-          <p
-            className="text-[9px] font-bold uppercase tracking-[0.18em]"
-            style={{ color: "var(--color-primary-mid)" }}
-          >
-            {timezone.split("/").pop()?.replace(/_/g, " ") || timezone} ({getTimezoneAbbrev(timezone, time || new Date())})
-          </p>
-        </div>
-
-        {/* Live Sync badge */}
-        {eventId && (
-          <div
-            className={cn(
-              "flex items-center gap-2 px-3 h-8 rounded-lg transition-all cursor-default select-none"
-            )}
-            style={{
-              background: "var(--color-surface-3)",
-              border: `1px solid ${isConnected ? "rgba(16, 185, 129, 0.25)" : "rgba(245, 158, 11, 0.25)"}`,
-            }}
-            title={isConnected ? "Real-time sync active" : "Attempting to reconnect..."}
-          >
-            <span
-              className="h-2 w-2 rounded-full relative shrink-0"
-              style={{
-                background: isConnected ? "var(--color-accent-green)" : "var(--color-accent-amber)",
-                boxShadow: isConnected
-                  ? "0 0 8px rgba(16, 185, 129, 0.7)"
-                  : "0 0 8px rgba(245, 158, 11, 0.7)",
-              }}
-            >
-              {isConnected && (
-                <span
-                  className="absolute inset-0 rounded-full animate-ping"
-                  style={{ background: "var(--color-accent-green)", opacity: 0.6 }}
-                />
-              )}
-            </span>
-            <span
-              className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline"
-              style={{ color: isConnected ? "var(--color-accent-green)" : "var(--color-accent-amber)" }}
-            >
-              {isConnected ? "Live" : "Offline"}
-            </span>
-          </div>
-        )}
-
-        {/* Notifications */}
-        <Link href={eventId ? `/events/${eventId}/speaker/notifications` : "/notifications"}>
-          <button
-            className="h-9 w-9 rounded-lg flex items-center justify-center relative transition-all"
-            style={{
-              background: "var(--color-surface-3)",
-              border: "1px solid var(--color-border)",
-              color: "var(--color-text-muted)",
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)";
-              (e.currentTarget as HTMLElement).style.borderColor = "var(--color-primary-end)";
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
-              (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)";
-            }}
-          >
-            <Bell className="h-4 w-4" />
-            {/* Notification dot */}
-            <span
-              className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full pulse-glow-red"
-              style={{ background: "var(--color-danger)", border: "2px solid var(--color-surface-1)" }}
-            />
-          </button>
-        </Link>
-
-        {/* Docs */}
-        <Link href="/docs">
-          <button
-            className="h-9 w-9 rounded-lg flex items-center justify-center transition-all"
-            style={{
-              background: "var(--color-surface-3)",
-              border: "1px solid var(--color-border)",
-              color: "var(--color-text-muted)",
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)";
-              (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)";
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
-              (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)";
-            }}
-          >
-            <HelpCircle className="h-4 w-4" />
-          </button>
-        </Link>
-
-        {/* Dark / Light toggle */}
-        <motion.button
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.92 }}
-          onClick={toggleTheme}
-          className="h-9 w-9 rounded-lg flex items-center justify-center transition-all"
-          style={{
-            background: "var(--color-surface-3)",
-            border: "1px solid var(--color-border)",
-          }}
-          title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
-        >
-          {isDark
-            ? <Sun className="h-4 w-4" style={{ color: "var(--color-accent-amber)" }} />
-            : <Moon className="h-4 w-4" style={{ color: "var(--color-primary-mid)" }} />
-          }
-        </motion.button>
-
-        {/* ── User Avatar + Menu ── */}
-        <div
-          className="flex items-center gap-3 pl-3 relative"
-          style={{ borderLeft: "1px solid var(--color-border)" }}
-          ref={userMenuRef}
-        >
-          <div
-            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-            className="flex items-center gap-2.5 cursor-pointer group"
-          >
-            {/* Name & role */}
-            <div className="text-right hidden sm:block">
-              <p
-                className="text-[12px] font-bold leading-none mb-0.5 tracking-tight"
-                style={{ color: "var(--color-text-primary)" }}
-              >
-                {user?.full_name || user?.first_name || "Account"}
+        {!isPlatformWorkspace ? (
+          <>
+            <div className="hidden border-r border-[var(--color-border)] pr-4 xl:flex xl:flex-col xl:items-end">
+              <p className="mb-0.5 text-[13px] font-bold leading-none text-[var(--color-text-primary)]">
+                {time
+                  ? time.toLocaleTimeString("en-IN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                      hour12: true,
+                      timeZone: timezone,
+                    })
+                  : "--:--:-- --"}
               </p>
-              <p
-                className="text-[9px] font-bold uppercase tracking-[0.2em]"
-                style={{ color: "var(--color-primary-mid)", opacity: 0.8 }}
-              >
-                {user?.role?.replace(/_/g, " ") || "Member"}
+              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--color-primary-mid)]">
+                {timezone.split("/").pop()?.replace(/_/g, " ")} ({getTimezoneAbbrev(timezone, time || new Date())})
               </p>
             </div>
-
-            {/* Avatar */}
-            <div
-              className="h-9 w-9 rounded-lg flex items-center justify-center text-[12px] font-bold text-white overflow-hidden relative transition-all group-hover:scale-105"
-              style={{ background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))" }}
-            >
-              {user?.avatar_url ? (
-                <img src={user.avatar_url} alt="User" className="h-full w-full object-cover" />
-              ) : (
-                <img
-                  src={`https://api.dicebear.com/7.x/lorelei/svg?seed=${user?.email || "default"}`}
-                  alt="Avatar"
-                  className="h-full w-full object-cover"
-                  onError={(e) => {
-                    const el = e.currentTarget as HTMLImageElement;
-                    el.style.display = "none";
-                    (el.parentElement as HTMLElement).textContent =
-                      (user?.full_name?.split(" ").map((n: string) => n[0]).join("") || user?.email?.[0] || "U").toUpperCase().slice(0, 2);
-                  }}
-                />
-              )}
-              {/* Online indicator */}
-              <span
-                className="absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full"
+            {eventId ? (
+              <div
+                className="flex h-8 items-center gap-2 rounded-lg px-3"
                 style={{
-                  background: "var(--color-accent-green)",
-                  border: "1.5px solid var(--color-surface-1)",
-                  boxShadow: "0 0 6px rgba(16, 185, 129, 0.7)",
+                  background: "var(--color-surface-3)",
+                  border: `1px solid ${isConnected ? "rgba(134,239,172,0.25)" : "rgba(253,224,71,0.25)"}`,
                 }}
-              />
-            </div>
-          </div>
+              >
+                {isConnected ? (
+                  <Wifi className="h-3.5 w-3.5 text-[var(--color-success)]" />
+                ) : (
+                  <WifiOff className="h-3.5 w-3.5 text-[var(--color-warning)]" />
+                )}
+                <span
+                  className={cn(
+                    "text-[10px] font-bold uppercase tracking-widest",
+                    isConnected ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"
+                  )}
+                >
+                  {isConnected ? "Live" : "Offline"}
+                </span>
+              </div>
+            ) : null}
+          </>
+        ) : null}
 
-          {/* ── User Dropdown Menu ── */}
+        <HeaderIcon href={eventId ? `/events/${eventId}/speaker/notifications` : "/notifications"} icon={Bell} />
+        <HeaderIcon href={isPlatformWorkspace ? "/help-support" : "/docs"} icon={HelpCircle} />
+
+        <div className="relative pl-1" ref={userMenuRef}>
+          <button
+            onClick={() => setIsUserMenuOpen((value) => !value)}
+            className="flex h-10 w-10 items-center justify-center rounded-full text-[12px] font-semibold text-[var(--color-text-inverse)]"
+            style={{ background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))" }}
+          >
+            {userInitials}
+          </button>
+
           <AnimatePresence>
-            {isUserMenuOpen && (
+            {isUserMenuOpen ? (
               <motion.div
                 initial={{ opacity: 0, y: 8, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.96 }}
-                transition={{ duration: 0.18, ease: [0.34, 1.56, 0.64, 1] }}
-                className="absolute right-0 top-full mt-3 w-64 rounded-xl p-1 z-50"
+                className="absolute right-0 top-full z-50 mt-3 w-60 rounded-2xl p-2"
                 style={{
-                  background: "var(--color-surface-1)",
+                  background: "var(--color-surface-2)",
                   border: "1px solid var(--color-border)",
                   boxShadow: "var(--shadow-dropdown)",
-                  backdropFilter: "blur(16px)",
                 }}
               >
-                {/* User info header */}
-                <div
-                  className="px-3 py-3 mb-1 rounded-lg"
-                  style={{ background: "var(--color-surface-3)" }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className="h-9 w-9 rounded-lg flex items-center justify-center text-[12px] font-bold text-white overflow-hidden shrink-0"
-                      style={{ background: "linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end))" }}
-                    >
-                      {user?.avatar_url ? (
-                        <img src={user.avatar_url} alt="User" className="h-full w-full object-cover" />
-                      ) : (
-                        <img
-                          src={`https://api.dicebear.com/7.x/lorelei/svg?seed=${user?.email || "default"}`}
-                          alt="Avatar"
-                          className="h-full w-full object-cover"
-                        />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-bold truncate" style={{ color: "var(--color-text-primary)" }}>
-                        {user?.full_name || `${user?.first_name || ""} ${user?.last_name || ""}`.trim() || user?.email}
-                      </p>
-                      <p className="text-[10px] font-semibold uppercase tracking-widest mt-0.5" style={{ color: "var(--color-text-muted)" }}>
-                        {user?.role?.replace(/_/g, " ") || "Member"}
-                      </p>
-                    </div>
-                  </div>
+                <div className="rounded-[16px] bg-[var(--color-surface-3)] px-3 py-3">
+                  <p className="truncate text-[13px] font-semibold text-[var(--color-text-primary)]">
+                    {user?.full_name || user?.email || "Account"}
+                  </p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                    {user?.role?.replace(/_/g, " ") || "Member"}
+                  </p>
                 </div>
-
-                {/* Menu items */}
-                <div className="space-y-0.5 px-1 pb-1">
-                  <Link href="/settings?tab=profile">
-                    <button
-                      onClick={() => setIsUserMenuOpen(false)}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-[12px] font-medium"
-                      style={{ color: "var(--color-text-muted)" }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"; (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)"; }}
-                    >
-                      <User className="h-4 w-4 shrink-0" />
-                      View Profile
-                    </button>
-                  </Link>
-                  <Link href="/settings">
-                    <button
-                      onClick={() => setIsUserMenuOpen(false)}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-[12px] font-medium"
-                      style={{ color: "var(--color-text-muted)" }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"; (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; (e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)"; }}
-                    >
-                      <Settings className="h-4 w-4 shrink-0" />
-                      Global Settings
-                    </button>
-                  </Link>
-
-                  <div className="h-px my-1" style={{ background: "var(--color-border)" }} />
-
+                <div className="mt-2 space-y-1">
+                  <MenuLink href="/settings?tab=profile" icon={User} label="View profile" onClick={() => setIsUserMenuOpen(false)} />
+                  <MenuLink href="/settings" icon={Settings} label="Settings" onClick={() => setIsUserMenuOpen(false)} />
                   <button
-                    onClick={() => { setIsUserMenuOpen(false); logout(); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-[12px] font-semibold"
-                    style={{ color: "var(--color-danger)" }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--color-danger-muted)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      logout();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium text-[var(--color-danger)] transition-colors hover:bg-white/5"
                   >
-                    <LogOut className="h-4 w-4 shrink-0" />
-                    Sign Out
+                    <LogOut className="h-4 w-4" />
+                    Sign out
                   </button>
                 </div>
               </motion.div>
-            )}
+            ) : null}
           </AnimatePresence>
         </div>
       </div>
     </header>
+  );
+}
+
+function HeaderIcon({
+  href,
+  icon: Icon,
+}: {
+  href: string;
+  icon: any;
+}) {
+  return (
+    <Link href={href}>
+      <div
+        className="flex h-10 w-10 items-center justify-center rounded-full border transition-colors"
+        style={{
+          background: "var(--color-surface-3)",
+          border: "1px solid var(--color-border)",
+          color: "var(--color-text-muted)",
+        }}
+      >
+        <Icon className="h-4 w-4" />
+      </div>
+    </Link>
+  );
+}
+
+function MenuLink({
+  href,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  href: string;
+  icon: any;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Link href={href}>
+      <button
+        onClick={onClick}
+        className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-white/5 hover:text-[var(--color-text-primary)]"
+      >
+        <Icon className="h-4 w-4" />
+        {label}
+      </button>
+    </Link>
   );
 }
