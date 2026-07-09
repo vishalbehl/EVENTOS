@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Calendar,
@@ -12,11 +12,18 @@ import {
   Globe,
   Hash,
   Loader2,
+  Lock,
   MapPin,
   Phone,
-  Plus,
+  Shield,
   Sparkles,
-  Star,
+
+  Upload,
+  X,
+  Zap,
+  Building2,
+
+  Tag,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -26,6 +33,14 @@ import { useCreateEvent } from "@/hooks/useEvents";
 import { CountryStateEntry, fetchCountryStates, getStatesForCountry } from "@/lib/country-states";
 import { orgApi } from "@/components/organizer/org/org-api";
 import { EnterprisePageIntro, EnterprisePanel } from "@/components/organizer/platform/EnterprisePortal";
+import { apiClient } from "@/lib/api-client";
+import {
+  CommercialPlanCard,
+  CommercialAddonCard,
+  type PlanActionVariant,
+} from "@/components/organizer/platform/CommercialCards";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type StepId = 0 | 1 | 2 | 3 | 4;
 
@@ -58,13 +73,19 @@ type BillingAddon = {
 
 type OrgContext = Awaited<ReturnType<typeof orgApi.me>>;
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 const initialFormData = {
   name: "",
   short_code: "",
+  tagline: "",
+  description: "",
   location: "",
   venue_name: "",
   country: "",
   state: "",
+  map_link: "",
+  venue_images: [] as string[],
   organizer_details: {
     name: "",
     email: "",
@@ -75,13 +96,26 @@ const initialFormData = {
   end_date: "",
   timezone: "Asia/Kolkata",
   status: "draft" as const,
+  upload_deadline: "",
+  max_file_size_mb: 500,
+  allowed_formats: ["pptx", "pdf", "mp4"],
   speaker_settings: { enabled: true, window_required: true },
   registration_settings: {
     enabled: true,
     registration_allowed: true,
     participants_list_allowed: true,
   },
+  feature_toggles: {
+    enable_whatsapp: false,
+    enable_posters: true,
+    enable_srr: true,
+    enable_signage: true,
+    enable_moderator: true,
+    enable_webhooks: false,
+  },
 };
+
+const availableFormats = ["pptx", "pdf", "mp4", "key", "zip", "png", "jpg"];
 
 function asArray<T = any>(value: any): T[] {
   if (Array.isArray(value)) return value;
@@ -148,18 +182,371 @@ function formatCurrency(value: number | null | undefined, currency = "INR") {
       maximumFractionDigits: 0,
     }).format(value);
   } catch {
-    return `Rs ${value.toLocaleString("en-IN")}`;
+    return `₹${value.toLocaleString("en-IN")}`;
   }
 }
 
-export default function NewEventPage() {
+// ─── Payment Modal ────────────────────────────────────────────────────────────
+
+type PaymentMethod = "card" | "upi" | "bank";
+
+function PaymentModal({
+  open,
+  totalAmount,
+  planName,
+  addonNames,
+  billingName,
+  billingEmail,
+  billingPhone,
+  onClose,
+  onSuccess,
+}: {
+  open: boolean;
+  totalAmount: number;
+  planName: string;
+  addonNames: string[];
+  billingName: string;
+  billingEmail: string;
+  billingPhone: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [method, setMethod] = useState<PaymentMethod>("card");
+  const [cardholder, setCardholder] = useState("");
+  const [cardNo, setCardNo] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [cvv, setCvv] = useState("");
+  const [gstNumber, setGstNumber] = useState("");
+  const [upiId, setUpiId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [succeeded, setSucceeded] = useState(false);
+
+  // Format card number with spaces
+  const handleCardNo = (val: string) => {
+    const digits = val.replace(/\D/g, "").slice(0, 16);
+    setCardNo(digits.replace(/(.{4})/g, "$1 ").trim());
+  };
+
+  const handleExpiry = (val: string) => {
+    const digits = val.replace(/\D/g, "").slice(0, 4);
+    if (digits.length > 2) setExpiry(`${digits.slice(0, 2)}/${digits.slice(2)}`);
+    else setExpiry(digits);
+  };
+
+  const handlePay = async () => {
+    // Validation
+    if (method === "card" && (!cardholder || !cardNo || !expiry || !cvv)) {
+      toast.error("Fill in all card details.");
+      return;
+    }
+    if (method === "upi" && !upiId) {
+      toast.error("Enter your UPI ID.");
+      return;
+    }
+
+    setLoading(true);
+    // Simulated gateway call — will be replaced with Razorpay/Stripe SDK
+    await new Promise((r) => setTimeout(r, 2200));
+    setLoading(false);
+    setSucceeded(true);
+  };
+
+  const handleDone = () => {
+    onSuccess();
+    onClose();
+  };
+
+  if (!open) return null;
+
+  const cardBrand =
+    cardNo.startsWith("4") ? "VISA" :
+    cardNo.startsWith("5") ? "MC" :
+    cardNo.startsWith("3") ? "AMEX" : null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/80 backdrop-blur-md"
+        onClick={succeeded ? undefined : onClose}
+      />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-lg rounded-[28px] border border-white/[0.08] bg-[#111118] shadow-[0_40px_100px_rgba(0,0,0,0.8)] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+
+        {/* Success state */}
+        {succeeded ? (
+          <div className="p-10 flex flex-col items-center text-center gap-6">
+            <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#C2F542]/60 to-transparent absolute top-0 inset-x-0" />
+            <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-[rgba(194,245,66,0.4)] bg-[rgba(194,245,66,0.08)]">
+              <CheckCircle2 className="h-10 w-10 text-[#C2F542]" />
+            </div>
+            <div>
+              <h3 className="text-[24px] font-bold tracking-tight text-white">Payment Successful</h3>
+              <p className="mt-2 text-[14px] text-white/60">
+                Your plan <span className="text-white font-semibold">{planName}</span> has been activated.
+              </p>
+              <p className="mt-1 text-[13px] text-white/40">{formatCurrency(totalAmount)} charged</p>
+            </div>
+            <Button
+              onClick={handleDone}
+              className="h-12 rounded-xl px-8 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold text-[14px]"
+            >
+              Continue to Publish
+            </Button>
+          </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-white/[0.06]">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40">Secure Checkout</p>
+                <h3 className="mt-0.5 text-[20px] font-bold text-white">{formatCurrency(totalAmount)}</h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+                  <Shield className="h-3.5 w-3.5" />
+                  256-bit SSL
+                </div>
+                <button
+                  onClick={onClose}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition-colors"
+                >
+                  <X className="h-4 w-4 text-white/60" />
+                </button>
+              </div>
+            </div>
+
+            {/* Order summary */}
+            <div className="px-6 py-4 bg-white/[0.02] border-b border-white/[0.06]">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Order Summary</p>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-white/70">{planName}</span>
+                  <span className="font-mono font-semibold text-white">Plan</span>
+                </div>
+                {addonNames.map((name) => (
+                  <div key={name} className="flex justify-between text-[12px]">
+                    <span className="text-white/50">+ {name}</span>
+                    <span className="text-white/50">Add-on</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              {/* Payment method tabs */}
+              <div className="flex rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 gap-1">
+                {(["card", "upi", "bank"] as PaymentMethod[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMethod(m)}
+                    className={[
+                      "flex-1 rounded-lg py-2 text-[12px] font-semibold transition-all duration-150 capitalize",
+                      method === m
+                        ? "bg-white text-black shadow-sm"
+                        : "text-white/50 hover:text-white/80",
+                    ].join(" ")}
+                  >
+                    {m === "card" ? "Credit / Debit" : m === "upi" ? "UPI" : "Net Banking"}
+                  </button>
+                ))}
+              </div>
+
+              {/* Card form */}
+              {method === "card" && (
+                <div className="space-y-3">
+                  <PayField
+                    label="Cardholder Name"
+                    id="pay-cardholder"
+                    value={cardholder}
+                    onChange={setCardholder}
+                    placeholder="Name as on card"
+                    autoComplete="cc-name"
+                  />
+                  <div className="relative">
+                    <PayField
+                      label="Card Number"
+                      id="pay-card-no"
+                      value={cardNo}
+                      onChange={handleCardNo}
+                      placeholder="0000 0000 0000 0000"
+                      autoComplete="cc-number"
+                      inputMode="numeric"
+                    />
+                    {cardBrand && (
+                      <span className="absolute right-4 bottom-3.5 text-[10px] font-black tracking-widest text-white/40">
+                        {cardBrand}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <PayField
+                      label="Expiry"
+                      id="pay-expiry"
+                      value={expiry}
+                      onChange={handleExpiry}
+                      placeholder="MM/YY"
+                      autoComplete="cc-exp"
+                      inputMode="numeric"
+                    />
+                    <PayField
+                      label="CVV"
+                      id="pay-cvv"
+                      value={cvv}
+                      onChange={(v) => setCvv(v.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="•••"
+                      type="password"
+                      autoComplete="cc-csc"
+                      inputMode="numeric"
+                    />
+                  </div>
+                  <PayField
+                    label="GST Number (optional)"
+                    id="pay-gst"
+                    value={gstNumber}
+                    onChange={setGstNumber}
+                    placeholder="22AAAAA0000A1Z5"
+                  />
+                </div>
+              )}
+
+              {/* UPI form */}
+              {method === "upi" && (
+                <PayField
+                  label="UPI ID"
+                  id="pay-upi"
+                  value={upiId}
+                  onChange={setUpiId}
+                  placeholder="yourname@upi"
+                />
+              )}
+
+              {/* Net Banking placeholder */}
+              {method === "bank" && (
+                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 text-center">
+                  <p className="text-[13px] text-white/50">
+                    Net banking will redirect you to your bank's secure portal.
+                  </p>
+                  <p className="text-[11px] text-white/30 mt-1">Bank selection available after clicking Pay.</p>
+                </div>
+              )}
+
+              {/* Pay button */}
+              <button
+                type="button"
+                onClick={handlePay}
+                disabled={loading}
+                className="w-full h-13 rounded-xl bg-[#C2F542] text-black font-bold text-[15px] flex items-center justify-center gap-2.5 hover:bg-[#d4f75a] transition-colors disabled:opacity-60 py-3.5"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Processing…
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-4 w-4" />
+                    Pay {formatCurrency(totalAmount)}
+                  </>
+                )}
+              </button>
+
+              <p className="text-center text-[10px] text-white/25">
+                Secured by 256-bit encryption · Ready for Razorpay / Stripe
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PayField({
+  label,
+  id,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  autoComplete,
+  inputMode,
+}: {
+  label: string;
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  autoComplete?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
+        {label}
+      </label>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        inputMode={inputMode}
+        className="w-full h-12 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 text-[14px] text-white placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[rgba(194,245,66,0.4)] focus:border-[rgba(194,245,66,0.3)] transition-all"
+      />
+    </div>
+  );
+}
+
+// ─── Review & Deploy Panel ────────────────────────────────────────────────────
+
+function ReviewInfoBlock({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+        <Icon className="h-3 w-3" />
+        {label}
+      </div>
+      <p className="text-[14px] font-semibold text-[var(--color-text-primary)] leading-snug">{value || "—"}</p>
+    </div>
+  );
+}
+
+function ReviewSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-5 space-y-4">
+      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">{title}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Inner component that uses useSearchParams ────────────────────────────────
+
+function NewEventPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const createEvent = useCreateEvent();
 
   const [step, setStep] = useState<StepId>(0);
   const [globalTimezone, setGlobalTimezone] = useState("Asia/Kolkata");
   const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
   const [formData, setFormData] = useState(initialFormData);
+  const [isUploadingTempImage, setIsUploadingTempImage] = useState(false);
   const [orgContext, setOrgContext] = useState<OrgContext | null>(null);
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [addons, setAddons] = useState<BillingAddon[]>([]);
@@ -169,16 +556,18 @@ export default function NewEventPage() {
   const [billingName, setBillingName] = useState("");
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
-  const [gstNumber, setGstNumber] = useState("");
-  const [cardholder, setCardholder] = useState("");
-  const [cardNo, setCardNo] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvv, setCvv] = useState("");
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [calculating, setCalculating] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [subscriptionActivated, setSubscriptionActivated] = useState(false);
   const [successEvent, setSuccessEvent] = useState<any | null>(null);
+
+  // URL param pre-selection
+  const preselectedPlanId = searchParams.get("plan");
+  const preselectedAddonIds = (searchParams.get("addons") ?? "")
+    .split(",")
+    .filter(Boolean);
 
   useEffect(() => {
     fetchCountryStates().then(setCountryStates).catch(console.error);
@@ -200,18 +589,46 @@ export default function NewEventPage() {
       .then(([meRes, plansRes, addonsRes]) => {
         const normalizedPlans = asArray(plansRes).map(normalizePlan);
         const normalizedAddons = asArray(addonsRes).map(normalizeAddon);
-        const matchedPlan =
-          normalizedPlans.find(
-            (plan) =>
-              normalizeComparisonValue(plan.name) === normalizeComparisonValue(meRes.organization.plan)
-          ) ||
-          normalizedPlans[0] ||
-          null;
+
+        // URL param pre-selection takes priority, then active plan matching
+        let matchedPlan: BillingPlan | null = null;
+        if (preselectedPlanId) {
+          matchedPlan =
+            normalizedPlans.find(
+              (p) =>
+                p.id === preselectedPlanId ||
+                p.key === preselectedPlanId ||
+                normalizeComparisonValue(p.name) === normalizeComparisonValue(preselectedPlanId)
+            ) ?? null;
+        }
+        if (!matchedPlan) {
+          matchedPlan =
+            normalizedPlans.find(
+              (plan) =>
+                normalizeComparisonValue(plan.name) ===
+                normalizeComparisonValue(meRes.organization.plan)
+            ) ||
+            normalizedPlans[0] ||
+            null;
+        }
+
+        // Pre-select addons from URL params
+        const preAddonKeys = preselectedAddonIds.flatMap((id) => {
+          const match = normalizedAddons.find(
+            (a) =>
+              a.id === id ||
+              a.key === id ||
+              a.rawKey === id ||
+              normalizeComparisonValue(a.name) === normalizeComparisonValue(id)
+          );
+          return match ? [match.rawKey] : [];
+        });
 
         setOrgContext(meRes);
         setPlans(normalizedPlans);
         setAddons(normalizedAddons);
         setSelectedPlan(matchedPlan);
+        if (preAddonKeys.length > 0) setSelectedAddons(preAddonKeys);
         setBillingName(meRes.organization.name || "");
         setBillingEmail(meRes.organization.billing_email || "");
         setFormData((current) => ({
@@ -273,13 +690,13 @@ export default function NewEventPage() {
     return base + addOnTotal;
   }, [priceDetails, selectedPlan, selectedAddonRecords]);
 
-  const reviewItems = [
-    { label: "Plan", value: selectedPlan?.name || "Not selected" },
-    { label: "Add-ons", value: selectedAddonRecords.length ? selectedAddonRecords.map((item) => item.name).join(", ") : "None" },
-    { label: "Event name", value: formData.name || "Pending" },
-    { label: "Dates", value: formData.start_date && formData.end_date ? `${formData.start_date} to ${formData.end_date}` : "Pending" },
-    { label: "Venue", value: formData.venue_name || formData.location || "Pending" },
-    { label: "Timezone", value: formData.timezone || "Pending" },
+  // ── Step meta (4 steps, no Limits step) ──────────────────────────────────
+  const stepMeta = [
+    { label: "Basics", description: "Identity & contacts" },
+    { label: "Venue & Schedule", description: "Location & dates" },
+    { label: "Choose Plan", description: "Workspace tier" },
+    { label: "Add-ons", description: "Optional modules" },
+    { label: "Review & Pay", description: "Deploy" },
   ];
 
   const canContinueBasics = Boolean(
@@ -289,15 +706,14 @@ export default function NewEventPage() {
       formData.organizer_details.email.trim()
   );
 
-  const canContinueVenue = Boolean(formData.start_date && formData.end_date && formData.timezone);
-  const canContinueActivation = Boolean(selectedPlan && selectedPlanUnlocksEvent && (!requiresPurchase || subscriptionActivated));
+  const canContinueVenue = Boolean(
+    formData.start_date && formData.end_date && formData.timezone
+  );
 
-  const stepMeta = [
-    { label: "Basics", description: "Name, code, organizer" },
-    { label: "Date & Venue", description: "Schedule and location" },
-    { label: "Plans & Add-ons", description: "Activation and entitlements" },
-    { label: "Publish", description: "Review and create" },
-  ];
+  const canContinuePlan = Boolean(selectedPlan);
+  // Add-ons step is always continuable
+  const canContinueAddons = true;
+  const canContinueReview = Boolean(selectedPlan && (subscriptionActivated || !requiresPurchase));
 
   const handleToggleAddon = (value: string) => {
     setSelectedAddons((current) =>
@@ -305,44 +721,54 @@ export default function NewEventPage() {
     );
   };
 
-  const handleActivatePlan = async () => {
-    if (!selectedPlan) {
-      toast.error("Choose a plan first.");
-      return;
-    }
-    if (!billingName || !billingEmail || !billingPhone) {
-      toast.error("Add billing contact details.");
-      return;
-    }
-    if (!cardholder || !cardNo || !expiry || !cvv) {
-      toast.error("Add card details.");
-      return;
-    }
+  const handleToggleFormat = (format: string) => {
+    setFormData((current) => {
+      const active = current.allowed_formats.includes(format);
+      const updated = active
+        ? current.allowed_formats.filter((f) => f !== format)
+        : [...current.allowed_formats, format];
+      return { ...current, allowed_formats: updated };
+    });
+  };
 
-    setLoading(true);
+  const handleUploadTempImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploadingTempImage(true);
+    const file = files[0];
+    const formDataObj = new FormData();
+    formDataObj.append("file", file);
+
     try {
-      await orgApi.subscribe({
-        plan_name: selectedPlan.name,
-        addon_keys: selectedAddons,
-        is_custom: false,
-        custom_limits: null,
-        promo_code: null,
-        billing_name: billingName,
-        billing_email: billingEmail,
-        billing_phone: billingPhone,
-        gst_number: gstNumber || null,
-        cardholder_name: cardholder,
-        card_number: cardNo,
-        expiry,
-        cvv,
-      });
-      setSubscriptionActivated(true);
-      toast.success("Plan activated successfully.");
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to activate plan.");
+      const res = await apiClient.post<{ url: string }>(
+        "/events/venue-images/upload-temp",
+        formDataObj,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      setFormData((current) => ({
+        ...current,
+        venue_images: [...current.venue_images, res.url],
+      }));
+      toast.success("Venue image uploaded successfully.");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message || "Failed to upload venue image.");
     } finally {
-      setLoading(false);
+      setIsUploadingTempImage(false);
     }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setFormData((current) => ({
+      ...current,
+      venue_images: current.venue_images.filter((_, idx) => idx !== index),
+    }));
+    toast.success("Venue image removed.");
+  };
+
+  const handlePaymentSuccess = () => {
+    setSubscriptionActivated(true);
   };
 
   const handleCreateEvent = async () => {
@@ -351,15 +777,28 @@ export default function NewEventPage() {
       return;
     }
     if (requiresPurchase && !subscriptionActivated) {
-      toast.error("Activate the workspace plan before creating the event.");
+      setPaymentModalOpen(true);
       return;
     }
 
     setLoading(true);
     try {
-      const created = await createEvent.mutateAsync(formData);
+      const payload = {
+        ...formData,
+        organizer_name: formData.organizer_details.name || null,
+        upload_deadline: formData.upload_deadline ? new Date(formData.upload_deadline).toISOString() : null,
+        licensing_details: {
+          plan_name: selectedPlan.name,
+          price: selectedPlan.price || 0,
+          addons: selectedAddonRecords.map((a) => a.name),
+          activated_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          status: "active",
+        },
+      };
+
+      const created = await createEvent.mutateAsync(payload);
       setSuccessEvent(created);
-      setStep(4);
       toast.success("Event created successfully.");
     } catch (error: any) {
       toast.error(error?.message || "Failed to create event.");
@@ -368,83 +807,191 @@ export default function NewEventPage() {
     }
   };
 
+  // ── Plan card helper ────────────────────────────────────────────────────────
+  function getPlanActionVariant(planName: string, planIdx: number): PlanActionVariant {
+    const isSelected = selectedPlan?.name === planName;
+    if (isSelected) return "current";
+    return "choose";
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-6 pb-10 max-w-4xl mx-auto w-full">
       <EnterprisePageIntro
         title="Create Event"
-        subtitle="Build the event on a full page, keep the existing organizer setup logic, and activate the plan only when the workspace needs a new event slot."
+        subtitle="Provision an enterprise-level conference with dedicated module access, billing plan, and real-time database settings."
         action={
-          <Button variant="ghost" onClick={() => router.push("/events")}>
-            <ArrowLeft className="h-4 w-4" />
-            Exit Creation
+          <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-xl">
+            <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
+            Exit Creator
           </Button>
         }
       />
 
-      {loadingConfig ? (
+      {/* Success Screen */}
+      {successEvent ? (
+        <EnterprisePanel className="p-10">
+          <div className="flex flex-col items-center justify-center text-center gap-6 py-6">
+            <div className="relative">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-[rgba(194,245,66,0.4)] bg-[rgba(194,245,66,0.08)]">
+                <CheckCircle2 className="h-10 w-10 text-[#C2F542]" aria-hidden="true" />
+              </div>
+              {/* Pulse ring */}
+              <div className="absolute inset-0 rounded-full border border-[rgba(194,245,66,0.2)] animate-ping" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-[28px] font-bold tracking-tight text-[var(--color-text-primary)]">
+                Event Provisioned
+              </h3>
+              <p className="text-[14px] text-[var(--color-text-secondary)]">
+                <span className="font-semibold text-[var(--color-text-primary)]">
+                  {successEvent?.name || formData.name}
+                </span>{" "}
+                was successfully created and activated.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Button
+                onClick={() =>
+                  router.push(
+                    successEvent?.id ? `/events/${successEvent.id}/dashboard` : "/events"
+                  )
+                }
+                className="h-12 rounded-xl px-8 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold"
+              >
+                Go to Event Dashboard
+              </Button>
+              <Button variant="outline" onClick={() => router.push("/events")} className="h-12 rounded-xl px-8">
+                Back to Events
+              </Button>
+            </div>
+          </div>
+        </EnterprisePanel>
+      ) : loadingConfig ? (
         <EnterprisePanel className="p-12">
-          <div className="flex flex-col items-center justify-center gap-3">
-            <Loader2 className="h-7 w-7 animate-spin text-[var(--color-primary-mid)]" />
-            <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Syncing event builder
+          <div className="flex flex-col items-center justify-center gap-3 py-10">
+            <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary-mid)]" aria-hidden="true" />
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+              Syncing event builder…
             </p>
           </div>
         </EnterprisePanel>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)_340px]">
-          <EnterprisePanel className="h-fit p-5">
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-              Steps
-            </p>
-            <div className="mt-5 space-y-4">
+        <div className="space-y-6">
+          {/* ── Step Progress Bar ──────────────────────────────────────────── */}
+          <div className="w-full rounded-[24px] border border-[var(--color-border)] bg-white/[0.01] p-6 relative">
+            <div className="absolute left-[8%] right-[8%] top-[40px] h-[1px] bg-[var(--color-border)] z-0 hidden md:block" />
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 md:gap-4 relative z-10">
               {stepMeta.map((item, index) => {
                 const active = step === index;
-                const complete = step > index || step === 4;
+                const complete = step > index;
+                const canClick =
+                  index === 0 ||
+                  (index === 1 && canContinueBasics) ||
+                  (index === 2 && canContinueBasics && canContinueVenue) ||
+                  (index === 3 && canContinueBasics && canContinueVenue && canContinuePlan) ||
+                  (index === 4 && canContinueBasics && canContinueVenue && canContinuePlan);
+
                 return (
-                  <div key={item.label} className="flex items-start gap-3">
+                  <button
+                    key={item.label}
+                    type="button"
+                    disabled={!canClick}
+                    onClick={() => setStep(index as StepId)}
+                    className={[
+                      "flex md:flex-col items-center md:text-center gap-3 md:gap-2 focus:outline-none transition-all duration-200 focus-visible:ring-1 focus-visible:ring-[var(--color-primary-mid)] rounded-xl p-1",
+                      canClick ? "cursor-pointer hover:opacity-90" : "cursor-default opacity-50",
+                    ].join(" ")}
+                  >
                     <div
                       className={[
-                        "mt-0.5 flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-bold",
-                        active || complete
-                          ? "border-[rgba(224,255,0,0.24)] bg-[rgba(224,255,0,0.14)] text-[var(--color-primary-mid)]"
-                          : "border-[var(--color-border)] text-[var(--color-text-muted)]",
+                        "flex h-10 w-10 items-center justify-center rounded-full border text-[12px] font-bold transition-all duration-300",
+                        active
+                          ? "border-[var(--color-primary-mid)] bg-[rgba(224,255,0,0.12)] text-[var(--color-primary-mid)] shadow-[0_0_12px_rgba(224,255,0,0.1)] scale-105"
+                          : complete
+                          ? "border-[rgba(224,255,0,0.3)] bg-[rgba(224,255,0,0.06)] text-[var(--color-primary-mid)]"
+                          : "border-[var(--color-border)] bg-[#121214] text-[var(--color-text-muted)]",
                       ].join(" ")}
                     >
-                      {complete ? <Check className="h-4 w-4" /> : index + 1}
+                      {complete ? <Check className="h-4 w-4" aria-hidden="true" /> : index + 1}
                     </div>
-                    <div>
-                      <p className={active ? "text-[13px] font-semibold text-[var(--color-text-primary)]" : "text-[13px] font-semibold text-[var(--color-text-secondary)]"}>
+                    <div className="text-left md:text-center">
+                      <p
+                        className={[
+                          "text-[12px] font-bold tracking-tight",
+                          active ? "text-[var(--color-primary-mid)]" : "text-[var(--color-text-primary)]",
+                        ].join(" ")}
+                      >
                         {item.label}
                       </p>
-                      <p className="text-[11px] text-[var(--color-text-muted)]">{item.description}</p>
+                      <p className="text-[10px] text-[var(--color-text-muted)] hidden md:block">
+                        {item.description}
+                      </p>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
-          </EnterprisePanel>
+          </div>
 
-          <EnterprisePanel className="min-h-[720px] p-6 md:p-8">
-            {step === 0 ? (
+          {/* ── Form Body ────────────────────────────────────────────────────── */}
+          <EnterprisePanel className="min-h-[580px] p-6 md:p-8">
+
+            {/* STEP 0 — BASICS */}
+            {step === 0 && (
               <div className="space-y-6">
-                <SectionHeader title="Basics" description="Start with the event identity and organizer contact details." />
-                <div className="grid gap-4 md:grid-cols-2">
+                <SectionHeader
+                  title="Basics"
+                  description="Specify the core identities, tagline, and details of the organizer."
+                />
+                <div className="space-y-6">
                   <FormField
+                    id="event-name"
                     label="Event Name"
+                    description="Provide the official title of your conference."
+                    placeholder="e.g. World Tech Congress 2026…"
                     value={formData.name}
                     onChange={(value) => setFormData((current) => ({ ...current, name: value }))}
                     icon={Sparkles}
                   />
                   <FormField
+                    id="short-code"
                     label="Short Code"
+                    description="An uppercase alphanumeric identifier used in speaker URLs."
+                    placeholder="e.g. WTC26…"
                     value={formData.short_code}
+                    spellCheck={false}
                     onChange={(value) =>
-                      setFormData((current) => ({ ...current, short_code: value.toUpperCase().slice(0, 10) }))
+                      setFormData((current) => ({
+                        ...current,
+                        short_code: value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 10),
+                      }))
                     }
                     icon={Hash}
                   />
                   <FormField
+                    id="tagline"
+                    label="Event Tagline"
+                    description="A catchy sub-slogan to display on public registration and speaker pages."
+                    placeholder="e.g. Innovating the Future, Together…"
+                    value={formData.tagline}
+                    onChange={(value) => setFormData((current) => ({ ...current, tagline: value }))}
+                    icon={Tag}
+                  />
+                  <FormTextArea
+                    id="description"
+                    label="Event Description"
+                    description="A rich summary detailing the objectives and theme of the event."
+                    placeholder="Provide a description of the topics and scope of the conference…"
+                    value={formData.description}
+                    onChange={(value) => setFormData((current) => ({ ...current, description: value }))}
+                  />
+                  <FormField
+                    id="organizer-name"
                     label="Organizer Name"
+                    description="Company or agency coordinating the logistics."
+                    placeholder="e.g. Apex Global Group…"
                     value={formData.organizer_details.name}
                     onChange={(value) =>
                       setFormData((current) => ({
@@ -452,21 +999,30 @@ export default function NewEventPage() {
                         organizer_details: { ...current.organizer_details, name: value },
                       }))
                     }
+                    icon={Building2}
                   />
                   <FormField
+                    id="organizer-email"
                     label="Organizer Email"
+                    description="Contact email address for attendee inquiries."
+                    placeholder="e.g. hello@apex-events.com…"
                     value={formData.organizer_details.email}
+                    type="email"
+                    spellCheck={false}
                     onChange={(value) =>
                       setFormData((current) => ({
                         ...current,
                         organizer_details: { ...current.organizer_details, email: value },
                       }))
                     }
-                    type="email"
                   />
                   <FormField
+                    id="organizer-phone"
                     label="Organizer Phone"
+                    description="Dedicated support hotline."
+                    placeholder="e.g. +91 98765 43210…"
                     value={formData.organizer_details.phone}
+                    type="tel"
                     onChange={(value) =>
                       setFormData((current) => ({
                         ...current,
@@ -476,8 +1032,13 @@ export default function NewEventPage() {
                     icon={Phone}
                   />
                   <FormField
-                    label="Website"
+                    id="organizer-website"
+                    label="Organizer Website"
+                    description="URL to the organizer's primary site."
+                    placeholder="e.g. https://apex-events.com…"
                     value={formData.organizer_details.website}
+                    type="url"
+                    spellCheck={false}
                     onChange={(value) =>
                       setFormData((current) => ({
                         ...current,
@@ -488,506 +1049,773 @@ export default function NewEventPage() {
                   />
                 </div>
               </div>
-            ) : null}
+            )}
 
-            {step === 1 ? (
+            {/* STEP 1 — VENUE & SCHEDULE */}
+            {step === 1 && (
               <div className="space-y-6">
-                <SectionHeader title="Date & Venue" description="Add schedule, timezone, and location details for the event." />
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <SectionHeader
+                  title="Venue & Schedule"
+                  description="Configure dates, regional settings, physical location, and module toggles."
+                />
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <FormField
+                      id="start-date"
+                      label="Start Date"
+                      description="Official start date."
+                      value={formData.start_date}
+                      onChange={(value) => setFormData((current) => ({ ...current, start_date: value }))}
+                      type="date"
+                      icon={Calendar}
+                    />
+                    <FormField
+                      id="end-date"
+                      label="End Date"
+                      description="Official end date."
+                      value={formData.end_date}
+                      onChange={(value) => setFormData((current) => ({ ...current, end_date: value }))}
+                      type="date"
+                      icon={Calendar}
+                    />
+                  </div>
                   <FormField
-                    label="Start Date"
-                    value={formData.start_date}
-                    onChange={(value) => setFormData((current) => ({ ...current, start_date: value }))}
-                    type="date"
-                    icon={Calendar}
-                  />
-                  <FormField
-                    label="End Date"
-                    value={formData.end_date}
-                    onChange={(value) => setFormData((current) => ({ ...current, end_date: value }))}
-                    type="date"
-                    icon={Calendar}
-                  />
-                  <FormField
-                    label="Timezone"
+                    id="timezone"
+                    label="IANA Timezone"
+                    description="System timezone for scheduler windows."
                     value={formData.timezone}
                     onChange={(value) => setFormData((current) => ({ ...current, timezone: value }))}
                     icon={Globe}
                   />
                   <FormField
+                    id="venue-name"
                     label="Venue Name"
+                    description="Name of the convention center, hotel, or building."
+                    placeholder="e.g. Grand Convention Center Hall A…"
                     value={formData.venue_name}
                     onChange={(value) => setFormData((current) => ({ ...current, venue_name: value }))}
+                    icon={Building2}
                   />
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
                   <FormField
-                    label="Location"
+                    id="location-city"
+                    label="Venue City"
+                    description="City where the venue resides."
+                    placeholder="e.g. New Delhi…"
                     value={formData.location}
                     onChange={(value) => setFormData((current) => ({ ...current, location: value }))}
                     icon={MapPin}
                   />
                   <SelectField
+                    id="country"
                     label="Country"
+                    description="Country of the event venue."
                     value={formData.country}
                     onChange={(value) => setFormData((current) => ({ ...current, country: value, state: "" }))}
                     options={countryStates.map((entry) => ({ label: entry.country, value: entry.country }))}
                   />
                   <SelectField
+                    id="state"
                     label="State / Province"
+                    description="Region or state of the event venue."
                     value={formData.state}
                     onChange={(value) => setFormData((current) => ({ ...current, state: value }))}
-                    options={getStatesForCountry(countryStates, formData.country).map((state) => ({ label: state, value: state }))}
+                    options={getStatesForCountry(countryStates, formData.country).map((state) => ({
+                      label: state,
+                      value: state,
+                    }))}
                   />
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <ToggleCard
-                    label="Speaker Workspace"
-                    checked={formData.speaker_settings.enabled}
-                    onCheckedChange={(checked) =>
-                      setFormData((current) => ({
-                        ...current,
-                        speaker_settings: { ...current.speaker_settings, enabled: checked },
-                      }))
-                    }
+                  <FormField
+                    id="map-link"
+                    label="Google Maps Link"
+                    description="Direct Google Maps URL to display location maps for attendees."
+                    placeholder="e.g. https://maps.google.com/?q=…"
+                    value={formData.map_link}
+                    type="url"
+                    spellCheck={false}
+                    onChange={(value) => setFormData((current) => ({ ...current, map_link: value }))}
+                    icon={MapPin}
                   />
-                  <ToggleCard
-                    label="Registration Workspace"
-                    checked={formData.registration_settings.enabled}
-                    onCheckedChange={(checked) =>
-                      setFormData((current) => ({
-                        ...current,
-                        registration_settings: { ...current.registration_settings, enabled: checked },
-                      }))
-                    }
-                  />
+
+                  {/* Venue Images */}
+                  <div className="space-y-2">
+                    <label className="text-[12px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-primary)]">
+                      Venue Gallery Images
+                    </label>
+                    <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+                      Upload images representing the venue. These will render in your portals.
+                    </p>
+                    {formData.venue_images.length > 0 ? (
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                        {formData.venue_images.map((img, idx) => (
+                          <div key={idx} className="relative rounded-xl overflow-hidden border border-[var(--color-border)] aspect-video bg-black/40">
+                            <img src={img} alt={`Venue ${idx + 1}`} className="h-full w-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImage(idx)}
+                              className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 border border-white/20 hover:bg-black/90 transition-colors"
+                            >
+                              <X className="h-3 w-3 text-white" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[13px] text-[var(--color-text-muted)] italic py-2">
+                        No venue images added yet.
+                      </p>
+                    )}
+                    <input
+                      id="temp-venue-image-upload-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleUploadTempImage}
+                      disabled={isUploadingTempImage}
+                    />
+                    <Button
+                      type="button"
+                      disabled={isUploadingTempImage}
+                      onClick={() => document.getElementById("temp-venue-image-upload-input")?.click()}
+                      className="h-12 px-6 rounded-xl border border-[rgba(224,255,0,0.2)] bg-[rgba(224,255,0,0.06)] hover:bg-[rgba(224,255,0,0.1)] text-[var(--color-primary-mid)] font-semibold flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {isUploadingTempImage ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                      Upload Venue Image
+                    </Button>
+                  </div>
+
+                  {/* Upload settings (collapsed from old step 2) */}
+                  <div className="space-y-4 rounded-[24px] border border-[var(--color-border)] bg-white/[0.01] p-6">
+                    <h4 className="text-[13px] font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                      Upload Settings & Modules
+                    </h4>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        id="upload-deadline"
+                        label="Upload Deadline"
+                        description="Cut-off date/time for speaker files."
+                        value={formData.upload_deadline}
+                        onChange={(value) => setFormData((current) => ({ ...current, upload_deadline: value }))}
+                        type="datetime-local"
+                      />
+                      <FormField
+                        id="max-file-size"
+                        label="Max File Size (MB)"
+                        description="Maximum size for uploaded files."
+                        placeholder="e.g. 500…"
+                        value={formData.max_file_size_mb.toString()}
+                        onChange={(value) =>
+                          setFormData((current) => ({ ...current, max_file_size_mb: Number(value) || 500 }))
+                        }
+                        type="number"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[12px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-primary)]">
+                        Allowed File Extensions
+                      </label>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {availableFormats.map((format) => {
+                          const isSelected = formData.allowed_formats.includes(format);
+                          return (
+                            <button
+                              key={format}
+                              type="button"
+                              onClick={() => handleToggleFormat(format)}
+                              className={[
+                                "rounded-full border px-4 py-2 text-[12px] font-bold uppercase tracking-wider transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)]",
+                                isSelected
+                                  ? "border-[rgba(224,255,0,0.3)] bg-[rgba(224,255,0,0.12)] text-[var(--color-primary-mid)]"
+                                  : "border-[var(--color-border)] bg-[#121214] text-[var(--color-text-muted)] hover:border-white/10",
+                              ].join(" ")}
+                            >
+                              {format}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      {[
+                        { key: "enabled", label: "Speaker Desk", desc: "Speaker portal for file uploads and schedules.", obj: "speaker_settings" as const },
+                      ].map(({ key, label, desc, obj }) => (
+                        <ToggleRow
+                          key={key}
+                          label={label}
+                          description={desc}
+                          checked={(formData[obj] as any).enabled}
+                          onCheckedChange={(checked) =>
+                            setFormData((c) => ({
+                              ...c,
+                              [obj]: { ...(c[obj] as any), enabled: checked },
+                            }))
+                          }
+                        />
+                      ))}
+                      {[
+                        { key: "enable_posters", label: "Poster Abstracts", desc: "Allow poster submissions and reviews." },
+                        { key: "enable_moderator", label: "Moderator Desk", desc: "Podium console for session moderators." },
+                        { key: "enable_signage", label: "Digital Signage", desc: "Sync schedules to digital signs at the venue." },
+                        { key: "enable_whatsapp", label: "WhatsApp Tickets", desc: "Dispatch tickets via WhatsApp." },
+                        { key: "enable_srr", label: "Smart Room Routing", desc: "Local sync for room presentation PCs." },
+                        { key: "enable_webhooks", label: "Developer Webhooks", desc: "Push events to custom API endpoints." },
+                      ].map(({ key, label, desc }) => (
+                        <ToggleRow
+                          key={key}
+                          label={label}
+                          description={desc}
+                          checked={(formData.feature_toggles as any)[key]}
+                          onCheckedChange={(checked) =>
+                            setFormData((c) => ({
+                              ...c,
+                              feature_toggles: { ...c.feature_toggles, [key]: checked },
+                            }))
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
-            ) : null}
+            )}
 
-            {step === 2 ? (
+            {/* STEP 2 — CHOOSE PLAN */}
+            {step === 2 && (
               <div className="space-y-6">
-                <SectionHeader title="Plans & Add-ons" description="Use the current workspace entitlements and activate a new event slot only when needed." />
-                <WorkspaceStateCard
-                  activePlanName={activePlanName || "No active plan"}
-                  stateLabel={remainingEvents > 0 ? `${remainingEvents} event slot left` : "No event slots left"}
-                  currentEventCount={currentEventCount}
-                  currentEventLimit={currentEventLimit}
+                <SectionHeader
+                  title="Choose Your Plan"
+                  description="Select the workspace plan for this event. Pre-selected based on your active subscription or incoming link."
                 />
-                <div className="grid gap-4 xl:grid-cols-2">
-                  {plans.map((plan) => {
-                    const isSelected = selectedPlan?.name === plan.name;
-                    const isCurrent = normalizeComparisonValue(plan.name) === normalizedActivePlan;
-                    return (
-                      <button
-                        key={plan.id ?? plan.key ?? plan.name}
-                        type="button"
-                        onClick={() => {
-                          setSelectedPlan(plan);
-                          setSubscriptionActivated(false);
-                        }}
-                        className={[
-                          "rounded-[26px] border p-5 text-left transition-all duration-200 hover:-translate-y-1",
-                          isSelected
-                            ? "border-[rgba(224,255,0,0.28)] bg-[rgba(224,255,0,0.06)]"
-                            : "border-[var(--color-border)] bg-white/[0.02]",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h4 className="text-[22px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                                {plan.name}
-                              </h4>
-                              {plan.popular ? (
-                                <span className="rounded-full border border-[rgba(224,255,0,0.25)] bg-[rgba(224,255,0,0.12)] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.2em] text-[var(--color-primary-mid)]">
-                                  Popular
-                                </span>
-                              ) : null}
-                              {isCurrent ? (
-                                <span className="rounded-full border border-[var(--color-border)] bg-white/[0.04] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-secondary)]">
-                                  Active
-                                </span>
-                              ) : null}
-                            </div>
-                            <p className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                              {plan.tagline || plan.description}
-                            </p>
-                          </div>
-                          <div className="hex-icon-shell flex h-11 w-11 items-center justify-center">
-                            {isSelected ? (
-                              <Check className="h-4 w-4 text-[var(--color-text-primary)]" />
-                            ) : (
-                              <Star className="h-4 w-4 text-[var(--color-text-primary)]" />
-                            )}
-                          </div>
-                        </div>
 
-                        <div className="mt-5 border-y border-[var(--color-border)] py-4">
-                          <p className="text-[24px] font-bold tracking-[-0.05em] text-[var(--color-text-primary)]">
-                            {formatCurrency(plan.price, plan.currency)}
-                          </p>
-                          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
-                            {plan.maxEvents} event{plan.maxEvents === 1 ? "" : "s"} · {plan.maxUsers} users
-                          </p>
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {plan.features.slice(0, 4).map((feature) => (
-                            <span
-                              key={feature}
-                              className="rounded-full border border-[var(--color-border)] bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--color-text-secondary)]"
-                            >
-                              {feature}
-                            </span>
-                          ))}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-2">
-                  {addons.map((addon) => {
-                    const selected = selectedAddons.includes(addon.rawKey);
-                    return (
-                      <button
-                        key={addon.id ?? addon.key ?? addon.name}
-                        type="button"
-                        onClick={() => {
-                          handleToggleAddon(addon.rawKey);
-                          setSubscriptionActivated(false);
-                        }}
-                        className={[
-                          "rounded-[24px] border p-5 text-left transition-all duration-200 hover:-translate-y-1",
-                          selected
-                            ? "border-[rgba(224,255,0,0.28)] bg-[rgba(224,255,0,0.06)]"
-                            : "border-[var(--color-border)] bg-white/[0.02]",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <h4 className="text-[18px] font-semibold text-[var(--color-text-primary)]">{addon.name}</h4>
-                            <p className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                              {addon.description || "Optional service layer for this workspace."}
-                            </p>
-                          </div>
-                          <div className="hex-icon-shell flex h-10 w-10 items-center justify-center">
-                            {selected ? (
-                              <Check className="h-4 w-4 text-[var(--color-text-primary)]" />
-                            ) : (
-                              <Sparkles className="h-4 w-4 text-[var(--color-text-primary)]" />
-                            )}
-                          </div>
-                        </div>
-                        <div className="mt-4 flex items-center justify-between border-t border-[var(--color-border)] pt-4">
-                          <p className="text-[16px] font-semibold text-[var(--color-text-primary)]">
-                            {formatCurrency(addon.price, addon.currency)}
-                          </p>
-                          <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                            {selected ? "Selected" : "Optional"}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {requiresPurchase ? (
-                  <div className="rounded-[24px] border border-[var(--color-border)] bg-white/[0.03] p-5">
-                    <h4 className="text-[18px] font-semibold text-[var(--color-text-primary)]">Activation details</h4>
-                    <p className="mt-2 text-[13px] text-[var(--color-text-secondary)]">
-                      This workspace needs a backend-backed plan activation before a new event can be created.
+                {/* Workspace status */}
+                <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      Current Workspace
                     </p>
-                    <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      <FormField label="Billing Name" value={billingName} onChange={setBillingName} />
-                      <FormField label="Billing Email" value={billingEmail} onChange={setBillingEmail} type="email" />
-                      <FormField label="Billing Phone" value={billingPhone} onChange={setBillingPhone} icon={Phone} />
-                      <FormField label="GST Number" value={gstNumber} onChange={setGstNumber} />
-                      <FormField label="Card Holder" value={cardholder} onChange={setCardholder} />
-                      <FormField label="Card Number" value={cardNo} onChange={setCardNo} icon={CreditCard} />
-                      <FormField label="Expiry" value={expiry} onChange={setExpiry} />
-                      <FormField label="CVV" value={cvv} onChange={setCvv} type="password" />
-                    </div>
-                    <div className="mt-5 flex items-center justify-between gap-4">
-                      <p className="text-[12px] text-[var(--color-text-muted)]">
-                        Total {calculating ? "is recalculating" : `will be ${formatCurrency(totalPrice)}`}.
-                      </p>
-                      <Button disabled={loading} onClick={handleActivatePlan}>
-                        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {subscriptionActivated ? "Activated" : "Activate Plan"}
-                      </Button>
-                    </div>
+                    <p className="text-[15px] font-bold text-[var(--color-text-primary)] mt-0.5">
+                      {activePlanName || "No active plan"}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Events</p>
+                    <p className="text-[15px] font-bold font-mono text-[var(--color-text-primary)]">
+                      {currentEventCount} / {currentEventLimit > 0 ? currentEventLimit : "∞"}
+                    </p>
+                  </div>
+                </div>
+
+                {plans.length > 0 ? (
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    {plans.map((plan, idx) => {
+                      const isSelected = selectedPlan?.name === plan.name;
+                      return (
+                        <CommercialPlanCard
+                          key={plan.id ?? plan.key ?? plan.name}
+                          plan={{
+                            id: String(plan.id ?? plan.key ?? plan.name),
+                            name: plan.name,
+                            tagline: plan.tagline,
+                            description: plan.description,
+                            priceLabel: formatCurrency(plan.price, plan.currency) + " / event",
+                            colorHex: "#6366F1",
+                            isPopular: plan.popular,
+                            isActive: true,
+                            highlights: [
+                              `${plan.maxUsers || "Unlimited"} team members`,
+                              `${plan.maxRegistrations || "Unlimited"} registrations`,
+                              `${plan.maxSpeakers || "Unlimited"} speakers`,
+                            ],
+                          }}
+                          index={idx}
+                          actionVariant={isSelected ? "current" : "choose"}
+                          isCurrentPlan={isSelected}
+                          onAction={() => {
+                            setSelectedPlan(plan);
+                            setSubscriptionActivated(false);
+                          }}
+                        />
+                      );
+                    })}
                   </div>
                 ) : (
-                  <div className="rounded-[24px] border border-[rgba(224,255,0,0.16)] bg-[rgba(224,255,0,0.06)] p-5">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--color-primary-mid)]">
-                      Existing entitlement is enough
-                    </p>
-                    <p className="mt-2 text-[13px] text-[var(--color-text-primary)]">
-                      The active plan already allows another event. You can continue without another purchase.
-                    </p>
-                  </div>
+                  <p className="text-[13px] text-[var(--color-text-muted)] py-8 text-center">No plans available.</p>
                 )}
               </div>
-            ) : null}
+            )}
 
-            {step === 3 ? (
+            {/* STEP 3 — ADD-ONS */}
+            {step === 3 && (
               <div className="space-y-6">
-                <SectionHeader title="Review & Publish" description="Confirm the event details, plan, and activation state before creation." />
-                <div className="grid gap-4 md:grid-cols-2">
-                  {reviewItems.map((item) => (
-                    <div key={item.label} className="rounded-[22px] border border-[var(--color-border)] bg-white/[0.03] p-4">
-                      <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">{item.label}</p>
-                      <p className="mt-2 text-[14px] font-semibold text-[var(--color-text-primary)]">{item.value}</p>
+                <SectionHeader
+                  title="Add-ons"
+                  description="Extend your plan with optional capabilities. Select any add-ons for this event."
+                />
+
+                {/* Running total */}
+                {selectedPlan && (
+                  <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Selected Plan</p>
+                      <p className="text-[14px] font-bold text-[var(--color-text-primary)]">{selectedPlan.name}</p>
                     </div>
-                  ))}
-                </div>
-                <div className="rounded-[24px] border border-[var(--color-border)] bg-white/[0.03] p-5">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                    What happens next
-                  </p>
-                  <div className="mt-4 space-y-3 text-[13px] text-[var(--color-text-secondary)]">
-                    <p>1. The event record is created with the selected module settings.</p>
-                    <p>2. The plan and add-ons remain associated with the workspace through the backend subscription flow.</p>
-                    <p>3. Your team can continue into speaker and registration surfaces immediately after creation.</p>
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+                        {calculating ? "Calculating…" : "Running Total"}
+                      </p>
+                      <p className="text-[18px] font-bold font-mono text-[var(--color-primary-mid)]">
+                        {formatCurrency(totalPrice)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {addons.length > 0 ? (
+                  <div className="grid gap-5 md:grid-cols-2">
+                    {addons.map((addon) => {
+                      const selected = selectedAddons.includes(addon.rawKey);
+                      return (
+                        <CommercialAddonCard
+                          key={addon.id ?? addon.key ?? addon.name}
+                          addon={{
+                            id: String(addon.id ?? addon.key ?? addon.name),
+                            name: addon.name,
+                            description: addon.description,
+                            type: "PLAN",
+                            billingUnit: "PER_EVENT",
+                            priceLabel: formatCurrency(addon.price, addon.currency),
+                            isActive: true,
+                          }}
+                          selected={selected}
+                          onAction={() => {
+                            handleToggleAddon(addon.rawKey);
+                            setSubscriptionActivated(false);
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-[var(--color-text-muted)] py-8 text-center">No add-ons available.</p>
+                )}
+              </div>
+            )}
+
+            {/* STEP 4 — REVIEW & DEPLOY */}
+            {step === 4 && (
+              <div className="space-y-6">
+                <SectionHeader
+                  title="Review & Deploy"
+                  description="Verify all event details before publishing. Click 'Pay & Publish' to complete."
+                />
+
+                <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+                  {/* Left — all event data */}
+                  <div className="space-y-4 min-w-0">
+                    <ReviewSection title="Event Identity">
+                      <ReviewInfoBlock icon={Sparkles} label="Event Name" value={formData.name || "Pending"} />
+                      <ReviewInfoBlock icon={Hash} label="Short Code" value={formData.short_code || "Pending"} />
+                      <ReviewInfoBlock icon={Tag} label="Tagline" value={formData.tagline || "—"} />
+                      <div className="sm:col-span-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">Description</div>
+                        <p className="text-[13px] text-[var(--color-text-secondary)] leading-relaxed line-clamp-3">
+                          {formData.description || "—"}
+                        </p>
+                      </div>
+                    </ReviewSection>
+
+                    <ReviewSection title="Organizer">
+                      <ReviewInfoBlock icon={Building2} label="Name" value={formData.organizer_details.name || "—"} />
+                      <ReviewInfoBlock icon={Globe} label="Email" value={formData.organizer_details.email || "—"} />
+                      <ReviewInfoBlock icon={Phone} label="Phone" value={formData.organizer_details.phone || "—"} />
+                      <ReviewInfoBlock icon={Globe} label="Website" value={formData.organizer_details.website || "—"} />
+                    </ReviewSection>
+
+                    <ReviewSection title="Venue & Schedule">
+                      <ReviewInfoBlock icon={Calendar} label="Start Date" value={formData.start_date || "Pending"} />
+                      <ReviewInfoBlock icon={Calendar} label="End Date" value={formData.end_date || "Pending"} />
+                      <ReviewInfoBlock icon={Globe} label="Timezone" value={formData.timezone} />
+                      <ReviewInfoBlock icon={Building2} label="Venue" value={formData.venue_name || "—"} />
+                      <ReviewInfoBlock icon={MapPin} label="Location" value={`${formData.location}${formData.state ? `, ${formData.state}` : ""}${formData.country ? `, ${formData.country}` : ""}` || "—"} />
+                      {formData.map_link && (
+                        <div className="sm:col-span-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">Maps Link</div>
+                          <a
+                            href={formData.map_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[13px] text-[var(--color-primary-mid)] hover:underline truncate block"
+                          >
+                            {formData.map_link}
+                          </a>
+                        </div>
+                      )}
+                    </ReviewSection>
+
+                    {/* Billing / Plan */}
+                    <div className="rounded-2xl border border-[rgba(194,245,66,0.2)] bg-[rgba(194,245,66,0.04)] p-5 space-y-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#C2F542]">Plan & Billing</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[14px] font-bold text-[var(--color-text-primary)]">
+                          {selectedPlan?.name ?? "No plan selected"}
+                        </span>
+                        <span className="font-mono text-[16px] font-bold text-[var(--color-text-primary)]">
+                          {formatCurrency(selectedPlan?.price)}
+                        </span>
+                      </div>
+                      {selectedAddonRecords.map((addon) => (
+                        <div key={addon.rawKey} className="flex items-center justify-between text-[13px]">
+                          <span className="text-[var(--color-text-secondary)]">+ {addon.name}</span>
+                          <span className="font-mono text-[var(--color-text-secondary)]">{formatCurrency(addon.price)}</span>
+                        </div>
+                      ))}
+                      <div className="border-t border-[rgba(194,245,66,0.15)] pt-3 flex items-center justify-between">
+                        <span className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                          {calculating ? "Calculating total…" : "Total Due"}
+                        </span>
+                        <span className="text-[20px] font-bold font-mono text-[#C2F542]">
+                          {formatCurrency(totalPrice)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Subscription status */}
+                    {requiresPurchase ? (
+                      subscriptionActivated ? (
+                        <div className="rounded-2xl border border-[rgba(194,245,66,0.25)] bg-[rgba(194,245,66,0.06)] p-4 flex items-center gap-3">
+                          <CheckCircle2 className="h-5 w-5 text-[#C2F542] shrink-0" />
+                          <div>
+                            <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">Payment completed</p>
+                            <p className="text-[11px] text-[var(--color-text-muted)]">Plan activated. Click Publish to create the event.</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 flex items-center gap-3">
+                          <CreditCard className="h-5 w-5 text-[var(--color-text-muted)] shrink-0" />
+                          <div>
+                            <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">Payment required</p>
+                            <p className="text-[11px] text-[var(--color-text-muted)]">Click "Pay & Publish" to complete checkout and create the event.</p>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      <div className="rounded-2xl border border-[rgba(194,245,66,0.16)] bg-[rgba(194,245,66,0.03)] p-4 flex items-center gap-3">
+                        <Zap className="h-5 w-5 text-[#C2F542] shrink-0" />
+                        <div>
+                          <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">Entitlement available</p>
+                          <p className="text-[11px] text-[var(--color-text-muted)]">
+                            Your plan has unused slots. Click "Publish" to create the event without extra charges.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right — venue image */}
+                  <div className="space-y-4">
+                    <div className="sticky top-6">
+                      <div className="rounded-2xl overflow-hidden border border-[var(--color-border)] aspect-[4/5] bg-[#0a0a0f]">
+                        {formData.venue_images.length > 0 ? (
+                          <img
+                            src={formData.venue_images[0]}
+                            alt="Venue"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-[#111118] to-[#0a0a0f]">
+                            <Building2 className="h-12 w-12 text-white/20" />
+                            <p className="text-[11px] text-white/25 text-center px-6">
+                              No venue image — upload one in the Venue step
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Modules summary */}
+                      <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Modules</p>
+                        {[
+                          { label: "Speaker Desk", on: formData.speaker_settings.enabled },
+                          { label: "Registration", on: formData.registration_settings.enabled },
+                          { label: "Poster Abstracts", on: formData.feature_toggles.enable_posters },
+                          { label: "Moderator Desk", on: formData.feature_toggles.enable_moderator },
+                          { label: "Digital Signage", on: formData.feature_toggles.enable_signage },
+                          { label: "WhatsApp Tickets", on: formData.feature_toggles.enable_whatsapp },
+                          { label: "Smart Room Routing", on: formData.feature_toggles.enable_srr },
+                          { label: "Webhooks", on: formData.feature_toggles.enable_webhooks },
+                        ].map(({ label, on }) => (
+                          <div key={label} className="flex items-center justify-between text-[12px]">
+                            <span className="text-[var(--color-text-secondary)]">{label}</span>
+                            <span className={on ? "text-[#C2F542] font-semibold" : "text-white/30"}>
+                              {on ? "On" : "Off"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-            ) : null}
+            )}
+          </EnterprisePanel>
 
-            {step === 4 ? (
-              <div className="flex min-h-[620px] flex-col items-center justify-center space-y-6 text-center">
-                <div className="hex-icon-shell flex h-20 w-20 items-center justify-center">
-                  <CheckCircle2 className="h-9 w-9 text-[var(--color-text-primary)]" />
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-[28px] font-bold tracking-[-0.05em] text-[var(--color-text-primary)]">
-                    Event ready
-                  </h3>
-                  <p className="text-[13px] text-[var(--color-text-secondary)]">
-                    {successEvent?.name || formData.name} was created successfully.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <Button
-                    onClick={() =>
-                      router.push(successEvent?.id ? `/events/${successEvent.id}/speaker/dashboard` : "/events")
-                    }
-                  >
-                    Go to Event Dashboard
-                  </Button>
-                  <Button variant="outline" onClick={() => router.push("/events")}>
-                    Back to Events
-                  </Button>
-                </div>
+          {/* ── Bottom Navigation Bar ─────────────────────────────────────── */}
+          <div className="sticky bottom-0 z-20">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-[var(--color-border)] bg-[#121214]/90 backdrop-blur-md px-6 py-4 shadow-xl">
+              <div className="text-[12px] text-[var(--color-text-muted)]">
+                Step {step + 1} of 5
               </div>
-            ) : null}
-          </EnterprisePanel>
+              <div className="flex items-center gap-3">
+                {step > 0 ? (
+                  <Button
+                    variant="ghost"
+                    onClick={() => setStep((current) => Math.max(0, current - 1) as StepId)}
+                    className="rounded-xl"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
+                    Back
+                  </Button>
+                ) : (
+                  <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-xl">
+                    Cancel
+                  </Button>
+                )}
 
-          <EnterprisePanel className="h-fit p-5">
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Workspace summary
-            </p>
-            <div className="mt-4 space-y-4">
-              <SummaryRow label="Active plan" value={activePlanName || "Not active"} />
-              <SummaryRow label="Slots used" value={`${currentEventCount} / ${currentEventLimit || 0}`} />
-              <SummaryRow label="Selected plan" value={selectedPlan?.name || "None"} />
-              <SummaryRow
-                label="Add-ons"
-                value={selectedAddonRecords.length ? `${selectedAddonRecords.length} selected` : "None"}
-              />
-              <SummaryRow
-                label="Total"
-                value={calculating ? "Calculating..." : formatCurrency(totalPrice)}
-                strong
-              />
+                {step === 0 && (
+                  <Button disabled={!canContinueBasics} onClick={() => setStep(1)} className="rounded-xl">
+                    Continue to Venue
+                    <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
+                  </Button>
+                )}
+                {step === 1 && (
+                  <Button disabled={!canContinueVenue} onClick={() => setStep(2)} className="rounded-xl">
+                    Continue to Plan
+                    <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
+                  </Button>
+                )}
+                {step === 2 && (
+                  <Button disabled={!canContinuePlan} onClick={() => setStep(3)} className="rounded-xl">
+                    Continue to Add-ons
+                    <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
+                  </Button>
+                )}
+                {step === 3 && (
+                  <Button onClick={() => setStep(4)} className="rounded-xl">
+                    Review & Deploy
+                    <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
+                  </Button>
+                )}
+                {step === 4 && (
+                  <Button
+                    disabled={loading}
+                    onClick={handleCreateEvent}
+                    className="rounded-xl px-6 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
+                    ) : requiresPurchase && !subscriptionActivated ? (
+                      <>
+                        <Lock className="h-4 w-4 mr-2" />
+                        Pay & Publish
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4 mr-2" />
+                        Publish Event
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
-            {remainingEvents <= 0 ? (
-              <p className="mt-4 text-[12px] text-[var(--color-warning)]">
-                A new event slot must be activated before publishing this event.
-              </p>
-            ) : null}
-          </EnterprisePanel>
+          </div>
         </div>
       )}
 
-      {step < 4 && !loadingConfig ? (
-        <div className="sticky bottom-0 z-20">
-          <EnterprisePanel className="flex flex-wrap items-center justify-between gap-3 border border-[var(--color-border)] px-5 py-4">
-            <div className="text-[12px] text-[var(--color-text-muted)]">
-              Step {Math.min(step + 1, 4)} of 4
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              {step > 0 ? (
-                <Button variant="ghost" onClick={() => setStep((current) => Math.max(0, current - 1) as StepId)}>
-                  <ArrowLeft className="h-4 w-4" />
-                  Back
-                </Button>
-              ) : (
-                <Button variant="ghost" onClick={() => router.push("/events")}>
-                  Cancel
-                </Button>
-              )}
-
-              {step === 0 ? (
-                <Button disabled={!canContinueBasics} onClick={() => setStep(1)}>
-                  Continue to Date & Venue
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              ) : null}
-
-              {step === 1 ? (
-                <Button disabled={!canContinueVenue} onClick={() => setStep(2)}>
-                  Continue to Plans & Add-ons
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              ) : null}
-
-              {step === 2 ? (
-                <Button disabled={!canContinueActivation} onClick={() => setStep(3)}>
-                  Continue to Publish
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              ) : null}
-
-              {step === 3 ? (
-                <Button disabled={loading} onClick={handleCreateEvent}>
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Publish Event
-                </Button>
-              ) : null}
-            </div>
-          </EnterprisePanel>
-        </div>
-      ) : null}
+      {/* Payment Modal */}
+      <PaymentModal
+        open={paymentModalOpen}
+        totalAmount={totalPrice}
+        planName={selectedPlan?.name ?? ""}
+        addonNames={selectedAddonRecords.map((a) => a.name)}
+        billingName={billingName}
+        billingEmail={billingEmail}
+        billingPhone={billingPhone}
+        onClose={() => setPaymentModalOpen(false)}
+        onSuccess={() => {
+          handlePaymentSuccess();
+          setPaymentModalOpen(false);
+          // After payment, auto-create the event
+          setTimeout(() => handleCreateEvent(), 200);
+        }}
+      />
     </div>
   );
 }
+
+// ─── Wrapped with Suspense (required for useSearchParams) ─────────────────────
+
+export default function NewEventPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary-mid)]" />
+        </div>
+      }
+    >
+      <NewEventPageInner />
+    </Suspense>
+  );
+}
+
+// ─── Local sub-components ────────────────────────────────────────────────────
 
 function SectionHeader({ title, description }: { title: string; description: string }) {
   return (
-    <div className="space-y-2">
-      <h2 className="text-[28px] font-bold tracking-[-0.05em] text-[var(--color-text-primary)]">{title}</h2>
-      <p className="text-[13px] leading-6 text-[var(--color-text-secondary)]">{description}</p>
-    </div>
-  );
-}
-
-function WorkspaceStateCard({
-  activePlanName,
-  stateLabel,
-  currentEventCount,
-  currentEventLimit,
-}: {
-  activePlanName: string;
-  stateLabel: string;
-  currentEventCount: number;
-  currentEventLimit: number;
-}) {
-  return (
-    <div className="rounded-[24px] border border-[var(--color-border)] bg-white/[0.03] p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-            Current workspace
-          </p>
-          <h4 className="mt-2 text-[20px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-            {activePlanName}
-          </h4>
-        </div>
-        <span className="rounded-full border border-[var(--color-border)] bg-white/[0.04] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">
-          {stateLabel}
-        </span>
-      </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.03] p-4">
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">Events used</p>
-          <p className="mt-2 text-[24px] font-bold tracking-[-0.05em] text-[var(--color-text-primary)]">
-            {currentEventCount}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.03] p-4">
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">Plan limit</p>
-          <p className="mt-2 text-[24px] font-bold tracking-[-0.05em] text-[var(--color-text-primary)]">
-            {currentEventLimit}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SummaryRow({
-  label,
-  value,
-  strong = false,
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-[13px]">
-      <span className="text-[var(--color-text-muted)]">{label}</span>
-      <span className={strong ? "font-semibold text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}>
-        {value}
-      </span>
+    <div className="space-y-1 border-b border-[var(--color-border)] pb-4">
+      <h2 className="text-[22px] font-bold tracking-tight text-[var(--color-text-primary)]">{title}</h2>
+      <p className="text-[13px] text-[var(--color-text-secondary)]">{description}</p>
     </div>
   );
 }
 
 function FormField({
+  id,
   label,
+  description,
   value,
   onChange,
   type = "text",
   icon: Icon,
+  spellCheck,
+  autoComplete = "off",
+  placeholder,
 }: {
+  id: string;
   label: string;
+  description?: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   icon?: any;
+  spellCheck?: boolean;
+  autoComplete?: string;
+  placeholder?: string;
 }) {
   return (
-    <div className="space-y-2">
-      <label>{label}</label>
+    <div className="space-y-1.5">
+      <div className="flex flex-col gap-0.5">
+        <label htmlFor={id} className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+          {label}
+        </label>
+        {description ? (
+          <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{description}</p>
+        ) : null}
+      </div>
       <div className="relative">
-        {Icon ? <Icon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" /> : null}
+        {Icon ? (
+          <Icon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden="true" />
+        ) : null}
         <Input
+          id={id}
+          name={id}
           value={value}
           type={type}
+          placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
-          className={["h-12 rounded-2xl border-[var(--color-border)] bg-white/[0.03] text-[var(--color-text-primary)]", Icon ? "pl-11" : ""].join(" ")}
+          spellCheck={spellCheck}
+          autoComplete={autoComplete}
+          className={[
+            "h-12 rounded-xl border-[var(--color-border)] bg-white/[0.02] text-[14px] text-[var(--color-text-primary)] placeholder:text-white/20 focus-visible:ring-1 focus-visible:ring-[var(--color-primary-mid)] focus-visible:ring-offset-0 focus-visible:border-[var(--color-primary-mid)]",
+            Icon ? "pl-11" : "",
+          ].join(" ")}
         />
       </div>
     </div>
   );
 }
 
-function SelectField({
+function FormTextArea({
+  id,
   label,
+  description,
+  value,
+  onChange,
+  placeholder,
+  spellCheck = true,
+}: {
+  id: string;
+  label: string;
+  description?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  spellCheck?: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-col gap-0.5">
+        <label htmlFor={id} className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+          {label}
+        </label>
+        {description ? (
+          <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{description}</p>
+        ) : null}
+      </div>
+      <textarea
+        id={id}
+        name={id}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={spellCheck}
+        rows={4}
+        className="w-full rounded-xl border border-[var(--color-border)] bg-white/[0.02] p-4 text-[14px] text-[var(--color-text-primary)] placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)] focus:border-[var(--color-primary-mid)] resize-none"
+      />
+    </div>
+  );
+}
+
+function SelectField({
+  id,
+  label,
+  description,
   value,
   onChange,
   options,
 }: {
+  id: string;
   label: string;
+  description?: string;
   value: string;
   onChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
 }) {
   return (
-    <div className="space-y-2">
-      <label>{label}</label>
+    <div className="space-y-1.5">
+      <div className="flex flex-col gap-0.5">
+        <label htmlFor={id} className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+          {label}
+        </label>
+        {description ? (
+          <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{description}</p>
+        ) : null}
+      </div>
       <select
+        id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full rounded-2xl border border-[var(--color-border)] bg-white/[0.03] px-4 text-[13px] text-[var(--color-text-primary)]"
+        className="h-12 w-full rounded-xl border border-[var(--color-border)] bg-white/[0.02] px-4 text-[13px] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)]"
       >
-        <option value="">Select</option>
+        <option value="" className="bg-[#121214]">Select…</option>
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option key={option.value} value={option.value} className="bg-[#121214]">
             {option.label}
           </option>
         ))}
@@ -996,20 +1824,22 @@ function SelectField({
   );
 }
 
-function ToggleCard({
+function ToggleRow({
   label,
+  description,
   checked,
   onCheckedChange,
 }: {
   label: string;
+  description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-[22px] border border-[var(--color-border)] bg-white/[0.03] px-4 py-4">
-      <div>
-        <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">{label}</p>
-        <p className="text-[12px] text-[var(--color-text-muted)]">Controls module access after the event is created.</p>
+    <div className="flex items-center justify-between border-b border-[var(--color-border)] py-3.5 last:border-b-0">
+      <div className="max-w-[80%] pr-4 text-left">
+        <p className="text-[13px] font-bold tracking-tight text-[var(--color-text-primary)]">{label}</p>
+        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mt-0.5">{description}</p>
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>

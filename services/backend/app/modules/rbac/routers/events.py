@@ -282,8 +282,8 @@ async def _perform_nuclear_wipe(event_id: uuid.UUID, db: AsyncSession):
     
     # Many-to-Many and Tables without direct CASCADE relationships in code
     await db.execute(text("DELETE FROM presentations.bundle_files WHERE bundle_id IN (SELECT id FROM presentations.bundles WHERE event_id = :eid)").bindparams(eid=event_id))
-    await db.execute(text("DELETE FROM speakers.session_speakers WHERE session_id IN (SELECT id FROM speakers.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
-    await db.execute(text("DELETE FROM presentations.presentation_queue WHERE session_id IN (SELECT id FROM speakers.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
+    await db.execute(text("DELETE FROM events.session_speakers WHERE session_id IN (SELECT id FROM events.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
+    await db.execute(text("DELETE FROM venue.presentation_queue WHERE session_id IN (SELECT id FROM events.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
     
     # 1. Main Tables (presorted for FK dependencies where possible)
     await db.execute(delete(Session).where(Session.event_id == event_id))
@@ -312,19 +312,20 @@ async def delete_event(
     """
     Nuclear Delete: Deletes the event and ALL associated data in other tables atomically.
     """
+    event_id = event.id
     try:
         # 1. Wipe all associated data in the same transaction
-        await _perform_nuclear_wipe(event.id, db)
+        await _perform_nuclear_wipe(event_id, db)
         
         # 2. Finally delete the event itself
         await db.delete(event)
         await db.commit()
         
-        logger.warning(f"Nuclear delete complete for event {event.id} ({event.name})")
+        logger.warning(f"Nuclear delete complete for event {event_id} ({event.name})")
         return MessageResponse(message="Event and all associated data have been permanently deleted.")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Nuclear delete FAILED for event {event.id}: {e}")
+        logger.error(f"Nuclear delete FAILED for event {event_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Nuclear delete failed: {str(e)}")
 
 
@@ -362,14 +363,15 @@ async def clear_event_data(
     """
     DANGEROUS: Deletes all schedule-related data for this event but preserves the event settings.
     """
+    event_id = event.id
     try:
-        await _perform_nuclear_wipe(event.id, db)
+        await _perform_nuclear_wipe(event_id, db)
         await db.commit()
-        logger.warning(f"All data cleared for event {event.id} by user request.")
+        logger.warning(f"All data cleared for event {event_id} by user request.")
         return MessageResponse(message="All schedule data has been cleared for this event.")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Clear data FAILED for event {event.id}: {e}")
+        logger.error(f"Clear data FAILED for event {event_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear event data: {str(e)}")
 
 
@@ -523,5 +525,106 @@ async def upload_speaker_branding_image(
         "branding_settings": branding,
         "profile_settings": speaker_settings.get("profile_settings", {})
     }
+
+
+@router.post("/venue-images/upload-temp", response_model=dict)
+async def upload_temp_venue_image(
+    current_user: User = Depends(require_active_user),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Upload a venue image before an event is created (associated with the organization).
+    """
+    try:
+        contents = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    def _clean(text: str) -> str:
+        return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
+
+    org_slug = _clean(str(current_user.organization_id or "temp"))
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    filename = f"{uuid.uuid4().hex[:8]}.{ext}"
+    storage_path = f"org_{org_slug}/temp_venue/{filename}"
+    bucket = "event_branding"
+
+    try:
+        _upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=storage_path,
+            data=contents,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+    if _app_settings.STORAGE_MODE == "local":
+        url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+    else:
+        url = _upload_service.create_presigned_download(
+            bucket=bucket,
+            storage_path=storage_path,
+            expiry_seconds=31_536_000,
+        )
+
+    return {"url": url}
+
+
+@router.post("/{event_id}/venue-images/upload", response_model=dict)
+async def upload_venue_image(
+    event: CurrentEvent,
+    current_user: OrganizerOrAbove,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Authenticated venue image upload.
+    Appends the uploaded image URL to the event's `venue_images` array.
+    """
+    try:
+        contents = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    def _clean(text: str) -> str:
+        return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
+
+    event_slug = _clean(event.short_code or str(event.id))
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    filename = f"{uuid.uuid4().hex[:8]}.{ext}"
+    storage_path = f"{event_slug}/venue/{filename}"
+    bucket = "event_branding"
+
+    try:
+        _upload_service.upload_bytes(
+            bucket=bucket,
+            storage_path=storage_path,
+            data=contents,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+    if _app_settings.STORAGE_MODE == "local":
+        url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
+    else:
+        url = _upload_service.create_presigned_download(
+            bucket=bucket,
+            storage_path=storage_path,
+            expiry_seconds=31_536_000,
+        )
+
+    # Append to venue_images list
+    images = list(event.venue_images or [])
+    images.append(url)
+    event.venue_images = images
+    
+    await db.commit()
+    await db.refresh(event)
+
+    return {"url": url, "venue_images": event.venue_images}
+
 
 

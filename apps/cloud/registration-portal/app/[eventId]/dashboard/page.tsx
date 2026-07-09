@@ -151,7 +151,7 @@ export default function PortalDashboardPage() {
   const [tcModalOpen, setTcModalOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string }>>([
-    { sender: "bot", text: "Hello! Welcome to EventOS support. How can I help you today?" }
+    { sender: "bot", text: "Hello! Welcome to EventX OS support. How can I help you today?" }
   ]);
   const [chatInput, setChatInput] = useState("");
   const [connectedStates, setConnectedStates] = useState<Record<number, boolean>>({});
@@ -1367,7 +1367,7 @@ export default function PortalDashboardPage() {
                 <h1>PAYMENT RECEIPT</h1>
                 <span style="font-size: 11px; color: #666;">${event.name}</span>
               </div>
-              <span style="font-size: 20px; font-weight: 900; color: #6366f1;">EventOS</span>
+              <span style="font-size: 20px; font-weight: 900; color: #6366f1;">EventX OS</span>
             </div>
             <div class="details-grid">
               <div class="detail-item">
@@ -1721,7 +1721,7 @@ export default function PortalDashboardPage() {
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent p-6 rounded-[2rem] border border-white/5 shadow-2xl relative overflow-hidden">
               <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
               <div className="absolute -bottom-10 left-10 w-48 h-48 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
-              
+
               <div className="relative z-10 flex-1">
                 <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.25em] block mb-1">
                   Attendee Control Center
@@ -1740,7 +1740,7 @@ export default function PortalDashboardPage() {
                     )
                   ) : ""} You have <span className="text-purple-400 font-extrabold font-bold">{pendingActions.length} pending actions</span>.
                 </p>
-                
+
                 {pendingActions.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-3">
                     {pendingActions.map((action, i) => (
@@ -1847,10 +1847,10 @@ export default function PortalDashboardPage() {
                         <div key={idx} className="flex flex-col items-center text-center group">
                           {/* Step Node */}
                           <div className={`h-8 w-8 md:h-10 md:w-10 rounded-full flex items-center justify-center border transition-all duration-300 ${isCompleted
-                              ? "bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.2)]"
-                              : isActive
-                                ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.2)]"
-                                : "bg-[#0d0e1b] border-white/10 text-[var(--muted)]"
+                            ? "bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.2)]"
+                            : isActive
+                              ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.2)]"
+                              : "bg-[#0d0e1b] border-white/10 text-[var(--muted)]"
                             }`}>
                             {isCompleted ? (
                               <Check className="h-4 w-4 md:h-5 md:w-5" />
@@ -1860,10 +1860,10 @@ export default function PortalDashboardPage() {
                           </div>
                           {/* Step Label */}
                           <span className={`text-[7px] sm:text-[8px] md:text-[10px] font-black uppercase tracking-wider mt-2.5 md:mt-3 transition-colors ${isCompleted
-                              ? "text-emerald-400"
-                              : isActive
-                                ? "text-[#E8EAFF]"
-                                : "text-[var(--muted)]"
+                            ? "text-emerald-400"
+                            : isActive
+                              ? "text-[#E8EAFF]"
+                              : "text-[var(--muted)]"
                             }`}>
                             {step.label}
                           </span>
@@ -1888,8 +1888,8 @@ export default function PortalDashboardPage() {
                     <button
                       onClick={() => setActiveTab("ticket")}
                       className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${activeTab === "ticket"
-                          ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.15)]"
-                          : "text-[var(--muted)] hover:text-[#E8EAFF] border border-transparent"
+                        ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.15)]"
+                        : "text-[var(--muted)] hover:text-[#E8EAFF] border border-transparent"
                         }`}
                     >
                       <Ticket className="h-4 w-4" /> My Ticket
@@ -1897,8 +1897,8 @@ export default function PortalDashboardPage() {
                     <button
                       onClick={() => setActiveTab("profile")}
                       className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all relative ${activeTab === "profile"
-                          ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.15)]"
-                          : "text-[var(--muted)] hover:text-[#E8EAFF] border border-transparent"
+                        ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.15)]"
+                        : "text-[var(--muted)] hover:text-[#E8EAFF] border border-transparent"
                         }`}
                     >
                       <User className="h-4 w-4" /> My Profile
@@ -2544,10 +2544,10 @@ export default function PortalDashboardPage() {
                       </div>
                     </div>
                   </div>
+                </div>
               </div>
-            </div>
-          )}
-        </>
+            )}
+          </>
         )}
       </div>
 
@@ -2626,8 +2626,8 @@ export default function PortalDashboardPage() {
                             value={numVal}
                             onChange={(e) => handlePhoneChange(selectedCc, e.target.value)}
                             className={`input flex-1 ${isInvalid
-                                ? "border-rose-500/50 focus:border-rose-500"
-                                : "border-white/10 focus:border-indigo-500"
+                              ? "border-rose-500/50 focus:border-rose-500"
+                              : "border-white/10 focus:border-indigo-500"
                               }`}
                           />
                         </div>
@@ -2993,8 +2993,8 @@ export default function PortalDashboardPage() {
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-xs ${msg.sender === "user"
-                      ? "bg-indigo-500 text-white rounded-tr-none"
-                      : "bg-white/5 border border-white/5 text-[#E8EAFF] rounded-tl-none font-bold"
+                    ? "bg-indigo-500 text-white rounded-tr-none"
+                    : "bg-white/5 border border-white/5 text-[#E8EAFF] rounded-tl-none font-bold"
                     }`}>
                     {msg.text}
                   </div>

@@ -889,6 +889,73 @@ async def get_features_matrix(
     return list(categories.values())
 
 
+async def calculate_addon_final_price(
+    db: AsyncSession,
+    addon_type: str,
+    min_price_inr: Optional[float],
+    price_inr: Optional[float],
+    hardware_spec: List[Dict[str, Any]],
+    staff_spec: List[Dict[str, Any]]
+) -> float:
+    import math
+    base_price = float(min_price_inr if min_price_inr is not None else (price_inr if price_inr is not None else 0.0))
+    if addon_type.upper() != "VENUE":
+        # Round base price to nearest 500
+        return float(math.floor(base_price / 500.0 + 0.5) * 500)
+
+    hardware_cost = 0.0
+    if hardware_spec:
+        from app.modules.inventory.models import HardwareItem
+        item_ids = []
+        for row in hardware_spec:
+            if "item_id" in row and row["item_id"]:
+                try:
+                    item_ids.append(uuid.UUID(str(row["item_id"])))
+                except ValueError:
+                    pass
+        if item_ids:
+            stmt = select(HardwareItem).where(HardwareItem.id.in_(item_ids))
+            items = (await db.execute(stmt)).scalars().all()
+            price_map = {item.id: float(item.renting_price or 0.0) for item in items}
+            for row in hardware_spec:
+                try:
+                    item_uuid = uuid.UUID(str(row["item_id"]))
+                    qty = int(row.get("quantity", 1))
+                    days = int(row.get("days", 1))
+                    unit_price = price_map.get(item_uuid, 0.0)
+                    hardware_cost += qty * days * unit_price
+                except Exception:
+                    pass
+
+    staff_cost = 0.0
+    if staff_spec:
+        from app.modules.commercial.models import StaffRole
+        role_ids = []
+        for row in staff_spec:
+            if "role_id" in row and row["role_id"]:
+                try:
+                    role_ids.append(uuid.UUID(str(row["role_id"])))
+                except ValueError:
+                    pass
+        if role_ids:
+            stmt = select(StaffRole).where(StaffRole.id.in_(role_ids))
+            roles = (await db.execute(stmt)).scalars().all()
+            price_map = {role.id: float(role.selling_per_day or 0.0) for role in roles}
+            for row in staff_spec:
+                try:
+                    role_uuid = uuid.UUID(str(row["role_id"]))
+                    qty = int(row.get("quantity", 1))
+                    days = int(row.get("days", 1))
+                    unit_price = price_map.get(role_uuid, 0.0)
+                    staff_cost += qty * days * unit_price
+                except Exception:
+                    pass
+
+    total_cost = base_price + hardware_cost + staff_cost
+    # Round final price to nearest 500
+    return float(math.floor(total_cost / 500.0 + 0.5) * 500)
+
+
 async def ensure_addon_columns(db: AsyncSession):
     try:
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS features_spec JSONB DEFAULT '[]'::jsonb"))
@@ -903,11 +970,28 @@ async def ensure_addon_columns(db: AsyncSession):
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS exclusions JSONB DEFAULT '[]'::jsonb"))
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS consumables_cost NUMERIC(12, 2) DEFAULT 0"))
         await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS template_types VARCHAR[] DEFAULT '{}'"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS price_unit VARCHAR(50)"))
+        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS final_price NUMERIC(12, 2)"))
         # Drop legacy columns if they exist
         await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS monthly_price CASCADE"))
         await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS yearly_price CASCADE"))
         await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS stripe_product_id CASCADE"))
         await db.commit()
+
+        # Backfill final_price for existing addons if they are null
+        stmt = select(Addon).where(Addon.final_price == None)
+        addons_to_backfill = (await db.execute(stmt)).scalars().all()
+        if addons_to_backfill:
+            for addon in addons_to_backfill:
+                addon.final_price = await calculate_addon_final_price(
+                    db,
+                    addon_type=addon.addon_type,
+                    min_price_inr=addon.min_price_inr,
+                    price_inr=addon.price_inr,
+                    hardware_spec=addon.hardware_spec or [],
+                    staff_spec=addon.staff_spec or []
+                )
+            await db.commit()
     except Exception as e:
         print(f"Error checking/adding features_spec column: {e}")
         await db.rollback()
@@ -938,6 +1022,8 @@ async def list_platform_addons(
             "min_price_inr": float(a.min_price_inr) if a.min_price_inr is not None else None,
             "max_price_inr": float(a.max_price_inr) if a.max_price_inr is not None else None,
             "billing_unit": a.billing_unit,
+            "price_unit": a.price_unit,
+            "final_price": float(a.final_price) if a.final_price is not None else None,
             "available_for_plans": a.available_for_plans or [],
             "is_optional_for_plan": a.is_optional_for_plan,
             "included_in_plan": a.included_in_plan,
@@ -3280,6 +3366,15 @@ async def create_platform_addon(
     hardware_spec = payload.hardware_spec if addon_type == "VENUE" else []
     staff_spec = payload.staff_spec if addon_type == "VENUE" else []
         
+    final_price = await calculate_addon_final_price(
+        db,
+        addon_type=addon_type,
+        min_price_inr=payload.min_price_inr,
+        price_inr=payload.price_inr,
+        hardware_spec=hardware_spec,
+        staff_spec=staff_spec
+    )
+        
     addon = Addon(
         name=payload.name,
         key=payload.key,
@@ -3291,6 +3386,7 @@ async def create_platform_addon(
         min_price_inr=payload.min_price_inr,
         max_price_inr=payload.max_price_inr,
         billing_unit=payload.billing_unit,
+        price_unit=getattr(payload, "price_unit", None),
         available_for_plans=payload.available_for_plans,
         is_optional_for_plan=payload.is_optional_for_plan,
         included_in_plan=payload.included_in_plan,
@@ -3298,6 +3394,7 @@ async def create_platform_addon(
         features_spec=payload.features_spec,
         hardware_spec=hardware_spec,
         staff_spec=staff_spec,
+        final_price=final_price,
         inclusions=payload.inclusions,
         exclusions=payload.exclusions,
         consumables_cost=payload.consumables_cost
@@ -3341,6 +3438,16 @@ async def patch_platform_addon(
         if field == "addon_type" and isinstance(val, str):
             val = val.upper()
         setattr(addon, field, val)
+        
+    # Recalculate final_price
+    addon.final_price = await calculate_addon_final_price(
+        db,
+        addon_type=addon.addon_type,
+        min_price_inr=addon.min_price_inr,
+        price_inr=addon.price_inr,
+        hardware_spec=addon.hardware_spec or [],
+        staff_spec=addon.staff_spec or []
+    )
         
     # Update feature mappings if provided
     if payload.feature_ids is not None:

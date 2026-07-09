@@ -18,6 +18,15 @@ export function useCatalogTemplates() {
   });
 }
 
+export function useCatalogTemplate(slug: string | null) {
+  return useQuery({
+    queryKey: ["catalog-template", slug],
+    queryFn: () => apiGet<CatalogTemplateRecord>(`/pricing/superadmin/catalog/templates/${slug}`),
+    enabled: !!slug,
+    staleTime: 300_000,
+  });
+}
+
 export function useCreateServiceRequest() {
   const queryClient = useQueryClient();
 

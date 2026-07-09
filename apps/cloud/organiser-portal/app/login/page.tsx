@@ -42,7 +42,7 @@ export default function LoginPage() {
     try {
       await authService.login({ email, password }, rememberMe);
       sessionStorage.setItem("session_active", "true");
-      toast.success("Identity verified. Accessing EventOS ecosystem.");
+      toast.success("Identity verified. Accessing EventX OS ecosystem.");
       setStep(2);
       setTimeout(() => {
         router.push("/dashboard");

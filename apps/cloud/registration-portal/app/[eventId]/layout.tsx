@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { 
-  Loader2, Calendar, MapPin, Globe, Mail, Phone, FileText, 
-  X, Check, HelpCircle, User, LogOut 
+import {
+  Loader2, Calendar, MapPin, Globe, Mail, Phone, FileText,
+  X, Check, HelpCircle, User, LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
@@ -12,11 +12,11 @@ import remarkGfm from "remark-gfm";
 
 const THEME_PRESETS: Record<string, { bg: string, surf: string, card: string, color: string, sec: string }> = {
   midnight: { bg: '#080410', surf: '#120924', card: '#1d0f3a', color: '#7c3aed', sec: '#a78bfa' },
-  ocean:    { bg: '#060f1e', surf: '#0a182f', card: '#112547', color: '#0ea5e9', sec: '#38bdf8' },
-  emerald:  { bg: '#040f0c', surf: '#071914', card: '#0f2a22', color: '#10b981', sec: '#34d399' },
-  sunset:   { bg: '#0f0b04', surf: '#181107', card: '#2a1d0c', color: '#f59e0b', sec: '#fbbf24' },
-  rose:     { bg: '#0f0508', surf: '#190a10', card: '#2a101b', color: '#f43f5e', sec: '#fb7185' },
-  slate:    { bg: '#0b0f17', surf: '#151e2e', card: '#202c3f', color: '#94a3b8', sec: '#cbd5e1' },
+  ocean: { bg: '#060f1e', surf: '#0a182f', card: '#112547', color: '#0ea5e9', sec: '#38bdf8' },
+  emerald: { bg: '#040f0c', surf: '#071914', card: '#0f2a22', color: '#10b981', sec: '#34d399' },
+  sunset: { bg: '#0f0b04', surf: '#181107', card: '#2a1d0c', color: '#f59e0b', sec: '#fbbf24' },
+  rose: { bg: '#0f0508', surf: '#190a10', card: '#2a101b', color: '#f43f5e', sec: '#fb7185' },
+  slate: { bg: '#0b0f17', surf: '#151e2e', card: '#202c3f', color: '#94a3b8', sec: '#cbd5e1' },
 };
 
 const DEFAULT_BANNERS = [
@@ -70,7 +70,7 @@ export default function EventPortalLayout({
   useEffect(() => {
     if (!eventId) return;
     const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-    
+
     fetch(`${apiBase}/api/v1/portal/registration/${eventId}/form`)
       .then(res => {
         if (!res.ok) throw new Error("Failed to load branding");
@@ -140,33 +140,33 @@ export default function EventPortalLayout({
     try {
       const start = new Date(startStr);
       if (isNaN(start.getTime())) return "";
-      
+
       const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
       const startDay = String(start.getDate()).padStart(2, '0');
       const startMonth = monthNames[start.getMonth()];
       const startYear = start.getFullYear();
-      
+
       if (!endStr) {
         return `${startDay} ${startMonth} ${startYear}`;
       }
-      
+
       const end = new Date(endStr);
       if (isNaN(end.getTime()) || start.toDateString() === end.toDateString()) {
         return `${startDay} ${startMonth} ${startYear}`;
       }
-      
+
       const endDay = String(end.getDate()).padStart(2, '0');
       const endMonth = monthNames[end.getMonth()];
       const endYear = end.getFullYear();
-      
+
       if (startYear !== endYear) {
         return `${startDay} ${startMonth} ${startYear} - ${endDay} ${endMonth} ${endYear}`;
       }
-      
+
       if (startMonth !== endMonth) {
         return `${startDay} ${startMonth} - ${endDay} ${endMonth} ${startYear}`;
       }
-      
+
       return `${startDay} - ${endDay} ${startMonth} ${startYear}`;
     } catch (e) {
       return "";
@@ -198,7 +198,8 @@ export default function EventPortalLayout({
 
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         :root {
           --base: ${themeColors.bg};
           --surf: ${themeColors.surf};
@@ -239,9 +240,9 @@ export default function EventPortalLayout({
         
         .selection\\:bg-indigo-500\\/30 *::selection { background-color: color-mix(in srgb, var(--pri) 30%, transparent) !important; }
       `}} />
-      
+
       <div className="min-h-screen bg-[var(--base)] text-[var(--text)] transition-colors duration-300 flex flex-col items-center w-full">
-        
+
         {/* ── Global Header Navigation Bar ── */}
         <nav className="w-full sticky top-0 z-50 border-b border-white/5 backdrop-blur-xl bg-black/40 py-4 px-4 md:px-8 lg:px-16 flex items-center justify-between shrink-0 shadow-md">
           <div className="flex items-center gap-3">
@@ -269,7 +270,7 @@ export default function EventPortalLayout({
               </div>
             )}
             {attendeeEmail && (
-              <button 
+              <button
                 onClick={handleLogout}
                 className="flex items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[#E8EAFF] transition-colors px-3 py-2 rounded-xl hover:bg-white/5"
               >
@@ -313,7 +314,7 @@ export default function EventPortalLayout({
                     {config.event_name}
                   </h1>
                   <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300/80 mt-1 pl-1">
-                    Powered by EventOS
+                    Powered by EventX OS
                   </p>
                 </div>
               </div>
@@ -369,7 +370,7 @@ export default function EventPortalLayout({
 
             {/* Column 2: Event Info */}
             <div className="space-y-3">
-              <span className="font-black uppercase tracking-wider text-[#E8EAFF] text-xs block">{config.event_name || "EventOS Portal"}</span>
+              <span className="font-black uppercase tracking-wider text-[#E8EAFF] text-xs block">{config.event_name || "EventX OS Portal"}</span>
               <p className="leading-relaxed text-[11px] text-muted/80">
                 Secure, premium public registration and attendee portal. Manage your pass, speaker session assets, and event updates in real-time.
               </p>

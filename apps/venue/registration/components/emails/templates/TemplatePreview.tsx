@@ -87,7 +87,7 @@ export default function TemplatePreview({
     return createPortal(
         <div className="fixed top-[100px] bottom-0 left-0 right-0 z-[9999] flex items-center justify-center border-t border-white/5 shadow-2xl">
             {/* ===== Modal Content ===== */}
-            <motion.div 
+            <motion.div
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
@@ -113,7 +113,7 @@ export default function TemplatePreview({
                         <ViewToggle active={viewMode === 'desktop'} onClick={() => setViewMode('desktop')} icon={<Monitor className="w-4 h-4" />} label="Desktop" />
                         <ViewToggle active={viewMode === 'mobile'} onClick={() => setViewMode('mobile')} icon={<Smartphone className="w-4 h-4" />} label="Mobile" />
                         <div className="w-px h-4 bg-white/10 mx-2" />
-                        <button 
+                        <button
                             onClick={onClose}
                             className="p-2 rounded-lg hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 transition-colors"
                         >
@@ -130,8 +130,8 @@ export default function TemplatePreview({
                     </div>
 
                     <div className="h-full flex justify-center items-center w-full min-h-0">
-                        <motion.div 
-                            animate={{ 
+                        <motion.div
+                            animate={{
                                 width: viewMode === 'desktop' ? '100%' : '375px',
                                 maxWidth: viewMode === 'desktop' ? '850px' : '375px',
                             }}
@@ -148,7 +148,7 @@ export default function TemplatePreview({
                                 <div className="space-y-1 text-[11px] md:text-xs text-zinc-500 font-sans">
                                     <div>
                                         <span className="font-semibold text-zinc-400 w-16 inline-block">From:</span>
-                                        <span className="text-zinc-700">EventOS Ecosystem &lt;noreply@eventos.io&gt;</span>
+                                        <span className="text-zinc-700">EventX OS Ecosystem &lt;noreply@eventos.io&gt;</span>
                                     </div>
                                     <div>
                                         <span className="font-semibold text-zinc-400 w-16 inline-block">To:</span>
@@ -163,7 +163,7 @@ export default function TemplatePreview({
 
                             {/* Iframe Viewport */}
                             <div className="flex-1 bg-white relative overflow-hidden min-h-0">
-                                <iframe 
+                                <iframe
                                     srcDoc={rendered}
                                     title="Email Preview"
                                     className="w-full h-full border-0 bg-white"

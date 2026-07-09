@@ -82,7 +82,6 @@ class MilestoneOut(BaseModel):
 
 # Projects
 class ProjectCreate(BaseModel):
-    service_request_id: Optional[uuid.UUID] = None
     name: str = Field(min_length=1, max_length=255)
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -101,7 +100,6 @@ class ProjectOut(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     event_id: uuid.UUID
-    service_request_id: Optional[uuid.UUID]
     project_code: str
     name: str
     status: str

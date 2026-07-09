@@ -594,14 +594,130 @@ async def list_available_addons(
             "name": addon.name,
             "key": addon.key,
             "description": addon.description,
+            "addon_type": addon.addon_type,
+            "short_description": addon.short_description,
+            "image_url": addon.image_url,
             "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
+            "min_price_inr": float(addon.min_price_inr) if addon.min_price_inr is not None else None,
+            "max_price_inr": float(addon.max_price_inr) if addon.max_price_inr is not None else None,
             "billing_unit": addon.billing_unit,
+            "price_unit": addon.price_unit,
+            "final_price": float(addon.final_price) if addon.final_price is not None else None,
             "available_for_plans": addon.available_for_plans,
             "is_optional_for_plan": addon.is_optional_for_plan,
             "included_in_plan": addon.included_in_plan,
+            "is_active": addon.is_active,
+            "inclusions": addon.inclusions or [],
+            "exclusions": addon.exclusions or [],
+            "consumables_cost": float(addon.consumables_cost) if addon.consumables_cost is not None else 0.0,
+            "template_types": addon.template_types or [],
+            "hardware_spec": addon.hardware_spec or [],
+            "staff_spec": addon.staff_spec or [],
         }
         for addon in addons
     ]
+
+
+@router.get("/organisations/plans/{plan_id}")
+async def get_plan_details(
+    plan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+) -> dict:
+    """Fetch details of a single subscription plan by ID or name."""
+    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature
+    from app.modules.platform.models.feature import FeatureCatalog
+    import uuid
+    
+    try:
+        plan_uuid = uuid.UUID(plan_id)
+        stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == plan_uuid)
+    except ValueError:
+        stmt = select(SubscriptionPlan).where(SubscriptionPlan.name.ilike(plan_id))
+        
+    res = await db.execute(stmt)
+    p = res.scalars().first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Plan not found")
+        
+    stmt_feats = select(FeatureCatalog.name).join(PlanFeature).where(
+        and_(PlanFeature.plan_id == p.id, PlanFeature.enabled == True)
+    )
+    features_res = await db.execute(stmt_feats)
+    feats = features_res.scalars().all()
+    
+    return {
+        "id": str(p.id),
+        "name": p.name,
+        "tagline": p.tagline,
+        "description": p.description,
+        "billing_model": p.billing_model,
+        "currency": p.currency,
+        "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
+        "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
+        "price_per_event": float(p.price_per_event) if p.price_per_event is not None else None,
+        "max_events": p.max_events,
+        "max_users": p.max_users,
+        "max_registrations": p.max_registrations,
+        "max_speakers": p.max_speakers,
+        "max_sessions": p.max_sessions,
+        "max_rooms": p.max_rooms,
+        "max_ticket_categories": p.max_ticket_categories,
+        "max_badge_templates": p.max_badge_templates,
+        "max_certificate_templates": p.max_certificate_templates,
+        "storage_quota_mb": p.storage_quota_mb,
+        "is_popular": p.is_popular,
+        "color_hex": p.color_hex,
+        "features": feats
+    }
+
+
+@router.get("/organisations/addons/{addon_id}")
+async def get_addon_details(
+    addon_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+) -> dict:
+    """Fetch details of a single addon by ID or key."""
+    from app.modules.billing.models.subscription import Addon
+    import uuid
+    
+    try:
+        addon_uuid = uuid.UUID(addon_id)
+        stmt = select(Addon).where(Addon.id == addon_uuid)
+    except ValueError:
+        stmt = select(Addon).where(Addon.key == addon_id)
+        
+    res = await db.execute(stmt)
+    addon = res.scalars().first()
+    if not addon:
+        raise HTTPException(status_code=404, detail="Addon not found")
+        
+    return {
+        "id": str(addon.id),
+        "name": addon.name,
+        "key": addon.key,
+        "description": addon.description,
+        "addon_type": addon.addon_type,
+        "short_description": addon.short_description,
+        "image_url": addon.image_url,
+        "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
+        "min_price_inr": float(addon.min_price_inr) if addon.min_price_inr is not None else None,
+        "max_price_inr": float(addon.max_price_inr) if addon.max_price_inr is not None else None,
+        "billing_unit": addon.billing_unit,
+        "price_unit": addon.price_unit,
+        "final_price": float(addon.final_price) if addon.final_price is not None else None,
+        "available_for_plans": addon.available_for_plans,
+        "is_optional_for_plan": addon.is_optional_for_plan,
+        "included_in_plan": addon.included_in_plan,
+        "is_active": addon.is_active,
+        "inclusions": addon.inclusions or [],
+        "exclusions": addon.exclusions or [],
+        "consumables_cost": float(addon.consumables_cost) if addon.consumables_cost is not None else 0.0,
+        "template_types": addon.template_types or [],
+        "hardware_spec": addon.hardware_spec or [],
+        "staff_spec": addon.staff_spec or [],
+    }
 
 
 class SubscribeRequest(BaseModel):
@@ -828,6 +944,8 @@ async def list_available_plans(
             "currency": p.currency,
             "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
             "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
+            "price_per_event": float(p.price_per_event) if p.price_per_event is not None else None,
+            "price_display": p.price_display,
             "max_events": p.max_events,
             "max_users": p.max_users,
             "max_registrations": p.max_registrations,

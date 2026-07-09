@@ -56,6 +56,28 @@ class EventCreate(BaseModel):
     allowed_formats: List[str] = Field(default=["pptx", "pdf", "mp4"])
     currency: str = "INR"
 
+    tagline: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    map_link: Optional[str] = Field(None, max_length=1024)
+    venue_images: List[str] = Field(default_factory=list)
+    venue_details: dict = Field(default_factory=lambda: {
+        "website": "",
+        "email": "",
+        "phone": "",
+        "facilities": [],
+        "images": [],
+        "notes": "",
+        "map_coords": "",
+    })
+    licensing_details: dict = Field(default_factory=lambda: {
+        "plan_name": "",
+        "price": 0,
+        "addons": [],
+        "activated_at": None,
+        "expires_at": None,
+        "status": "inactive",
+    })
+
     # Nested JSONB settings
     speaker_settings: SpeakerSettings = Field(default_factory=SpeakerSettings)
     registration_settings: RegistrationSettings = Field(default_factory=RegistrationSettings)
@@ -106,6 +128,13 @@ class EventUpdate(BaseModel):
     currency: Optional[str] = None
     feature_toggles: Optional[dict] = None
 
+    tagline: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    map_link: Optional[str] = Field(None, max_length=1024)
+    venue_images: Optional[List[str]] = None
+    venue_details: Optional[dict] = None
+    licensing_details: Optional[dict] = None
+
     # Nested JSONB settings (partial updates — None means "don't touch")
     speaker_settings: Optional[SpeakerSettings] = None
     registration_settings: Optional[RegistrationSettings] = None
@@ -147,6 +176,14 @@ class EventResponse(BaseModel):
     status: str
     feature_toggles: dict = Field(default_factory=dict)
     currency: str
+
+    tagline: Optional[str] = None
+    description: Optional[str] = None
+    map_link: Optional[str] = None
+    venue_images: List[str] = Field(default_factory=list)
+    venue_details: dict = Field(default_factory=dict)
+    licensing_details: dict = Field(default_factory=dict)
+
     speaker_settings: dict = Field(default_factory=dict)
     registration_settings: dict = Field(default_factory=dict)
     branding_settings: dict = Field(default_factory=dict)
@@ -171,6 +208,14 @@ class EventSummary(BaseModel):
     start_date: date
     end_date: date
     status: str
+
+    tagline: Optional[str] = None
+    description: Optional[str] = None
+    map_link: Optional[str] = None
+    venue_images: List[str] = Field(default_factory=list)
+    venue_details: dict = Field(default_factory=dict)
+    licensing_details: dict = Field(default_factory=dict)
+
     branding_settings: dict = Field(default_factory=dict)
     speaker_settings: dict = Field(default_factory=dict)
     registration_settings: dict = Field(default_factory=dict)

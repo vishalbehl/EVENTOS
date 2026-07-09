@@ -46,20 +46,20 @@ export default function PlatformDashboardPage() {
         subtitle={`Welcome${user?.full_name ? `, ${user.full_name}` : ""}. Set up your workspace and bring your first conference live from one place.`}
       />
 
-      <EnterprisePanel className="overflow-hidden border-violet-200 bg-[linear-gradient(135deg,#f8f7ff_0%,#ffffff_56%,#f5f9ff_100%)] p-6">
+      <EnterprisePanel className="overflow-hidden p-6 relative border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(255,255,255,0.02)_0%,rgba(255,255,255,0.01)_100%)]">
         {events.length === 0 ? (
           <div className="grid gap-6 lg:grid-cols-[220px_1fr] lg:items-center">
             <div className="flex justify-center lg:justify-start">
-              <div className="relative flex h-36 w-36 items-center justify-center rounded-full bg-violet-100/80">
-                <div className="absolute -bottom-2 left-4 h-10 w-10 rounded-2xl bg-amber-100" />
-                <Calendar className="h-16 w-16 text-violet-500" />
+              <div className="relative flex h-36 w-36 items-center justify-center rounded-full bg-[var(--color-surface-3)] border border-[var(--color-border)]">
+                <div className="absolute -bottom-2 left-4 h-10 w-10 rounded-2xl bg-[var(--color-primary-glow)] border border-[var(--color-primary-mid)]/20" />
+                <Calendar className="h-16 w-16 text-[var(--color-primary-mid)]" />
               </div>
             </div>
             <div>
-              <p className="text-[24px] font-bold tracking-[-0.04em] text-slate-950">
+              <p className="text-[24px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
                 You don&apos;t have any active events yet
               </p>
-              <p className="mt-3 max-w-xl text-[14px] leading-6 text-slate-500">
+              <p className="mt-3 max-w-xl text-[14px] leading-6 text-[var(--color-text-secondary)]">
                 Create your first event to unlock registrations, speaker workflows, billing, and operating dashboards across the organizer portal.
               </p>
               <Button
@@ -67,7 +67,7 @@ export default function PlatformDashboardPage() {
                   setCreateIntent(true);
                   router.push("/events?create=true");
                 }}
-                className="mt-5 h-11 rounded-xl px-5 text-[12px] font-semibold"
+                className="mt-5 h-11 rounded-xl px-5 text-[12px] font-bold hex-lime-gradient text-[var(--color-text-inverse)] hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_10px_22px_rgba(224,255,0,0.16)] border-0"
               >
                 Create New Event
               </Button>
@@ -76,10 +76,10 @@ export default function PlatformDashboardPage() {
         ) : (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-[24px] font-bold tracking-[-0.04em] text-slate-950">
+              <p className="text-[24px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
                 Your workspace is ready
               </p>
-              <p className="mt-2 max-w-2xl text-[14px] leading-6 text-slate-500">
+              <p className="mt-2 max-w-2xl text-[14px] leading-6 text-[var(--color-text-secondary)]">
                 Track active events, manage subscriptions, and coordinate your team without leaving the organizer portal.
               </p>
             </div>
@@ -132,7 +132,7 @@ export default function PlatformDashboardPage() {
         />
 
         <EnterprisePanel className="p-6">
-          <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-slate-950">
+          <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
             Why choose EventX OS?
           </h3>
           <div className="mt-5 space-y-4">
@@ -143,12 +143,12 @@ export default function PlatformDashboardPage() {
               { icon: Rocket, title: "Faster go-live cycles", description: "Move from onboarding to launch without stitching tools together." },
             ].map((item) => (
               <div key={item.title} className="flex gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50">
-                  <item.icon className="h-5 w-5 text-violet-500" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5">
+                  <item.icon className="h-5 w-5 text-[var(--color-primary-mid)]" />
                 </div>
                 <div>
-                  <p className="text-[14px] font-semibold text-slate-900">{item.title}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{item.description}</p>
+                  <p className="text-[14px] font-semibold text-[var(--color-text-primary)]">{item.title}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-[var(--color-text-secondary)]">{item.description}</p>
                 </div>
               </div>
             ))}

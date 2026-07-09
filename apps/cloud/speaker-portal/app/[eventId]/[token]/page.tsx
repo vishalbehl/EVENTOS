@@ -1009,28 +1009,28 @@ export default function SpeakerLandingPage() {
                                     </div>
 
                                     <div className="flex items-center gap-6">
-                                       {talk.upload_status === 'pending' ? (
-                                         isDeadlineLocked ? (
-                                           <div className="flex flex-col items-center gap-3 text-center px-6">
-                                             <Lock className="h-6 w-6 text-red-400" />
-                                           </div>
-                                         ) : (
-                                           <Link
-                                             href={`/${eventId}/${token}/upload?slot=${talk.session_speaker_id}`}
-                                             className="btn-primary px-10 h-14 rounded-full font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2"
-                                           >
-                                             Begin Upload <ChevronRight className="h-4 w-4" />
-                                           </Link>
-                                         )
-                                       ) : (
-                                         <button
-                                           onClick={() => setActiveViewTalk(talk)}
-                                           className="btn-primary px-10 h-14 rounded-full font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2"
-                                         >
-                                           View Talk <ChevronRight className="h-4 w-4" />
-                                         </button>
-                                       )}
-                                     </div>
+                                      {talk.upload_status === 'pending' ? (
+                                        isDeadlineLocked ? (
+                                          <div className="flex flex-col items-center gap-3 text-center px-6">
+                                            <Lock className="h-6 w-6 text-red-400" />
+                                          </div>
+                                        ) : (
+                                          <Link
+                                            href={`/${eventId}/${token}/upload?slot=${talk.session_speaker_id}`}
+                                            className="btn-primary px-10 h-14 rounded-full font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2"
+                                          >
+                                            Begin Upload <ChevronRight className="h-4 w-4" />
+                                          </Link>
+                                        )
+                                      ) : (
+                                        <button
+                                          onClick={() => setActiveViewTalk(talk)}
+                                          className="btn-primary px-10 h-14 rounded-full font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2"
+                                        >
+                                          View Talk <ChevronRight className="h-4 w-4" />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                 ));
                               })()}
@@ -1477,7 +1477,7 @@ export default function SpeakerLandingPage() {
                             <div className="glass-3d p-8 rounded-[2.5rem] space-y-6">
                               <h3 className="text-xl font-black uppercase tracking-wider text-[#E8EAFF]">Intake Mode 3: CV Text Parser</h3>
                               <p className="text-xs text-muted leading-relaxed">
-                                Upload your existing professional Curriculum Vitae (CV) or Resume as a PDF, DOCX, or PPTX document. EventOS's AI parsing heuristics will analyze and extract your job title, university/company affiliation, and a formatted bio snippet directly, allowing you to review them immediately.
+                                Upload your existing professional Curriculum Vitae (CV) or Resume as a PDF, DOCX, or PPTX document. EventX OS's AI parsing heuristics will analyze and extract your job title, university/company affiliation, and a formatted bio snippet directly, allowing you to review them immediately.
                               </p>
 
                               <label className="w-full h-44 rounded-[2rem] border-2 border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300">

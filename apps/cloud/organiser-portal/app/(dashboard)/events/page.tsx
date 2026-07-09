@@ -98,7 +98,7 @@ export default function EventsPage() {
             {sortedEvents.map((event) => (
               <button
                 key={event.id}
-                onClick={() => router.push(`/events/${event.id}/speaker/dashboard`)}
+                onClick={() => router.push(`/events/${event.id}/dashboard`)}
                 className="grid w-full grid-cols-[2.2fr_1fr_1fr_auto] gap-4 px-6 py-5 text-left transition-colors hover:bg-white/[0.03]"
               >
                 <div>

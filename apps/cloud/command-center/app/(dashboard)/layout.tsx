@@ -39,7 +39,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
           <Header />
           
           <div className="flex min-h-0 flex-1 flex-col px-4 py-4 md:px-6">
-            <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_78%,transparent)] p-5 backdrop-blur-md md:p-6">
+            <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_78%,transparent)] p-5 backdrop-blur-md md:p-6">
               {children}
             </div>
           </div>

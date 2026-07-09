@@ -103,6 +103,8 @@
   --primary-foreground: var(--color-text-inverse);
   --input: var(--color-border);
   --ring: var(--color-primary-mid);
+  --accent: color-mix(in srgb, var(--pri) 12%, transparent);
+  --accent-foreground: var(--text);
 
   --bg-surface: var(--color-surface-2);
   --bg-surface-2: var(--color-surface-3);
@@ -190,8 +192,8 @@
   }
 
   ::selection {
-    background: rgba(224, 255, 0, 0.24);
-    color: var(--color-text-inverse);
+    background: color-mix(in srgb, var(--pri) 25%, transparent) !important;
+    color: var(--color-text-primary) !important;
   }
 }
 
@@ -222,7 +224,6 @@
 
   .hex-panel {
     position: relative;
-    overflow: hidden;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
       var(--color-surface-2);

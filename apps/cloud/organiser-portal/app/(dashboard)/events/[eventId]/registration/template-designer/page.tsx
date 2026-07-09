@@ -1793,29 +1793,49 @@ export default function PrintDesigner() {
       }
     });
 
-    if (typeof window !== "undefined") {
-      const googleFonts = Array.from(fontFamilies).filter(f => !["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"].includes(f));
-      if (googleFonts.length > 0) {
-        const linkId = "google-fonts-preload";
-        let link = document.getElementById(linkId) as HTMLLinkElement;
-        const query = googleFonts.map(f => `family=${f.replace(/\s+/g, "+")}:ital,wght@0,400;0,700;1,400;1,700`).join("&");
-        const url = `https://fonts.googleapis.com/css2?${query}&display=swap`;
-        if (!link) {
-          link = document.createElement("link");
-          link.id = linkId;
-          link.rel = "stylesheet";
-          link.href = url;
-          document.head.appendChild(link);
-        } else {
-          link.href = url;
+    const googleFonts = typeof window !== "undefined"
+      ? Array.from(fontFamilies).filter(f => !["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"].includes(f))
+      : [];
+
+    if (typeof window !== "undefined" && googleFonts.length > 0) {
+      const linkId = "google-fonts-preload";
+      const query = googleFonts.map(f => `family=${f.replace(/\s+/g, "+")}:ital,wght@0,400;0,700;1,400;1,700`).join("&");
+      const url = `https://fonts.googleapis.com/css2?${query}&display=swap`;
+      
+      const linkLoadPromise = new Promise<void>((resolve) => {
+        const existing = document.getElementById(linkId) as HTMLLinkElement;
+        if (existing && existing.href === url) {
+          if (existing.sheet) {
+            resolve();
+            return;
+          }
+          existing.addEventListener("load", () => resolve());
+          existing.addEventListener("error", () => resolve());
+          setTimeout(resolve, 1500);
+          return;
         }
 
-        // Force load all fonts and weights via CSS Font Loading API
-        for (const family of googleFonts) {
-          promises.push(document.fonts.load(`12px "${family}"`));
-          promises.push(document.fonts.load(`bold 12px "${family}"`));
-          promises.push(document.fonts.load(`italic 12px "${family}"`));
+        if (existing) {
+          existing.remove();
         }
+
+        const link = document.createElement("link");
+        link.id = linkId;
+        link.rel = "stylesheet";
+        link.href = url;
+        link.addEventListener("load", () => resolve());
+        link.addEventListener("error", () => resolve());
+        document.head.appendChild(link);
+        setTimeout(resolve, 1500);
+      });
+      
+      await linkLoadPromise;
+
+      // Force load all fonts and weights via CSS Font Loading API
+      for (const family of googleFonts) {
+        promises.push(document.fonts.load(`12px "${family}"`));
+        promises.push(document.fonts.load(`bold 12px "${family}"`));
+        promises.push(document.fonts.load(`italic 12px "${family}"`));
       }
       promises.push(document.fonts.ready);
     }
@@ -1831,8 +1851,20 @@ export default function PrintDesigner() {
       promises.push(bgImagePromise);
     }
     await Promise.all(promises);
-    // Yield to make sure styles are processed
-    await new Promise(r => setTimeout(r, 100));
+
+    // Dynamic Font Verification Loop (checks document.fonts.check)
+    if (typeof window !== "undefined" && googleFonts.length > 0) {
+      for (const family of googleFonts) {
+        let attempts = 0;
+        while (!document.fonts.check(`12px "${family}"`) && attempts < 30) {
+          await new Promise(r => setTimeout(r, 100));
+          attempts++;
+        }
+      }
+    }
+
+    // Yield to make sure styles are processed and painted
+    await new Promise(r => setTimeout(r, 200));
   };
 
   const handlePrint = async () => {
@@ -1851,28 +1883,35 @@ export default function PrintDesigner() {
         const pageData = template.pages[i];
         if (i > 0) pdf.addPage([width_mm, height_mm], template.orientation);
 
-        if (pageData.print_backgroundImage && pageData.backgroundImage) {
-          const imageType = pageData.backgroundImage.startsWith("data:image/png") ? "PNG" : "JPEG";
-          pdf.addImage(pageData.backgroundImage, imageType, 0, 0, width_mm, height_mm);
-        } else if (pageData.print_backgroundColor) {
-          pdf.setFillColor(pageData.backgroundColor);
-          pdf.rect(0, 0, width_mm, height_mm, "F");
-        }
-
         const printContainer = document.createElement("div");
         document.body.appendChild(printContainer);
         Object.assign(printContainer.style, {
-          position: "fixed", top: "0", left: "0", opacity: "0", zIndex: "-1", pointerEvents: "none"
+          position: "absolute",
+          top: "0",
+          left: "0",
+          opacity: "0.01",
+          zIndex: "-9999",
+          pointerEvents: "none",
+          margin: "0",
+          padding: "0"
         });
 
         const pageElement = document.createElement("div");
         printContainer.innerHTML = "";
         printContainer.appendChild(pageElement);
+
+        const hasBgImage = pageData.backgroundImage && pageData.print_backgroundImage !== false;
+        const bgImageCss = hasBgImage ? `url(${pageData.backgroundImage})` : "none";
+        const bgColorCss = pageData.print_backgroundColor !== false ? pageData.backgroundColor || "#FFFFFF" : "transparent";
+
         Object.assign(pageElement.style, {
           width: `${mmToPx(width_mm)}px`,
           height: `${mmToPx(height_mm)}px`,
           position: "relative",
-          backgroundColor: "transparent",
+          backgroundColor: bgColorCss,
+          backgroundImage: bgImageCss,
+          backgroundSize: "100% 100%",
+          backgroundPosition: "center",
         });
 
         // Helper: compute border CSS for a field
@@ -1967,8 +2006,8 @@ export default function PrintDesigner() {
               return `<div style="${outerStyle}"><div style="${innerStyle} justify-content:${justify};"><div style="height:100%; aspect-ratio:1/1;">${qrSVG}</div></div></div>`;
             }
             const justify = f.align === "center" ? "center" : f.align === "right" ? "flex-end" : "flex-start";
-            const styles = `font-family:'${f.fontFamily}', sans-serif; font-size:${f.fontSize}pt; line-height:1.2; color:${f.color}; font-weight:${f.bold ? 700 : 400}; font-style:${f.italic ? "italic" : "normal"}; text-decoration:${f.underline ? "underline" : "none"}; white-space:nowrap; overflow:hidden; padding:0 4px; display:flex; align-items:center; justify-content:${justify}; word-break:keep-all; width:100%; height:100%; box-sizing:border-box;`;
-            return `<div style="${outerStyle}"><div style="${innerStyle}"><div style="${styles}">${tokenReplace(f.placeholder, previewData, f.textCase)}</div></div></div>`;
+            const styles = `position:absolute; top:0; left:0; width:${pw}px; height:${ph}px; ${borderCss} overflow:hidden; display:flex; align-items:center; justify-content:${justify}; font-family:'${f.fontFamily}', sans-serif; font-size:${f.fontSize}pt; line-height:1.2; color:${f.color}; font-weight:${f.bold ? 700 : 400}; font-style:${f.italic ? "italic" : "normal"}; text-decoration:${f.underline ? "underline" : "none"}; white-space:nowrap; padding:0 4px; box-sizing:border-box;`;
+            return `<div style="${outerStyle}"><div style="${styles}"><span style="line-height:1.2;">${tokenReplace(f.placeholder, previewData, f.textCase)}</span></div></div>`;
           })
           .join("");
 
@@ -1977,11 +2016,23 @@ export default function PrintDesigner() {
         await new Promise(resolve => requestAnimationFrame(resolve));
         await preloadPageAssets(pageData);
 
+        const originalScrollX = typeof window !== "undefined" ? window.scrollX : 0;
+        const originalScrollY = typeof window !== "undefined" ? window.scrollY : 0;
+        if (typeof window !== "undefined") {
+          window.scrollTo(0, 0);
+        }
+
         const canvas = await html2canvas(pageElement, {
           scale: 3,
           useCORS: true,
-          backgroundColor: null
+          backgroundColor: null,
+          scrollX: 0,
+          scrollY: 0,
         });
+
+        if (typeof window !== "undefined") {
+          window.scrollTo(originalScrollX, originalScrollY);
+        }
 
         const imgData = canvas.toDataURL("image/png");
         pdf.addImage(imgData, "PNG", 0, 0, width_mm, height_mm);
@@ -3323,10 +3374,10 @@ export default function PrintDesigner() {
                                   fontWeight: field.bold ? 700 : 400,
                                   fontStyle: field.italic ? "italic" : "normal",
                                   textDecoration: field.underline ? "underline" : "none",
-                                  justifyContent: field.align === "center" ? "center" : field.align === "right" ? "flex-end" : "flex-start",
-                                  lineHeight: 1.2,
+                                  textAlign: field.align || "left",
+                                  lineHeight: `${mmToPx(field.height_mm)}px`,
                                 }}
-                                className="w-full h-full overflow-hidden whitespace-nowrap flex items-center px-1"
+                                className="w-full h-full overflow-hidden whitespace-nowrap block px-1"
                               >
                                 {tokenReplace(field.placeholder || "", previewData, field.textCase)}
                               </div>

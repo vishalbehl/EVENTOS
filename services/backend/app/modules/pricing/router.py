@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db
+from app.dependencies import get_current_user, get_db, require_active_user
 from app.modules.identity.models.user import User
 from app.modules.pricing.services import PricingService, SimulationService
 from app.modules.pricing.models import PricingSimulation, RevenueForecast
@@ -524,6 +524,104 @@ async def superadmin_run_simulation(
     await db.commit()
     
     return output_data
+
+
+@router.get("/superadmin/catalog/templates/{slug}")
+async def get_template_details(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_active_user)
+):
+    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    
+    # 1. Check RoomTemplate
+    room_stmt = select(RoomTemplate).where(RoomTemplate.slug == slug)
+    room_res = await db.execute(room_stmt)
+    room = room_res.scalars().first()
+    if room:
+        return {
+            "name": room.name,
+            "slug": room.slug,
+            "description": room.description or "",
+            "version": room.version,
+            "is_default": room.is_default,
+            "is_active": room.status == "ACTIVE",
+            "usage_count": room.usage_count,
+            "default_capacity": room.default_capacity,
+            "room_type": room.room_type,
+            "setup_time": float(room.setup_time) if room.setup_time else 0.0,
+            "teardown_time": float(room.teardown_time) if room.teardown_time else 0.0,
+            "hardware_allocation": room.hardware_allocation or [],
+            "staff_allocation": room.staff_allocation or [],
+            "podiums": room.podiums or 0,
+            "image_url": room.image_url,
+            "template_type": "room",
+            **_template_commercial_fields(room),
+        }
+        
+    # 2. Check RegistrationTemplate
+    reg_stmt = select(RegistrationTemplate).where(RegistrationTemplate.slug == slug)
+    reg_res = await db.execute(reg_stmt)
+    reg = reg_res.scalars().first()
+    if reg:
+        return {
+            "name": reg.name,
+            "slug": reg.slug,
+            "description": reg.description or "",
+            "version": reg.version,
+            "is_default": reg.is_default,
+            "is_active": reg.status == "ACTIVE",
+            "usage_count": reg.usage_count,
+            "registration_type": reg.registration_type,
+            "min_attendees": reg.min_attendees,
+            "max_attendees": reg.max_attendees,
+            "recommended_reg_type": reg.recommended_reg_type,
+            "reg_counters": reg.reg_counters,
+            "kiosks": reg.kiosks,
+            "badge_stations": reg.badge_stations,
+            "qr_stations": reg.qr_stations,
+            "helpdesk_counters": reg.helpdesk_counters,
+            "checkins_per_hour": reg.checkins_per_hour,
+            "setup_time": float(reg.setup_time) if reg.setup_time else 0.0,
+            "teardown_time": float(reg.teardown_time) if reg.teardown_time else 0.0,
+            "hardware_allocation": reg.hardware_allocation or [],
+            "staff_allocation": reg.staff_allocation or [],
+            "image_url": reg.image_url,
+            "template_type": "registration",
+            **_template_commercial_fields(reg),
+        }
+        
+    # 3. Check SrrTemplate
+    srr_stmt = select(SrrTemplate).where(SrrTemplate.slug == slug)
+    srr_res = await db.execute(srr_stmt)
+    srr = srr_res.scalars().first()
+    if srr:
+        return {
+            "name": srr.name,
+            "slug": srr.slug,
+            "description": srr.description or "",
+            "version": srr.version,
+            "is_default": srr.is_default,
+            "is_active": srr.status == "ACTIVE",
+            "usage_count": srr.usage_count,
+            "min_speakers": srr.min_speakers,
+            "max_speakers": srr.max_speakers,
+            "preview_stations": srr.preview_stations,
+            "checkin_counters": srr.checkin_counters,
+            "consultation_desks": srr.consultation_desks,
+            "printer_stations": srr.printer_stations,
+            "speakers_per_hour": srr.speakers_per_hour,
+            "setup_time": float(srr.setup_time) if srr.setup_time else 0.0,
+            "teardown_time": float(srr.teardown_time) if srr.teardown_time else 0.0,
+            "hardware_allocation": srr.hardware_allocation or [],
+            "staff_allocation": srr.staff_allocation or [],
+            "image_url": srr.image_url,
+            "template_type": "srr",
+            **_template_commercial_fields(srr),
+        }
+        
+    raise HTTPException(status_code=404, detail="Template not found")
+
 
 @router.get("/superadmin/catalog/templates")
 async def superadmin_get_templates(

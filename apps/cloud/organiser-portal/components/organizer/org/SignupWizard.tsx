@@ -98,7 +98,7 @@ export function SignupWizard() {
       });
       setAuth(result.user, result.access_token);
       toast.success("Workspace created. Let us set up the essentials.");
-      router.push("/onboarding");
+      router.push("/dashboard");
     } catch (error: any) {
       toast.error(error.message || "Could not create workspace.");
     } finally {

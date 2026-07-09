@@ -32,7 +32,6 @@ async def create_project(
             organization_id=org_id,
             event_id=event_id,
             name=req.name,
-            service_request_id=req.service_request_id,
             start_date=req.start_date,
             end_date=req.end_date,
             project_manager_id=req.project_manager_id or current_user.id

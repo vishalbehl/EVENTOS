@@ -104,6 +104,7 @@ export default function SubscriptionPlansPage() {
   const [addonMinPrice, setAddonMinPrice] = useState<number>(0);
   const [addonMaxPrice, setAddonMaxPrice] = useState<number>(0);
   const [addonBillingUnit, setAddonBillingUnit] = useState("PER_EVENT");
+  const [addonPriceUnit, setAddonPriceUnit] = useState("");
   const [addonIsActive, setAddonIsActive] = useState(true);
   const [addonAvailablePlans, setAddonAvailablePlans] = useState<string[]>([]);
   const [addonOptionalPlan, setAddonOptionalPlan] = useState("");
@@ -121,6 +122,7 @@ export default function SubscriptionPlansPage() {
       setAddonMinPrice(addon.min_price_inr || 0);
       setAddonMaxPrice(addon.max_price_inr || 0);
       setAddonBillingUnit(addon.billing_unit || "PER_EVENT");
+      setAddonPriceUnit(addon.price_unit || "");
       setAddonIsActive(addon.is_active);
       setAddonAvailablePlans(addon.available_for_plans || []);
       setAddonOptionalPlan(addon.is_optional_for_plan || "");
@@ -135,6 +137,7 @@ export default function SubscriptionPlansPage() {
       setAddonMinPrice(0);
       setAddonMaxPrice(0);
       setAddonBillingUnit("PER_EVENT");
+      setAddonPriceUnit("");
       setAddonIsActive(true);
       setAddonAvailablePlans([]);
       setAddonOptionalPlan("");
@@ -189,6 +192,7 @@ export default function SubscriptionPlansPage() {
       min_price_inr: addonMinPrice,
       max_price_inr: addonMaxPrice,
       billing_unit: addonBillingUnit,
+      price_unit: addonPriceUnit || null,
       available_for_plans: addonAvailablePlans,
       is_optional_for_plan: addonOptionalPlan || null,
       included_in_plan: addonIncludedPlan || null,
@@ -1346,7 +1350,7 @@ export default function SubscriptionPlansPage() {
 
                 {/* Right Column: Pricing & Eligibility */}
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="text-[10px] font-black uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">Price (INR)</label>
                       <input
@@ -1358,15 +1362,23 @@ export default function SubscriptionPlansPage() {
                     </div>
                     <div>
                       <label className="text-[10px] font-black uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">Billing Unit</label>
-                      <select
+                      <input
+                        type="text"
                         value={addonBillingUnit}
                         onChange={(e) => setAddonBillingUnit(e.target.value)}
+                        placeholder="e.g. PER_EVENT, PER_MONTH"
                         className="w-full rounded-xl bg-surface-2 border border-border px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-indigo-500"
-                      >
-                        <option value="PER_EVENT">PER_EVENT</option>
-                        <option value="PER_MONTH">PER_MONTH</option>
-                        <option value="CUSTOM">CUSTOM</option>
-                      </select>
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">Price Unit</label>
+                      <input
+                        type="text"
+                        value={addonPriceUnit}
+                        onChange={(e) => setAddonPriceUnit(e.target.value)}
+                        placeholder="e.g. screen, room, day"
+                        className="w-full rounded-xl bg-surface-2 border border-border px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-indigo-500"
+                      />
                     </div>
                   </div>
 

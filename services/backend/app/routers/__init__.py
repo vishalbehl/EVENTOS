@@ -134,12 +134,10 @@ api_router.include_router(billing_router)
 api_router.include_router(activations_router)
 
 # ── Phase 7: Tech Services & Operations Planning Engine ───────
-from app.modules.technology_services.router import router as technology_services_router
 from app.modules.operations_planning.router import router as operations_planning_router
 from app.modules.resource_management.router import router as resource_management_router
 from app.modules.deployment_management.router import router as deployment_management_router
 
-api_router.include_router(technology_services_router)
 api_router.include_router(operations_planning_router)
 api_router.include_router(resource_management_router)
 api_router.include_router(deployment_management_router)

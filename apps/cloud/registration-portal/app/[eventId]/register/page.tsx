@@ -3,9 +3,9 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Globe, AlertCircle, Calendar, CheckCircle2, ChevronRight, 
-  Upload, FileText, Check, Copy, ArrowLeft, ArrowRight, ShieldCheck, 
+import {
+  Globe, AlertCircle, Calendar, CheckCircle2, ChevronRight,
+  Upload, FileText, Check, Copy, ArrowLeft, ArrowRight, ShieldCheck,
   MapPin, Loader2, Sparkles, Building, User, Mail, Phone, Map, Users, X, Crop
 } from "lucide-react";
 import { toast } from "sonner";
@@ -46,11 +46,11 @@ interface FormConfig {
 
 const THEME_PRESETS: Record<string, { bg: string, surf: string, card: string, color: string, sec: string }> = {
   midnight: { bg: '#080410', surf: '#120924', card: '#1d0f3a', color: '#7c3aed', sec: '#a78bfa' },
-  ocean:    { bg: '#060f1e', surf: '#0a182f', card: '#112547', color: '#0ea5e9', sec: '#38bdf8' },
-  emerald:  { bg: '#040f0c', surf: '#071914', card: '#0f2a22', color: '#10b981', sec: '#34d399' },
-  sunset:   { bg: '#0f0b04', surf: '#181107', card: '#2a1d0c', color: '#f59e0b', sec: '#fbbf24' },
-  rose:     { bg: '#0f0508', surf: '#190a10', card: '#2a101b', color: '#f43f5e', sec: '#fb7185' },
-  slate:    { bg: '#0b0f17', surf: '#151e2e', card: '#202c3f', color: '#94a3b8', sec: '#cbd5e1' },
+  ocean: { bg: '#060f1e', surf: '#0a182f', card: '#112547', color: '#0ea5e9', sec: '#38bdf8' },
+  emerald: { bg: '#040f0c', surf: '#071914', card: '#0f2a22', color: '#10b981', sec: '#34d399' },
+  sunset: { bg: '#0f0b04', surf: '#181107', card: '#2a1d0c', color: '#f59e0b', sec: '#fbbf24' },
+  rose: { bg: '#0f0508', surf: '#190a10', card: '#2a101b', color: '#f43f5e', sec: '#fb7185' },
+  slate: { bg: '#0b0f17', surf: '#151e2e', card: '#202c3f', color: '#94a3b8', sec: '#cbd5e1' },
 };
 
 const countryCodes = [
@@ -119,7 +119,7 @@ export default function PublicRegistrationPortal() {
   const [submitting, setSubmitting] = useState(false);
   const [config, setConfig] = useState<FormConfig | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
-  
+
   const [activeSlide, setActiveSlide] = useState(0);
 
   const selectedThemeId = config?.branding_settings?.theme || 'midnight';
@@ -446,7 +446,7 @@ export default function PublicRegistrationPortal() {
 
       setImageEditorOpen(false);
       setImageToEdit(null);
-      
+
       if (editingFieldId) {
         await executeFileUpload(editingFieldId, croppedFile);
       }
@@ -463,7 +463,7 @@ export default function PublicRegistrationPortal() {
     total_price: number;
   } | null>(null);
   const [verifyingPayment, setVerifyingPayment] = useState(false);
-  
+
   // Registration success state
   const [successData, setSuccessData] = useState<{
     regno: string;
@@ -721,7 +721,7 @@ export default function PublicRegistrationPortal() {
       }
       const data: FormConfig = await res.json();
       setConfig(data);
-      
+
       // Initialize default values
       const initialForm: Record<string, any> = {};
       data.fields.forEach(f => {
@@ -739,14 +739,14 @@ export default function PublicRegistrationPortal() {
           }
         }
       });
-      
+
       // Parse email from token and merge it
       const token = localStorage.getItem(`portal_token_${eventId}`);
       if (token) {
         try {
           const base64Url = token.split('.')[1];
           const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-          const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
             return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
           }).join(''));
           const payload = JSON.parse(jsonPayload);
@@ -758,7 +758,7 @@ export default function PublicRegistrationPortal() {
           console.error("Failed to parse token email", e);
         }
       }
-      
+
       setFormData(initialForm);
     } catch (err: any) {
       console.error(err);
@@ -794,7 +794,7 @@ export default function PublicRegistrationPortal() {
   const handleFileUpload = async (fieldId: string, file: File) => {
     const field = config?.fields?.find((f: any) => f.id === fieldId);
     const fieldType = field ? getEffectiveFieldType(field) : "file";
-    
+
     if (fieldType === "image") {
       const reader = new FileReader();
       reader.onload = () => {
@@ -985,7 +985,8 @@ export default function PublicRegistrationPortal() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
-        <style dangerouslySetInnerHTML={{ __html: `
+        <style dangerouslySetInnerHTML={{
+          __html: `
           :root {
             --base: ${themeColors.bg};
             --surf: ${themeColors.surf};
@@ -1011,7 +1012,8 @@ export default function PublicRegistrationPortal() {
   if (verifyingPayment) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
-        <style dangerouslySetInnerHTML={{ __html: `
+        <style dangerouslySetInnerHTML={{
+          __html: `
           :root {
             --base: ${themeColors.bg};
             --surf: ${themeColors.surf};
@@ -1032,7 +1034,8 @@ export default function PublicRegistrationPortal() {
   if (!config || !config.is_live) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6">
-        <style dangerouslySetInnerHTML={{ __html: `
+        <style dangerouslySetInnerHTML={{
+          __html: `
           :root {
             --base: ${themeColors.bg};
             --surf: ${themeColors.surf};
@@ -1041,7 +1044,7 @@ export default function PublicRegistrationPortal() {
             --sec: ${themeColors.sec};
           }
         `}} />
-        <motion.div 
+        <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           className="glass-3d p-10 max-w-md text-center border-rose-500/10 rounded-[2.5rem] bg-indigo-950/5 relative overflow-hidden"
@@ -1055,7 +1058,7 @@ export default function PublicRegistrationPortal() {
             The registration portal for <span className="text-indigo-400">{config?.event_name || "this event"}</span> is currently inactive or draft.
           </p>
           <div className="text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-40">
-            EventOS Intelligence Desk
+            EventX OS Intelligence Desk
           </div>
         </motion.div>
       </div>
@@ -1069,7 +1072,8 @@ export default function PublicRegistrationPortal() {
 
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
-        <style dangerouslySetInnerHTML={{ __html: `
+        <style dangerouslySetInnerHTML={{
+          __html: `
           :root {
             --base: ${themeColors.bg};
             --surf: ${themeColors.surf};
@@ -1081,29 +1085,26 @@ export default function PublicRegistrationPortal() {
         <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className={`glass-3d p-10 max-w-lg w-full text-center rounded-[3rem] bg-[#0d0e1b]/80 relative overflow-hidden space-y-8 border ${
-            isWaitlisted 
-              ? "border-amber-500/20" 
-              : isSubmitted 
-                ? "border-indigo-500/20" 
+          className={`glass-3d p-10 max-w-lg w-full text-center rounded-[3rem] bg-[#0d0e1b]/80 relative overflow-hidden space-y-8 border ${isWaitlisted
+              ? "border-amber-500/20"
+              : isSubmitted
+                ? "border-indigo-500/20"
                 : "border-emerald-500/20"
-          }`}
+            }`}
         >
-          <div className={`absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl pointer-events-none ${
-            isWaitlisted 
-              ? "bg-amber-500/10" 
-              : isSubmitted 
-                ? "bg-indigo-500/10" 
+          <div className={`absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl pointer-events-none ${isWaitlisted
+              ? "bg-amber-500/10"
+              : isSubmitted
+                ? "bg-indigo-500/10"
                 : "bg-emerald-500/10"
-          }`} />
-          
-          <div className={`h-20 w-20 rounded-full flex items-center justify-center mx-auto border ${
-            isWaitlisted 
-              ? "bg-amber-500/10 border-amber-500/20" 
-              : isSubmitted 
-                ? "bg-indigo-500/10 border-indigo-500/20" 
+            }`} />
+
+          <div className={`h-20 w-20 rounded-full flex items-center justify-center mx-auto border ${isWaitlisted
+              ? "bg-amber-500/10 border-amber-500/20"
+              : isSubmitted
+                ? "bg-indigo-500/10 border-indigo-500/20"
                 : "bg-emerald-500/10 border-emerald-500/20"
-          }`}>
+            }`}>
             {isWaitlisted ? (
               <AlertCircle className="h-10 w-10 text-amber-400 animate-pulse" />
             ) : isSubmitted ? (
@@ -1114,30 +1115,29 @@ export default function PublicRegistrationPortal() {
           </div>
 
           <div className="space-y-2">
-            <span className={`text-[9px] font-black uppercase tracking-[0.3em] block ${
-              isWaitlisted 
-                ? "text-amber-400" 
-                : isSubmitted 
-                  ? "text-indigo-400" 
+            <span className={`text-[9px] font-black uppercase tracking-[0.3em] block ${isWaitlisted
+                ? "text-amber-400"
+                : isSubmitted
+                  ? "text-indigo-400"
                   : "text-emerald-400"
-            }`}>
-              {isWaitlisted 
-                ? "Waitlist Registered" 
-                : isSubmitted 
-                  ? "Submission Pending Review" 
+              }`}>
+              {isWaitlisted
+                ? "Waitlist Registered"
+                : isSubmitted
+                  ? "Submission Pending Review"
                   : "Registration Successful"}
             </span>
             <h1 className="text-3xl font-black text-[#E8EAFF] tracking-tighter">
-              {isWaitlisted 
-                ? "Hold Tight!" 
-                : isSubmitted 
-                  ? "Application Received" 
+              {isWaitlisted
+                ? "Hold Tight!"
+                : isSubmitted
+                  ? "Application Received"
                   : "Welcome Aboard!"}
             </h1>
             <p className="text-muted font-bold text-xs leading-relaxed max-w-sm mx-auto">
-              {isWaitlisted 
+              {isWaitlisted
                 ? `You have been added to the waitlist for ${config.event_name}.`
-                : isSubmitted 
+                : isSubmitted
                   ? `Your registration for ${config.event_name} is under review.`
                   : `You have been registered for ${config.event_name}.`}
             </p>
@@ -1152,7 +1152,7 @@ export default function PublicRegistrationPortal() {
                 {successData.name}
               </span>
             </div>
-            
+
             <div className="flex justify-between items-center px-4 py-2 bg-white/5 border border-white/5 rounded-xl">
               <span className="text-[9px] font-black text-muted uppercase tracking-widest">
                 Category
@@ -1166,9 +1166,8 @@ export default function PublicRegistrationPortal() {
               <span className="text-[9px] font-black text-muted uppercase tracking-widest">
                 Transaction Status
               </span>
-              <span className={`text-xs font-black uppercase tracking-widest ${
-                isWaitlisted ? "text-purple-400" : isSubmitted ? "text-indigo-400" : "text-emerald-400"
-              }`}>
+              <span className={`text-xs font-black uppercase tracking-widest ${isWaitlisted ? "text-purple-400" : isSubmitted ? "text-indigo-400" : "text-emerald-400"
+                }`}>
                 {isWaitlisted ? "N/A (Waitlisted)" : config.payment_enabled && getTicketPrice() > 0 ? "SUCCESSFUL" : "Completed (Free)"}
               </span>
             </div>
@@ -1211,7 +1210,7 @@ export default function PublicRegistrationPortal() {
                   <span className="text-2xl font-black text-[#E8EAFF] tracking-wider uppercase">
                     {successData.regno}
                   </span>
-                  <button 
+                  <button
                     onClick={copyRegNo}
                     className="h-8 w-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center border border-white/10 active:scale-95 transition-all"
                   >
@@ -1223,15 +1222,15 @@ export default function PublicRegistrationPortal() {
           </div>
 
           <p className="text-[10px] font-bold text-muted leading-relaxed max-w-[280px] mx-auto">
-            {isWaitlisted 
+            {isWaitlisted
               ? "We will automatically promote and approve your registration as capacity frees up."
-              : isSubmitted 
+              : isSubmitted
                 ? "The event organizers will review your submission shortly. You will be notified via email."
                 : "Please keep this registration number safe. You will need it to print your badge at the registration desk."}
           </p>
 
           <div className="pt-2">
-            <button 
+            <button
               onClick={() => {
                 router.push(`/${eventId}/dashboard`);
               }}
@@ -1251,7 +1250,8 @@ export default function PublicRegistrationPortal() {
   // Render main form questionnaire
   return (
     <div className="w-full py-2 flex flex-col items-center">
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         :root {
           --base: ${themeColors.bg};
           --surf: ${themeColors.surf};
@@ -1260,7 +1260,7 @@ export default function PublicRegistrationPortal() {
           --sec: ${themeColors.sec};
         }
       `}} />
-      
+
 
       {/* ── Event Journey Progress ── */}
       <div className="w-full max-w-6xl mb-10">
@@ -1279,18 +1279,16 @@ export default function PublicRegistrationPortal() {
                   <div key={step.id} className="flex-1 flex items-center relative group">
                     {/* Step Bubble */}
                     <div className="flex flex-col items-center z-10 mx-auto">
-                      <div className={`h-8 w-8 rounded-full flex items-center justify-center border text-[10px] font-black transition-all ${
-                        isCompleted
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center border text-[10px] font-black transition-all ${isCompleted
                           ? "bg-indigo-500 border-indigo-400 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]"
                           : isActive
                             ? "bg-[#0d0e1b] border-indigo-500 text-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.2)]"
                             : "bg-[#0d0e1b] border-white/10 text-muted"
-                      }`}>
+                        }`}>
                         {isCompleted ? <Check className="h-4 w-4" /> : idx + 1}
                       </div>
-                      <span className={`text-[8px] font-black uppercase tracking-widest mt-2 whitespace-nowrap ${
-                        isActive ? "text-indigo-400" : isCompleted ? "text-[#E8EAFF]" : "text-muted"
-                      }`}>
+                      <span className={`text-[8px] font-black uppercase tracking-widest mt-2 whitespace-nowrap ${isActive ? "text-indigo-400" : isCompleted ? "text-[#E8EAFF]" : "text-muted"
+                        }`}>
                         {step.label}
                       </span>
                     </div>
@@ -1298,9 +1296,8 @@ export default function PublicRegistrationPortal() {
                     {/* Connecting Line */}
                     {idx < steps.length - 1 && (
                       <div className="absolute top-[16px] left-[50%] right-[-50%] h-[1.5px] z-0 bg-white/5">
-                        <div className={`h-full bg-indigo-500 transition-all duration-500 ${
-                          isCompleted ? "w-full" : "w-0"
-                        }`} />
+                        <div className={`h-full bg-indigo-500 transition-all duration-500 ${isCompleted ? "w-full" : "w-0"
+                          }`} />
                       </div>
                     )}
                   </div>
@@ -1337,7 +1334,7 @@ export default function PublicRegistrationPortal() {
             className="w-full glass-3d p-6 md:p-10 rounded-[2.5rem] bg-[#0d0e1b]/80 space-y-8 relative overflow-hidden shadow-2xl border border-indigo-500/20"
           >
             <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-            
+
             <div className="border-b border-white/5 pb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-black text-[#E8EAFF] tracking-tight uppercase">Confirm Details</h2>
@@ -1410,9 +1407,8 @@ export default function PublicRegistrationPortal() {
                 </ReactMarkdown>
               </div>
               <label className="flex items-start gap-3 cursor-pointer select-none group">
-                <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${
-                  agreedToTerms ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
-                }`}>
+                <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${agreedToTerms ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
+                  }`}>
                   <input
                     type="checkbox"
                     checked={agreedToTerms}
@@ -1458,9 +1454,8 @@ export default function PublicRegistrationPortal() {
                   </div>
                   <div className="px-8 py-5 border-t border-white/5 bg-white/[0.01] shrink-0 space-y-3">
                     <label className="flex items-start gap-3 cursor-pointer select-none group">
-                      <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${
-                        agreedToTerms ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
-                      }`}>
+                      <div className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-all ${agreedToTerms ? "bg-indigo-500 border-indigo-500" : "bg-white/5 border-white/20 group-hover:border-indigo-400/50"
+                        }`}>
                         <input
                           type="checkbox"
                           checked={agreedToTerms}
@@ -1514,17 +1509,17 @@ export default function PublicRegistrationPortal() {
         </div>
       ) : (
         <div className="w-full max-w-6xl grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-          
+
           {/* Left Column: Registration Form (col-span-7) */}
           <div className="md:col-span-7 space-y-6">
-            <motion.form 
+            <motion.form
               onSubmit={handleProceedToPreview}
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               className="w-full glass-3d p-6 md:p-10 rounded-[2.5rem] bg-white/5 space-y-8 relative overflow-hidden shadow-2xl"
             >
               <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-              
+
               <div className="border-b border-white/5 pb-4">
                 <h2 className="text-xl font-black text-[#E8EAFF] tracking-tight uppercase">Registration Details</h2>
                 <p className="text-[10px] text-muted font-bold uppercase tracking-wider mt-1">Please enter your information below to register</p>
@@ -1558,9 +1553,8 @@ export default function PublicRegistrationPortal() {
                               placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
                               value={formData[field.id] || ""}
                               onChange={(e) => handleInputChange(field.id, e.target.value)}
-                              className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all ${
-                                getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                              }`}
+                              className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                                }`}
                             />
                           </div>
                         )}
@@ -1580,9 +1574,8 @@ export default function PublicRegistrationPortal() {
                               placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
                               value={formData[field.id] || ""}
                               onChange={(e) => handleInputChange(field.id, e.target.value)}
-                              className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF]/50 cursor-not-allowed focus:border-indigo-500 focus:ring-0 transition-all ${
-                                getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                              }`}
+                              className={`h-12 w-full bg-white/5 border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF]/50 cursor-not-allowed focus:border-indigo-500 focus:ring-0 transition-all ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                                }`}
                             />
                             {field.id === "email" && (
                               <p className="text-[10px] text-indigo-400 mt-1 font-bold">Bound to your verified login email.</p>
@@ -1594,11 +1587,11 @@ export default function PublicRegistrationPortal() {
                         {fieldType === "phone" && (
                           (() => {
                             const rawValue = formData[field.id] || "";
-                            
+
                             // Parse country code and number
                             let selectedCc = "+91"; // default
                             let numVal = rawValue;
-                            
+
                             for (const cc of countryCodes) {
                               if (rawValue.startsWith(cc.code)) {
                                 selectedCc = cc.code;
@@ -1606,16 +1599,16 @@ export default function PublicRegistrationPortal() {
                                 break;
                               }
                             }
-                            
+
                             // Real-time validation
                             const isInvalid = numVal.length > 0 && (numVal.length < 7 || numVal.length > 15 || !/^\d+$/.test(numVal));
-                            
+
                             const handlePhoneChange = (newCc: string, newNum: string) => {
                               const filteredNum = newNum.replace(/\D/g, "");
                               const combined = newCc + filteredNum;
                               handleInputChange(field.id, combined);
                             };
-                            
+
                             return (
                               <div className="space-y-1.5 w-full">
                                 <div className="flex gap-2">
@@ -1644,16 +1637,15 @@ export default function PublicRegistrationPortal() {
                                       placeholder={field.placeholder || "Enter phone number..."}
                                       value={numVal}
                                       onChange={(e) => handlePhoneChange(selectedCc, e.target.value)}
-                                      className={`h-12 w-full bg-white/5 border rounded-xl font-semibold text-xs text-[#E8EAFF] focus:ring-0 transition-all ${
-                                        isInvalid 
-                                          ? "border-rose-500/50 focus:border-rose-500" 
+                                      className={`h-12 w-full bg-white/5 border rounded-xl font-semibold text-xs text-[#E8EAFF] focus:ring-0 transition-all ${isInvalid
+                                          ? "border-rose-500/50 focus:border-rose-500"
                                           : "border-white/10 focus:border-indigo-500"
-                                      } ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"}`}
+                                        } ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"}`}
                                     />
                                   </div>
                                 </div>
                                 {isInvalid && (
-                                  <motion.p 
+                                  <motion.p
                                     initial={{ opacity: 0, y: -4 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     className="text-[10px] text-rose-400 font-bold text-left pl-2"
@@ -1697,9 +1689,8 @@ export default function PublicRegistrationPortal() {
                                         handleInputChange(field.id, e.target.value);
                                         handleInputChange(`${field.id}_state`, "");
                                       }}
-                                      className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
-                                        getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                                      }`}
+                                      className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                                        }`}
                                     >
                                       <option value="" className="bg-[#080912]">Select Country...</option>
                                       {countries.map((country) => (
@@ -1771,9 +1762,8 @@ export default function PublicRegistrationPortal() {
                             <select
                               value={formData[field.id] || ""}
                               onChange={(e) => handleInputChange(field.id, e.target.value)}
-                              className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${
-                                getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
-                              }`}
+                              className={`h-12 w-full bg-[#0d0e1b] border border-white/10 rounded-xl font-semibold text-xs text-[#E8EAFF] focus:border-indigo-500 focus:ring-0 transition-all cursor-pointer ${getFieldIcon(field.id) ? "pl-12 pr-4" : "px-4"
+                                }`}
                             >
                               {(field.options || []).map((opt) => (
                                 <option key={opt} value={opt} className="bg-[#080912]">
@@ -1815,10 +1805,10 @@ export default function PublicRegistrationPortal() {
                                   </div>
                                   <div className="min-w-0">
                                     <p className="text-xs font-black text-[#E8EAFF] uppercase tracking-wider truncate">File Uploaded</p>
-                                    <a 
-                                      href={formData[field.id]} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer" 
+                                    <a
+                                      href={formData[field.id]}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
                                       className="text-[9px] text-indigo-400 font-bold hover:underline truncate block"
                                     >
                                       View Uploaded File
@@ -1845,7 +1835,7 @@ export default function PublicRegistrationPortal() {
                                   disabled={uploadingField !== null}
                                   className="hidden"
                                 />
-                                
+
                                 {uploadingField === field.id ? (
                                   <div className="flex flex-col items-center gap-2">
                                     <Loader2 className="h-6 w-6 text-indigo-400 animate-spin" />
@@ -1973,26 +1963,26 @@ export default function PublicRegistrationPortal() {
 
           {/* Right Column: Event Info on top (col-span-5) */}
           <div className="md:col-span-5 space-y-6 md:sticky md:top-8">
-            <motion.div 
+            <motion.div
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               className="w-full glass-3d p-8 rounded-[2.5rem] bg-white/5 border border-white/10 space-y-6 relative overflow-hidden shadow-2xl"
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-              
+
               <div className="flex items-center gap-4">
                 {config.logo_url ? (
-                  <img 
-                    src={config.logo_url} 
-                    alt="Event Logo" 
-                    className="h-16 object-contain rounded-xl border border-white/10 bg-white/5 p-2" 
+                  <img
+                    src={config.logo_url}
+                    alt="Event Logo"
+                    className="h-16 object-contain rounded-xl border border-white/10 bg-white/5 p-2"
                   />
                 ) : (
                   <div className="h-14 w-14 glass-3d rounded-2xl flex items-center justify-center border-indigo-500/30 shadow-xl">
                     <Globe className="h-6 w-6 text-indigo-400" />
                   </div>
                 )}
-                
+
                 <div>
                   <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.3em] block">
                     Featured Event
@@ -2058,7 +2048,7 @@ export default function PublicRegistrationPortal() {
 
               <div className="pt-6 border-t border-white/5">
                 <div className="text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-40 text-center">
-                  EventOS Intelligence Desk
+                  EventX OS Intelligence Desk
                 </div>
               </div>
             </motion.div>

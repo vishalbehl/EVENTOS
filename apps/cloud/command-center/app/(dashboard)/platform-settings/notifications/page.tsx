@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { 
+import {
   Mail, Search, RefreshCw, Send, Save, Layout, Eye, Code, FileCode2
 } from "lucide-react";
 import { toast } from "sonner";
@@ -22,7 +22,7 @@ const TEMPLATES: EmailTemplate[] = [
   {
     id: "tpl-1",
     name: "Organiser Invitation",
-    subject: "Welcome to Eventos! Setup your organizer account",
+    subject: "Welcome to EventX OS! Setup your organizer account",
     category: "auth",
     htmlContent: `<!DOCTYPE html>
 <html>
@@ -36,7 +36,7 @@ const TEMPLATES: EmailTemplate[] = [
 </head>
 <body>
   <div class="card">
-    <div class="logo">EVENTOS</div>
+    <div class="logo">EVENTX OS</div>
     <h2>Welcome to the Platform!</h2>
     <p>You have been invited by the platform supervisor to set up your organizer dashboard account for your upcoming conference.</p>
     <div style="text-align: center; margin: 24px 0;">
@@ -135,8 +135,8 @@ export default function EmailTemplatesPage() {
   };
 
   const filteredTemplates = useMemo(() => {
-    return TEMPLATES.filter(t => 
-      searchQuery === "" || 
+    return TEMPLATES.filter(t =>
+      searchQuery === "" ||
       t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.subject.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -171,7 +171,7 @@ export default function EmailTemplatesPage() {
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 items-start h-[600px] min-h-0">
-        
+
         {/* Left Column (35%) — List Selector */}
         <div className="lg:col-span-3 bg-surface border border-border rounded-xl p-4 flex flex-col gap-4 h-full min-h-0">
           <div className="relative">
@@ -220,7 +220,7 @@ export default function EmailTemplatesPage() {
               <h4 className="text-xs font-bold text-[var(--text-primary)] truncate">{activeTemplate.name}</h4>
               <p className="text-[10px] text-[var(--text-tertiary)] truncate mt-0.5">Subject: {activeTemplate.subject}</p>
             </div>
-            
+
             <div className="flex gap-1.5 bg-surface border border-border rounded-xl p-1 shrink-0">
               <button
                 type="button"

@@ -13,7 +13,6 @@ class ProjectService:
         organization_id: uuid.UUID,
         event_id: uuid.UUID,
         name: str,
-        service_request_id: Optional[uuid.UUID] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         project_manager_id: Optional[uuid.UUID] = None
@@ -24,7 +23,6 @@ class ProjectService:
             id=uuid.uuid4(),
             organization_id=organization_id,
             event_id=event_id,
-            service_request_id=service_request_id,
             project_code=project_code,
             name=name,
             status="INITIATED",
@@ -188,36 +186,6 @@ class ProjectService:
                     
         await db.flush()
         return True
-
-    @staticmethod
-    async def create_project_from_request(db: AsyncSession, request: Any) -> Optional[Project]:
-        # Fetch event dates
-        event_stmt = select(Event).where(Event.id == request.event_id)
-        res = await db.execute(event_stmt)
-        event = res.scalar_one_or_none()
-        start_date = event.start_date if event else date.today()
-        end_date = event.end_date if event else date.today()
-
-        project = await ProjectService.create_project(
-            db=db,
-            organization_id=request.organization_id,
-            event_id=request.event_id,
-            name=f"Project: {request.title}",
-            service_request_id=request.id,
-            start_date=start_date,
-            end_date=end_date,
-            project_manager_id=request.requested_by
-        )
-
-        # Generate milestones & tasks automatically
-        await ProjectService.generate_project_plan(db, project.id)
-
-        # Set service request status to IN_PROGRESS now that operations have initiated
-        request.status = "IN_PROGRESS"
-        request.updated_at = datetime.now(timezone.utc)
-        await db.flush()
-
-        return project
 
     @staticmethod
     async def recalculate_completion(db: AsyncSession, project_id: uuid.UUID) -> float:

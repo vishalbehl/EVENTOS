@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { ArrowRight, CheckCircle2, ClipboardList, MapPin, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useEvents } from "@/hooks/useEvents";
 import { useAddons } from "@/hooks/useBilling";
-import { useCatalogTemplates, useCreateServiceRequest } from "@/hooks/useVenueOperations";
+import { useCatalogTemplates, useCreateServiceRequest, useCatalogTemplate } from "@/hooks/useVenueOperations";
+import { orgApi } from "@/components/organizer/org/org-api";
+import { CommercialDetailsDialog } from "@/components/organizer/platform/CommercialDetailsDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -102,6 +104,42 @@ export default function VenueOperationsPage() {
 
   const [selectedEventId, setSelectedEventId] = useState("");
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
+
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailType, setDetailType] = useState<"addon" | "template" | null>(null);
+  const [detailData, setDetailData] = useState<any | null>(null);
+
+  const [activeTemplateSlug, setActiveTemplateSlug] = useState<string | null>(null);
+
+  // Hook to fetch template by slug
+  const { data: templateDetailRes } = useCatalogTemplate(activeTemplateSlug);
+
+  useEffect(() => {
+    if (activeTemplateSlug && templateDetailRes) {
+      setDetailType("template");
+      setDetailData(templateDetailRes);
+      setDetailOpen(true);
+    }
+  }, [templateDetailRes, activeTemplateSlug]);
+
+  const handleOpenAddonDetails = async (addonId: string) => {
+    try {
+      const res = await orgApi.addon(addonId);
+      setDetailType("addon");
+      setDetailData(res);
+      setDetailOpen(true);
+    } catch (err) {
+      console.error("Failed to fetch addon details", err);
+    }
+  };
+
+  const handleOpenTemplateDetails = (slug: string) => {
+    setActiveTemplateSlug(null);
+    setTimeout(() => {
+      setActiveTemplateSlug(slug);
+    }, 10);
+  };
+
   const [answers, setAnswers] = useState({
     maxAttendees: attendeeRangeOptions[1].value,
     maxSpeakers: speakerRangeOptions[1].value,
@@ -148,6 +186,10 @@ export default function VenueOperationsPage() {
             ? addon.template_types.map((item: string) => item === "srr" ? "SRR" : item).join(" · ")
             : "Other",
           priceLabel: (() => {
+            const finalPrice = toNumber(addon.final_price);
+            if (finalPrice !== null && finalPrice > 0) {
+              return formatCurrency(finalPrice);
+            }
             const minPrice = toNumber(addon.min_price_inr ?? addon.price_inr);
             const maxPrice = toNumber(addon.max_price_inr);
             if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
@@ -155,6 +197,7 @@ export default function VenueOperationsPage() {
             }
             return formatCurrency(minPrice);
           })(),
+          priceUnit: addon.price_unit || undefined,
           isActive: addon.is_active !== false,
           templateTypes: Array.isArray(addon.template_types) ? addon.template_types : [],
         })),
@@ -209,12 +252,8 @@ export default function VenueOperationsPage() {
   );
 
   const recommendedAddons = useMemo(
-    () =>
-      venueAddons.filter((addon) => {
-        if (!addon.templateTypes.length) return true;
-        return addon.templateTypes.some((type: string) => recommendedTypes.has(type));
-      }),
-    [venueAddons, recommendedTypes]
+    () => venueAddons,
+    [venueAddons]
   );
 
   const submitServiceRequest = async () => {
@@ -262,14 +301,14 @@ export default function VenueOperationsPage() {
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <EnterprisePanel className="p-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-50">
-              <Sparkles className="h-5 w-5 text-violet-500" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5">
+              <Sparkles className="h-5 w-5 text-[var(--color-primary-mid)]" />
             </div>
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-slate-950">
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
                 Venue questionnaire
               </h2>
-              <p className="mt-1 text-[13px] text-slate-500">
+              <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
                 We use this to recommend the smallest templates that fully cover the event brief.
               </p>
             </div>
@@ -305,14 +344,14 @@ export default function VenueOperationsPage() {
 
         <EnterprisePanel className="p-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-50">
-              <ClipboardList className="h-5 w-5 text-violet-500" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5">
+              <ClipboardList className="h-5 w-5 text-[var(--color-primary-mid)]" />
             </div>
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-slate-950">
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
                 Request context
               </h2>
-              <p className="mt-1 text-[13px] text-slate-500">
+              <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
                 Select the event receiving the venue setup request and send the recommendations directly to service operations.
               </p>
             </div>
@@ -370,10 +409,10 @@ export default function VenueOperationsPage() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-slate-950">
-            Recommended venue templates
+          <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
+            Recommended Venue Templates
           </h2>
-          <p className="mt-1 text-[13px] text-slate-500">
+          <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
             These recommendations follow the questionnaire pattern from the quote builder.
           </p>
         </div>
@@ -383,6 +422,7 @@ export default function VenueOperationsPage() {
               key={template.id}
               template={template}
               ctaLabel="Included in request"
+              onDetails={() => handleOpenTemplateDetails(template.meta.slug)}
             />
           ))}
         </div>
@@ -391,10 +431,10 @@ export default function VenueOperationsPage() {
       <section className="space-y-4">
         <div className="flex items-end justify-between gap-4">
           <div>
-            <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-slate-950">
-              Venue services and add-ons
+            <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
+              Additional Venue Services
             </h2>
-            <p className="mt-1 text-[13px] text-slate-500">
+            <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
               These are the venue-facing packages from the add-on catalog, filtered against the recommended template types.
             </p>
           </div>
@@ -414,6 +454,7 @@ export default function VenueOperationsPage() {
                     : [...current, addon.id]
                 )
               }
+              onDetails={() => handleOpenAddonDetails(addon.id)}
             />
           ))}
         </div>
@@ -421,19 +462,26 @@ export default function VenueOperationsPage() {
 
       <EnterprisePanel className="p-6">
         <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-50">
-            <CheckCircle2 className="h-5 w-5 text-violet-500" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5">
+            <CheckCircle2 className="h-5 w-5 text-[var(--color-primary-mid)]" />
           </div>
           <div>
-            <p className="text-[16px] font-semibold tracking-[-0.02em] text-slate-950">
-              This page is tied to the service request workflow
+            <p className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
+              You can review template guidance, select additional venue services, and send the request.
             </p>
-            <p className="mt-2 text-[14px] leading-6 text-slate-500">
-              Organizers can review template guidance, select venue services, and push the request into the service-request pipeline without switching over to command center.
+            <p className="mt-2 text-[14px] leading-6 text-[var(--color-text-secondary)]">
+              We will review your request and contact you with a custom quotation for your requested services. Thank You for choosing our Venue Services.
             </p>
           </div>
         </div>
       </EnterprisePanel>
+
+      <CommercialDetailsDialog
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        type={detailType}
+        data={detailData}
+      />
     </div>
   );
 }
@@ -459,7 +507,7 @@ function QuestionBlock({
             onClick={() => onChange(option.value)}
             className={
               value === option.value
-                ? "rounded-full border border-violet-500 bg-violet-600 px-4 py-2 text-[12px] font-semibold text-white"
+                ? "rounded-full border border-[var(--pri)] bg-[var(--pri)] px-4 py-2 text-[12px] font-semibold text-black"
                 : "rounded-full border border-[var(--border-default)] bg-[var(--bg-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--text-secondary)]"
             }
           >

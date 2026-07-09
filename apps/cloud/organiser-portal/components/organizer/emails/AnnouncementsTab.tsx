@@ -12,10 +12,14 @@ import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/card";
 import { apiClient } from "@/lib/api-client";
 
-export default function AnnouncementsTab({ eventId }: { eventId: string }) {
+export default function AnnouncementsTab({ eventId, filterAudience }: { eventId: string; filterAudience?: "all" | "speakers" | "participants" }) {
   const [announcementId, setAnnouncementId] = useState("");
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const displayedAnnouncements = filterAudience && filterAudience !== "all"
+    ? announcements.filter((a) => a.audience === filterAudience)
+    : announcements;
 
   // Composer fields
   const [title, setTitle] = useState("");
@@ -551,7 +555,7 @@ export default function AnnouncementsTab({ eventId }: { eventId: string }) {
         <div className="lg:col-span-6 flex flex-col space-y-4 min-h-0 h-[650px]">
           <Card className="glass-3d rounded-[2rem] p-6 border-default bg-[color-mix(in_srgb,var(--text)_3%,transparent)] flex flex-col h-full min-h-0">
             <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text)] border-b border-white/5 pb-3 shrink-0">
-              Active Bulletins Feed ({announcements.length})
+              Active Bulletins Feed ({displayedAnnouncements.length})
             </h3>
 
             <div className="flex-1 overflow-y-auto pr-1 space-y-4 custom-scrollbar min-h-0 mt-4">
@@ -560,8 +564,8 @@ export default function AnnouncementsTab({ eventId }: { eventId: string }) {
                   <Loader2 className="h-6 w-6 text-[var(--pri)] animate-spin" />
                   <span className="text-[10px] font-black text-muted uppercase tracking-wider">Fetching Feed...</span>
                 </div>
-              ) : announcements.length > 0 ? (
-                announcements.map((ann, idx) => {
+              ) : displayedAnnouncements.length > 0 ? (
+                displayedAnnouncements.map((ann, idx) => {
                   const type = ann.priority || "info";
                   const isPinned = ann.is_pinned;
                   const isExpanded = !!expandedFeed[ann.id || idx];

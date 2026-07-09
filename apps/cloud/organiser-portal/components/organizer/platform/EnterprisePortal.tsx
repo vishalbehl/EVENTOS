@@ -40,7 +40,7 @@ export function EnterprisePanel({
   children: ReactNode;
   className?: string;
 }) {
-  return <section className={cn("hex-panel rounded-[28px]", className)}>{children}</section>;
+  return <section className={cn("hex-panel rounded-[28px] overflow-hidden", className)}>{children}</section>;
 }
 
 export function EnterpriseStatCard({

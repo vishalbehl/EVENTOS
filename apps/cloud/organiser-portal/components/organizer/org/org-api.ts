@@ -63,7 +63,9 @@ export const orgApi = {
   platformUpdate: (id: string, data: Record<string, unknown>) => apiClient.put(`/platform/organisations/${id}`, data),
   impersonate: (id: string) => apiClient.post<{ access_token: string }>(`/platform/organisations/${id}/impersonate`),
   plans: () => apiClient.get<any[]>("/organisations/plans"),
+  plan: (id: string) => apiClient.get<any>("/organisations/plans/" + id),
   addons: () => apiClient.get<any[]>("/organisations/addons"),
+  addon: (id: string) => apiClient.get<any>("/organisations/addons/" + id),
   calculatePrice: (data: Record<string, any>) => apiClient.post<any>("/organisations/calculate-price", data),
   subscribe: (data: Record<string, unknown>) => apiClient.post<any>("/organisations/me/subscribe", data),
 };

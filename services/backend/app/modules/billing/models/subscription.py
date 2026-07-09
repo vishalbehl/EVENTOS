@@ -118,10 +118,12 @@ class Addon(Base):
     min_price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     max_price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     billing_unit: Mapped[Optional[str]] = mapped_column(String(20))
+    price_unit: Mapped[Optional[str]] = mapped_column(String(50))
     available_for_plans: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String))
     is_optional_for_plan: Mapped[Optional[str]] = mapped_column(String(50))
     included_in_plan: Mapped[Optional[str]] = mapped_column(String(50))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    final_price: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), default=0.0)
     
     features_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)
     hardware_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)

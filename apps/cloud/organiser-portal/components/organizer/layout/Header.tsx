@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
@@ -14,12 +14,14 @@ import {
   User,
   Wifi,
   WifiOff,
+  Search,
 } from "lucide-react";
 import { cn, getTimezoneAbbrev } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 export function Header() {
+  const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
   const eventId = params?.eventId as string | undefined;
@@ -74,19 +76,23 @@ export function Header() {
   }, [pathname]);
 
   const breadcrumbs = useMemo(() => {
-    return pathname
-      .split("/")
-      .filter(Boolean)
-      .filter((part) => part !== eventId)
-      .map((part, index, parts) => ({
+    const parts = pathname.split("/").filter(Boolean);
+    const crumbs: { label: string; href: string }[] = [];
+    let currentPath = "";
+    parts.forEach((part) => {
+      currentPath += `/${part}`;
+      if (part === eventId) return;
+      crumbs.push({
         label: part.replace(/-/g, " "),
-        href: `/${parts.slice(0, index + 1).join("/")}`,
-      }));
+        href: currentPath,
+      });
+    });
+    return crumbs;
   }, [pathname, eventId]);
 
   return (
     <header
-      className={cn("sticky top-0 z-30 flex w-full items-center justify-between px-6", isPlatformWorkspace ? "h-[78px]" : "h-16")}
+      className={cn("sticky top-0 z-30 flex w-full items-center justify-between px-6", isPlatformWorkspace ? "h-[78px]" : "h-[72px]")}
       style={{
         background: "rgba(5,5,5,0.78)",
         borderBottom: "1px solid var(--color-border)",
@@ -94,13 +100,7 @@ export function Header() {
         backdropFilter: "blur(14px)",
       }}
     >
-      {isPlatformWorkspace ? (
-        <div className="min-w-0">
-          <h1 className="truncate text-[28px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-            {pageTitle}
-          </h1>
-        </div>
-      ) : (
+      {!isPlatformWorkspace ? (
         <div className="flex min-w-0 items-center gap-3">
           <div
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
@@ -111,11 +111,11 @@ export function Header() {
           <div className="flex items-center gap-1.5 overflow-hidden">
             {breadcrumbs.map((crumb, index) => (
               <div key={crumb.href} className="flex items-center gap-1.5 whitespace-nowrap">
-                <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
+                {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />}
                 <Link
                   href={crumb.href}
                   className={cn(
-                    "text-[11px] font-semibold uppercase tracking-widest",
+                    "text-[10px] font-black uppercase tracking-widest transition-colors",
                     index === breadcrumbs.length - 1
                       ? "text-[var(--color-text-primary)]"
                       : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
@@ -127,13 +127,36 @@ export function Header() {
             ))}
           </div>
         </div>
+      ) : (
+        <div className="min-w-0">
+          <h1 className="truncate text-[28px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
+            {pageTitle}
+          </h1>
+        </div>
       )}
+
+      {/* Centered Search Command Bar */}
+      <div className="hidden max-w-sm flex-1 md:block relative mx-4">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search console..."
+            className="h-9 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-3)] pl-9 pr-10 text-[12px] text-[var(--color-text-primary)] placeholder-[var(--color-text-placeholder)] focus:border-[var(--color-primary-mid)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)] transition-all"
+          />
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]">
+            <Search className="h-3.5 w-3.5" />
+          </div>
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-bold text-[var(--color-text-muted)] select-none">
+            ⌘K
+          </div>
+        </div>
+      </div>
 
       <div className="flex items-center gap-3">
         {!isPlatformWorkspace ? (
           <>
-            <div className="hidden border-r border-[var(--color-border)] pr-4 xl:flex xl:flex-col xl:items-end">
-              <p className="mb-0.5 text-[13px] font-bold leading-none text-[var(--color-text-primary)]">
+            <div className="hidden pr-4 xl:flex xl:flex-col xl:items-end">
+              <p className="mb-0.5 text-[13px] font-bold leading-none text-[var(--color-text-primary)] tabular-nums">
                 {time
                   ? time.toLocaleTimeString("en-IN", {
                       hour: "2-digit",
@@ -144,26 +167,26 @@ export function Header() {
                     })
                   : "--:--:-- --"}
               </p>
-              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--color-primary-mid)]">
-                {timezone.split("/").pop()?.replace(/_/g, " ")} ({getTimezoneAbbrev(timezone, time || new Date())})
+              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--color-primary-mid)] leading-none mt-1">
+                {time ? time.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: timezone }).toUpperCase() : ""}
               </p>
             </div>
             {eventId ? (
               <div
-                className="flex h-8 items-center gap-2 rounded-lg px-3"
+                className="flex h-8 items-center gap-2 rounded-lg px-3 border mr-2"
                 style={{
                   background: "var(--color-surface-3)",
-                  border: `1px solid ${isConnected ? "rgba(134,239,172,0.25)" : "rgba(253,224,71,0.25)"}`,
+                  borderColor: isConnected ? "rgba(134,239,172,0.15)" : "rgba(253,224,71,0.15)",
                 }}
               >
                 {isConnected ? (
-                  <Wifi className="h-3.5 w-3.5 text-[var(--color-success)]" />
+                  <Wifi className="h-3 w-3 text-[var(--color-success)]" />
                 ) : (
-                  <WifiOff className="h-3.5 w-3.5 text-[var(--color-warning)]" />
+                  <WifiOff className="h-3 w-3 text-[var(--color-warning)]" />
                 )}
                 <span
                   className={cn(
-                    "text-[10px] font-bold uppercase tracking-widest",
+                    "text-[9px] font-bold uppercase tracking-widest",
                     isConnected ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"
                   )}
                 >

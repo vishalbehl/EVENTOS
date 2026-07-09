@@ -30,6 +30,18 @@ import {
   MonitorPlay,
   Activity,
   ClipboardPlus,
+  Clock,
+  CheckSquare,
+  LayoutDashboard,
+  CreditCard,
+  ScanLine,
+  Contact,
+  FileEdit,
+  User,
+  LayoutGrid,
+  Award,
+  Download,
+  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/useUIStore";
@@ -53,7 +65,7 @@ export function Sidebar() {
   const { isSidebarCollapsed: isCollapsed, toggleSidebar } = useUIStore();
   const { user, logout } = useAuthStore();
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
-  const { checkPermission } = usePermissions(eventId);
+  const { checkPermission, isLoading } = usePermissions(eventId);
   const { data: event } = useEvent(eventId || "");
 
   const isEventWorkspace = Boolean(eventId);
@@ -70,8 +82,9 @@ export function Sidebar() {
     setOpenMenus((prev) => ({ ...prev, [label]: !prev[label] }));
   };
 
-  const filterRoutesByPermissions = (routes: NavItem[]) =>
-    routes
+  const filterRoutesByPermissions = (routes: NavItem[]) => {
+    if (isLoading) return routes;
+    return routes
       .map((route) => {
         if (route.subItems) {
           const allowed = route.subItems.filter(
@@ -83,132 +96,122 @@ export function Sidebar() {
         return route;
       })
       .filter(Boolean) as NavItem[];
+  };
 
   const platformRoutes: NavItem[] = [
     { label: "Dashboard", icon: Home, href: "/dashboard" },
     { label: "Events", icon: Calendar, href: "/events", permission: PERMISSIONS.EVENTS_VIEW },
+    { label: "Analytics", icon: Activity, href: "/analytics", permission: PERMISSIONS.ANALYTICS_VIEW },
     { label: "Subscriptions", icon: Globe, href: "/subscriptions" },
     { label: "Billing", icon: Banknote, href: "/billing" },
     { label: "Venue Operations", icon: ClipboardPlus, href: "/venue-operations" },
     { label: "Users", icon: Users, href: "/users", permission: PERMISSIONS.USERS_VIEW },
     { label: "Settings", icon: Settings, href: "/settings" },
-    { label: "Templates", icon: LayoutTemplate, href: "/templates" },
-    { label: "Integrations", icon: SlidersHorizontal, href: "/connections" },
     { label: "Help & Support", icon: BookOpen, href: "/help-support" },
   ];
 
   const eventRoutes: NavItem[] = [
-    { label: "Overview", icon: Home, href: `/events/${eventId}/speaker/dashboard` },
+    { label: "Overview", icon: Home, href: `/events/${eventId}/dashboard` },
     {
-      label: "PROGRAM",
+      label: "Planning",
+      icon: LayoutGrid,
+      subItems: [
+        { label: "Event Details", icon: FileText, href: `/events/${eventId}/planning/details`, permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Timeline", icon: Clock, href: `/events/${eventId}/planning/timeline` },
+        { label: "Tasks", icon: CheckSquare, href: `/events/${eventId}/planning/timeline` },
+      ],
+    },
+    {
+      label: "Registration",
+      icon: Users,
+      subItems: [
+        { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/registration/dashboard` },
+        { label: "Registrations", icon: Users, href: `/events/${eventId}/registration/participants` },
+        { label: "Payments", icon: CreditCard, href: `/events/${eventId}/registration/financials` },
+        { label: "Check-in", icon: ScanLine, href: `/events/${eventId}/registration/review` },
+        { label: "Templates", icon: FileText, href: `/events/${eventId}/registration/template-designer` },
+        { label: "Forms", icon: FileEdit, href: `/events/${eventId}/registration/form-builder` },
+        { label: "Certificates", icon: Award, href: `/events/${eventId}/registration/certificates` },
+        { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
+      ],
+    },
+    {
+      label: "Speakers",
+      icon: User,
+      subItems: [
+        { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/speakers/dashboard` },
+        { label: "Speaker Directory", icon: Users, href: `/events/${eventId}/speakers/list`, permission: PERMISSIONS.SPEAKERS_VIEW },
+        { label: "File Review", icon: FileVideo, href: `/events/${eventId}/speakers/files`, permission: PERMISSIONS.FILES_VIEW },
+        { label: "ePoster", icon: MonitorPlay, href: `/events/${eventId}/speakers/eposters`, permission: PERMISSIONS.POSTERS_VIEW },
+        { label: "Analytics", icon: TrendingUp, href: `/events/${eventId}/speakers/analytics`, permission: PERMISSIONS.SPEAKERS_VIEW },
+        { label: "Export", icon: Download, href: `/events/${eventId}/speakers/export`, permission: PERMISSIONS.SPEAKERS_VIEW },
+      ],
+    },
+    {
+      label: "Sessions",
       icon: Calendar,
       subItems: [
-        { label: "Sessions", icon: Calendar, href: `/events/${eventId}/speaker/sessions`, permission: PERMISSIONS.SESSIONS_VIEW },
-        { label: "Rooms", icon: MapPin, href: `/events/${eventId}/speaker/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
+        { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/sessions/dashboard` },
+        { label: "Agenda", icon: Calendar, href: `/events/${eventId}/sessions/agenda`, permission: PERMISSIONS.SESSIONS_VIEW },
+        { label: "Rooms & Devices", icon: MapPin, href: `/events/${eventId}/sessions/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
       ],
     },
     {
-      label: "SPEAKERS",
-      icon: Users,
-      subItems: [
-        { label: "Speakers", icon: Users, href: `/events/${eventId}/speaker/speakers`, permission: PERMISSIONS.SPEAKERS_VIEW },
-        { label: "File Monitoring", icon: FileVideo, href: `/events/${eventId}/speaker/files`, permission: PERMISSIONS.FILES_VIEW },
-        { label: "Posters", icon: MonitorPlay, href: `/events/${eventId}/speaker/eposters`, permission: PERMISSIONS.POSTERS_VIEW },
-      ],
-    },
-    {
-      label: "COMMUNICATION",
+      label: "Communication",
       icon: Mail,
       subItems: [
-        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/speaker/emails`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/speaker/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Notifications", icon: Bell, href: `/events/${eventId}/speaker/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
+        { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/communication/dashboard` },
+        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/communication/emails`, permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Email Designer", icon: FileEdit, href: `/events/${eventId}/communication/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Notifications", icon: Bell, href: `/events/${eventId}/communication/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
+        { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/communication/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
       ],
     },
     {
-      label: "DESIGN STUDIO",
+      label: "Design Studio",
       icon: Palette,
       subItems: [
-        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/speaker/theme`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/speaker/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
+        { label: "Badge Designer", icon: Contact, href: `/events/${eventId}/design-studio/badges` },
+        { label: "Certificate Designer", icon: Award, href: `/events/${eventId}/design-studio/certificates` },
+        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/design-studio/emails` },
+        { label: "Portal Designer", icon: MonitorPlay, href: `/events/${eventId}/design-studio/portals` },
       ],
-    },
-    {
-      label: "AUTOMATION",
-      icon: ClipboardList,
-      subItems: [{ label: "Workflows", icon: ClipboardList, href: `/events/${eventId}/speaker/workflows` }],
-    },
-  ];
-
-  const registrationRoutes: NavItem[] = [
-    { label: "Overview", icon: Home, href: `/events/${eventId}/registration/dashboard` },
-    {
-      label: "ATTENDEES",
-      icon: Users,
-      subItems: [
-        { label: "Participants", icon: Users, href: `/events/${eventId}/registration/participants` },
-        { label: "Review Queue", icon: ClipboardList, href: `/events/${eventId}/registration/review` },
-      ],
-    },
-    {
-      label: "DESIGN STUDIO",
-      icon: Palette,
-      subItems: [
-        { label: "Form Builder", icon: SlidersHorizontal, href: `/events/${eventId}/registration/form-builder` },
-        { label: "Theme Designer", icon: Palette, href: `/events/${eventId}/registration/theme` },
-        { label: "Template Designer", icon: LayoutTemplate, href: `/events/${eventId}/registration/template-designer` },
-        { label: "Email Designer", icon: Mail, href: `/events/${eventId}/registration/email-designer` },
-      ],
-    },
-    {
-      label: "COMMUNICATION",
-      icon: Mail,
-      subItems: [
-        { label: "Campaigns", icon: Mail, href: `/events/${eventId}/registration/emails` },
-        { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/registration/announcements` },
-      ],
-    },
-    {
-      label: "FINANCE",
-      icon: Banknote,
-      subItems: [{ label: "Financials", icon: Banknote, href: `/events/${eventId}/registration/financials` }],
     },
   ];
 
   const currentRoutes = useMemo(() => {
     if (isPlatformWorkspace) return filterRoutesByPermissions(platformRoutes);
-    if (isRegistrationWorkspace) return regEnabled ? filterRoutesByPermissions(registrationRoutes) : [];
-    return speakerEnabled ? filterRoutesByPermissions(eventRoutes) : [];
+    return filterRoutesByPermissions(eventRoutes);
   }, [
     isPlatformWorkspace,
-    isRegistrationWorkspace,
-    regEnabled,
-    speakerEnabled,
+    eventId,
     pathname,
+    isLoading,
   ]);
 
   const bottomRoutes = isPlatformWorkspace
     ? []
-    : isRegistrationWorkspace
-      ? [
-          { label: "Settings", icon: Settings, href: `/events/${eventId}/registration/settings` },
-          { label: "Documentation", icon: FileText, href: "/docs" },
-        ]
-      : [
-          { label: "Settings", icon: Settings, href: isEventWorkspace ? `/events/${eventId}/speaker/settings` : "/settings" },
-          { label: "Documentation", icon: FileText, href: "/docs" },
-        ];
+    : [
+        { label: "Settings", icon: Settings, href: `/events/${eventId}/speaker/settings` },
+        { label: "Documentation", icon: FileText, href: "/docs" },
+      ];
 
   useEffect(() => {
     if (!pathname) return;
     const openState: Record<string, boolean> = {};
+    let hasChanges = false;
     currentRoutes.forEach((route) => {
       if (route.subItems?.some((sub) => pathname === sub.href || pathname.startsWith(`${sub.href}/`))) {
-        openState[route.label] = true;
+        if (!openMenus[route.label]) {
+          openState[route.label] = true;
+          hasChanges = true;
+        }
       }
     });
-    setOpenMenus((prev) => ({ ...prev, ...openState }));
-  }, [pathname, currentRoutes]);
+    if (hasChanges) {
+      setOpenMenus((prev) => ({ ...prev, ...openState }));
+    }
+  }, [pathname, currentRoutes, openMenus]);
 
   const userInitials = user?.full_name
     ? user.full_name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()
@@ -244,7 +247,7 @@ export function Sidebar() {
               </div>
               <div className="min-w-0">
                 <p className="truncate text-[18px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                  HexOS
+                  EventX OS
                 </p>
                 <p className="text-[11px] text-[var(--color-text-muted)]">Organizer workspace</p>
               </div>
@@ -269,30 +272,12 @@ export function Sidebar() {
               isPlatformWorkspace
                 ? "border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)]"
-              )}
+            )}
             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
         </div>
-
-        {!isCollapsed && isPlatformWorkspace ? (
-          <div className="hex-panel mb-5 rounded-[18px] px-4 py-4">
-            <div className="flex items-center gap-3">
-              <div className="hex-icon-shell flex h-11 w-11 items-center justify-center text-[12px] font-semibold text-[var(--color-text-primary)]">
-                {userInitials}
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-[13px] font-semibold text-[var(--color-text-primary)]">
-                  {user?.organization_id ? "Organizer workspace" : "Organization"}
-                </p>
-                <p className="truncate text-[11px] text-[var(--color-text-muted)]">
-                  {user?.full_name || user?.email || "Event operations"}
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         <div className="flex-1 space-y-1 overflow-y-auto no-scrollbar">
           {currentRoutes.map((route) => (
@@ -326,7 +311,7 @@ export function Sidebar() {
           ))}
 
           {!isCollapsed && isPlatformWorkspace ? (
-            <div className="hex-panel mt-3 rounded-[20px] p-4">
+            <div className="hex-panel overflow-hidden mt-3 rounded-[20px] p-4">
               <p className="text-[12px] font-semibold text-[var(--color-text-primary)]">Workspace access</p>
               <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
                 Create your first event and unlock advanced modules when you're ready.
@@ -462,7 +447,7 @@ function SidebarItem({
           >
             {route.subItems.map((sub) => (
               <SidebarLeaf
-                key={sub.href}
+                key={sub.label}
                 route={sub}
                 pathname={pathname}
                 isCollapsed={false}
@@ -503,10 +488,10 @@ function SidebarLeaf({
         style={
           isActive
             ? {
-                background: "linear-gradient(135deg, rgba(224,255,0,0.16), rgba(224,255,0,0.06))",
-                color: "var(--color-text-primary)",
-                borderLeft: "3px solid var(--color-primary-mid)",
-              }
+              background: "linear-gradient(135deg, rgba(224,255,0,0.16), rgba(224,255,0,0.06))",
+              color: "var(--color-text-primary)",
+              borderLeft: "3px solid var(--color-primary-mid)",
+            }
             : { color: "var(--color-text-muted)" }
         }
       >

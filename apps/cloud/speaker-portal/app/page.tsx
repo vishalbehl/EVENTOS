@@ -17,7 +17,7 @@ export default function SpeakerPortalHome() {
       toast.error("Please enter a valid Event ID.");
       return;
     }
-    
+
     setIsSubmitting(true);
     setTimeout(() => {
       router.push(`/${eventId.trim()}`);
@@ -26,14 +26,14 @@ export default function SpeakerPortalHome() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-6 relative">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         className="glass-3d p-12 max-w-md w-full relative group overflow-hidden border-indigo-500/10 rounded-[3rem] bg-indigo-950/5"
       >
         {/* Animated Accent Line */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-500 to-transparent opacity-50" />
-        
+
         <header className="mb-10 text-center relative z-10">
           <div className="flex justify-center mb-6">
             <div className="h-16 w-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform duration-500">
@@ -61,9 +61,9 @@ export default function SpeakerPortalHome() {
               />
             </div>
           </div>
-          
-          <button 
-            type="submit" 
+
+          <button
+            type="submit"
             disabled={isSubmitting}
             className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
           >
@@ -84,7 +84,7 @@ export default function SpeakerPortalHome() {
       </motion.div>
 
       <div className="mt-8 text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-30">
-        Powered by EventOS Platform
+        Powered by EventX OS Platform
       </div>
     </div>
   );

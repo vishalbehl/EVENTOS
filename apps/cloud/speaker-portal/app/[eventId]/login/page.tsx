@@ -109,7 +109,7 @@ export default function SpeakerPortalLoginPage() {
       toast.error("Please enter a valid speaker code.");
       return;
     }
-    
+
     setLoading(true);
     setError(null);
     try {
@@ -263,209 +263,207 @@ export default function SpeakerPortalLoginPage() {
       country={config.country}
       organizerName={config.organizer_name}
     >
-    <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 relative">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass-3d p-12 max-w-md w-full relative group overflow-hidden"
-      >
-        {/* Animated Accent Line */}
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[var(--pri)] to-transparent opacity-50" />
-        
-        <header className="mb-8 text-center relative z-10">
-          <div className="flex justify-center mb-6">
-            <div className="h-16 w-16 rounded-2xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform duration-500">
-              <Command className="h-8 w-8 text-[var(--pri)]" />
-            </div>
-          </div>
-          <span className="text-[9px] font-black text-[var(--pri)] uppercase tracking-[0.3em] block mb-1">
-            {config.event_name}
-          </span>
-          <h1 className="text-3xl font-black tracking-tighter text-glow-indigo mb-2">
-            Speaker <span className="text-[var(--pri)]">Portal</span>
-          </h1>
-          <p className="text-muted text-[10px] font-black uppercase tracking-[0.2em]">Secure Speaker Access</p>
-        </header>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 relative">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-3d p-12 max-w-md w-full relative group overflow-hidden"
+        >
+          {/* Animated Accent Line */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[var(--pri)] to-transparent opacity-50" />
 
-        {/* Auth Mode Toggle */}
-        {step === "email" && (
-          <div className="relative flex gap-1 p-1 rounded-xl bg-white/5 border border-white/5 mb-8">
-            <button
-              onClick={() => { setLoginMode("code"); setError(null); }}
-              className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                loginMode === "code" ? "bg-[var(--pri)] text-white shadow-lg" : "text-muted hover:text-[#E8EAFF]"
-              }`}
-            >
-              Access Code
-            </button>
-            <button
-              onClick={() => { setLoginMode("email"); setError(null); }}
-              className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                loginMode === "email" ? "bg-[var(--pri)] text-white shadow-lg" : "text-muted hover:text-[#E8EAFF]"
-              }`}
-            >
-              Email & OTP
-            </button>
-          </div>
-        )}
-
-        <AnimatePresence mode="wait">
-          {loginMode === "code" ? (
-            <motion.form 
-              key="code-login"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 10 }}
-              onSubmit={handleCodeSubmit} 
-              className="space-y-6 relative z-10"
-            >
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Unique Access Code</label>
-                <div className="relative group">
-                  <input
-                    type="text"
-                    placeholder="A1B2C3D4"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    className="input text-center text-2xl tracking-[0.3em] uppercase font-mono h-16"
-                    maxLength={20}
-                    disabled={loading}
-                  />
-                  <Shield className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted/30 group-focus-within:text-[var(--pri)] transition-colors" />
-                </div>
+          <header className="mb-8 text-center relative z-10">
+            <div className="flex justify-center mb-6">
+              <div className="h-16 w-16 rounded-2xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform duration-500">
+                <Command className="h-8 w-8 text-[var(--pri)]" />
               </div>
+            </div>
+            <span className="text-[9px] font-black text-[var(--pri)] uppercase tracking-[0.3em] block mb-1">
+              {config.event_name}
+            </span>
+            <h1 className="text-3xl font-black tracking-tighter text-glow-indigo mb-2">
+              Speaker <span className="text-[var(--pri)]">Portal</span>
+            </h1>
+            <p className="text-muted text-[10px] font-black uppercase tracking-[0.2em]">Secure Speaker Access</p>
+          </header>
 
-              {error && (
-                <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                  className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
-                  <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                  <p className="text-xs font-bold text-rose-400">{error}</p>
-                </motion.div>
-              )}
-              
-              <button 
-                type="submit" 
-                disabled={loading}
-                className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
+          {/* Auth Mode Toggle */}
+          {step === "email" && (
+            <div className="relative flex gap-1 p-1 rounded-xl bg-white/5 border border-white/5 mb-8">
+              <button
+                onClick={() => { setLoginMode("code"); setError(null); }}
+                className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${loginMode === "code" ? "bg-[var(--pri)] text-white shadow-lg" : "text-muted hover:text-[#E8EAFF]"
+                  }`}
               >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
-                  <>
-                    Access Dashboard <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
+                Access Code
               </button>
-            </motion.form>
-          ) : (
-            <motion.div
-              key="email-login"
-              initial={{ opacity: 0, x: 10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              className="space-y-6"
-            >
-              <AnimatePresence mode="wait">
-                {step === "email" ? (
-                  <motion.form key="email-step" onSubmit={requestOtp} className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Registered Email Address</label>
-                      <div className="relative">
-                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--pri)]" />
-                        <input
-                          type="email"
-                          required
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="your@email.com"
-                          className="input !pl-12 h-14"
-                          disabled={loading}
-                        />
-                      </div>
-                    </div>
+              <button
+                onClick={() => { setLoginMode("email"); setError(null); }}
+                className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${loginMode === "email" ? "bg-[var(--pri)] text-white shadow-lg" : "text-muted hover:text-[#E8EAFF]"
+                  }`}
+              >
+                Email & OTP
+              </button>
+            </div>
+          )}
 
-                    {error && (
-                      <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
-                        <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                        <p className="text-xs font-bold text-rose-400">{error}</p>
-                      </motion.div>
-                    )}
+          <AnimatePresence mode="wait">
+            {loginMode === "code" ? (
+              <motion.form
+                key="code-login"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                onSubmit={handleCodeSubmit}
+                className="space-y-6 relative z-10"
+              >
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Unique Access Code</label>
+                  <div className="relative group">
+                    <input
+                      type="text"
+                      placeholder="A1B2C3D4"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      className="input text-center text-2xl tracking-[0.3em] uppercase font-mono h-16"
+                      maxLength={20}
+                      disabled={loading}
+                    />
+                    <Shield className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted/30 group-focus-within:text-[var(--pri)] transition-colors" />
+                  </div>
+                </div>
 
-                    <button
-                      type="submit"
-                      disabled={loading || !email}
-                      className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
-                    >
-                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
-                        <>
-                          Send OTP <ArrowRight className="h-4 w-4" />
-                        </>
-                      )}
-                    </button>
-                  </motion.form>
-                ) : (
-                  <motion.div key="otp-step" className="space-y-5">
-                    <OtpBoxes value={otp} onChange={setOtp} disabled={loading} />
-
-                    {!otpExpired ? (
-                      <p className="text-center text-xs font-bold text-muted">
-                        Expires in <Countdown seconds={600} onEnd={() => setOtpExpired(true)} />
-                      </p>
-                    ) : (
-                      <p className="text-center text-xs font-black text-amber-400">OTP expired — please resend.</p>
-                    )}
-
-                    {error && (
-                      <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
-                        <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                        <p className="text-xs font-bold text-rose-400">{error}</p>
-                      </motion.div>
-                    )}
-
-                    <button
-                      onClick={verifyOtp}
-                      disabled={loading || otp.replace(/\s/g, "").length < 6}
-                      className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
-                    >
-                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & Login"}
-                    </button>
-
-                    <div className="flex items-center justify-between pt-1">
-                      <button
-                        onClick={() => { setStep("email"); setOtp(""); setError(null); }}
-                        className="text-xs font-bold text-muted hover:text-[#E8EAFF] transition-colors"
-                      >
-                        ← Change email
-                      </button>
-                      <button
-                        onClick={resendOtp}
-                        disabled={!canResend || loading}
-                        className="flex items-center gap-1.5 text-xs font-black text-[var(--pri)] hover:text-indigo-300 disabled:text-white/20 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        {canResend ? "Resend OTP" : <span className="text-muted font-bold">Resend in <Countdown seconds={60} onEnd={() => setCanResend(true)} /></span>}
-                      </button>
-                    </div>
+                {error && (
+                  <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                    <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+                    <p className="text-xs font-bold text-rose-400">{error}</p>
                   </motion.div>
                 )}
-              </AnimatePresence>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
-        <footer className="mt-12 pt-8 border-t border-white/5 text-center">
-          <p className="text-xs font-medium text-muted leading-relaxed">
-            {loginMode === "code" 
-              ? "Can't find your code? Access details were sent to your registered email address."
-              : "OTP login requires both Registration and Speaker portal features to be active for the event."}
-          </p>
-        </footer>
-      </motion.div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
+                    <>
+                      Access Dashboard <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
+                </button>
+              </motion.form>
+            ) : (
+              <motion.div
+                key="email-login"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                className="space-y-6"
+              >
+                <AnimatePresence mode="wait">
+                  {step === "email" ? (
+                    <motion.form key="email-step" onSubmit={requestOtp} className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Registered Email Address</label>
+                        <div className="relative">
+                          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--pri)]" />
+                          <input
+                            type="email"
+                            required
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="your@email.com"
+                            className="input !pl-12 h-14"
+                            disabled={loading}
+                          />
+                        </div>
+                      </div>
 
-      <div className="mt-8 text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-30">
-        Powered by EventOS Platform
+                      {error && (
+                        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                          className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                          <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+                          <p className="text-xs font-bold text-rose-400">{error}</p>
+                        </motion.div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={loading || !email}
+                        className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
+                      >
+                        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
+                          <>
+                            Send OTP <ArrowRight className="h-4 w-4" />
+                          </>
+                        )}
+                      </button>
+                    </motion.form>
+                  ) : (
+                    <motion.div key="otp-step" className="space-y-5">
+                      <OtpBoxes value={otp} onChange={setOtp} disabled={loading} />
+
+                      {!otpExpired ? (
+                        <p className="text-center text-xs font-bold text-muted">
+                          Expires in <Countdown seconds={600} onEnd={() => setOtpExpired(true)} />
+                        </p>
+                      ) : (
+                        <p className="text-center text-xs font-black text-amber-400">OTP expired — please resend.</p>
+                      )}
+
+                      {error && (
+                        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                          className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                          <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+                          <p className="text-xs font-bold text-rose-400">{error}</p>
+                        </motion.div>
+                      )}
+
+                      <button
+                        onClick={verifyOtp}
+                        disabled={loading || otp.replace(/\s/g, "").length < 6}
+                        className="btn-primary w-full h-14 text-xs tracking-widest flex items-center justify-center gap-3 rounded-full"
+                      >
+                        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & Login"}
+                      </button>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <button
+                          onClick={() => { setStep("email"); setOtp(""); setError(null); }}
+                          className="text-xs font-bold text-muted hover:text-[#E8EAFF] transition-colors"
+                        >
+                          ← Change email
+                        </button>
+                        <button
+                          onClick={resendOtp}
+                          disabled={!canResend || loading}
+                          className="flex items-center gap-1.5 text-xs font-black text-[var(--pri)] hover:text-indigo-300 disabled:text-white/20 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          {canResend ? "Resend OTP" : <span className="text-muted font-bold">Resend in <Countdown seconds={60} onEnd={() => setCanResend(true)} /></span>}
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <footer className="mt-12 pt-8 border-t border-white/5 text-center">
+            <p className="text-xs font-medium text-muted leading-relaxed">
+              {loginMode === "code"
+                ? "Can't find your code? Access details were sent to your registered email address."
+                : "OTP login requires both Registration and Speaker portal features to be active for the event."}
+            </p>
+          </footer>
+        </motion.div>
+
+        <div className="mt-8 text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-30">
+          Powered by EventX OS Platform
+        </div>
       </div>
-    </div>
     </SpeakerPortalLayout>
   );
 }

@@ -225,12 +225,6 @@ from app.modules.blueprints.models import (
     EventBlueprint, BlueprintTemplate, BlueprintStep
 )
 
-# technology_services models
-from app.modules.technology_services.models import (
-    ServiceRequest, ServiceRequestItem, Requirement, RequirementDocument, RequestComment, RequestHistory,
-    RequestAssignment, ServiceLevel, ServiceSlaPolicy, ServiceSlaTarget, ServiceSlaBreach,
-    RequirementTemplate, RequirementFormTemplate, RequirementFormField, RequirementResponse
-)
 
 # operations_planning models
 from app.modules.operations_planning.models import (

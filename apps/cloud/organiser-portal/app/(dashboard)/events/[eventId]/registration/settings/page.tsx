@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useParams, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Globe, Tag, ShieldCheck, Palette, Box, Users } from 'lucide-react'
 import PortalTab from '@/components/organizer/registration/settings/PortalTab'
@@ -19,7 +19,15 @@ const TABS = [
 
 export default function RegistrationSettings() {
   const { eventId } = useParams()
-  const [activeTab, setActiveTab] = useState('portal')
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState(tabParam || 'portal')
+
+  useEffect(() => {
+    if (tabParam && ['portal', 'roles', 'capacity', 'access'].includes(tabParam)) {
+      setActiveTab(tabParam)
+    }
+  }, [tabParam])
 
   const eid = eventId as string
 

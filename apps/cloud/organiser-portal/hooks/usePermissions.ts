@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api-client";
 import { hasPermission, PermissionCode } from "@/lib/permissions";
 import { useMemo } from "react";
@@ -23,6 +23,7 @@ export function usePermissions(eventId?: string) {
     enabled: isAuthenticated && !!accessToken,
     // Context-sensitive permissions don't change often, but we want them ready
     staleTime: 1000 * 60, // 1 minute
+    placeholderData: keepPreviousData,
   });
 
   const permissions = data?.permissions || [];

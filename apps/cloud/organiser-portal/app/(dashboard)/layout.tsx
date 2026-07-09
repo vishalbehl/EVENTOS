@@ -261,7 +261,7 @@ export default function DashboardLayout({
 
         <div className="flex min-h-0 flex-1 flex-col px-4 py-4 md:px-6">
           <div
-            className="hex-panel flex min-h-0 flex-1 flex-col overflow-y-auto rounded-[30px] p-5 md:p-6"
+            className="hex-panel flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-[30px] p-5 md:p-6"
             style={{
               background:
                 "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)), var(--color-surface-1)",

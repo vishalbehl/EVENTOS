@@ -9,7 +9,6 @@ from app.modules.deployment_management.models import (
 )
 from app.modules.operations_planning.models import Project, ProjectTask
 from app.modules.resource_management.models import ResourceAllocation
-from app.modules.technology_services.models import ServiceRequest
 
 class ReadinessService:
     @staticmethod

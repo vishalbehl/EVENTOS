@@ -59,6 +59,16 @@ async def request_upload_url(
             detail=f"File exceeds maximum size of {event.max_file_size_mb} MB.",
         )
 
+    # Calculate version number dynamically
+    from sqlalchemy import func
+    version_result = await db.execute(
+        select(func.max(PresentationFile.version_number)).where(
+            PresentationFile.session_speaker_id == ss.id
+        )
+    )
+    max_version = version_result.scalar() or 0
+    next_version = max_version + 1
+
     storage_path, stored_filename = upload_service.build_presentation_path(
         event.id,
         ss.speaker_id,
@@ -82,7 +92,7 @@ async def request_upload_url(
         file_format=payload.file_format,
         upload_status="processing",
         upload_source="web",
-        version_number=1,
+        version_number=next_version,
         is_current_version=False,
     )
     db.add(pf)
@@ -266,7 +276,12 @@ async def reject_file(
 ) -> PresentationFileResponse:
     pf = await _get_file_or_404(db, file_id, event.id)
     pf.upload_status = "rejected"
-    pf.rejection_reason = payload.reason
+    timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    reason_entry = f"[{timestamp_str}]: {payload.reason}"
+    if pf.rejection_reason:
+        pf.rejection_reason = f"{pf.rejection_reason}\n{reason_entry}"
+    else:
+        pf.rejection_reason = reason_entry
     sp = await db.get(Speaker, pf.speaker_id)
     if sp:
         sp.upload_status = "rejected"

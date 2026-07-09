@@ -16,7 +16,6 @@ class Project(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False, index=True)
-    service_request_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("technology_services.service_requests.id", ondelete="SET NULL"), nullable=True)
     project_code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="INITIATED", index=True) # INITIATED, PLANNING, ACTIVE, COMPLETED, ON_HOLD, CANCELLED
@@ -26,7 +25,6 @@ class Project(Base):
     completion_percentage: Mapped[float] = mapped_column(Numeric(5, 2), default=0.0)
 
     # Relationships
-    service_request: Mapped[Optional["app.modules.technology_services.models.ServiceRequest"]] = relationship("ServiceRequest", back_populates="projects")
     project_manager: Mapped[Optional["app.modules.identity.models.user.User"]] = relationship("User")
     milestones: Mapped[List["Milestone"]] = relationship("Milestone", back_populates="project", cascade="all, delete-orphan")
     tasks: Mapped[List["ProjectTask"]] = relationship("ProjectTask", back_populates="project", cascade="all, delete-orphan")

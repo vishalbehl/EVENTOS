@@ -107,7 +107,7 @@ export function OnboardingWizard() {
       Promise.all([orgApi.plans(), orgApi.addons()])
         .then(([plansRes, addonsRes]) => {
           setPlans(plansRes);
-          setAddons(addonsRes);
+          setAddons(addonsRes.filter((a: any) => String(a.addon_type || "PLAN").toUpperCase() === "PLAN"));
           
           const activePlan = plansRes.find(p => p.name.toLowerCase() === data?.organization.plan.toLowerCase()) || plansRes[0];
           setSelectedPlan(activePlan);
@@ -354,7 +354,7 @@ export function OnboardingWizard() {
               <Input type="date" value={event.start_date} onChange={(e) => setEvent({ ...event, start_date: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" />
               <Input type="date" value={event.end_date} onChange={(e) => setEvent({ ...event, end_date: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" />
             </div>
-            {eventId ? <a href={`/events/${eventId}/speaker/dashboard`} className="flex items-center gap-2 text-[var(--pri)] font-black uppercase tracking-widest text-[11px]">Event created <ExternalLink className="h-4 w-4" /></a> : <Button onClick={createEvent} className="h-12 rounded-xl bg-[var(--pri)]">Create Event</Button>}
+            {eventId ? <a href={`/events/${eventId}/dashboard`} className="flex items-center gap-2 text-[var(--pri)] font-black uppercase tracking-widest text-[11px]">Event created <ExternalLink className="h-4 w-4" /></a> : <Button onClick={createEvent} className="h-12 rounded-xl bg-[var(--pri)]">Create Event</Button>}
             <Button variant="outline" onClick={() => setStep(3)} className="h-12 rounded-xl border-default bg-white/5">Skip for now</Button>
           </Stack>
         )}
@@ -398,7 +398,7 @@ export function OnboardingWizard() {
                             <div className="space-y-2.5">
                               <h4 className="text-sm font-black text-white capitalize flex items-center gap-1.5">
                                 {p.name}
-                                {p.is_popular && <BadgeCheck className="w-3.5 h-3.5 text-indigo-400" />}
+                                {p.is_popular && <BadgeCheck className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />}
                               </h4>
                               <p className="text-[10px] text-white/45 leading-normal min-h-[30px]">{p.description}</p>
                               <div className="flex items-baseline gap-0.5">
@@ -443,7 +443,7 @@ export function OnboardingWizard() {
                         className={cn(
                           "px-4 h-9 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 active:scale-95",
                           isCustom 
-                            ? "bg-indigo-500 border-indigo-500 text-white shadow-md shadow-indigo-500/10"
+                            ? "bg-[var(--pri)] border-[var(--pri)] text-[var(--color-text-inverse)] shadow-md shadow-[var(--pri)]/10"
                             : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
                         )}
                       >
@@ -458,7 +458,7 @@ export function OnboardingWizard() {
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold">
                             <span className="text-white/60">Number of Events</span>
-                            <span className="text-indigo-400 font-black">{customLimits.max_events} {customLimits.max_events === 20 ? "Events (Max)" : "Events"}</span>
+                            <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_events} {customLimits.max_events === 20 ? "Events (Max)" : "Events"}</span>
                           </div>
                           <input
                             type="range"
@@ -466,7 +466,7 @@ export function OnboardingWizard() {
                             max={20}
                             value={customLimits.max_events}
                             onChange={(e) => setCustomLimits({ ...customLimits, max_events: Number(e.target.value) })}
-                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
                           <p className="text-[8px] text-white/35 font-bold">Select event package volume.</p>
                         </div>
@@ -475,7 +475,7 @@ export function OnboardingWizard() {
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold">
                             <span className="text-white/60">Organizer/Staff Users</span>
-                            <span className="text-indigo-400 font-black">{customLimits.max_users} {customLimits.max_users === 50 ? "Users (Max)" : "Users"}</span>
+                            <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_users} {customLimits.max_users === 50 ? "Users (Max)" : "Users"}</span>
                           </div>
                           <input
                             type="range"
@@ -483,7 +483,7 @@ export function OnboardingWizard() {
                             max={50}
                             value={customLimits.max_users}
                             onChange={(e) => setCustomLimits({ ...customLimits, max_users: Number(e.target.value) })}
-                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
                           <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_users} users. +₹1,500/user/event.</p>
                         </div>
@@ -492,7 +492,7 @@ export function OnboardingWizard() {
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold">
                             <span className="text-white/60">Attendee Registrations</span>
-                            <span className="text-indigo-400 font-black">
+                            <span className="text-[var(--color-primary-mid)] font-black">
                               {customLimits.max_registrations >= 10000 ? "10,000+ (Unlimited)" : `${customLimits.max_registrations.toLocaleString()} Registrations`}
                             </span>
                           </div>
@@ -503,7 +503,7 @@ export function OnboardingWizard() {
                             step={50}
                             value={customLimits.max_registrations}
                             onChange={(e) => setCustomLimits({ ...customLimits, max_registrations: Number(e.target.value) })}
-                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
                           <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_registrations} attendees. +₹5/attendee/event.</p>
                         </div>
@@ -512,7 +512,7 @@ export function OnboardingWizard() {
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold">
                             <span className="text-white/60">File Storage Quota</span>
-                            <span className="text-indigo-400 font-black">{customLimits.max_storage_gb} GB Storage</span>
+                            <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_storage_gb} GB Storage</span>
                           </div>
                           <input
                             type="range"
@@ -521,7 +521,7 @@ export function OnboardingWizard() {
                             step={10}
                             value={customLimits.max_storage_gb}
                             onChange={(e) => setCustomLimits({ ...customLimits, max_storage_gb: Number(e.target.value) })}
-                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
                           <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan ? selectedPlan.storage_quota_mb / 1024 : 10} GB. +₹200/GB/event.</p>
                         </div>
@@ -530,7 +530,7 @@ export function OnboardingWizard() {
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold">
                             <span className="text-white/60">Speakers limit</span>
-                            <span className="text-indigo-400 font-black">{customLimits.max_speakers} Speakers</span>
+                            <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_speakers} Speakers</span>
                           </div>
                           <input
                             type="range"
@@ -539,7 +539,7 @@ export function OnboardingWizard() {
                             step={10}
                             value={customLimits.max_speakers}
                             onChange={(e) => setCustomLimits({ ...customLimits, max_speakers: Number(e.target.value) })}
-                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
                           <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_speakers || 30} speakers. +₹100/speaker/event.</p>
                         </div>
@@ -548,7 +548,7 @@ export function OnboardingWizard() {
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold">
                             <span className="text-white/60">Rooms/Halls</span>
-                            <span className="text-indigo-400 font-black">{customLimits.max_rooms} Rooms</span>
+                            <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_rooms} Rooms</span>
                           </div>
                           <input
                             type="range"
@@ -556,7 +556,7 @@ export function OnboardingWizard() {
                             max={50}
                             value={customLimits.max_rooms}
                             onChange={(e) => setCustomLimits({ ...customLimits, max_rooms: Number(e.target.value) })}
-                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
                           <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_rooms || 5} rooms. +₹1,000/room/event.</p>
                         </div>
@@ -584,7 +584,7 @@ export function OnboardingWizard() {
                             className={cn(
                               "rounded-xl border p-4 cursor-pointer transition-all flex items-start gap-3 relative",
                               isChecked && !isIncluded
-                                ? "bg-violet-500/10 border-violet-500/40 shadow-sm"
+                                ? "bg-[var(--pri)]/5 border-[var(--pri)]/20 shadow-sm"
                                 : isIncluded
                                   ? "bg-emerald-500/5 border-emerald-500/20 opacity-80 cursor-default"
                                   : "bg-white/3 border-default hover:bg-white/5 hover:border-white/10"
@@ -595,13 +595,13 @@ export function OnboardingWizard() {
                               checked={isChecked || !!isIncluded}
                               readOnly
                               disabled={!!isIncluded}
-                              className="rounded border-white/20 bg-white/5 text-[var(--pri)] focus:ring-[var(--pri)] w-4 h-4 shrink-0 mt-0.5 accent-indigo-500"
+                              className="rounded border-white/20 bg-white/5 text-[var(--pri)] focus:ring-[var(--pri)] w-4 h-4 shrink-0 mt-0.5 accent-[var(--pri)]"
                             />
                             <div className="space-y-1">
                               <h5 className="text-[11px] font-black text-white">{a.name}</h5>
                               <p className="text-[9px] text-white/40 leading-normal leading-relaxed">{a.description}</p>
                               <div className="pt-1 flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold text-indigo-400">
+                                <span className="text-[10px] font-bold text-[var(--color-primary-mid)]">
                                   {isIncluded ? "Included in Base" : a.price_inr ? `+₹${Number(a.price_inr).toLocaleString()}` : "Custom Pricing"}
                                 </span>
                                 {!isIncluded && a.billing_unit && (
@@ -619,13 +619,13 @@ export function OnboardingWizard() {
                 {/* Live Pricing Calculator Panel */}
                 <div className="rounded-3xl border border-white/10 bg-white/[0.035] backdrop-blur-xl p-5 space-y-5 sticky top-5">
                   <h4 className="text-xs font-black uppercase tracking-wider text-white/50 flex items-center gap-2">
-                    <Receipt className="w-4 h-4 text-violet-400" />
+                    <Receipt className="w-4 h-4 text-[var(--color-primary-mid)]" />
                     Pricing Summary
                   </h4>
                   
                   {calculating || !priceDetails ? (
                     <div className="flex flex-col items-center justify-center py-12 space-y-2">
-                      <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+                      <Loader2 className="w-5 h-5 text-[var(--color-primary-mid)] animate-spin" />
                       <span className="text-[9px] text-white/40 uppercase tracking-widest font-black">Calculating Rates...</span>
                     </div>
                   ) : (
@@ -650,7 +650,7 @@ export function OnboardingWizard() {
                           </div>
                         )}
                         
-                        <div className="flex justify-between text-[11px] font-black text-indigo-300 pt-1">
+                        <div className="flex justify-between text-[11px] font-black text-[var(--color-primary-mid)] pt-1">
                           <span>Rate Per Event</span>
                           <span>₹{Number(priceDetails.price_per_event).toLocaleString()}</span>
                         </div>
@@ -711,7 +711,7 @@ export function OnboardingWizard() {
                         onClick={() => {
                           setCheckoutOpen(true);
                         }}
-                        className="w-full h-12 rounded-xl bg-violet-600 hover:bg-violet-500 font-black uppercase tracking-widest text-[11px] text-white shadow-lg shadow-violet-600/25 transition-all mt-4 active:scale-95"
+                        className="w-full h-12 rounded-xl bg-[var(--pri)] hover:opacity-90 text-[var(--color-text-inverse)] font-black uppercase tracking-widest text-[11px] shadow-lg shadow-[var(--pri)]/10 transition-all mt-4 active:scale-95"
                       >
                         Proceed to Checkout
                       </Button>
@@ -739,13 +739,13 @@ export function OnboardingWizard() {
       {/* Checkout Modal */}
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
         <DialogContent className="max-w-2xl border-white/10 bg-[#0e0e14]/95 backdrop-blur-xl text-white rounded-3xl p-6 relative overflow-hidden select-none max-h-[90vh] overflow-y-auto">
-          <div className="absolute top-0 right-0 h-32 w-32 bg-violet-500/10 blur-3xl rounded-full" />
+          <div className="absolute top-0 right-0 h-32 w-32 bg-[var(--pri)]/10 blur-3xl rounded-full" />
           
           {processingState === null ? (
             <>
               <DialogHeader>
                 <DialogTitle className="text-base font-black tracking-tight flex items-center gap-2 text-white">
-                  <CreditCard className="w-5 h-5 text-violet-400" />
+                  <CreditCard className="w-5 h-5 text-[var(--color-primary-mid)]" />
                   Subscription Sandbox Checkout
                 </DialogTitle>
                 <p className="text-xs text-white/40 font-medium">
@@ -757,7 +757,7 @@ export function OnboardingWizard() {
                 {/* Billing Details & Invoice info */}
                 <div className="space-y-3.5">
                   <h5 className="text-[10px] font-black uppercase tracking-widest text-white/50 border-b border-white/5 pb-1 flex items-center gap-1.5">
-                    <Receipt className="w-3.5 h-3.5 text-violet-400" />
+                    <Receipt className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Invoice Contact & Tax Details
                   </h5>
                   
@@ -769,7 +769,7 @@ export function OnboardingWizard() {
                       placeholder="Organization Name"
                       value={billingName}
                       onChange={(e) => setBillingName(e.target.value)}
-                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-bold"
+                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
                   
@@ -781,7 +781,7 @@ export function OnboardingWizard() {
                       placeholder="billing@company.com"
                       value={billingEmail}
                       onChange={(e) => setBillingEmail(e.target.value)}
-                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-bold"
+                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
                   
@@ -794,7 +794,7 @@ export function OnboardingWizard() {
                         placeholder="+91 9999999999"
                         value={billingPhone}
                         onChange={(e) => setBillingPhone(e.target.value)}
-                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-bold"
+                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                       />
                     </div>
                     <div>
@@ -805,7 +805,7 @@ export function OnboardingWizard() {
                         maxLength={15}
                         value={gstNumber}
                         onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
-                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-mono font-bold tracking-wider"
+                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-mono font-bold tracking-wider"
                       />
                     </div>
                   </div>
@@ -825,7 +825,7 @@ export function OnboardingWizard() {
                 {/* Credit card form & 3D Flipping animation */}
                 <div className="space-y-4">
                   <h5 className="text-[10px] font-black uppercase tracking-widest text-white/50 border-b border-white/5 pb-1 flex items-center gap-1.5">
-                    <CreditCard className="w-3.5 h-3.5 text-violet-400" />
+                    <CreditCard className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Sandbox Card Details
                   </h5>
                   
@@ -839,7 +839,7 @@ export function OnboardingWizard() {
                       >
                         {/* Front */}
                         <div 
-                          className="absolute inset-0 w-full h-full rounded-2xl p-4 bg-gradient-to-br from-violet-600 to-indigo-850 border border-white/10 shadow-xl flex flex-col justify-between"
+                          className="absolute inset-0 w-full h-full rounded-2xl p-4 bg-gradient-to-br from-zinc-800 to-neutral-950 border border-[var(--pri)]/20 shadow-xl flex flex-col justify-between"
                           style={{ backfaceVisibility: "hidden" }}
                         >
                           <div className="flex justify-between items-start">
@@ -899,7 +899,7 @@ export function OnboardingWizard() {
                         value={cardholder}
                         onChange={(e) => setCardholder(e.target.value)}
                         onFocus={() => setIsFlipped(false)}
-                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-semibold"
+                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-semibold"
                       />
                     </div>
                     
@@ -912,7 +912,7 @@ export function OnboardingWizard() {
                         value={cardNo}
                         onChange={handleCardNoChange}
                         onFocus={() => setIsFlipped(false)}
-                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500/40 transition-all"
+                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all"
                       />
                     </div>
                     
@@ -926,7 +926,7 @@ export function OnboardingWizard() {
                           value={expiry}
                           onChange={handleExpiryChange}
                           onFocus={() => setIsFlipped(false)}
-                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500/40 transition-all text-center"
+                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all text-center"
                         />
                       </div>
                       <div>
@@ -939,7 +939,7 @@ export function OnboardingWizard() {
                           onChange={handleCvvChange}
                           onFocus={() => setIsFlipped(true)}
                           onBlur={() => setIsFlipped(false)}
-                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500/40 transition-all text-center"
+                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all text-center"
                         />
                       </div>
                     </div>
@@ -955,7 +955,7 @@ export function OnboardingWizard() {
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 h-10 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-violet-600/20 active:scale-95 transition-all"
+                      className="flex-1 h-10 rounded-xl bg-[var(--pri)] hover:opacity-90 text-[var(--color-text-inverse)] text-xs font-black uppercase tracking-wider shadow-lg shadow-[var(--pri)]/10 active:scale-95 transition-all"
                     >
                       Authorize Sandbox
                     </button>
@@ -967,8 +967,8 @@ export function OnboardingWizard() {
             /* Processing Escrow Loading Loop */
             <div className="flex flex-col items-center justify-center py-16 space-y-6 text-center min-h-[300px]">
               <div className="relative w-14 h-14 flex items-center justify-center">
-                <div className="absolute inset-0 bg-violet-500/20 blur-xl rounded-full animate-pulse" />
-                <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+                <div className="absolute inset-0 bg-[var(--pri)]/10 blur-xl rounded-full animate-pulse" />
+                <Loader2 className="w-8 h-8 text-[var(--color-primary-mid)] animate-spin" />
               </div>
               <div className="space-y-2 max-w-sm">
                 <h4 className="text-sm font-bold text-white tracking-tight">Authorizing Escrow Handshake</h4>
@@ -1035,7 +1035,7 @@ export function OnboardingWizard() {
                   setSuccessDetails(null);
                   setStep(4);
                 }}
-                className="w-full max-w-xs h-11 rounded-xl bg-violet-600 hover:bg-violet-500 font-black uppercase tracking-widest text-[10px] text-white shadow-lg transition-all active:scale-95"
+                className="w-full max-w-xs h-11 rounded-xl bg-[var(--pri)] hover:opacity-90 font-black uppercase tracking-widest text-[10px] text-[var(--color-text-inverse)] shadow-lg transition-all active:scale-95"
               >
                 Continue Onboarding
               </Button>
@@ -1301,7 +1301,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       Promise.all([orgApi.plans(), orgApi.addons()])
         .then(([plansRes, addonsRes]) => {
           setPlans(plansRes);
-          setAddons(addonsRes);
+          setAddons(addonsRes.filter((a: any) => String(a.addon_type || "PLAN").toUpperCase() === "PLAN"));
           
           // Set initial base plan to Pro or Basic if not set
           const activePlan = plansRes.find(p => p.name.toLowerCase() === data.organization.plan.toLowerCase()) || plansRes[0];
@@ -1549,7 +1549,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       <div className="space-y-2.5">
                         <h4 className="text-sm font-black text-white capitalize flex items-center gap-1.5">
                           {p.name}
-                          {p.is_popular && <BadgeCheck className="w-3.5 h-3.5 text-indigo-400" />}
+                          {p.is_popular && <BadgeCheck className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />}
                         </h4>
                         <p className="text-[10px] text-white/45 leading-normal min-h-[30px]">{p.description}</p>
                         <div className="flex items-baseline gap-0.5">
@@ -1566,7 +1566,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       <button className={cn(
                         "w-full h-8 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all mt-4 active:scale-95 border",
                         isSelected && !isCustom
-                          ? "bg-[var(--pri)] border-[var(--pri)] text-white"
+                          ? "bg-[var(--pri)] border-[var(--pri)] text-black font-semibold"
                           : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10"
                       )}>
                         {isSelected && !isCustom ? "Selected" : "Select Tier"}
@@ -1594,7 +1594,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   className={cn(
                     "px-4 h-9 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 active:scale-95",
                     isCustom 
-                      ? "bg-indigo-500 border-indigo-500 text-white shadow-md shadow-indigo-500/10"
+                      ? "bg-[var(--pri)] border-[var(--pri)] text-[var(--color-text-inverse)] shadow-md shadow-[var(--pri)]/10"
                       : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
                   )}
                 >
@@ -1609,7 +1609,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
                       <span className="text-white/60">Number of Events</span>
-                      <span className="text-indigo-400 font-black">{customLimits.max_events} {customLimits.max_events === 20 ? "Events (Max)" : "Events"}</span>
+                      <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_events} {customLimits.max_events === 20 ? "Events (Max)" : "Events"}</span>
                     </div>
                     <input
                       type="range"
@@ -1617,7 +1617,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       max={20}
                       value={customLimits.max_events}
                       onChange={(e) => setCustomLimits({ ...customLimits, max_events: Number(e.target.value) })}
-                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
                     <p className="text-[8px] text-white/35 font-bold">Select event package volume.</p>
                   </div>
@@ -1626,7 +1626,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
                       <span className="text-white/60">Organizer/Staff Users</span>
-                      <span className="text-indigo-400 font-black">{customLimits.max_users} {customLimits.max_users === 50 ? "Users (Max)" : "Users"}</span>
+                      <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_users} {customLimits.max_users === 50 ? "Users (Max)" : "Users"}</span>
                     </div>
                     <input
                       type="range"
@@ -1634,7 +1634,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       max={50}
                       value={customLimits.max_users}
                       onChange={(e) => setCustomLimits({ ...customLimits, max_users: Number(e.target.value) })}
-                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
                     <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_users} users. +₹1,500/user/event.</p>
                   </div>
@@ -1643,7 +1643,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
                       <span className="text-white/60">Attendee Registrations</span>
-                      <span className="text-indigo-400 font-black">
+                      <span className="text-[var(--color-primary-mid)] font-black">
                         {customLimits.max_registrations >= 10000 ? "10,000+ (Unlimited)" : `${customLimits.max_registrations.toLocaleString()} Registrations`}
                       </span>
                     </div>
@@ -1654,7 +1654,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       step={50}
                       value={customLimits.max_registrations}
                       onChange={(e) => setCustomLimits({ ...customLimits, max_registrations: Number(e.target.value) })}
-                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
                     <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_registrations} attendees. +₹5/attendee/event.</p>
                   </div>
@@ -1663,7 +1663,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
                       <span className="text-white/60">File Storage Quota</span>
-                      <span className="text-indigo-400 font-black">{customLimits.max_storage_gb} GB Storage</span>
+                      <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_storage_gb} GB Storage</span>
                     </div>
                     <input
                       type="range"
@@ -1672,7 +1672,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       step={10}
                       value={customLimits.max_storage_gb}
                       onChange={(e) => setCustomLimits({ ...customLimits, max_storage_gb: Number(e.target.value) })}
-                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
                     <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan ? selectedPlan.storage_quota_mb / 1024 : 10} GB. +₹200/GB/event.</p>
                   </div>
@@ -1681,7 +1681,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
                       <span className="text-white/60">Speakers limit</span>
-                      <span className="text-indigo-400 font-black">{customLimits.max_speakers} Speakers</span>
+                      <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_speakers} Speakers</span>
                     </div>
                     <input
                       type="range"
@@ -1690,7 +1690,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       step={10}
                       value={customLimits.max_speakers}
                       onChange={(e) => setCustomLimits({ ...customLimits, max_speakers: Number(e.target.value) })}
-                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
                     <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_speakers || 30} speakers. +₹100/speaker/event.</p>
                   </div>
@@ -1699,7 +1699,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
                       <span className="text-white/60">Rooms/Halls</span>
-                      <span className="text-indigo-400 font-black">{customLimits.max_rooms} Rooms</span>
+                      <span className="text-[var(--color-primary-mid)] font-black">{customLimits.max_rooms} Rooms</span>
                     </div>
                     <input
                       type="range"
@@ -1707,7 +1707,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       max={50}
                       value={customLimits.max_rooms}
                       onChange={(e) => setCustomLimits({ ...customLimits, max_rooms: Number(e.target.value) })}
-                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
                     <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_rooms || 5} rooms. +₹1,000/room/event.</p>
                   </div>
@@ -1735,7 +1735,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       className={cn(
                         "rounded-xl border p-4 cursor-pointer transition-all flex items-start gap-3 relative",
                         isChecked && !isIncluded
-                          ? "bg-violet-500/10 border-violet-500/40 shadow-sm animate-pulse-subtle"
+                          ? "bg-[var(--pri)]/5 border-[var(--pri)]/20 shadow-sm animate-pulse-subtle"
                           : isIncluded
                             ? "bg-emerald-500/5 border-emerald-500/20 opacity-80 cursor-default"
                             : "bg-white/3 border-default hover:bg-white/5 hover:border-white/10"
@@ -1746,13 +1746,13 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         checked={isChecked || !!isIncluded}
                         readOnly
                         disabled={!!isIncluded}
-                        className="rounded border-white/20 bg-white/5 text-[var(--pri)] focus:ring-[var(--pri)] w-4 h-4 shrink-0 mt-0.5 accent-indigo-500"
+                        className="rounded border-white/20 bg-white/5 text-[var(--pri)] focus:ring-[var(--pri)] w-4 h-4 shrink-0 mt-0.5 accent-[var(--pri)]"
                       />
                       <div className="space-y-1">
                         <h5 className="text-[11px] font-black text-white">{a.name}</h5>
                         <p className="text-[9px] text-white/40 leading-normal leading-relaxed">{a.description}</p>
                         <div className="pt-1 flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold text-indigo-400">
+                          <span className="text-[10px] font-bold text-[var(--color-primary-mid)]">
                             {isIncluded ? "Included in Base" : a.price_inr ? `+₹${Number(a.price_inr).toLocaleString()}` : "Custom Pricing"}
                           </span>
                           {!isIncluded && a.billing_unit && (
@@ -1770,13 +1770,13 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
           {/* Live Pricing Calculator Panel */}
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] backdrop-blur-xl p-5 space-y-5 sticky top-5">
             <h4 className="text-xs font-black uppercase tracking-wider text-white/50 flex items-center gap-2">
-              <Receipt className="w-4 h-4 text-violet-400" />
+              <Receipt className="w-4 h-4 text-[var(--color-primary-mid)]" />
               Pricing Summary
             </h4>
             
             {calculating || !priceDetails ? (
               <div className="flex flex-col items-center justify-center py-12 space-y-2">
-                <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+                <Loader2 className="w-5 h-5 text-[var(--color-primary-mid)] animate-spin" />
                 <span className="text-[9px] text-white/40 uppercase tracking-widest font-black">Calculating Rates...</span>
               </div>
             ) : (
@@ -1801,7 +1801,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                     </div>
                   )}
                   
-                  <div className="flex justify-between text-[11px] font-black text-indigo-300 pt-1">
+                  <div className="flex justify-between text-[11px] font-black text-[var(--color-primary-mid)] pt-1">
                     <span>Rate Per Event</span>
                     <span>₹{Number(priceDetails.price_per_event).toLocaleString()}</span>
                   </div>
@@ -1864,7 +1864,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                     setBillingEmail(data.organization.billing_email || "");
                     setCheckoutOpen(true);
                   }}
-                  className="w-full h-12 rounded-xl bg-violet-600 hover:bg-violet-500 font-black uppercase tracking-widest text-[11px] text-white shadow-lg shadow-violet-600/25 transition-all mt-4 active:scale-95"
+                  className="w-full h-12 rounded-xl bg-[var(--pri)] hover:opacity-90 text-[var(--color-text-inverse)] font-black uppercase tracking-widest text-[11px] shadow-lg shadow-[var(--pri)]/10 transition-all mt-4 active:scale-95"
                 >
                   Proceed to Checkout
                 </Button>
@@ -1877,13 +1877,13 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       {/* Integrated Checkout Wizard */}
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
         <DialogContent className="max-w-2xl border-white/10 bg-[#0e0e14]/95 backdrop-blur-xl text-white rounded-3xl p-6 relative overflow-hidden select-none max-h-[90vh] overflow-y-auto">
-          <div className="absolute top-0 right-0 h-32 w-32 bg-violet-500/10 blur-3xl rounded-full" />
+          <div className="absolute top-0 right-0 h-32 w-32 bg-[var(--pri)]/10 blur-3xl rounded-full" />
           
           {processingState === null ? (
             <>
               <DialogHeader>
                 <DialogTitle className="text-base font-black tracking-tight flex items-center gap-2 text-white">
-                  <CreditCard className="w-5 h-5 text-violet-400" />
+                  <CreditCard className="w-5 h-5 text-[var(--color-primary-mid)]" />
                   Subscription Sandbox Checkout
                 </DialogTitle>
                 <p className="text-xs text-white/40 font-medium">
@@ -1895,7 +1895,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                 {/* Billing Details & Invoice info */}
                 <div className="space-y-3.5">
                   <h5 className="text-[10px] font-black uppercase tracking-widest text-white/50 border-b border-white/5 pb-1 flex items-center gap-1.5">
-                    <Receipt className="w-3.5 h-3.5 text-violet-400" />
+                    <Receipt className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Invoice Contact & Tax Details
                   </h5>
                   
@@ -1907,7 +1907,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       placeholder="Organization Name"
                       value={billingName}
                       onChange={(e) => setBillingName(e.target.value)}
-                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-bold"
+                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
                   
@@ -1919,7 +1919,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       placeholder="billing@company.com"
                       value={billingEmail}
                       onChange={(e) => setBillingEmail(e.target.value)}
-                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-bold"
+                      className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
                   
@@ -1932,7 +1932,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         placeholder="+91 9999999999"
                         value={billingPhone}
                         onChange={(e) => setBillingPhone(e.target.value)}
-                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-bold"
+                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                       />
                     </div>
                     <div>
@@ -1943,7 +1943,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         maxLength={15}
                         value={gstNumber}
                         onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
-                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-mono font-bold tracking-wider"
+                        className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-mono font-bold tracking-wider"
                       />
                     </div>
                   </div>
@@ -1963,7 +1963,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                 {/* Credit card form & 3D Flipping animation */}
                 <div className="space-y-4">
                   <h5 className="text-[10px] font-black uppercase tracking-widest text-white/50 border-b border-white/5 pb-1 flex items-center gap-1.5">
-                    <CreditCard className="w-3.5 h-3.5 text-violet-400" />
+                    <CreditCard className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Sandbox Card Details
                   </h5>
                   
@@ -1977,7 +1977,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       >
                         {/* Front */}
                         <div 
-                          className="absolute inset-0 w-full h-full rounded-2xl p-4 bg-gradient-to-br from-violet-600 to-indigo-850 border border-white/10 shadow-xl flex flex-col justify-between"
+                          className="absolute inset-0 w-full h-full rounded-2xl p-4 bg-gradient-to-br from-zinc-800 to-neutral-950 border border-[var(--pri)]/20 shadow-xl flex flex-col justify-between"
                           style={{ backfaceVisibility: "hidden" }}
                         >
                           <div className="flex justify-between items-start">
@@ -2037,7 +2037,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         value={cardholder}
                         onChange={(e) => setCardholder(e.target.value)}
                         onFocus={() => setIsFlipped(false)}
-                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-violet-500/40 transition-all font-semibold"
+                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-semibold"
                       />
                     </div>
                     
@@ -2050,7 +2050,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         value={cardNo}
                         onChange={handleCardNoChange}
                         onFocus={() => setIsFlipped(false)}
-                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500/40 transition-all"
+                        className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all"
                       />
                     </div>
                     
@@ -2064,7 +2064,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                           value={expiry}
                           onChange={handleExpiryChange}
                           onFocus={() => setIsFlipped(false)}
-                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500/40 transition-all text-center"
+                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all text-center"
                         />
                       </div>
                       <div>
@@ -2077,7 +2077,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                           onChange={handleCvvChange}
                           onFocus={() => setIsFlipped(true)}
                           onBlur={() => setIsFlipped(false)}
-                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500/40 transition-all text-center"
+                          className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all text-center"
                         />
                       </div>
                     </div>
@@ -2093,7 +2093,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 h-10 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-violet-600/20 active:scale-95 transition-all"
+                      className="flex-1 h-10 rounded-xl bg-[var(--pri)] hover:opacity-90 text-[var(--color-text-inverse)] text-xs font-black uppercase tracking-wider shadow-lg shadow-[var(--pri)]/10 active:scale-95 transition-all"
                     >
                       Authorize Sandbox
                     </button>
@@ -2105,8 +2105,8 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
             /* Processing Escrow Loading Loop */
             <div className="flex flex-col items-center justify-center py-16 space-y-6 text-center min-h-[300px]">
               <div className="relative w-14 h-14 flex items-center justify-center">
-                <div className="absolute inset-0 bg-violet-500/20 blur-xl rounded-full animate-pulse" />
-                <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+                <div className="absolute inset-0 bg-[var(--pri)]/10 blur-xl rounded-full animate-pulse" />
+                <Loader2 className="w-8 h-8 text-[var(--color-primary-mid)] animate-spin" />
               </div>
               <div className="space-y-2 max-w-sm">
                 <h4 className="text-sm font-bold text-white tracking-tight">Authorizing Escrow Handshake</h4>
@@ -2173,7 +2173,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   setSuccessDetails(null);
                   setActiveView("usage");
                 }}
-                className="w-full max-w-xs h-11 rounded-xl bg-violet-600 hover:bg-violet-500 font-black uppercase tracking-widest text-[10px] text-white shadow-lg transition-all active:scale-95"
+                className="w-full max-w-xs h-11 rounded-xl bg-[var(--pri)] hover:opacity-90 text-[var(--color-text-inverse)] font-black uppercase tracking-widest text-[10px] shadow-lg transition-all active:scale-95"
               >
                 Go to Dashboard
               </Button>

@@ -34,6 +34,7 @@ type FormState = {
   description: string
   image_url: string
   billing_unit: string
+  price_unit: string
   min_price_inr: string
   max_price_inr: string
   available_for_plans: string[]
@@ -54,6 +55,7 @@ const emptyForm = (kind: Kind): FormState => ({
   description: "",
   image_url: "",
   billing_unit: "PER_EVENT",
+  price_unit: "",
   min_price_inr: "",
   max_price_inr: "",
   available_for_plans: [],
@@ -140,6 +142,7 @@ export default function AddonsManagementPage() {
       description: a.description || "",
       image_url: a.image_url || "",
       billing_unit: a.billing_unit || "PER_EVENT",
+      price_unit: a.price_unit || "",
       min_price_inr: String(a.min_price_inr ?? a.price_inr ?? ""),
       max_price_inr: String(a.max_price_inr ?? ""),
       available_for_plans: a.available_for_plans || [],
@@ -192,6 +195,7 @@ export default function AddonsManagementPage() {
       ...form,
       addon_type: normalizedType,
       key: form.key.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+      price_unit: form.price_unit || null,
       min_price_inr: form.min_price_inr ? Number(form.min_price_inr) : null,
       max_price_inr: form.max_price_inr ? Number(form.max_price_inr) : null,
       price_inr: form.min_price_inr ? Number(form.min_price_inr) : null,
@@ -389,18 +393,22 @@ export default function AddonsManagementPage() {
               </section>
 
               <Section title="Commercial settings" subtitle="Set the sell range and plan availability.">
-                <div className="grid gap-4 md:grid-cols-4">
+                <div className="grid gap-4 md:grid-cols-5">
                   <Field label="Billing unit">
-                    <select
+                    <Input
+                      type="text"
+                      placeholder="e.g. PER_EVENT, PER_MONTH"
                       value={form.billing_unit}
                       onChange={(e) => setForm({ ...form, billing_unit: e.target.value })}
-                      className="h-10 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-sm"
-                    >
-                      <option value="PER_EVENT">Per event</option>
-                      <option value="PER_DAY">Per day</option>
-                      <option value="PER_MONTH">Per month</option>
-                      <option value="CUSTOM">Custom quote</option>
-                    </select>
+                    />
+                  </Field>
+                  <Field label="Price unit">
+                    <Input
+                      type="text"
+                      placeholder="e.g. screen, room, day"
+                      value={form.price_unit}
+                      onChange={(e) => setForm({ ...form, price_unit: e.target.value })}
+                    />
                   </Field>
                   <Field label="Minimum price">
                     <Input type="number" value={form.min_price_inr} onChange={(e) => setForm({ ...form, min_price_inr: e.target.value })} />
@@ -541,18 +549,21 @@ export default function AddonsManagementPage() {
   )
 }
 
-function getAdjustedAddonPriceLabel(addon: Addon, hardwareMap: Record<string, any>, staffMap: Record<string, any>) {
+function getAdjustedAddonPriceLabel(addon: Addon, hardwareMap?: Record<string, any>, staffMap?: Record<string, any>) {
   if (addon.billing_unit === "CUSTOM") return "Custom quote"
+  if (addon.final_price !== undefined && addon.final_price !== null) {
+    return formatINR(addon.final_price)
+  }
   const minPrice = Number(addon.min_price_inr ?? addon.price_inr ?? addon.max_price_inr ?? 0)
   const maxPrice = Math.max(minPrice, Number(addon.max_price_inr ?? addon.price_inr ?? addon.min_price_inr ?? 0))
-  const hardwareCost = (addon.hardware_spec || []).reduce((sum, row) => {
+  const hardwareCost = hardwareMap ? (addon.hardware_spec || []).reduce((sum, row) => {
     const item = hardwareMap[row.item_id]
     return sum + Number(row.quantity || 0) * Number(row.days || 1) * Number(item?.selling_price || 0)
-  }, 0)
-  const staffCost = (addon.staff_spec || []).reduce((sum, row) => {
+  }, 0) : 0
+  const staffCost = staffMap ? (addon.staff_spec || []).reduce((sum, row) => {
     const item = staffMap[row.role_id]
     return sum + Number(row.quantity || 0) * Number(row.days || 1) * Number(item?.selling_per_day || 0)
-  }, 0)
+  }, 0) : 0
   const totalMin = minPrice + hardwareCost + staffCost
   const totalMax = maxPrice + hardwareCost + staffCost
   return totalMin === totalMax ? formatINR(totalMin) : `${formatINR(totalMin)} - ${formatINR(totalMax)}`

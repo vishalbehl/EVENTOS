@@ -55,17 +55,24 @@
   --primary: var(--brand-primary);
   --primary-foreground: var(--bg-base);
   --radius: 0.75rem;
+  --accent: color-mix(in srgb, var(--pri) 12%, transparent);
+  --accent-foreground: var(--text-primary);
+  --ring: var(--pri);
 }
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-
 @layer base {
   body {
     @apply antialiased;
     font-family: var(--font-dm-sans), sans-serif;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--pri) 25%, transparent) !important;
+    color: var(--text-primary) !important;
   }
 }
 

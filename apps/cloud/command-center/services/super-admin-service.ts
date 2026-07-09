@@ -213,7 +213,9 @@ export interface Addon {
   price_inr?: number;
   min_price_inr?: number;
   max_price_inr?: number;
+  final_price?: number;
   billing_unit?: string;
+  price_unit?: string;
   available_for_plans: string[];
   is_optional_for_plan?: string;
   included_in_plan?: string;

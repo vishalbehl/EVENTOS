@@ -118,6 +118,36 @@ class Event(Base, SoftDeleteMixin):
 
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="INR")
 
+    tagline: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    map_link: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    venue_images: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    venue_details: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {
+            "website": "",
+            "email": "",
+            "phone": "",
+            "facilities": [],
+            "images": [],
+            "notes": "",
+            "map_coords": "",
+        }
+    )
+    licensing_details: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {
+            "plan_name": "",
+            "price": 0,
+            "addons": [],
+            "activated_at": None,
+            "expires_at": None,
+            "status": "inactive",
+        }
+    )
+
     # ── Theme and portal settings relationships ──────────────────
     registration_theme_setting: Mapped[Optional["RegistrationThemeSetting"]] = relationship(
         "RegistrationThemeSetting", back_populates="event", uselist=False, lazy="joined", cascade="all, delete-orphan"

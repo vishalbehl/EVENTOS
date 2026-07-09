@@ -47,29 +47,59 @@ export const preloadGoogleFonts = async (families: string[]) => {
   if (googleFonts.length === 0) return;
   const uniqueFonts = Array.from(new Set(googleFonts));
   const linkId = "google-fonts-preload";
-  let link = document.getElementById(linkId) as HTMLLinkElement;
   const query = uniqueFonts
     .map((f) => `family=${f.replace(/\s+/g, "+")}:ital,wght@0,400;0,700;1,400;1,700`)
     .join("&");
   const url = `https://fonts.googleapis.com/css2?${query}&display=swap`;
   
-  if (!link) {
-    link = document.createElement("link");
+  await new Promise<void>((resolve) => {
+    const existing = document.getElementById(linkId) as HTMLLinkElement;
+    if (existing && existing.href === url) {
+      if (existing.sheet) {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => resolve());
+      setTimeout(resolve, 1500);
+      return;
+    }
+
+    if (existing) {
+      existing.remove();
+    }
+
+    const link = document.createElement("link");
     link.id = linkId;
     link.rel = "stylesheet";
     link.href = url;
+    link.addEventListener("load", () => resolve());
+    link.addEventListener("error", () => resolve());
     document.head.appendChild(link);
-  } else {
-    link.href = url;
-  }
+    setTimeout(resolve, 1500);
+  });
 
   try {
+    const promises: Promise<any>[] = [];
     for (const family of uniqueFonts) {
-      await document.fonts.load(`12px "${family}"`);
-      await document.fonts.load(`bold 12px "${family}"`);
-      await document.fonts.load(`italic 12px "${family}"`);
+      promises.push(document.fonts.load(`12px "${family}"`));
+      promises.push(document.fonts.load(`bold 12px "${family}"`));
+      promises.push(document.fonts.load(`italic 12px "${family}"`));
     }
+    await Promise.all(promises);
     await document.fonts.ready;
+
+    // Dynamic Font Verification Loop (checks document.fonts.check)
+    for (const family of uniqueFonts) {
+      let attempts = 0;
+      while (!document.fonts.check(`12px "${family}"`) && attempts < 30) {
+        await new Promise((r) => setTimeout(r, 100));
+        attempts++;
+      }
+    }
+
+    // Extra yield to allow browser layout engine to paint font faces
+    await new Promise((r) => setTimeout(r, 200));
   } catch (e) {
     console.error("Error preloading google fonts:", e);
   }
@@ -200,12 +230,14 @@ export const compileTemplateToPdf = async (
   const printContainer = document.createElement("div");
   document.body.appendChild(printContainer);
   Object.assign(printContainer.style, {
-    position: "fixed",
+    position: "absolute",
     top: "0",
     left: "0",
-    opacity: "0",
+    opacity: "0.01",
     zIndex: "-9999",
     pointerEvents: "none",
+    margin: "0",
+    padding: "0",
   });
 
   for (let idx = 0; idx < participants.length; idx++) {
@@ -219,30 +251,22 @@ export const compileTemplateToPdf = async (
         pdf.addPage([width_mm, height_mm], orientation as any);
       }
 
-      // Draw background color
-      let bgColor = null;
-      if (pageData.print_backgroundColor !== false) {
-        bgColor = pageData.backgroundColor || "#FFFFFF";
-        pdf.setFillColor(bgColor);
-        pdf.rect(0, 0, width_mm, height_mm, "F");
-      }
-
-      // Draw background image
-      if (pageData.backgroundImage && pageData.print_backgroundImage !== false) {
-        let format = "JPEG";
-        if (pageData.backgroundImage.startsWith("data:image/png")) format = "PNG";
-        else if (pageData.backgroundImage.startsWith("data:image/webp")) format = "WEBP";
-        pdf.addImage(pageData.backgroundImage, format, 0, 0, width_mm, height_mm);
-      }
-
       // Build DOM layout for the html2canvas overlay
       const pageElement = document.createElement("div");
       printContainer.appendChild(pageElement);
+
+      const hasBgImage = pageData.backgroundImage && pageData.print_backgroundImage !== false;
+      const bgImageCss = hasBgImage ? `url(${pageData.backgroundImage})` : "none";
+      const bgColorCss = pageData.print_backgroundColor !== false ? pageData.backgroundColor || "#FFFFFF" : "transparent";
+
       Object.assign(pageElement.style, {
         width: `${mmToPx(width_mm)}px`,
         height: `${mmToPx(height_mm)}px`,
         position: "relative",
-        backgroundColor: "transparent",
+        backgroundColor: bgColorCss,
+        backgroundImage: bgImageCss,
+        backgroundSize: "100% 100%",
+        backgroundPosition: "center",
       });
 
       const nativeImages: Array<{
@@ -303,7 +327,7 @@ export const compileTemplateToPdf = async (
         });
 
         const innerEl = document.createElement("div");
-        Object.assign(innerEl.style, {
+        const innerElStyle: any = {
           position: "absolute",
           top: "0",
           left: "0",
@@ -311,14 +335,38 @@ export const compileTemplateToPdf = async (
           height: `${ph}px`,
           boxSizing: "border-box",
           overflow: "hidden",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
           borderStyle: borderStyle !== "none" ? borderStyle : undefined,
           borderWidth: borderStyle !== "none" ? borderWidth : undefined,
           borderColor: borderStyle !== "none" ? field.borderColor || "#000000" : undefined,
           borderRadius: borderRadius || "0px",
-        });
+          display: "flex",
+          alignItems: "center",
+        };
+
+        if (field.type === "text") {
+          const justifyContent =
+            field.align === "center"
+              ? "center"
+              : field.align === "right"
+              ? "flex-end"
+              : "flex-start";
+          innerElStyle.justifyContent = justifyContent;
+          Object.assign(innerElStyle, {
+            fontFamily: `'${field.fontFamily || "Arial"}', sans-serif`,
+            fontSize: `${field.fontSize || 10}pt`,
+            lineHeight: "1.2",
+            fontWeight: field.bold ? "700" : "400",
+            fontStyle: field.italic ? "italic" : "normal",
+            textDecoration: field.underline ? "underline" : "none",
+            color: field.color || "#000000",
+            whiteSpace: "nowrap",
+            padding: "0 4px",
+          });
+        } else {
+          innerElStyle.justifyContent = "center";
+        }
+
+        Object.assign(innerEl.style, innerElStyle);
         fieldEl.appendChild(innerEl);
 
         if (field.type === "qr") {
@@ -516,35 +564,7 @@ export const compileTemplateToPdf = async (
               (m, p1, p2) => p1 + p2.toUpperCase()
             );
 
-          const justifyContent =
-            field.align === "center"
-              ? "center"
-              : field.align === "right"
-              ? "flex-end"
-              : "flex-start";
-
-          const innerSpan = document.createElement("div");
-          Object.assign(innerSpan.style, {
-            display: "flex",
-            alignItems: "center",
-            justifyContent,
-            width: "100%",
-            height: "100%",
-            fontFamily: `'${field.fontFamily || "Arial"}', sans-serif`,
-            fontSize: `${field.fontSize || 10}pt`,
-            lineHeight: "1.2",
-            fontWeight: field.bold ? "700" : "400",
-            fontStyle: field.italic ? "italic" : "normal",
-            textDecoration: field.underline ? "underline" : "none",
-            color: field.color || "#000000",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            padding: "0 4px",
-            wordBreak: "keep-all",
-            boxSizing: "border-box",
-          });
-          innerSpan.innerText = processedText;
-          innerEl.appendChild(innerSpan);
+          innerEl.innerHTML = `<span style="line-height:1.2;">${processedText}</span>`;
         }
       }
 
@@ -557,16 +577,31 @@ export const compileTemplateToPdf = async (
       }
 
       // Render the Hidden Page container into Canvas
+      const originalScrollX = typeof window !== "undefined" ? window.scrollX : 0;
+      const originalScrollY = typeof window !== "undefined" ? window.scrollY : 0;
+      if (typeof window !== "undefined") {
+        window.scrollTo(0, 0);
+      }
+
       const canvas = await html2canvas(pageElement, {
         scale: 3,
         backgroundColor: null,
         logging: false,
         useCORS: true,
+        scrollX: 0,
+        scrollY: 0,
       });
+
+      if (typeof window !== "undefined") {
+        window.scrollTo(originalScrollX, originalScrollY);
+      }
 
       const overlayImgData = canvas.toDataURL("image/png");
 
-      // Draw direct native images (images bypassed from html2canvas to maintain high-res)
+      // Draw background and overlay elements (text fields, barcodes, etc.)
+      pdf.addImage(overlayImgData, "PNG", 0, 0, width_mm, height_mm);
+
+      // Draw direct native images on top (images bypassed from html2canvas to maintain high-res)
       for (const nImg of nativeImages) {
         await new Promise<void>((resolve) => {
           const img = new window.Image();
@@ -617,9 +652,6 @@ export const compileTemplateToPdf = async (
           img.src = nImg.src;
         });
       }
-
-      // Layer the overlay canvas image on top of pdf
-      pdf.addImage(overlayImgData, "PNG", 0, 0, width_mm, height_mm);
 
       // Clean up DOM node
       printContainer.removeChild(pageElement);
