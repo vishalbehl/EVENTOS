@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
-from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY
+from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.modules.identity.models.user import User
     from app.modules.events.models.event import Event
     from app.modules.billing.models.event_activation import EventActivation
+    from app.modules.billing.models.licensing import EntitlementGrant
 
 class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
@@ -24,6 +25,7 @@ class SubscriptionPlan(Base):
     
     max_events: Mapped[int] = mapped_column(Integer, default=3)
     max_users: Mapped[int] = mapped_column(Integer, default=10)
+    max_event_team_members: Mapped[Optional[int]] = mapped_column(Integer)
     max_registrations: Mapped[Optional[int]] = mapped_column(Integer, default=1000)
     max_speakers: Mapped[Optional[int]] = mapped_column(Integer)
     max_sessions: Mapped[Optional[int]] = mapped_column(Integer)
@@ -64,10 +66,13 @@ class SubscriptionPlan(Base):
 
 class OrganizationSubscription(Base):
     __tablename__ = "organization_subscriptions"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = (
+        Index("ix_rls_billing_organization_subscriptions_organization", "organization_id"),
+        {"schema": "billing"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), unique=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
     plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.subscription_plans.id"))
     
     status: Mapped[str] = mapped_column(String(50), default="TRIAL") # ACTIVE, TRIAL, SUSPENDED, EXPIRED, PENDING_PAYMENT, GRACE_PERIOD, CANCELLED, ARCHIVED
@@ -80,6 +85,9 @@ class OrganizationSubscription(Base):
     
     organization: Mapped["Organization"] = relationship("Organization", back_populates="subscription")
     plan: Mapped["SubscriptionPlan"] = relationship("SubscriptionPlan")
+    entitlement_grants: Mapped[List["EntitlementGrant"]] = relationship(
+        "EntitlementGrant", back_populates="subscription"
+    )
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -119,6 +127,9 @@ class Addon(Base):
     max_price_inr: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     billing_unit: Mapped[Optional[str]] = mapped_column(String(20))
     price_unit: Mapped[Optional[str]] = mapped_column(String(50))
+    scope_type: Mapped[str] = mapped_column(String(30), default="ORG_SCOPED", nullable=False)
+    consumption_model: Mapped[str] = mapped_column(String(40), default="NON_CONSUMABLE", nullable=False)
+    unit_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     available_for_plans: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String))
     is_optional_for_plan: Mapped[Optional[str]] = mapped_column(String(50))
     included_in_plan: Mapped[Optional[str]] = mapped_column(String(50))
@@ -143,7 +154,10 @@ class AddonFeature(Base):
 
 class OrganizationAddon(Base):
     __tablename__ = "organization_addons"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = (
+        Index("ix_rls_billing_organization_addons_organization", "organization_id"),
+        {"schema": "billing"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))

@@ -81,9 +81,22 @@ class PlanGuardMiddleware:
                 return
 
             # 5. Check Subscription Status
-            sub_stmt = select(OrganizationSubscription.status).where(OrganizationSubscription.organization_id == org_id)
-            status = await db.scalar(sub_stmt)
-            
+            active_sub_stmt = select(OrganizationSubscription.id).where(
+                OrganizationSubscription.organization_id == org_id,
+                OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"])
+            ).limit(1)
+            active_sub_id = await db.scalar(active_sub_stmt)
+            if not active_sub_id:
+                sub_stmt = (
+                    select(OrganizationSubscription.status)
+                    .where(OrganizationSubscription.organization_id == org_id)
+                    .order_by(OrganizationSubscription.created_at.desc())
+                    .limit(1)
+                )
+                status = await db.scalar(sub_stmt)
+            else:
+                status = None
+
             if status in ["SUSPENDED", "EXPIRED", "CANCELLED", "ARCHIVED"]:
                 response = JSONResponse(
                     status_code=402,

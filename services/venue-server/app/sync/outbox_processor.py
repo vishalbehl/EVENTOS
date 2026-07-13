@@ -57,7 +57,7 @@ async def process_outbox(event_id: str):
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     url,
-                    headers={"X-Internal-Secret": settings.CLOUD_API_KEY},
+                    headers={"X-Device-Key": settings.CLOUD_DEVICE_KEY},
                     json=payload,
                     timeout=15.0
                 )

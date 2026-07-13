@@ -60,7 +60,7 @@ def patch_all_async_session_locals(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_require_feature_decorator_success(db: AsyncSession, organizer):
     """
-    Test require_feature allows access when EntitlementService.has_feature returns True.
+    Test require_feature allows access when EntitlementResolver.has_feature returns True.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -77,7 +77,7 @@ async def test_require_feature_decorator_success(db: AsyncSession, organizer):
     app.dependency_overrides[get_current_user] = lambda: organizer
     app.dependency_overrides[get_db] = lambda: db
 
-    with patch("app.modules.rbac.services.entitlement_service.EntitlementService.has_feature", new_callable=AsyncMock) as mock_has:
+    with patch("app.modules.billing.services.entitlement_resolver.EntitlementResolver.has_feature", new_callable=AsyncMock) as mock_has:
         mock_has.return_value = True
 
         client = TestClient(app)
@@ -91,7 +91,7 @@ async def test_require_feature_decorator_success(db: AsyncSession, organizer):
 @pytest.mark.asyncio
 async def test_require_feature_decorator_forbidden(db: AsyncSession, organizer):
     """
-    Test require_feature blocks access and returns custom JSON when EntitlementService.has_feature returns False.
+    Test require_feature blocks access and returns custom JSON when EntitlementResolver.has_feature returns False.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -111,7 +111,7 @@ async def test_require_feature_decorator_forbidden(db: AsyncSession, organizer):
     app.dependency_overrides[get_current_user] = lambda: organizer
     app.dependency_overrides[get_db] = lambda: db
 
-    with patch("app.modules.rbac.services.entitlement_service.EntitlementService.has_feature", new_callable=AsyncMock) as mock_has:
+    with patch("app.modules.billing.services.entitlement_resolver.EntitlementResolver.has_feature", new_callable=AsyncMock) as mock_has:
         mock_has.return_value = False
 
         client = TestClient(app)
@@ -142,7 +142,7 @@ async def test_require_feature_decorator_super_admin_bypass(db: AsyncSession, su
     app.dependency_overrides[get_current_user] = lambda: super_admin
     app.dependency_overrides[get_db] = lambda: db
 
-    with patch("app.modules.rbac.services.entitlement_service.EntitlementService.has_feature", new_callable=AsyncMock) as mock_has:
+    with patch("app.modules.billing.services.entitlement_resolver.EntitlementResolver.has_feature", new_callable=AsyncMock) as mock_has:
         client = TestClient(app)
         response = client.get("/test-gated")
 
@@ -276,7 +276,9 @@ async def test_api_usage_redis_and_celery_flush(db: AsyncSession, organization):
     """
     org_id = organization.id
     endpoint = "/events"
-    redis_key = f"api_usage:{org_id}:{endpoint}"
+    from app.core.cache_keys import TenantCacheKey
+
+    redis_key, fingerprint = TenantCacheKey.api_usage(org_id, endpoint)
 
     # Mock Redis responses
     mock_pipeline = MagicMock()
@@ -284,7 +286,7 @@ async def test_api_usage_redis_and_celery_flush(db: AsyncSession, organization):
     mock_pipeline.__aexit__ = AsyncMock(return_value=None)
     mock_pipeline.get = MagicMock()
     mock_pipeline.delete = MagicMock()
-    mock_pipeline.execute = AsyncMock(return_value=["12", 1])
+    mock_pipeline.execute = AsyncMock(return_value=["12", 1, endpoint])
 
     with patch.object(redis_client, "smembers", AsyncMock(return_value={redis_key})), \
          patch.object(redis_client, "srem", AsyncMock(return_value=1)), \

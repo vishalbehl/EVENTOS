@@ -314,6 +314,25 @@ async def delete_event(
     """
     event_id = event.id
     try:
+        # Deactivate first to release the slot (if no usage) or lock it (if there is usage)
+        from app.modules.billing.models.event_activation import EventActivation
+        from app.modules.billing.services.activation_service import ActivationService
+        
+        activation = await db.scalar(
+            select(EventActivation).where(
+                EventActivation.event_id == event_id,
+                EventActivation.status.in_(ActivationService.LIVE_STATUSES),
+            )
+        )
+        if activation:
+            await ActivationService.deactivate_event(
+                db,
+                organization_id=event.organization_id,
+                event_id=event_id,
+                idempotency_key=f"delete-deactivate-{event_id}",
+                actor_id=None,
+            )
+
         # 1. Wipe all associated data in the same transaction
         await _perform_nuclear_wipe(event_id, db)
         

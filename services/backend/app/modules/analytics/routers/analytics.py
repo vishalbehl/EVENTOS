@@ -1,19 +1,21 @@
 # backend/app/routers/analytics.py
 from __future__ import annotations
 
-import csv
-import io
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
+from app.core.tenant_context import TenantContextGuard
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
+from app.modules.audit.models.audit_domain_tables import DataExport
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.identity.models.user import User
+from app.modules.presentations.services.upload_service import create_presigned_download
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.analytics.schemas.analytics import (
     DashboardStats, UploadFunnelStats, SessionReadinessRow,
@@ -26,11 +28,9 @@ from app.modules.analytics.services.analytics_service import (
     get_approval_times,
     get_file_format_distribution,
     get_per_room_breakdown,
-    export_event_data_csv,
-    export_event_data_xlsx,
-    export_event_data_pdf,
     build_main_event_dashboard_data,
 )
+from app.worker import celery_app
 
 router = APIRouter(prefix="/events/{event_id}/analytics", tags=["analytics"])
 global_router = APIRouter(prefix="/analytics", tags=["global_analytics"])
@@ -224,6 +224,146 @@ async def per_room_breakdown(
     return [PerRoomBreakdownRow(**r) for r in rows]
 
 
+@router.post("/exports", status_code=status.HTTP_202_ACCEPTED)
+async def request_analytics_export(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    format: str = Query("xlsx", pattern="^xlsx$"),
+) -> dict:
+    """Queue a tenant-scoped analytics export and return its durable record."""
+    await TenantContextGuard.apply(db, event.organization_id)
+    export = DataExport(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        requested_by=current_user.id,
+        status="QUEUED",
+        export_type="event_summary",
+        file_format=format,
+        request_metadata={"source": "analytics", "event_name": event.name},
+    )
+    db.add(export)
+    await db.flush()
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type="EXPORT_REQUESTED",
+            resource_type="data_export",
+            resource_id=export.id,
+            actor_user_id=current_user.id,
+            organization_id=event.organization_id,
+            actor_role=getattr(current_user, "role", None),
+            new_state={
+                "event_id": str(event.id),
+                "export_type": export.export_type,
+                "file_format": export.file_format,
+                "status": export.status,
+            },
+        ),
+        db,
+    )
+    celery_app.send_task(
+        "workers.tasks.report_tasks.generate_event_summary_report",
+        kwargs={
+            "event_id": str(event.id),
+            "organization_id": str(event.organization_id),
+            "requested_by_user_id": str(current_user.id),
+            "export_id": str(export.id),
+        },
+    )
+    return {
+        "export_id": str(export.id),
+        "status": export.status,
+        "event_id": str(event.id),
+        "format": export.file_format,
+    }
+
+
+@router.get("/exports/{export_id}")
+async def get_analytics_export(
+    export_id: uuid.UUID,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await TenantContextGuard.apply(db, event.organization_id)
+    result = await db.execute(
+        select(DataExport).where(
+            DataExport.id == export_id,
+            DataExport.organization_id == event.organization_id,
+            DataExport.event_id == event.id,
+        )
+    )
+    export = result.scalar_one_or_none()
+    if export is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found.")
+    return {
+        "export_id": str(export.id),
+        "status": export.status,
+        "event_id": str(export.event_id),
+        "format": export.file_format,
+        "export_type": export.export_type,
+        "created_at": export.created_at,
+        "completed_at": export.completed_at,
+        "expires_at": export.expires_at,
+        "failure_reason": export.failure_reason,
+    }
+
+
+@router.get("/exports/{export_id}/download")
+async def download_analytics_export(
+    export_id: uuid.UUID,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await TenantContextGuard.apply(db, event.organization_id)
+    result = await db.execute(
+        select(DataExport).where(
+            DataExport.id == export_id,
+            DataExport.organization_id == event.organization_id,
+            DataExport.event_id == event.id,
+        )
+    )
+    export = result.scalar_one_or_none()
+    if export is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found.")
+    if export.status != "COMPLETED" or not export.storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "EXPORT_NOT_READY", "status": export.status},
+        )
+    now = datetime.now(timezone.utc)
+    if export.expires_at and export.expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail={"code": "EXPORT_EXPIRED"})
+
+    filename = f"{event.name.replace(' ', '_')[:40]}_analytics.{export.file_format}"
+    download_url = create_presigned_download(
+        bucket=settings.S3_BUCKET_EXPORTS,
+        storage_path=export.storage_key,
+        filename=filename,
+        expiry_seconds=min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),
+    )
+    export.downloaded_at = now
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type="EXPORT_DOWNLOADED",
+            resource_type="data_export",
+            resource_id=export.id,
+            actor_user_id=current_user.id,
+            organization_id=event.organization_id,
+            actor_role=getattr(current_user, "role", None),
+            old_state={"status": export.status},
+            new_state={"downloaded_at": now.isoformat()},
+        ),
+        db,
+    )
+    return {
+        "download_url": download_url,
+        "expires_in": min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),
+        "filename": filename,
+    }
+
+
 @router.get("/export")
 async def export_analytics(
     event: CurrentEvent,
@@ -231,6 +371,13 @@ async def export_analytics(
     db: AsyncSession = Depends(get_db),
     format: str = Query("csv", pattern="^(csv|xlsx|pdf)$"),
 ) -> StreamingResponse:
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "DIRECT_EXPORT_DISABLED",
+            "message": "Use POST /exports, poll GET /exports/{export_id}, then download through the authorized endpoint.",
+        },
+    )
     """
     Export event analytics as a streaming file download.
     format=csv  → application/csv

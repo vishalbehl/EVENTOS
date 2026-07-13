@@ -137,3 +137,49 @@ async def test_feature_overrides_require_admin(client: AsyncClient, organizer, o
     ]
     res2 = await client.put(f"/platform/organizations/{organization.id}/feature-overrides", json=payload, headers=headers)
     assert res2.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_platform_org_list_deduplicates_multiple_subscriptions(
+    client: AsyncClient,
+    super_admin,
+    organization: Organization,
+    db: AsyncSession,
+):
+    headers = auth_headers(super_admin)
+
+    basic = SubscriptionPlan(
+        id=uuid.uuid4(),
+        name="List Basic",
+        max_events=1,
+        max_users=2,
+        max_registrations=150,
+        max_rooms=5,
+        storage_quota_mb=1000,
+        is_active=True,
+    )
+    pro = SubscriptionPlan(
+        id=uuid.uuid4(),
+        name="List Pro",
+        max_events=1,
+        max_users=10,
+        max_registrations=500,
+        max_rooms=10,
+        storage_quota_mb=5000,
+        is_active=True,
+    )
+    db.add_all([basic, pro])
+    await db.flush()
+
+    db.add_all(
+        [
+            OrganizationSubscription(organization_id=organization.id, plan_id=basic.id, status="ACTIVE"),
+            OrganizationSubscription(organization_id=organization.id, plan_id=pro.id, status="ACTIVE"),
+        ]
+    )
+    await db.commit()
+
+    response = await client.get("/platform/organizations", headers=headers)
+    assert response.status_code == 200, response.text
+    items = [item for item in response.json() if item["id"] == str(organization.id)]
+    assert len(items) == 1

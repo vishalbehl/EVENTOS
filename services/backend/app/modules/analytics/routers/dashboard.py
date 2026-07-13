@@ -28,6 +28,28 @@ from app.modules.events.models.room import Room
 router = APIRouter(prefix="/dashboard", tags=["dashboard_analytics"])
 
 
+async def _get_accessible_event(
+    db: AsyncSession,
+    current_user: User,
+    event_id: uuid.UUID,
+) -> Event:
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event {event_id} not found",
+        )
+
+    if current_user.role != "super_admin" and event.organization_id != current_user.organization_id:
+        # Hide cross-tenant event existence from non-super-admin users.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event {event_id} not found",
+        )
+
+    return event
+
+
 @router.get("/summary")
 async def get_dashboard_summary(
     event_id: uuid.UUID = Query(..., description="The event ID"),
@@ -35,13 +57,7 @@ async def get_dashboard_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """Calculates all 5 pre-event readiness scorecards and dynamic overview stats."""
-    # Check event existence
-    event = await db.get(Event, event_id)
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Event {event_id} not found"
-        )
+    event = await _get_accessible_event(db, current_user, event_id)
 
     # 1. Sessions Ready: sessions with confirmed speakers + uploaded files / total sessions
     sessions_stmt = (
@@ -176,9 +192,7 @@ async def get_registrations_timeline(
     db: AsyncSession = Depends(get_db),
 ):
     """Daily cumulative registrations for the last 30 days plus linear projection to start date."""
-    event = await db.get(Event, event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = await _get_accessible_event(db, current_user, event_id)
 
     today = date.today()
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
@@ -254,6 +268,7 @@ async def get_roles_breakdown(
     db: AsyncSession = Depends(get_db),
 ):
     """Role distribution count for DonutChart."""
+    await _get_accessible_event(db, current_user, event_id)
     stmt = (
         select(
             ParticipantRole.name,
@@ -274,9 +289,7 @@ async def get_pending_actions(
     db: AsyncSession = Depends(get_db),
 ):
     """Auto-generates critical organizer tasks."""
-    event = await db.get(Event, event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = await _get_accessible_event(db, current_user, event_id)
 
     # 1. Sessions without speakers assigned
     no_speaker_sessions = (await db.execute(
@@ -371,6 +384,7 @@ async def get_recent_activity(
     db: AsyncSession = Depends(get_db),
 ):
     """Activity counts grouped by hour for the last 24h."""
+    await _get_accessible_event(db, current_user, event_id)
     now = datetime.now(timezone.utc)
     one_day_ago = now - timedelta(hours=24)
 
@@ -423,9 +437,7 @@ async def get_upcoming_deadlines(
     db: AsyncSession = Depends(get_db),
 ):
     """Upcoming upload and custom deadlines."""
-    event = await db.get(Event, event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = await _get_accessible_event(db, current_user, event_id)
 
     deadlines = []
     if event.upload_deadline:

@@ -50,9 +50,9 @@ export default function ComponentLibraryPage() {
             />
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <KpiCard title="Active Core Blocks" value={blocks.length} desc="Available in Page Builder" icon={Box} iconColor="brand" />
-                <KpiCard title="Schema Definitions" value={22} desc="Dynamic config parameters" icon={FileCode} iconColor="success" />
-                <KpiCard title="Custom Block Styles" value={14} desc="Global HSL layouts mapped" icon={Sliders} iconColor="info" />
+                <KpiCard title="Active Core Blocks" value={blocks.length} deltaLabel="Available in Page Builder" icon={Box} iconColor="brand" />
+                <KpiCard title="Schema Definitions" value={22} deltaLabel="Dynamic config parameters" icon={FileCode} iconColor="success" />
+                <KpiCard title="Custom Block Styles" value={14} deltaLabel="Global HSL layouts mapped" icon={Sliders} iconColor="info" />
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Left Side: Blocks List */}

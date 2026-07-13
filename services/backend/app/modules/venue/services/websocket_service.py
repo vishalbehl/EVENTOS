@@ -30,6 +30,15 @@ import socketio
 from loguru import logger
 
 from app.config import settings
+from app.database import AsyncSessionLocal
+from app.websocket.auth import (
+    RealtimeAuthError,
+    RealtimePrincipal,
+    authenticate_realtime,
+    authorize_event,
+    authorize_moderator_command,
+    authorize_room,
+)
 
 
 # ── Socket.IO server ──────────────────────────────────────────
@@ -38,21 +47,7 @@ from app.config import settings
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins="*" if settings.environment == "development" else [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://0.0.0.0:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
-        "http://localhost:3003",
-        "http://127.0.0.1:3003",
-        "http://localhost:3004",
-        "http://127.0.0.1:3004",
-        "http://localhost:3005",
-        "http://127.0.0.1:3005",
-    ],
+    cors_allowed_origins=settings.CORS_ORIGINS,
     logger=False,
     engineio_logger=False,
     ping_interval=settings.WS_HEARTBEAT_INTERVAL,
@@ -142,7 +137,7 @@ async def emit_to_client(
 # ── Event handlers ────────────────────────────────────────────
 
 @sio.event
-async def connect(sid: str, environ: dict, auth: dict | None = None) -> None:
+async def connect(sid: str, environ: dict, auth: dict | None = None) -> bool:
     """
     Called when a client connects.
 
@@ -154,14 +149,34 @@ async def connect(sid: str, environ: dict, auth: dict | None = None) -> None:
     We emit a 'connected' ack so the client knows the connection succeeded.
     In production, validate the token here and disconnect if invalid.
     """
-    logger.info(f"WebSocket client connected: sid={sid}")
+    try:
+        async with AsyncSessionLocal() as db:
+            principal = await authenticate_realtime(db, auth)
+    except RealtimeAuthError as exc:
+        logger.warning(f"Rejected realtime connection sid={sid}: {exc}")
+        return False
+
+    await sio.save_session(sid, principal.to_session())
+    logger.info(f"Authenticated realtime connection sid={sid} kind={principal.kind}")
     await sio.emit("connected", {"sid": sid, "status": "ok"}, to=sid)
+    return True
 
 
 @sio.event
 async def disconnect(sid: str) -> None:
     """Called when a client disconnects (intentional or network loss)."""
     logger.info(f"WebSocket client disconnected: sid={sid}")
+
+
+async def _principal_for(sid: str) -> RealtimePrincipal:
+    try:
+        return RealtimePrincipal.from_session(await sio.get_session(sid))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RealtimeAuthError("Authenticated realtime session is required.") from exc
+
+
+async def _emit_denied(sid: str) -> None:
+    await sio.emit("error", {"code": "PERMISSION_DENIED", "message": "Access denied."}, to=sid)
 
 
 @sio.event
@@ -173,7 +188,14 @@ async def join_event_room(sid: str, data: dict) -> None:
 
     In production: verify the client's JWT has access to this event_id.
     """
-    event_id = data.get("event_id")
+    try:
+        event_id = uuid.UUID(str(data.get("event_id")))
+        principal = await _principal_for(sid)
+        async with AsyncSessionLocal() as db:
+            await authorize_event(db, principal, event_id)
+    except (RealtimeAuthError, TypeError, ValueError):
+        await _emit_denied(sid)
+        return
     if not event_id:
         await sio.emit("error", {"message": "event_id required"}, to=sid)
         return
@@ -190,9 +212,13 @@ async def join_room_room(sid: str, data: dict) -> None:
     Client (Room App / Moderator) requests to join a conference room channel.
     Expected data: { "room_id": "<uuid>" }
     """
-    room_id = data.get("room_id")
-    if not room_id:
-        await sio.emit("error", {"message": "room_id required"}, to=sid)
+    try:
+        room_id = uuid.UUID(str(data.get("room_id")))
+        principal = await _principal_for(sid)
+        async with AsyncSessionLocal() as db:
+            await authorize_room(db, principal, room_id)
+    except (RealtimeAuthError, TypeError, ValueError):
+        await _emit_denied(sid)
         return
 
     room = room_room(room_id)
@@ -207,9 +233,13 @@ async def join_srr_room(sid: str, data: dict) -> None:
     SRR technician / Kiosk joins the ready-room channel.
     Expected data: { "event_id": "<uuid>" }
     """
-    event_id = data.get("event_id")
-    if not event_id:
-        await sio.emit("error", {"message": "event_id required"}, to=sid)
+    try:
+        event_id = uuid.UUID(str(data.get("event_id")))
+        principal = await _principal_for(sid)
+        async with AsyncSessionLocal() as db:
+            await authorize_event(db, principal, event_id)
+    except (RealtimeAuthError, TypeError, ValueError):
+        await _emit_denied(sid)
         return
 
     room = srr_room(event_id)
@@ -263,7 +293,17 @@ async def moderator_command(sid: str, data: dict) -> None:
         await sio.emit("error", {"message": f"Unknown command: {command}"}, to=sid)
         return
 
-    room = room_room(room_id)
+    try:
+        parsed_room_id = uuid.UUID(str(room_id))
+        principal = await _principal_for(sid)
+        authorize_moderator_command(principal)
+        async with AsyncSessionLocal() as db:
+            await authorize_room(db, principal, parsed_room_id)
+    except (RealtimeAuthError, TypeError, ValueError):
+        await _emit_denied(sid)
+        return
+
+    room = room_room(parsed_room_id)
     event_payload = {"command": command, "payload": payload, "from_sid": sid}
     await sio.emit("presentation_command", event_payload, room=room, skip_sid=sid)
     logger.debug(f"Moderator command '{command}' → room {room}")
@@ -280,6 +320,12 @@ async def station_heartbeat(sid: str, data: dict) -> dict:
     In production, update last_heartbeat_at in the DB here.
     Returns ack to the station.
     """
+    try:
+        principal = await _principal_for(sid)
+        if principal.kind != "device":
+            raise RealtimeAuthError("Device authentication is required.")
+    except RealtimeAuthError:
+        return {"ack": False, "code": "PERMISSION_DENIED"}
     station_id = data.get("station_id")
     status = data.get("status", "idle")
     logger.debug(f"Heartbeat from station {station_id}: {status}")

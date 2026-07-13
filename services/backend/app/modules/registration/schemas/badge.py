@@ -9,6 +9,11 @@ class PrinterRegister(BaseModel):
     ip_address: str = Field(..., max_length=50)
     location: str = Field(..., max_length=150)
     status: str = Field(default="offline", max_length=30)
+    vendor_id: Optional[uuid.UUID] = None
+    room_id: Optional[uuid.UUID] = None
+    external_reference: Optional[str] = Field(default=None, max_length=150)
+    deployment_starts_at: Optional[datetime] = None
+    deployment_ends_at: Optional[datetime] = None
 
 
 class PrinterResponse(BaseModel):
@@ -19,6 +24,13 @@ class PrinterResponse(BaseModel):
     ip_address: str
     location: str
     status: str
+    organization_id: Optional[uuid.UUID] = None
+    event_id: Optional[uuid.UUID] = None
+    vendor_id: Optional[uuid.UUID] = None
+    room_id: Optional[uuid.UUID] = None
+    external_reference: Optional[str] = None
+    deployment_starts_at: Optional[datetime] = None
+    deployment_ends_at: Optional[datetime] = None
 
 
 class BadgeGenerateRequest(BaseModel):

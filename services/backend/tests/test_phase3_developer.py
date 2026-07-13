@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+import json
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
@@ -46,18 +47,24 @@ async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User,
     keys = list_resp.json()
     assert any(k["id"] == key_id for k in keys)
 
-    # 3. Authenticate with the API Key
-    # We can hit a non-public route (like /developer/api-keys) to verify auth
-    # Using X-API-Key header
+    # 3. Authenticate with the API key on a machine-authorized endpoint.
     auth_resp = await client.get(
-        "/developer/api-keys",
+        "/developer/service-identity",
         headers={"X-API-Key": plaintext_key}
     )
     assert auth_resp.status_code == 200
+    assert auth_resp.json()["organization_id"] == str(organizer.organization_id)
 
-    # Using Authorization Bearer key header
-    auth_resp2 = await client.get(
+    # API keys cannot impersonate users to manage credentials.
+    management_resp = await client.get(
         "/developer/api-keys",
+        headers={"X-API-Key": plaintext_key},
+    )
+    assert management_resp.status_code == 403
+
+    # Authorization Bearer also supports the machine endpoint.
+    auth_resp2 = await client.get(
+        "/developer/service-identity",
         headers={"Authorization": f"Bearer {plaintext_key}"}
     )
     assert auth_resp2.status_code == 200
@@ -71,7 +78,7 @@ async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User,
 
     # 5. Verify revoked key is rejected
     fail_resp = await client.get(
-        "/developer/api-keys",
+        "/developer/service-identity",
         headers={"X-API-Key": plaintext_key}
     )
     assert fail_resp.status_code == 401
@@ -169,29 +176,34 @@ async def test_developer_rate_limiting(client: AsyncClient, organizer: User, db:
     key_data = key_resp.json()
     plaintext_key = key_data["plaintext_key"]
 
+    from app.core.cache_keys import TenantCacheKey
+
     # Clear Redis rate limit keys to start clean
-    min_key_pattern = f"rate:dev:min:{organizer.organization_id}:*"
+    min_key_pattern = f"tenant:{organizer.organization_id}:rate-limit:developer:minute:*"
     keys = await redis_client.keys(min_key_pattern)
     for k in keys:
         await redis_client.delete(k)
         
     await redis_client.delete(f"rl:{organizer.organization_id}:minute")
     await redis_client.delete(f"rl:{organizer.organization_id}:day")
+    await redis_client.delete(TenantCacheKey.rate_limit_window(organizer.organization_id, "minute"))
+    await redis_client.delete(TenantCacheKey.rate_limit_window(organizer.organization_id, "day"))
         
-    config_key = f"rate:limit:config:{organizer.organization_id}"
+    config_key = TenantCacheKey.rate_limit_config(organizer.organization_id)
     await redis_client.delete(config_key)
+    await redis_client.setex(config_key, 300, json.dumps({"minute": 2, "day": 50}))
 
 
     # Trigger requests using the API key
     # First request: Allowed
-    resp1 = await client.get("/developer/api-keys", headers={"X-API-Key": plaintext_key})
+    resp1 = await client.get("/developer/service-identity", headers={"X-API-Key": plaintext_key})
     assert resp1.status_code == 200
 
     # Second request: Allowed
-    resp2 = await client.get("/developer/api-keys", headers={"X-API-Key": plaintext_key})
+    resp2 = await client.get("/developer/service-identity", headers={"X-API-Key": plaintext_key})
     assert resp2.status_code == 200
 
     # Third request: Blocked with 429
-    resp3 = await client.get("/developer/api-keys", headers={"X-API-Key": plaintext_key})
+    resp3 = await client.get("/developer/service-identity", headers={"X-API-Key": plaintext_key})
     assert resp3.status_code == 429
     assert resp3.json()["detail"] == "Rate limit exceeded. Too many requests."

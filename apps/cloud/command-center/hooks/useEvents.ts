@@ -1,10 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 import { EventSummary, EventResponse } from "@/types/backend";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export function useEvents(filters?: { status?: string; search?: string }) {
+  const { user, hasHydrated, isAuthenticated } = useAuthStore();
+  const orgId = user?.organization_id ?? null;
+
   return useQuery({
-    queryKey: ["events", filters],
+    queryKey: ["events", orgId, filters],
     queryFn: () => {
       const params = new URLSearchParams();
       if (filters?.status) params.append("status", filters.status);
@@ -12,14 +16,18 @@ export function useEvents(filters?: { status?: string; search?: string }) {
       const queryString = params.toString();
       return apiGet<EventSummary[]>(`/events${queryString ? `?${queryString}` : ""}`);
     },
+    enabled: hasHydrated && isAuthenticated,
   });
 }
 
 export function useEvent(eventId: string) {
+  const { user, hasHydrated, isAuthenticated } = useAuthStore();
+  const orgId = user?.organization_id ?? null;
+
   return useQuery({
-    queryKey: ["event", eventId],
+    queryKey: ["event", orgId, eventId],
     queryFn: () => apiGet<EventResponse>(`/events/${eventId}`),
-    enabled: !!eventId,
+    enabled: hasHydrated && isAuthenticated && !!eventId,
   });
 }
 

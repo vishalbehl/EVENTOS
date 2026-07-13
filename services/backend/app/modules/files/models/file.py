@@ -16,6 +16,9 @@ class Asset(Base):
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    processing_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="QUARANTINED", index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
@@ -85,4 +88,3 @@ class VirusScan(Base):
 
     # Relationships
     asset: Mapped["Asset"] = relationship("Asset", back_populates="virus_scans")
-

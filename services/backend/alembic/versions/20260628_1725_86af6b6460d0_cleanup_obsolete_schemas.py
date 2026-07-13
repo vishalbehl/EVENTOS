@@ -152,12 +152,11 @@ def upgrade() -> None:
     op.execute("DROP TABLE IF EXISTS platform.permissions CASCADE")
     op.execute("DROP TABLE IF EXISTS platform.role_permissions CASCADE")
 
-    # Drop rbac permission tables
+    # Drop rbac permission tables (user_access_nodes is still used in code, do not drop)
     op.execute("DROP TABLE IF EXISTS rbac.permission_groups CASCADE")
     op.execute("DROP TABLE IF EXISTS rbac.permission_sets CASCADE")
     op.execute("DROP TABLE IF EXISTS rbac.application_permissions CASCADE")
     op.execute("DROP TABLE IF EXISTS rbac.feature_permissions CASCADE")
-    op.execute("DROP TABLE IF EXISTS rbac.user_access_nodes CASCADE")
 
     # Drop entire schemas
     op.execute("DROP SCHEMA IF EXISTS platform_activity CASCADE")

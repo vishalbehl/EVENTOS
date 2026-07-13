@@ -101,6 +101,7 @@ export interface OrgDetail {
   max_events?: number;
   max_users?: number;
   max_storage_gb?: number;
+  max_registrations?: number;
   country?: string;
   timezone?: string;
   subscription: {
@@ -719,8 +720,10 @@ export const adminApi = {
   addOrgDomain: (orgId: string, domain: string) =>
     apiClient.post<OrgDomain>(`/platform/organizations/${orgId}/domains`, { domain }),
 
-  deleteOrgDomain: (orgId: string, domainId: string) =>
-    apiClient.delete(`/platform/organizations/${orgId}/domains/${domainId}`),
+  deleteOrgDomain: (orgId: string, domainId: string, reason?: string) =>
+    apiClient.delete(`/platform/organizations/${orgId}/domains/${domainId}`, {
+      data: reason ? { reason } : undefined,
+    }),
 
   verifyOrgDomain: (orgId: string, domainId: string) =>
     apiClient.post<any>(`/platform/organizations/${orgId}/domains/${domainId}/verify`),
@@ -1241,7 +1244,8 @@ export const useAddOrgDomain = (orgId: string) => {
 export const useDeleteOrgDomain = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (domainId: string) => adminApi.deleteOrgDomain(orgId, domainId),
+    mutationFn: ({ domainId, reason }: { domainId: string; reason?: string }) =>
+      adminApi.deleteOrgDomain(orgId, domainId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDomains(orgId) });
     },

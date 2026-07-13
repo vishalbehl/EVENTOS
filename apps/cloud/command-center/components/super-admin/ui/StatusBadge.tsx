@@ -37,19 +37,19 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   let label = status;
 
   if (["active", "healthy", "paid", "completed"].includes(norm)) {
-    bgClass = "bg-[var(--success-muted)] text-[var(--success)]";
+    bgClass = "bg-[var(--status-success-muted)] text-[var(--status-success)]";
     dotColor = "bg-[#10B981]";
     label = norm === "paid" ? "Paid" : norm === "active" ? "Active" : norm === "healthy" ? "Healthy" : "Completed";
   } else if (["trial", "running", "pending", "info"].includes(norm)) {
-    bgClass = "bg-[var(--info-muted)] text-[var(--info)]";
+    bgClass = "bg-[var(--status-info-muted)] text-[var(--status-info)]";
     dotColor = "bg-[#3B82F6]";
     label = norm === "trial" ? "Trial" : norm === "running" ? "Running" : norm === "pending" ? "Pending" : "Info";
   } else if (["grace", "warning", "degraded"].includes(norm)) {
-    bgClass = "bg-[var(--warning-muted)] text-[var(--warning)]";
+    bgClass = "bg-[var(--status-warning-muted)] text-[var(--status-warning)]";
     dotColor = "bg-[#F59E0B]";
     label = norm === "grace" ? "Grace Period" : norm === "warning" ? "Warning" : "Degraded";
   } else if (["suspended", "down", "overdue", "failed", "danger"].includes(norm)) {
-    bgClass = "bg-[var(--danger-muted)] text-[var(--danger)]";
+    bgClass = "bg-[var(--status-danger-muted)] text-[var(--status-danger)]";
     dotColor = "bg-[#EF4444]";
     label = norm === "suspended" ? "Suspended" : norm === "down" ? "Down" : norm === "overdue" ? "Overdue" : norm === "failed" ? "Failed" : "Danger";
   } else if (["expired", "cancelled", "draft"].includes(norm)) {

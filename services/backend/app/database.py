@@ -6,7 +6,7 @@
 # SQLAlchemy engines so the rest of the codebase can use either.
 # =============================================================
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy import DateTime, ForeignKey
@@ -529,18 +529,14 @@ class SchemaDeclarativeMeta(DeclarativeAttributeIntercept):
                 elif hasattr(val, "foreign_keys"):
                     fks = val.foreign_keys
                 
-                if fks:
-                    print(f"Class {name} column {key} has FKs: {fks}")
                 for fk in fks:
                     colspec = fk._colspec
-                    print(f"  FK: {fk}, original colspec: {colspec}")
                     if isinstance(colspec, str) and colspec.count(".") == 1:
                         parts = colspec.split(".")
                         target_table = parts[0]
                         if target_table in TABLE_SCHEMAS:
                             target_schema = TABLE_SCHEMAS[target_table]
                             fk._colspec = f"{target_schema}.{colspec}"
-                            print(f"  -> Rewrote to: {fk._colspec}")
         
         return super().__new__(mcls, name, bases, dict_)
 
@@ -562,7 +558,6 @@ tenant_org_id: contextvars.ContextVar[Optional[uuid.UUID]] = contextvars.Context
 @event.listens_for(Session, "do_orm_execute")
 def _do_orm_execute(execute_state):
     org_id = tenant_org_id.get()
-    print(f"DEBUG: _do_orm_execute: org_id={org_id}, skip={execute_state.execution_options.get('skip_tenant_filter', False)}")
     if org_id and not execute_state.execution_options.get("skip_tenant_filter", False):
         execute_state.statement = execute_state.statement.options(
             with_loader_criteria(
@@ -576,13 +571,13 @@ def _do_orm_execute(execute_state):
 @event.listens_for(Session, "after_begin")
 def _after_begin(session, transaction, connection):
     org_id = tenant_org_id.get()
-    print(f"DEBUG: _after_begin: org_id={org_id}")
     if org_id:
-        connection.exec_driver_sql(
-            f"SET LOCAL app.current_organization_id = '{org_id}'"
+        connection.execute(
+            text("SELECT set_config('app.current_organization_id', :org_id, true)"),
+            {"org_id": str(org_id)},
         )
     else:
-        connection.exec_driver_sql("RESET app.current_organization_id")
+        connection.execute(text("SELECT set_config('app.current_organization_id', '', true)"))
 
 
 # ── Async engine (FastAPI / dependencies.py) ──────────────────

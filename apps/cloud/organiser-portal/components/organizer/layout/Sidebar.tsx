@@ -48,6 +48,7 @@ import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useEvent } from "@/hooks/useEvents";
+import { useCurrentPlan } from "@/hooks/useBilling";
 import { PERMISSIONS, type PermissionCode } from "@/lib/permissions";
 
 type NavItem = {
@@ -67,12 +68,20 @@ export function Sidebar() {
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const { checkPermission, isLoading } = usePermissions(eventId);
   const { data: event } = useEvent(eventId || "");
+  const { data: currentPlan } = useCurrentPlan();
 
   const isEventWorkspace = Boolean(eventId);
   const isRegistrationWorkspace = Boolean(
     eventId && pathname?.includes(`/events/${eventId}/registration`)
   );
   const isPlatformWorkspace = !isEventWorkspace;
+
+  const showWorkspaceAccessBanner =
+    !isCollapsed &&
+    isPlatformWorkspace &&
+    user?.role !== "super_admin" &&
+    !user?.is_platform_admin &&
+    currentPlan?.status !== "ACTIVE";
 
   const speakerEnabled = event?.speaker_settings?.enabled ?? true;
   const regEnabled = event?.registration_settings?.enabled ?? true;
@@ -310,7 +319,7 @@ export function Sidebar() {
             />
           ))}
 
-          {!isCollapsed && isPlatformWorkspace ? (
+          {showWorkspaceAccessBanner ? (
             <div className="hex-panel overflow-hidden mt-3 rounded-[20px] p-4">
               <p className="text-[12px] font-semibold text-[var(--color-text-primary)]">Workspace access</p>
               <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -319,6 +328,20 @@ export function Sidebar() {
               <Link href="/subscriptions" className="mt-4 block">
                 <div className="rounded-xl hex-lime-gradient px-3 py-2 text-center text-[12px] font-semibold text-[var(--color-text-inverse)] shadow-[0_10px_22px_rgba(224,255,0,0.16)]">
                   Activate plan
+                </div>
+              </Link>
+            </div>
+          ) : null}
+
+          {!isCollapsed && isEventWorkspace && event && !event.licensing_details?.activated_at && user?.role !== "super_admin" && !user?.is_platform_admin ? (
+            <div className="hex-panel overflow-hidden mt-3 rounded-[20px] p-4 border border-dashed border-yellow-500/30 bg-yellow-500/5">
+              <p className="text-[12px] font-bold text-yellow-500">Dummy Event (Unactivated)</p>
+              <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                This is a demo event. Registrations, speakers, and communications are locked.
+              </p>
+              <Link href="/subscriptions" className="mt-4 block">
+                <div className="rounded-xl bg-yellow-600 hover:bg-yellow-500 px-3 py-2 text-center text-[12px] font-semibold text-white shadow-lg cursor-pointer">
+                  Activate Event
                 </div>
               </Link>
             </div>

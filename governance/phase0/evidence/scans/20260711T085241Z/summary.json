@@ -1,0 +1,51 @@
+﻿[
+    {
+        "scan":  "Secret scan",
+        "status":  "SKIPPED",
+        "tool":  "gitleaks",
+        "output":  "",
+        "notes":  "Tool is not installed or not on PATH."
+    },
+    {
+        "scan":  "Python SAST",
+        "status":  "SKIPPED",
+        "tool":  "bandit",
+        "output":  "",
+        "notes":  "Tool is not installed or not on PATH."
+    },
+    {
+        "scan":  "Multi-language SAST",
+        "status":  "SKIPPED",
+        "tool":  "semgrep",
+        "output":  "",
+        "notes":  "Tool is not installed or not on PATH."
+    },
+    {
+        "scan":  "Python dependency scan",
+        "status":  "SKIPPED",
+        "tool":  "pip-audit",
+        "output":  "",
+        "notes":  "Tool is not installed or not on PATH."
+    },
+    {
+        "scan":  "JavaScript dependency scan",
+        "status":  "SKIPPED",
+        "tool":  "npm audit",
+        "output":  "",
+        "notes":  "Skipped by caller."
+    },
+    {
+        "scan":  "Container image scan",
+        "status":  "SKIPPED",
+        "tool":  "trivy",
+        "output":  "",
+        "notes":  "Pass -ContainerImage with an immutable tag or digest."
+    },
+    {
+        "scan":  "API/DAST baseline",
+        "status":  "SKIPPED",
+        "tool":  "OWASP ZAP",
+        "output":  "",
+        "notes":  "Pass -ApiTargetUrl for an authorized local or staging target."
+    }
+]

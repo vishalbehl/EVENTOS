@@ -13,6 +13,7 @@ import pytest
 def _make_mock_video_file(fmt="mp4"):
     f = MagicMock()
     f.id = uuid.uuid4()
+    f.organization_id = uuid.uuid4()
     f.event_id = uuid.uuid4()
     f.file_format = fmt
     f.storage_path = f"presentations/{f.event_id}/{f.id}.{fmt}"
@@ -34,7 +35,8 @@ def _mock_db(file_obj):
     session.query.return_value = mock_query
 
     @contextmanager
-    def _ctx():
+    def _ctx(organization_id):
+        assert isinstance(organization_id, uuid.UUID)
         yield session
 
     with patch("workers.tasks.video_tasks.get_db_session", side_effect=_ctx):
@@ -48,7 +50,7 @@ class TestNormaliseVideoFile:
         mock_file = _make_mock_video_file(fmt="pptx")
 
         with _mock_db(mock_file):
-            result = normalise_video_file.apply(args=[str(mock_file.id)]).result
+            result = normalise_video_file.apply(args=[str(mock_file.id), str(mock_file.organization_id)]).result
 
         assert result.get("skipped") is True
 
@@ -65,12 +67,12 @@ class TestNormaliseVideoFile:
                  patch("workers.tasks.video_tasks.r2.upload_bytes") as mock_upload, \
                  patch("workers.tasks.video_tasks.generate_file_thumbnail") as mock_thumb:
 
-                result = normalise_video_file.apply(args=[str(mock_file.id)]).result
+                result = normalise_video_file.apply(args=[str(mock_file.id), str(mock_file.organization_id)]).result
 
         assert result["normalised"] is True
         assert result["normalised_bytes"] == len(normalised_data)
         mock_upload.assert_called_once()
-        mock_thumb.delay.assert_called_once_with(str(mock_file.id))
+        mock_thumb.delay.assert_called_once_with(str(mock_file.id), str(mock_file.organization_id))
 
     def test_returns_not_normalised_when_ffmpeg_unavailable(self):
         from workers.tasks.video_tasks import normalise_video_file
@@ -82,7 +84,7 @@ class TestNormaliseVideoFile:
                  patch("workers.tasks.video_tasks.get_video_metadata", return_value=None), \
                  patch("workers.tasks.video_tasks.normalise_video", return_value=None):
 
-                result = normalise_video_file.apply(args=[str(mock_file.id)]).result
+                result = normalise_video_file.apply(args=[str(mock_file.id), str(mock_file.organization_id)]).result
 
         assert result["normalised"] is False
 
@@ -93,11 +95,12 @@ class TestNormaliseVideoFile:
         session.get.return_value = None
 
         @contextmanager
-        def _ctx():
+        def _ctx(organization_id):
+            assert isinstance(organization_id, uuid.UUID)
             yield session
 
         with patch("workers.tasks.video_tasks.get_db_session", side_effect=_ctx):
-            result = normalise_video_file.apply(args=[str(uuid.uuid4())]).result
+            result = normalise_video_file.apply(args=[str(uuid.uuid4()), str(uuid.uuid4())]).result
 
         assert "error" in result
 
@@ -114,7 +117,7 @@ class TestNormaliseVideoFile:
                  patch("workers.tasks.video_tasks.r2.upload_bytes"), \
                  patch("workers.tasks.video_tasks.generate_file_thumbnail"):
 
-                normalise_video_file.apply(args=[str(mock_file.id)])
+                normalise_video_file.apply(args=[str(mock_file.id), str(mock_file.organization_id)])
 
         assert mock_file.file_size_bytes == 1000
         assert mock_file.file_format == "mp4"
@@ -138,7 +141,7 @@ class TestExtractVideoMetadata:
                  patch("workers.tasks.video_tasks.get_video_metadata", return_value=meta), \
                  patch("workers.tasks.video_tasks.FileValidation"):
 
-                result = extract_video_metadata.apply(args=[str(mock_file.id)]).result
+                result = extract_video_metadata.apply(args=[str(mock_file.id), str(mock_file.organization_id)]).result
 
         assert result["duration_seconds"] == 300.0
         assert result["width"] == 1920
@@ -153,6 +156,6 @@ class TestExtractVideoMetadata:
             with patch("workers.tasks.video_tasks.r2.download_bytes", return_value=b"v"), \
                  patch("workers.tasks.video_tasks.get_video_metadata", return_value=None):
 
-                result = extract_video_metadata.apply(args=[str(mock_file.id)]).result
+                result = extract_video_metadata.apply(args=[str(mock_file.id), str(mock_file.organization_id)]).result
 
         assert result["metadata_extracted"] is False

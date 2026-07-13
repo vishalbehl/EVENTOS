@@ -187,6 +187,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
   const [expiry, setExpiry] = useState("");
   const [cvv, setCvv] = useState("");
   const [successDetails, setSuccessDetails] = useState<any | null>(null);
+  const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState(initialFormData);
 
@@ -270,8 +271,20 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
     setPriceDetails(null);
     setLoadingConfig(true);
 
-    Promise.all([orgApi.me(), orgApi.plans(), orgApi.addons()])
-      .then(([meRes, plansRes, addonsRes]) => {
+    Promise.allSettled([orgApi.me(), orgApi.plans(), orgApi.addons(), orgApi.currentBillingPlan()])
+      .then((results) => {
+        const [meResult, plansResult, addonsResult, billingResult] = results;
+        if (
+          meResult.status !== "fulfilled" ||
+          plansResult.status !== "fulfilled" ||
+          addonsResult.status !== "fulfilled"
+        ) {
+          throw new Error("Failed to load billing configuration.");
+        }
+
+        const meRes = meResult.value;
+        const plansRes = plansResult.value;
+        const addonsRes = addonsResult.value;
         const normalizedPlans = asArray(plansRes).map(normalizePlan);
         const normalizedAddons = asArray(addonsRes).map(normalizeAddon);
         const matchedPlan =
@@ -283,6 +296,21 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         setPlans(normalizedPlans);
         setAddons(normalizedAddons);
         setSelectedPlan(matchedPlan);
+        if (billingResult.status === "fulfilled") {
+          setSubscriptionId(billingResult.value?.subscription_id ? String(billingResult.value.subscription_id) : null);
+        } else {
+          setSubscriptionId(null);
+        }
+
+        const isSuperOrg = meRes.organization?.slug === "eventxos";
+        const currentEventLimit = meRes.plan_limits?.events ?? 0;
+        const currentEventCount = meRes.event_count ?? 0;
+        const hasActivePlan = Boolean(meRes.organization?.is_active && currentEventLimit > 0);
+        const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
+
+        if (isSuperOrg || (hasActivePlan && remainingEvents > 0)) {
+          setStep(3);
+        }
         setBillingName(meRes.organization.name || "");
         setBillingEmail(meRes.organization.billing_email || "");
         setFormData((prev) => ({
@@ -386,6 +414,9 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         transactionId: result.transaction_id,
         amountPaid: result.amount_paid ?? totalPrice,
       });
+      if (result?.subscription_id) {
+        setSubscriptionId(String(result.subscription_id));
+      }
       toast.success("Plan activated. You can now create the event.");
       setStep(3);
     } catch (error: any) {
@@ -415,7 +446,22 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         return;
       }
 
-      await createEvent.mutateAsync(formData);
+      const created = await createEvent.mutateAsync(formData);
+
+      let resolvedSubscriptionId = subscriptionId;
+      if (!resolvedSubscriptionId) {
+        const currentPlan = await orgApi.currentBillingPlan();
+        resolvedSubscriptionId = currentPlan?.subscription_id ? String(currentPlan.subscription_id) : null;
+        if (resolvedSubscriptionId) {
+          setSubscriptionId(resolvedSubscriptionId);
+        }
+      }
+
+      if (!resolvedSubscriptionId) {
+        throw new Error("Subscription activation could not be completed because no active subscription was found.");
+      }
+
+      await orgApi.activateEvent(String(created.id), resolvedSubscriptionId);
       toast.success("Event created successfully.");
       setStep(4);
     } catch (error: any) {

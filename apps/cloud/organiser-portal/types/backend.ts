@@ -31,6 +31,9 @@ export interface EventResponse extends EventSummary {
   created_by?: string;
   created_at: string;
   updated_at: string;
+  licensing_details?: {
+    activated_at: string | null;
+  } | null;
 }
 
 export interface DashboardStats {

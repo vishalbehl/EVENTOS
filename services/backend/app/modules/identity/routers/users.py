@@ -1,9 +1,11 @@
 # backend/app/routers/users.py
 from __future__ import annotations
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,6 +19,16 @@ from app.modules.identity.schemas.user import (
 )
 from app.schemas.common import MessageResponse
 from app.services import auth_service
+from app.modules.identity.models.identity_domain_tables import MfaDevice
+from app.modules.identity.models.refresh_token import RefreshToken
+from app.modules.identity.services.mfa_service import (
+    build_totp_uri,
+    generate_totp_secret,
+    requires_privileged_mfa,
+    verify_totp,
+)
+from app.core.encryption import encrypt
+from app.config import settings
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -221,8 +233,6 @@ async def delete_user(
     current_user: SuperAdminOnly,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    from sqlalchemy import text
-    
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account.")
         
@@ -236,35 +246,99 @@ async def delete_user(
         if count_res.scalar() <= 1:
             raise HTTPException(status_code=400, detail="Cannot delete the last remaining Super Admin account.")
     
-    # Bypass immutable triggers on audit_logs (which have SET NULL on users.id)
-    # This allows physical deletion even if the user has audit logs.
-    await db.execute(text("SET LOCAL session_replication_role = 'replica'"))
-    
-    await db.delete(user)
+    # Preserve the user identifier for immutable audit attribution while removing
+    # authentication capability and personal profile data.
+    deleted_marker = f"deleted-{user.id}@invalid.eventx.local"
+    user.email = deleted_marker
+    user.first_name = "Deleted"
+    user.last_name = "User"
+    user.phone = None
+    user.avatar_url = None
+    user.password_hash = None
+    user.is_active = False
+    user.is_2fa_enabled = False
+    user.two_factor_secret = None
+    user.deleted_at = datetime.now(timezone.utc)
+    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    await db.execute(delete(MfaDevice).where(MfaDevice.user_id == user.id))
     await db.commit()
     
-    return MessageResponse(message="User account permanently deleted from the system.")
+    return MessageResponse(message="User account deactivated and personal profile data removed.")
 
 
-@router.post("/me/toggle-2fa", response_model=UserResponse, summary="Toggle 2FA for current user")
-async def toggle_2fa(
-    current_user: User = Depends(get_current_user),
+class MfaCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+
+@router.post("/me/mfa/setup", summary="Begin TOTP enrollment")
+async def setup_mfa(
+    current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
-) -> UserResponse:
-    """Enable or disable 2FA for the current user."""
-    current_user.is_2fa_enabled = not current_user.is_2fa_enabled
-    if current_user.is_2fa_enabled and not current_user.two_factor_secret:
-        # In a real app, we would generate a secret and show a QR code
-        from app.core.encryption import encrypt
-        current_user.two_factor_secret = encrypt("DUMMY_SECRET_KEY_FOR_DEMO")
-    
-    await db.commit()
-    await db.refresh(current_user)
-    
-    result = await db.execute(
-        select(User).options(selectinload(User.assignments)).where(User.id == current_user.id)
+) -> dict:
+    await db.execute(
+        delete(MfaDevice).where(
+            MfaDevice.user_id == current_user.id,
+            MfaDevice.is_active.is_(False),
+        )
     )
-    return result.scalar_one()
+    secret = generate_totp_secret()
+    db.add(MfaDevice(
+        user_id=current_user.id,
+        device_type="totp",
+        encrypted_secret=encrypt(secret),
+        is_active=False,
+    ))
+    await db.commit()
+    return {"secret": secret, "otpauth_uri": build_totp_uri(secret, current_user.email)}
+
+
+@router.post("/me/mfa/confirm", summary="Confirm TOTP enrollment")
+async def confirm_mfa(
+    payload: MfaCodeRequest,
+    current_user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    device = await db.scalar(
+        select(MfaDevice).where(
+            MfaDevice.user_id == current_user.id,
+            MfaDevice.is_active.is_(False),
+        )
+    )
+    if device is None or not verify_totp(device.totp_secret, payload.code):
+        raise HTTPException(status_code=400, detail="Invalid MFA enrollment code.")
+    device.is_active = True
+    current_user.is_2fa_enabled = True
+    current_user.two_factor_secret = None
+    await db.commit()
+    return {"status": "enabled"}
+
+
+@router.delete("/me/mfa", summary="Disable TOTP")
+async def disable_mfa(
+    payload: MfaCodeRequest,
+    current_user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if settings.ENFORCE_PRIVILEGED_MFA and requires_privileged_mfa(current_user):
+        raise HTTPException(status_code=409, detail="MFA is mandatory for this privileged account.")
+    device = await db.scalar(
+        select(MfaDevice).where(
+            MfaDevice.user_id == current_user.id,
+            MfaDevice.is_active.is_(True),
+        )
+    )
+    if device is None or not verify_totp(device.totp_secret, payload.code):
+        raise HTTPException(status_code=400, detail="Invalid MFA code.")
+    await db.execute(delete(MfaDevice).where(MfaDevice.user_id == current_user.id))
+    current_user.is_2fa_enabled = False
+    await auth_service.revoke_user_refresh_tokens(db, current_user.id, reason="mfa_disabled")
+    await db.commit()
+    return {"status": "disabled"}
+
+
+@router.post("/me/toggle-2fa", status_code=410, summary="Deprecated insecure MFA toggle")
+async def toggle_2fa() -> None:
+    raise HTTPException(status_code=410, detail="Use /users/me/mfa/setup and /users/me/mfa/confirm.")
 
 
 # ── Assignments ───────────────────────────────────────────
@@ -286,6 +360,13 @@ async def create_assignment(
             raise HTTPException(status_code=403, detail="Cannot manage access for super_admin or organiser roles.")
 
     from app.modules.rbac.models.rbac import UserAccessNode
+    from app.modules.events.models.event import Event
+    from app.modules.billing.services.limit_guard import LimitGuard
+
+    event = await db.scalar(select(Event).where(Event.id == payload.event_id))
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    await LimitGuard.check_event_team_members(db, event.organization_id, event.id)
 
     assignment = UserEventAssignment(
         user_id=payload.user_id,

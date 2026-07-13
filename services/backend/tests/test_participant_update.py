@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,12 @@ from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import ParticipantUpdate
 from app.modules.registration.routers.participants import update_participant, create_participant, generate_next_regno
 from app.modules.registration.schemas.participant import ParticipantCreate
+from tests.conftest import activate_event_for_test
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def licensed_event(db: AsyncSession, event: Event):
+    await activate_event_for_test(db, event)
 
 
 @pytest.mark.asyncio

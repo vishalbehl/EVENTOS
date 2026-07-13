@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 interface DataTableProps<TData> {
   table: TableType<TData>;
+  ariaLabel?: string;
   isLoading?: boolean;
   onRowClick?: (row: TData) => void;
   emptyState?: {
@@ -20,6 +21,7 @@ interface DataTableProps<TData> {
 
 export function DataTable<TData>({
   table,
+  ariaLabel = "Data table",
   isLoading = false,
   onRowClick,
   emptyState,
@@ -40,7 +42,7 @@ export function DataTable<TData>({
     <div className="space-y-4 w-full">
       <div className="rounded-xl border border-border bg-surface overflow-hidden w-full">
         <div className="w-full overflow-auto max-h-[calc(100vh-420px)] min-h-[300px]">
-          <table className="w-full text-left border-collapse">
+          <table aria-label={ariaLabel} className="w-full text-left border-collapse">
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-border/80">
@@ -110,8 +112,17 @@ export function DataTable<TData>({
                   return (
                     <tr
                       key={row.id}
+                      tabIndex={onRowClick ? 0 : undefined}
+                      role={onRowClick ? "button" : undefined}
+                      aria-selected={isSelected || undefined}
                       data-state={isSelected ? "selected" : undefined}
                       onClick={() => onRowClick?.(row.original)}
+                      onKeyDown={(event) => {
+                        if (onRowClick && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      }}
                       className={cn(
                         "group border-b border-border/40 min-h-[52px] h-[52px] transition-colors duration-100 align-middle",
                         onRowClick && "cursor-pointer hover:bg-surface-hover/50",
@@ -144,6 +155,8 @@ export function DataTable<TData>({
           <div className="flex items-center gap-2 self-end sm:self-center">
             {/* Prev button */}
             <button
+              type="button"
+              aria-label="Previous page"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
               className="p-1.5 rounded-lg border border-border bg-surface text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-surface disabled:hover:text-[var(--text-secondary)] transition-all duration-150"
@@ -157,6 +170,9 @@ export function DataTable<TData>({
                 const isCurrent = idx === pageIndex;
                 return (
                   <button
+                    type="button"
+                    aria-label={`Go to page ${idx + 1}`}
+                    aria-current={isCurrent ? "page" : undefined}
                     key={idx}
                     onClick={() => table.setPageIndex(idx)}
                     className={cn(
@@ -174,6 +190,8 @@ export function DataTable<TData>({
 
             {/* Next button */}
             <button
+              type="button"
+              aria-label="Next page"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
               className="p-1.5 rounded-lg border border-border bg-surface text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-surface disabled:hover:text-[var(--text-secondary)] transition-all duration-150"

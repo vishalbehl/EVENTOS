@@ -18,6 +18,8 @@ from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.events.models.session import Session
 from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.services import email_service
+from app.core.tenant_context import TenantContextGuard
+from app.database import tenant_org_id
 
 def _run_async(coro):
     if sys.platform == "win32":
@@ -25,21 +27,36 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 @celery_app.task(name="app.tasks.process_email_campaign", bind=True, max_retries=3)
-def process_email_campaign(self, campaign_id_str: str) -> None:
+def process_email_campaign(
+    self, campaign_id_str: str, organization_id_str: str
+) -> None:
     """
     Background task to process a bulk email campaign.
     Handles snapshotting, batching, and status updates.
     """
     campaign_id = uuid.UUID(campaign_id_str)
+    organization_id = uuid.UUID(organization_id_str)
     logger.info(f"[Celery] Processing campaign: {campaign_id}")
 
     try:
-        _run_async(_process_email_campaign_async(campaign_id))
+        _run_async(_process_email_campaign_async(campaign_id, organization_id))
     except Exception as exc:
         logger.exception(f"[Celery] Error processing campaign {campaign_id}: {exc}")
         raise self.retry(exc=exc, countdown=60)
 
-async def _process_email_campaign_async(campaign_id: uuid.UUID) -> None:
+async def _process_email_campaign_async(
+    campaign_id: uuid.UUID, organization_id: uuid.UUID
+) -> None:
+    context_token = tenant_org_id.set(organization_id)
+    try:
+        await _process_email_campaign_in_tenant(campaign_id, organization_id)
+    finally:
+        tenant_org_id.reset(context_token)
+
+
+async def _process_email_campaign_in_tenant(
+    campaign_id: uuid.UUID, organization_id: uuid.UUID
+) -> None:
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from sqlalchemy.pool import NullPool
     
@@ -55,7 +72,18 @@ async def _process_email_campaign_async(campaign_id: uuid.UUID) -> None:
         expire_on_commit=False,
     )
 
-    async with TaskSessionLocal() as db:
+    try:
+        await _process_email_campaign_with_session(TaskSessionLocal, campaign_id, organization_id)
+    finally:
+        await task_engine.dispose()
+
+
+async def _process_email_campaign_with_session(
+    session_factory, campaign_id: uuid.UUID, organization_id: uuid.UUID
+) -> None:
+
+    async with session_factory() as db:
+        await TenantContextGuard.apply(db, organization_id)
         # 1. Fetch Campaign with Template and Event
         result = await db.execute(
             select(EmailCampaign)
@@ -313,4 +341,3 @@ async def _process_email_campaign_async(campaign_id: uuid.UUID) -> None:
         except Exception as ws_err:
             logger.warning(f"Failed to broadcast websocket notification: {ws_err}")
 
-    await task_engine.dispose()

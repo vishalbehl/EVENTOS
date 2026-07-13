@@ -18,6 +18,7 @@ from app.modules.rbac.models.organization_member import OrganizationMember
 from app.modules.platform.models.organization import Organization
 from app.modules.rbac.schemas.organization import OrganizationResponse, OrganizationUpdate
 from app.services import auth_service
+from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 
 from app.redis import redis_client
 import json
@@ -231,12 +232,19 @@ async def get_my_org(current_user: User = Depends(require_active_user), db: Asyn
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
     event_count, member_count = await _usage(db, org.id)
+    max_events = await EntitlementResolver.get_limit(db, org.id, "max_events")
+    max_users = await EntitlementResolver.get_limit(db, org.id, "max_users")
+    max_storage_gb = await EntitlementResolver.get_limit(db, org.id, "max_storage_gb")
     return {
         "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
         "member_count": member_count,
         "event_count": event_count,
         "storage_used_gb": 0,
-        "plan_limits": {"events": org.max_events, "users": org.max_users, "storage_gb": org.max_storage_gb},
+        "plan_limits": {
+            "events": max_events if max_events is not None else org.max_events,
+            "users": max_users if max_users is not None else org.max_users,
+            "storage_gb": max_storage_gb if max_storage_gb is not None else org.max_storage_gb,
+        },
         "org_role": await _org_role(db, current_user),
     }
 
@@ -797,25 +805,19 @@ async def subscribe_organization(
     db.add(transaction)
     await db.flush()
     
-    # Update Subscription record
-    sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org.id)
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
-    
     current_period_end = datetime.now(timezone.utc) + timedelta(days=365) # 1 year
-    
-    if not sub:
-        sub = OrganizationSubscription(
-            organization_id=org.id,
-            plan_id=plan.id,
-            status="ACTIVE",
-            current_period_end=current_period_end
-        )
-        db.add(sub)
-    else:
-        sub.plan_id = plan.id
-        sub.status = "ACTIVE"
-        sub.current_period_end = current_period_end
-        
+
+    sub = OrganizationSubscription(
+        organization_id=org.id,
+        plan_id=plan.id,
+        status="ACTIVE",
+        current_period_end=current_period_end
+    )
+    db.add(sub)
+    await db.flush()
+    from app.modules.billing.services.activation_service import ActivationService
+    await ActivationService.ensure_subscription_grant(db, sub)
+
     # Clear old custom limits if not custom, otherwise set them
     await db.execute(delete(TenantLimit).where(TenantLimit.organization_id == org.id))
     
@@ -839,9 +841,6 @@ async def subscribe_organization(
         final_max_storage_gb = payload.custom_limits.get("max_storage_gb", final_max_storage_gb)
         
     # Handle Addons
-    # Delete previous organization addons
-    await db.execute(delete(OrganizationAddon).where(OrganizationAddon.organization_id == org.id))
-    
     if payload.addon_keys:
         for addon_key in payload.addon_keys:
             addon_stmt = select(Addon).where(Addon.key == addon_key)
@@ -880,10 +879,13 @@ async def subscribe_organization(
         db.add(callback_ticket)
                 
     # Update Organization core values
+    effective_max_events = await EntitlementResolver.get_limit(db, org.id, "max_events")
+    effective_max_users = await EntitlementResolver.get_limit(db, org.id, "max_users")
+    effective_max_storage_gb = await EntitlementResolver.get_limit(db, org.id, "max_storage_gb")
     org.plan = "custom" if payload.is_custom else plan.name.lower()
-    org.max_events = final_max_events
-    org.max_users = final_max_users
-    org.max_storage_gb = final_max_storage_gb
+    org.max_events = effective_max_events if effective_max_events is not None else final_max_events
+    org.max_users = effective_max_users if effective_max_users is not None else final_max_users
+    org.max_storage_gb = effective_max_storage_gb if effective_max_storage_gb is not None else final_max_storage_gb
     org.plan_expires_at = current_period_end
     
     # Save standard ActivityTimeline event
@@ -908,6 +910,8 @@ async def subscribe_organization(
     return {
         "message": f"Successfully subscribed to {plan.name} (Custom={payload.is_custom}).",
         "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
+        "subscription_id": str(sub.id),
+        "plan_id": str(plan.id),
         "transaction_id": str(transaction.id),
         "amount_paid": price_info["total"],
     }
@@ -1159,7 +1163,10 @@ async def superadmin_list_organisations(
     for org in orgs:
         # Subscription status
         sub = (await db.execute(
-            select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org.id)
+            select(OrganizationSubscription)
+            .where(OrganizationSubscription.organization_id == org.id)
+            .order_by(OrganizationSubscription.created_at.desc())
+            .limit(1)
         )).scalar_one_or_none()
         sub_status = sub.status if sub else "TRIAL"
 
@@ -1260,7 +1267,10 @@ async def superadmin_get_feature_overrides(
 
     # Get org's current plan
     sub = (await db.execute(
-        select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
+        select(OrganizationSubscription)
+        .where(OrganizationSubscription.organization_id == org_id)
+        .order_by(OrganizationSubscription.created_at.desc())
+        .limit(1)
     )).scalar_one_or_none()
     plan_id = sub.plan_id if sub else None
 
@@ -1344,7 +1354,10 @@ async def superadmin_upsert_feature_override(
 
     # Get plan default for this org
     sub = (await db.execute(
-        select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
+        select(OrganizationSubscription)
+        .where(OrganizationSubscription.organization_id == org_id)
+        .order_by(OrganizationSubscription.created_at.desc())
+        .limit(1)
     )).scalar_one_or_none()
     plan_default = False
     if sub:

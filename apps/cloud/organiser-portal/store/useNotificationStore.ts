@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
+import { useAuthStore } from './use-auth-store';
 
 export interface Notification {
   id: string;
@@ -39,10 +40,12 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   connect: (eventIds: string[]) => {
     if (get().socket) return;
     
-    // In production, you would pass an auth token here
+    const token = useAuthStore.getState().accessToken;
+    if (!token) return;
     const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8000', {
       path: '/socket.io',
       transports: ['websocket'],
+      auth: { token },
     });
 
     socket.on('connect', () => {

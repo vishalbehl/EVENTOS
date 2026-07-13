@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
 
 export interface EmailTemplate {
   id: string;
@@ -21,7 +22,7 @@ export interface AutoInviteResult {
 
 export function useEmailTemplates(eventId: string) {
   return useQuery({
-    queryKey: ["email-templates", eventId],
+    queryKey: queryKeys.events.emailTemplates(eventId),
     queryFn: () => apiGet<EmailTemplate[]>(`/events/${eventId}/notifications/templates`),
     enabled: !!eventId,
   });
@@ -40,7 +41,8 @@ export function useSendToSpeakers(eventId: string) {
         { ...data, send_immediately: data.send_immediately ?? true }
       ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.campaigns(eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(eventId) });
     },
   });
 }
@@ -66,7 +68,8 @@ export function useAutoInvite(eventId: string) {
       ),
     onSuccess: () => {
       // Refresh speaker list to reflect any status changes
-      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.campaigns(eventId) });
     },
   });
 }

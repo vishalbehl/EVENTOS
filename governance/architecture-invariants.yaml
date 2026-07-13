@@ -1,0 +1,36 @@
+version: "1.0"
+status: frozen
+invariants:
+  - id: no-runtime-ddl
+    rule: Runtime application code must not mutate database schema.
+    enforcement: Alembic migration tests and static invariant test.
+  - id: verified-tenant-context
+    rule: Tenant-owned queries require verified transaction-local tenant context.
+    enforcement: TenantContextGuard and connection-reuse tests.
+  - id: no-runtime-bypassrls
+    rule: Runtime database roles must not have BYPASSRLS.
+    enforcement: Database role audit and migration gate.
+  - id: no-client-tenant-header
+    rule: Client-provided tenant headers cannot establish tenant identity.
+    enforcement: Authentication context and static invariant test.
+  - id: tenant-cache-namespace
+    rule: Tenant cache keys include organization scope and event scope when applicable.
+    enforcement: Cache wrapper tests.
+  - id: snapshot-first-licensing
+    rule: Runtime event licensing resolves from activation snapshots only.
+    enforcement: Entitlement resolver tests.
+  - id: authenticated-realtime
+    rule: Realtime connections, room joins, and commands require authenticated scoped principals.
+    enforcement: Realtime authorization tests.
+  - id: venue-api-boundary
+    rule: Venue systems access cloud data only through authenticated APIs.
+    enforcement: Network policy and synchronization tests.
+  - id: quarantined-files
+    rule: Files remain unavailable until security processing marks them READY.
+    enforcement: File state and download tests.
+  - id: no-secrets-in-telemetry
+    rule: Secrets, raw tokens, passwords, and payment data cannot enter telemetry.
+    enforcement: Logging policy and redaction tests.
+  - id: transaction-owner
+    rule: One domain service owns each synchronous business invariant; external side effects use durable workflows.
+    enforcement: Service-boundary review and outbox tests.

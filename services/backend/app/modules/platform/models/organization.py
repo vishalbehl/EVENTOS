@@ -36,6 +36,10 @@ class Organization(Base):
         # trial | basic | pro | enterprise
     )
     plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_platform_org: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    banner_thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    readiness_score: Mapped[Optional[float]] = mapped_column(nullable=True)
     primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#6366f1")
     secondary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#8b5cf6")
     custom_domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -71,8 +75,8 @@ class Organization(Base):
     memberships: Mapped[List["OrganizationMember"]] = relationship(
         "OrganizationMember", back_populates="organization", cascade="all, delete-orphan"
     )
-    subscription: Mapped[Optional["OrganizationSubscription"]] = relationship(
-        "OrganizationSubscription", back_populates="organization", cascade="all, delete-orphan", uselist=False
+    subscription: Mapped[List["OrganizationSubscription"]] = relationship(
+        "OrganizationSubscription", back_populates="organization", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

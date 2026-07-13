@@ -13,6 +13,7 @@ from app.modules.identity.models.user import User
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.developer.models.developer_registry import RateLimit
 from app.modules.superadmin.dependencies import require_super_admin
+from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.schemas.commercial import (
     CommercialPlanResponse, PlanFeatureSummary,
     CommercialSubscriptionItem, SubscriptionStatusSummary, PaginatedSubscriptions,
@@ -29,18 +30,21 @@ async def get_billing_usage(user: ActiveUser, db: DB):
     if not org_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Organization context is required.")
-    stmt = (select(SubscriptionPlan).select_from(OrganizationSubscription)
-            .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-            .where(OrganizationSubscription.organization_id == org_id))
-    res = await db.execute(stmt)
-    plan = res.scalar_one_or_none()
+    sub = await EntitlementResolver.get_active_subscription(db, org_id)
+    plan = sub.plan if sub else None
+    max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")
+    max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
+    max_registrations = await EntitlementResolver.get_limit(db, org_id, "max_registrations")
+    storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
     if not plan:
-        plan_name = "Basic"; max_events = 1; max_users = 2
+        plan_name = "Basic"; max_events = max_events or 1; max_users = max_users or 2
         max_registrations = 150; storage_quota_bytes = 10 * 1024 * 1024 * 1024; daily_limit = 10000
     else:
-        plan_name = plan.name; max_events = plan.max_events; max_users = plan.max_users
-        max_registrations = plan.max_registrations
-        storage_quota_bytes = plan.storage_quota_mb * 1024 * 1024
+        plan_name = plan.name
+        max_events = max_events if max_events is not None else plan.max_events
+        max_users = max_users if max_users is not None else plan.max_users
+        max_registrations = max_registrations if max_registrations is not None else plan.max_registrations
+        storage_quota_bytes = (storage_quota_mb if storage_quota_mb is not None else plan.storage_quota_mb) * 1024 * 1024
         override_res = await db.execute(select(RateLimit.requests_per_day).where(
             RateLimit.organization_id == org_id).execution_options(skip_tenant_filter=True))
         daily_limit = override_res.scalar()
@@ -72,8 +76,8 @@ async def get_billing_plan(user: ActiveUser, db: DB):
     if not org_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Organization context is required.")
-    stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
-    sub = (await db.execute(stmt)).scalar_one_or_none()
+    subs = await EntitlementResolver.get_active_subscriptions(db, org_id)
+    sub = subs[0] if subs else None
     if not sub:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No subscription found for this organization.")
@@ -92,24 +96,35 @@ async def get_billing_plan(user: ActiveUser, db: DB):
     usage_rec = await db.get(OrganizationUsage, org_id)
     storage_used_bytes = usage_rec.storage_used_bytes if usage_rec else 0
     storage_used_mb = round(storage_used_bytes / (1024 * 1024), 2)
+    max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")
+    max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
+    max_registrations = await EntitlementResolver.get_limit(db, org_id, "max_registrations")
+    storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
     return {
         "subscription_id": sub.id, "status": sub.status,
         "trial_ends_at": sub.trial_ends_at, "current_period_end": sub.current_period_end,
         "cancel_at_period_end": sub.cancel_at_period_end,
+        "subscriptions": [{
+            "subscription_id": item.id,
+            "status": item.status,
+            "plan_id": item.plan_id,
+            "trial_ends_at": item.trial_ends_at,
+            "current_period_end": item.current_period_end,
+        } for item in subs],
         "plan": {"id": plan.id, "name": plan.name, "tagline": plan.tagline,
                  "description": plan.description, "billing_model": plan.billing_model,
                  "currency": plan.currency,
                  "price_per_event_min": float(plan.price_per_event_min) if plan.price_per_event_min is not None else None,
                  "price_per_event_max": float(plan.price_per_event_max) if plan.price_per_event_max is not None else None,
-                 "price_display": plan.price_display, "max_events": plan.max_events,
-                 "max_users": plan.max_users, "max_registrations": plan.max_registrations,
+                 "price_display": plan.price_display, "max_events": max_events if max_events is not None else plan.max_events,
+                 "max_users": max_users if max_users is not None else plan.max_users, "max_registrations": max_registrations if max_registrations is not None else plan.max_registrations,
                  "max_speakers": plan.max_speakers, "max_sessions": plan.max_sessions,
                  "max_rooms": plan.max_rooms, "max_ticket_categories": plan.max_ticket_categories,
-                 "storage_quota_mb": plan.storage_quota_mb, "color_hex": plan.color_hex},
-        "usage": {"events": {"used": events_used, "max": plan.max_events},
-                  "users": {"used": users_used, "max": plan.max_users},
-                  "registrations": {"used": registrations_used, "max": plan.max_registrations},
-                  "storage": {"used_mb": storage_used_mb, "max_mb": plan.storage_quota_mb}}}
+                 "storage_quota_mb": storage_quota_mb if storage_quota_mb is not None else plan.storage_quota_mb, "color_hex": plan.color_hex},
+        "usage": {"events": {"used": events_used, "max": max_events if max_events is not None else plan.max_events},
+                  "users": {"used": users_used, "max": max_users if max_users is not None else plan.max_users},
+                  "registrations": {"used": registrations_used, "max": max_registrations if max_registrations is not None else plan.max_registrations},
+                  "storage": {"used_mb": storage_used_mb, "max_mb": storage_quota_mb if storage_quota_mb is not None else plan.storage_quota_mb}}}
 
 
 # ── Super Admin Commercial Endpoints ─────────────────────────

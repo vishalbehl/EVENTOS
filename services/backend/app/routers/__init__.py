@@ -9,6 +9,7 @@ from app.modules.registration.routers.ticket_types import router as ticket_types
 from app.modules.identity.routers import auth, users, me, impersonation
 from app.modules.platform import router as platform
 from app.modules.platform import support_router
+from app.modules.platform.communications_router import router as platform_communications_router
 from app.modules.platform.departments.router import router as departments_router
 from app.modules.platform.teams.router import router as teams_router
 from app.modules.platform.roles.router import router as roles_router, assignments_router
@@ -65,6 +66,7 @@ api_router.include_router(marketplace_router)
 api_router.include_router(auth.router)
 api_router.include_router(impersonation.router)
 api_router.include_router(platform.router)
+api_router.include_router(platform_communications_router)
 
 api_router.include_router(support_router.router)
 api_router.include_router(departments_router)
@@ -135,10 +137,12 @@ api_router.include_router(activations_router)
 
 # ── Phase 7: Tech Services & Operations Planning Engine ───────
 from app.modules.operations_planning.router import router as operations_planning_router
+from app.modules.technology_services.router import router as technology_services_router
 from app.modules.resource_management.router import router as resource_management_router
 from app.modules.deployment_management.router import router as deployment_management_router
 
 api_router.include_router(operations_planning_router)
+api_router.include_router(technology_services_router)
 api_router.include_router(resource_management_router)
 api_router.include_router(deployment_management_router)
 

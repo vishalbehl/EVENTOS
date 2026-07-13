@@ -21,6 +21,7 @@ import {
   adminApi,
   useSubscriptionPlans,
   adminKeys,
+  type Invoice,
 } from "@/services/super-admin-service";
 import { useAuthStore } from "@/store/use-auth-store";
 import {
@@ -29,11 +30,13 @@ import {
   User, Send, MoreHorizontal, Plus, ShieldCheck as VerifiedIcon, Trash2,
   Lock, Globe, Key, Bell, Shield, Layers, HelpCircle, Download
 } from "lucide-react";
+import type { UserRole } from "@/types/models";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction";
 import { cn } from "@/lib/utils";
 
 // ── Helper functions ──────────────────────────────────────────
@@ -53,6 +56,23 @@ function formatINR(n: number) {
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(n);
+}
+
+function normalizeUserRole(role?: string): UserRole {
+  if (role === "owner" || role === "member") return "admin";
+  return (role || "viewer") as UserRole;
+}
+
+function invoiceStatusTone(status?: string) {
+  const normalized = status?.toUpperCase();
+  if (normalized === "PAID") return "border-emerald-500/20 text-emerald-400 bg-emerald-500/5";
+  if (normalized === "OPEN" || normalized === "PENDING" || normalized === "DRAFT") {
+    return "border-amber-500/20 text-amber-400 bg-amber-500/5";
+  }
+  if (normalized === "VOID" || normalized === "CANCELLED" || normalized === "FAILED") {
+    return "border-red-500/20 text-red-400 bg-red-500/5";
+  }
+  return "border-border text-[var(--text-tertiary)]";
 }
 
 // ── Top Navigation Tabs Configuration ──────────────────────────
@@ -106,7 +126,7 @@ function OverviewTab({ orgId }: { orgId: string }) {
   const storageUsedBytes = usage?.storage_used_bytes || 0;
   const maxStorageBytes = (detail.max_storage_gb || 10) * 1024 * 1024 * 1024;
   const totalRegistrationsCount = usage?.total_registrations_count || 0;
-  const maxRegistrations = 50000; // Mock limit default
+  const maxRegistrations = detail.max_registrations ?? null;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-10 gap-6">
@@ -193,7 +213,9 @@ function OverviewTab({ orgId }: { orgId: string }) {
             <p className={cn("text-lg font-black tracking-tight", healthColor)}>
               {score >= 80 ? "Excellent" : score >= 50 ? "Stable Warnings" : "Needs Review"}
             </p>
-            <p className="text-[10px] text-[var(--text-tertiary)]">+8 points versus last 30 days</p>
+            <p className="text-[10px] text-[var(--text-tertiary)]">
+              {detail.health?.status || "Latest backend health snapshot"}
+            </p>
           </div>
 
           {/* Circle Gauge SVG */}
@@ -265,12 +287,14 @@ function OverviewTab({ orgId }: { orgId: string }) {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between items-center font-mono">
                 <span className="font-semibold text-[var(--text-secondary)]">Registrations</span>
-                <span className="font-bold text-[var(--text-primary)]">{totalRegistrationsCount} / {maxRegistrations.toLocaleString()}</span>
+                <span className="font-bold text-[var(--text-primary)]">
+                  {totalRegistrationsCount.toLocaleString()} / {maxRegistrations ? maxRegistrations.toLocaleString() : "Not configured"}
+                </span>
               </div>
               <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
                 <div
                   className="h-full bg-teal-500 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (totalRegistrationsCount / maxRegistrations) * 100)}%` }}
+                  style={{ width: maxRegistrations ? `${Math.min(100, (totalRegistrationsCount / maxRegistrations) * 100)}%` : "0%" }}
                 />
               </div>
             </div>
@@ -307,7 +331,7 @@ function BillingTab({ orgId }: { orgId: string }) {
     enabled: !!orgId,
   });
 
-  const invoices = invoicesData?.items || [];
+  const invoices: Invoice[] = invoicesData?.items || [];
 
   return (
     <div className="space-y-6">
@@ -370,32 +394,39 @@ function BillingTab({ orgId }: { orgId: string }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40 font-medium text-[var(--text-secondary)]">
-                {invoices.map((inv: any) => (
+                {invoices.map((inv) => {
+                  const status = inv.status?.toUpperCase();
+                  const createdAt = inv.created_at || inv.issued_at;
+                  const amount = inv.total_amount_inr ?? inv.amount_inr ?? inv.amount ?? 0;
+
+                  return (
                   <tr key={inv.id} className="hover:bg-surface-hover/20 transition-colors">
                     <td className="px-4 py-3 font-mono font-bold text-indigo-400">{inv.id.slice(0, 12)}...</td>
                     <td className="px-4 py-3">
-                      {new Date(inv.created_at || inv.timestamp).toLocaleDateString("en-IN", { dateStyle: "medium" })}
+                      {createdAt ? new Date(createdAt).toLocaleDateString("en-IN", { dateStyle: "medium" }) : "Not recorded"}
                     </td>
                     <td className="px-4 py-3 font-mono font-bold text-[var(--text-primary)]">
-                      {formatINR(inv.amount_inr || inv.amount || 0)}
+                      {formatINR(amount)}
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant="outline" className={cn(
-                        "font-extrabold text-[9px] uppercase tracking-wide",
-                        inv.status === "PAID"
-                          ? "border-emerald-500/20 text-emerald-400 bg-emerald-500/5"
-                          : "border-red-500/20 text-red-400 bg-red-500/5"
-                      )}>
-                        {inv.status || "PAID"}
+                      <Badge variant="outline" className={cn("font-extrabold text-[9px] uppercase tracking-wide", invoiceStatusTone(status))}>
+                        {status || "Unknown"}
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Button variant="outline" size="sm" className="h-7 text-[10px] rounded-lg border-border hover:bg-surface-hover">
-                        <Download className="w-3 h-3 mr-1" /> PDF
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled
+                        title="Invoice PDF downloads require an authorization-gated download endpoint."
+                        className="h-7 text-[10px] rounded-lg border-border"
+                      >
+                        <Download className="w-3 h-3 mr-1" /> PDF unavailable
                       </Button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -443,7 +474,7 @@ function UsersTab({ orgId }: { orgId: string }) {
           email: user.email,
           first_name: user.first_name,
           last_name: user.last_name,
-          role: user.role as any,
+          role: normalizeUserRole(user.role),
           organization_id: user.organization_id,
           is_platform_admin: user.is_platform_admin,
           platform_role: user.platform_role,
@@ -454,7 +485,7 @@ function UsersTab({ orgId }: { orgId: string }) {
       );
 
       toast.success(`Active support impersonation started for ${user.first_name}`);
-      window.open("/", "_blank");
+      window.open("/", "_blank", "noopener,noreferrer");
     } catch {
       toast.error("Failed to establish impersonation session");
     }
@@ -642,6 +673,7 @@ function EventsTab({ orgId }: { orgId: string }) {
 function SettingsTab({ orgId }: { orgId: string }) {
   const queryClient = useQueryClient();
   const [activeSubTab, setActiveSubTab] = useState("general");
+  const [domainDeleteTarget, setDomainDeleteTarget] = useState<{ id: string; domain: string } | null>(null);
 
   // General Settings States & API Mutations
   const { data: detail } = useAdminOrgDetail(orgId);
@@ -720,10 +752,11 @@ function SettingsTab({ orgId }: { orgId: string }) {
     }
   };
 
-  const handleDeleteDomain = async (id: string) => {
+  const handleDeleteDomain = async (id: string, reason?: string) => {
     try {
-      await deleteDomainMutation.mutateAsync(id);
+      await deleteDomainMutation.mutateAsync({ domainId: id, reason });
       toast.success("Domain mapping removed");
+      setDomainDeleteTarget(null);
       refetchDomains();
     } catch {
       toast.error("Failed to remove domain mapping");
@@ -1081,7 +1114,7 @@ function SettingsTab({ orgId }: { orgId: string }) {
                             variant="outline"
                             size="sm"
                             disabled={deleteDomainMutation.isPending}
-                            onClick={() => handleDeleteDomain(dom.id)}
+                            onClick={() => setDomainDeleteTarget({ id: dom.id, domain: dom.domain })}
                             className="h-7 text-[10px] rounded-lg border-border hover:bg-red-500/10 hover:text-red-400"
                           >
                             <Trash2 className="w-3 h-3 mr-1" /> Delete
@@ -1101,7 +1134,7 @@ function SettingsTab({ orgId }: { orgId: string }) {
           <div className="space-y-5 text-xs">
             <div className="border-b border-border/40 pb-2">
               <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">Platform Gateways & Integrations</h4>
-              <p className="text-[10px] text-[var(--text-tertiary)] mt-0.5">Toggle and configure system connection states.</p>
+              <p className="text-[10px] text-[var(--text-tertiary)] mt-0.5">Read-only placeholder until tenant integration APIs expose persisted connection state.</p>
             </div>
 
             <div className="space-y-4">
@@ -1112,8 +1145,8 @@ function SettingsTab({ orgId }: { orgId: string }) {
                   <p className="text-[10px] text-[var(--text-tertiary)]">Process user tickets payments and payouts via Stripe Connect.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] font-extrabold uppercase bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded">Connected</span>
-                  <Switch checked={true} disabled />
+                  <span className="text-[9px] font-extrabold uppercase bg-border border border-border text-[var(--text-tertiary)] px-2 py-0.5 rounded">Not wired</span>
+                  <Switch checked={false} disabled />
                 </div>
               </div>
 
@@ -1124,8 +1157,8 @@ function SettingsTab({ orgId }: { orgId: string }) {
                   <p className="text-[10px] text-[var(--text-tertiary)]">Indian payment gateway integrations for domestic tickets transaction.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] font-extrabold uppercase bg-border border border-border text-[var(--text-tertiary)] px-2 py-0.5 rounded">Disabled</span>
-                  <Switch checked={false} />
+                  <span className="text-[9px] font-extrabold uppercase bg-border border border-border text-[var(--text-tertiary)] px-2 py-0.5 rounded">Not wired</span>
+                  <Switch checked={false} disabled />
                 </div>
               </div>
 
@@ -1136,8 +1169,8 @@ function SettingsTab({ orgId }: { orgId: string }) {
                   <p className="text-[10px] text-[var(--text-tertiary)]">Send automated tickets, updates, and templates via WhatsApp API.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] font-extrabold uppercase bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded">Connected</span>
-                  <Switch checked={true} />
+                  <span className="text-[9px] font-extrabold uppercase bg-border border border-border text-[var(--text-tertiary)] px-2 py-0.5 rounded">Not wired</span>
+                  <Switch checked={false} disabled />
                 </div>
               </div>
             </div>
@@ -1149,7 +1182,7 @@ function SettingsTab({ orgId }: { orgId: string }) {
           <div className="space-y-5 text-xs">
             <div className="border-b border-border/40 pb-2">
               <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">Notification Preferences</h4>
-              <p className="text-[10px] text-[var(--text-tertiary)] mt-0.5">Control platform webhooks and alerts preferences.</p>
+              <p className="text-[10px] text-[var(--text-tertiary)] mt-0.5">Read-only placeholder until notification preference APIs are connected.</p>
             </div>
 
             <div className="space-y-4">
@@ -1158,7 +1191,7 @@ function SettingsTab({ orgId }: { orgId: string }) {
                   <p className="text-xs font-bold text-[var(--text-primary)]">Email Webhook Webhooks</p>
                   <p className="text-[10px] text-[var(--text-tertiary)]">Alert super-admins of critical billing and lifecycle status events.</p>
                 </div>
-                <Switch defaultChecked />
+                <Switch checked={false} disabled />
               </div>
 
               <div className="flex justify-between items-center bg-surface-2/20 border border-border/60 rounded-xl p-4">
@@ -1166,12 +1199,26 @@ function SettingsTab({ orgId }: { orgId: string }) {
                   <p className="text-xs font-bold text-[var(--text-primary)]">Audit Timelines Logging</p>
                   <p className="text-[10px] text-[var(--text-tertiary)]">Track security modifications and log audit items on changes.</p>
                 </div>
-                <Switch defaultChecked />
+                <Switch checked={false} disabled />
               </div>
             </div>
           </div>
         )}
       </div>
+
+      <ConfirmDestructiveAction
+        open={!!domainDeleteTarget}
+        onOpenChange={(open) => !open && setDomainDeleteTarget(null)}
+        title="Delete custom domain mapping?"
+        description="This removes the tenant domain mapping from the Command Center. Existing DNS records outside EventX OS are not changed."
+        confirmLabel="Delete domain"
+        resourceName={domainDeleteTarget?.domain}
+        requireReason
+        pending={deleteDomainMutation.isPending}
+        onConfirm={(reason) => {
+          if (domainDeleteTarget) void handleDeleteDomain(domainDeleteTarget.id, reason);
+        }}
+      />
     </div>
   );
 }
@@ -1182,9 +1229,10 @@ export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("overview");
+  const [statusConfirmOpen, setStatusConfirmOpen] = useState(false);
 
   const { data: detail } = useAdminOrgDetail(orgId);
-  const { mutateAsync: updateStatus } = useUpdateOrgStatus();
+  const { mutateAsync: updateStatus, isPending: statusUpdating } = useUpdateOrgStatus();
 
   const handleImpersonateOwner = async () => {
     if (!orgId || !detail) return;
@@ -1206,7 +1254,7 @@ export default function OrgDetailPage() {
           email: owner.email,
           first_name: owner.first_name,
           last_name: owner.last_name,
-          role: owner.role as any,
+          role: normalizeUserRole(owner.role),
           organization_id: owner.organization_id,
           is_platform_admin: owner.is_platform_admin,
           platform_role: owner.platform_role,
@@ -1217,18 +1265,19 @@ export default function OrgDetailPage() {
       );
 
       toast.success(`Active impersonation started for ${owner.first_name}`);
-      window.open("/", "_blank");
+      window.open("/", "_blank", "noopener,noreferrer");
     } catch {
       toast.error("Failed to establish impersonation session");
     }
   };
 
-  const handleStatusToggle = async () => {
+  const handleStatusToggle = async (reason?: string) => {
     if (!detail) return;
     const isCurrentlyActive = detail.subscription?.status !== "SUSPENDED";
     try {
-      await updateStatus({ id: orgId, isActive: !isCurrentlyActive });
+      await updateStatus({ id: orgId, isActive: !isCurrentlyActive, reason });
       toast.success(isCurrentlyActive ? "Organization suspended" : "Organization activated");
+      setStatusConfirmOpen(false);
     } catch {
       toast.error("Failed to update status");
     }
@@ -1282,14 +1331,16 @@ export default function OrgDetailPage() {
           </Button>
           <Button
             variant="outline"
+            disabled
+            title="Organization messaging requires a persisted communication workflow before it can be enabled."
             className="text-xs rounded-xl h-9 border-border font-bold flex items-center gap-1.5"
           >
             <Send className="w-3.5 h-3.5" />
-            Send Message
+            Message unavailable
           </Button>
           <Button
             variant="outline"
-            onClick={handleStatusToggle}
+            onClick={() => setStatusConfirmOpen(true)}
             className="text-xs rounded-xl h-9 border-border font-bold flex items-center gap-1.5 hover:bg-red-500/10 hover:text-red-400"
           >
             <ShieldOff className="w-3.5 h-3.5" />
@@ -1330,6 +1381,22 @@ export default function OrgDetailPage() {
         {activeTab === "audit" && <TimelineTab orgId={orgId} />}
         {activeTab === "settings" && <SettingsTab orgId={orgId} />}
       </div>
+
+      <ConfirmDestructiveAction
+        open={statusConfirmOpen}
+        onOpenChange={setStatusConfirmOpen}
+        title={detail?.subscription?.status === "SUSPENDED" ? "Reactivate organization?" : "Suspend organization?"}
+        description={
+          detail?.subscription?.status === "SUSPENDED"
+            ? "This re-enables the organization subscription and tenant access according to backend policy."
+            : "This suspends the organization subscription and may restrict tenant access. Confirm the customer, billing, or security reason before proceeding."
+        }
+        confirmLabel={detail?.subscription?.status === "SUSPENDED" ? "Reactivate organization" : "Suspend organization"}
+        resourceName={detail?.name}
+        requireReason
+        pending={statusUpdating}
+        onConfirm={(reason) => void handleStatusToggle(reason)}
+      />
     </div>
   );
 }

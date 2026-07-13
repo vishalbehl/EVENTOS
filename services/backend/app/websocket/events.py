@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -45,6 +46,16 @@ from app.websocket.manager import (
     manager,
     monitor_ws_room,
     venue_ws_room,
+)
+from app.config import settings
+from app.database import AsyncSessionLocal
+from app.websocket.auth import (
+    RealtimeAuthError,
+    RealtimePrincipal,
+    authenticate_realtime,
+    authorize_event,
+    authorize_moderator_command,
+    authorize_room,
 )
 
 
@@ -155,6 +166,9 @@ async def _handle_client_message(
     websocket: WebSocket,
     message: dict,
     room: str,
+    *,
+    principal: RealtimePrincipal,
+    allow_commands: bool = False,
 ) -> None:
     """
     Process a message received from a connected client.
@@ -170,6 +184,20 @@ async def _handle_client_message(
         manager.update_heartbeat(websocket)
 
     elif msg_type == "command":
+        if not allow_commands:
+            await manager.send_to(
+                websocket,
+                build_message(EventType.AUTH_FAILED, {"code": "PERMISSION_DENIED"}),
+            )
+            return
+        try:
+            authorize_moderator_command(principal)
+        except RealtimeAuthError:
+            await manager.send_to(
+                websocket,
+                build_message(EventType.AUTH_FAILED, {"code": "PERMISSION_DENIED"}),
+            )
+            return
         # Broadcast presentation commands to the room (e.g. from Moderator App)
         action = message.get("payload", {}).get("action")
         if action:
@@ -187,6 +215,37 @@ async def _handle_client_message(
 
     else:
         logger.debug(f"Unhandled WS message type: {msg_type}")
+
+
+async def _authenticate_native_connection(
+    websocket: WebSocket,
+    *,
+    event_id: uuid.UUID | None = None,
+    room_id: uuid.UUID | None = None,
+    require_device: bool = False,
+) -> RealtimePrincipal | None:
+    await websocket.accept()
+    try:
+        message = await asyncio.wait_for(
+            websocket.receive_json(),
+            timeout=settings.WS_AUTH_TIMEOUT_SECONDS,
+        )
+        if message.get("type") != "authenticate":
+            raise RealtimeAuthError("Authentication must be the first message.")
+        credentials = message.get("payload") or message
+        async with AsyncSessionLocal() as db:
+            principal = await authenticate_realtime(db, credentials)
+            if require_device and principal.kind != "device":
+                raise RealtimeAuthError("Device authentication is required.")
+            if event_id is not None:
+                await authorize_event(db, principal, event_id)
+            if room_id is not None:
+                await authorize_room(db, principal, room_id)
+        return principal
+    except (asyncio.TimeoutError, RealtimeAuthError, TypeError, ValueError):
+        await websocket.send_json(build_message(EventType.AUTH_FAILED, {"code": "PERMISSION_DENIED"}))
+        await websocket.close(code=1008)
+        return None
 
 
 # ── WebSocket route handlers ──────────────────────────────────
@@ -210,8 +269,11 @@ async def handle_monitor_connection(
         async def monitor_ws(ws: WebSocket, event_id: uuid.UUID):
             await handle_monitor_connection(ws, event_id)
     """
+    principal = await _authenticate_native_connection(websocket, event_id=event_id)
+    if principal is None:
+        return
     room = monitor_ws_room(event_id)
-    await manager.connect(websocket, room)
+    manager.register(websocket, room)
 
     # Send welcome + ping to verify client connectivity
     await manager.send_to(
@@ -226,7 +288,7 @@ async def handle_monitor_connection(
     try:
         while True:
             data = await websocket.receive_json()
-            await _handle_client_message(websocket, data, room)
+            await _handle_client_message(websocket, data, room, principal=principal)
 
     except WebSocketDisconnect:
         logger.info(f"Monitor WS disconnected: event={event_id}")
@@ -257,8 +319,15 @@ async def handle_venue_sync_connection(
         Venue  → Cloud: FILE_SYNC_DONE / FILE_SYNC_FAILED, job_id
         Venue  → Cloud: SRR_HEARTBEAT, station statuses
     """
+    principal = await _authenticate_native_connection(
+        websocket,
+        event_id=event_id,
+        require_device=True,
+    )
+    if principal is None:
+        return
     room = venue_ws_room(event_id)
-    await manager.connect(websocket, room)
+    manager.register(websocket, room)
 
     await manager.send_to(
         websocket,
@@ -335,8 +404,11 @@ async def handle_room_connection(
 
     This is the PWA fallback path — Electron apps use Socket.IO.
     """
+    principal = await _authenticate_native_connection(websocket, room_id=room_id)
+    if principal is None:
+        return
     room_key = f"room:{room_id}"
-    await manager.connect(websocket, room_key)
+    manager.register(websocket, room_key)
 
     await manager.send_to(
         websocket,
@@ -384,8 +456,11 @@ async def handle_srr_connection(
       - Technician Dashboard (browser)
       - Ready Room View in Command Center
     """
+    principal = await _authenticate_native_connection(websocket, event_id=event_id)
+    if principal is None:
+        return
     room = f"srr:{event_id}"
-    await manager.connect(websocket, room)
+    manager.register(websocket, room)
 
     await manager.send_to(
         websocket,

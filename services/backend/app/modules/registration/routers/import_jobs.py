@@ -1,7 +1,6 @@
 # backend/app/routers/import_jobs.py
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -25,7 +24,6 @@ from app.modules.registration.schemas.import_job import (
 from app.schemas.common import MessageResponse
 from app.services import upload_service
 from app.modules.registration.services.excel_import_service import parse_workbook
-from app.tasks.tasks import _run_excel_import_async
 
 router = APIRouter(prefix="/events/{event_id}/import", tags=["import-jobs"])
 
@@ -68,21 +66,19 @@ async def upload_schedule(
     await db.commit()
     await db.refresh(job)
 
-    # Try Celery first; fall back to asyncio.ensure_future when Redis is unavailable.
-    celery_dispatched = False
     try:
         from app.tasks import run_excel_import  # type: ignore[import]
-        run_excel_import.delay(str(job.id))
-        celery_dispatched = True
+        run_excel_import.delay(str(job.id), str(event.organization_id))
         logger.info(f"Import job {job.id} dispatched to Celery worker.")
-    except Exception as e:
-        logger.warning(f"Celery unavailable ({e}), falling back to in-process background task.")
-
-    if not celery_dispatched:
-        # Run the import asynchronously in the same event loop so the HTTP
-        # response is returned immediately and the import proceeds in background.
-        asyncio.ensure_future(_run_excel_import_async(job.id))
-        logger.info(f"Import job {job.id} scheduled as in-process background task.")
+    except Exception as exc:
+        job.status = "failed"
+        job.error_summary = [{"row": 0, "error": "Background processing is unavailable."}]
+        await db.commit()
+        logger.exception(f"Failed to dispatch import job {job.id}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Import processing is temporarily unavailable. No background fallback was started.",
+        ) from exc
 
     return ImportJobResponse.model_validate(job)
 

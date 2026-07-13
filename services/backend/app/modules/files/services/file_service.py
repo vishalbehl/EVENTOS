@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.modules.files.models.file import Asset, AssetVersion, AssetTag, AssetPermission, UploadSession, VirusScan
 from app.modules.presentations.services.upload_service import upload_bytes, delete_object, create_presigned_download
 from app.config import settings
+from loguru import logger
 
 class FileService:
     @staticmethod
@@ -91,6 +92,7 @@ class FileService:
             file_path=storage_path,
             file_size_bytes=len(file_data),
             mime_type=content_type,
+            processing_status="QUARANTINED",
             created_at=datetime.now(timezone.utc)
         )
         db.add(asset)
@@ -114,13 +116,21 @@ class FileService:
             
         await db.flush()
         
-        # Trigger virus scan Celery task
+        scan = VirusScan(
+            id=uuid.uuid4(),
+            asset_id=asset_id,
+            status="pending",
+            scanned_at=datetime.now(timezone.utc),
+        )
+        db.add(scan)
+        await db.flush()
+
+        # Trigger virus scan Celery task. The asset remains quarantined if queuing fails.
         try:
             from workers.tasks.file_tasks import scan_file_for_viruses
-            scan_file_for_viruses.delay(str(asset_id))
-        except Exception as e:
-            # Fallback warning
-            print(f"Failed to queue virus scan: {e}")
+            scan_file_for_viruses.delay(str(asset_id), str(org_id))
+        except Exception as exc:
+            logger.exception(f"Failed to queue virus scan for asset {asset_id}: {exc}")
             
         return asset
 
@@ -168,8 +178,8 @@ class FileService:
         for ver in asset.versions:
             try:
                 delete_object(settings.S3_BUCKET_ASSETS, ver.file_path)
-            except Exception as e:
-                print(f"Failed to delete object from storage: {e}")
+            except Exception as exc:
+                logger.warning(f"Failed to delete object {ver.file_path}: {exc}")
                 
         await db.execute(delete(AssetTag).where(AssetTag.asset_id == asset_id))
         await db.execute(delete(AssetVersion).where(AssetVersion.asset_id == asset_id))

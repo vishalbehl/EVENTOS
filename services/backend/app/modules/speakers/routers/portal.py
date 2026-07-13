@@ -735,7 +735,7 @@ async def portal_confirm_upload(
     
     # Trigger background validation
     from app.modules.presentations.tasks.file_tasks import validate_presentation
-    validate_presentation.delay(str(pf.id))
+    validate_presentation.delay(str(pf.id), str(speaker.event.organization_id))
     
     await broadcast_file_event(pf.event_id, EventType.FILE_UPLOADED, {"file_id": str(pf.id)})
     

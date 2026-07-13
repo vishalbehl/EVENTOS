@@ -32,6 +32,17 @@ from app.modules.presentations.services.upload_service import (
     build_presentation_path,
     build_thumbnail_path,
 )
+from app.database import tenant_org_id
+
+
+@pytest.fixture(autouse=True)
+def tenant_storage_context():
+    organization_id = uuid.uuid4()
+    token = tenant_org_id.set(organization_id)
+    try:
+        yield organization_id
+    finally:
+        tenant_org_id.reset(token)
 
 
 # ── Storage path builder tests ────────────────────────────────
@@ -43,7 +54,7 @@ class TestStoragePathBuilders:
         speaker_id = uuid.uuid4()
         path, filename = build_presentation_path(event_id, speaker_id, "slides.pptx")
 
-        assert path.startswith(f"presentations/{event_id}/{speaker_id}/")
+        assert f"/presentations/{event_id}/{speaker_id}/" in path
         assert path.endswith(".pptx")
         assert filename.endswith(".pptx")
 
@@ -61,9 +72,7 @@ class TestStoragePathBuilders:
             speaker_name="Alice Smith",
         )
 
-        assert path.startswith(
-            "presentations/Annual-Conference-2026/Hall-A/2026-09-01/Opening-Keynote/Alice-Smith/"
-        )
+        assert "/presentations/Annual-Conference-2026/Hall-A/2026-09-01/Opening-Keynote/Alice-Smith/" in path
         assert path.endswith(".pptx")
         assert filename.endswith(".pptx")
 
@@ -82,7 +91,7 @@ class TestStoragePathBuilders:
         )
 
         assert ".." not in path
-        assert path.startswith("presentations/Conf-2026/Hall-A/Day-1-20260901/Opening-Keynote/Alice-Smith/")
+        assert "/presentations/Conf-2026/Hall-A/Day-1-20260901/Opening-Keynote/Alice-Smith/" in path
 
     def test_presentation_path_uuid_based_filename(self):
         event_id = uuid.uuid4()
@@ -120,20 +129,20 @@ class TestStoragePathBuilders:
         speaker_id = uuid.uuid4()
         path, filename = build_poster_path(event_id, speaker_id, "poster.pdf")
 
-        assert path.startswith(f"posters/{event_id}/{speaker_id}/")
+        assert f"/posters/{event_id}/{speaker_id}/" in path
         assert path.endswith(".pdf")
 
     def test_import_path_format(self):
         event_id = uuid.uuid4()
         path, filename = build_import_path(event_id, "schedule.xlsx")
 
-        assert path.startswith(f"imports/{event_id}/")
+        assert f"/imports/{event_id}/" in path
         assert path.endswith(".xlsx")
 
     def test_thumbnail_path_format(self):
         file_id = uuid.uuid4()
         path = build_thumbnail_path(file_id)
-        assert path == f"thumbnails/{file_id}.webp"
+        assert path.endswith(f"/thumbnails/{file_id}.webp")
 
     def test_paths_are_strings(self):
         event_id = uuid.uuid4()

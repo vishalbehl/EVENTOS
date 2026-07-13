@@ -18,9 +18,11 @@ from app.modules.registration.routers.participants import (
 from app.modules.registration.routers.registrations import helper_approve_registration
 from app.modules.registration.schemas.participant import ParticipantCreate, ParticipantUpdate
 from app.modules.events.models.speaker import Speaker
+from tests.conftest import activate_event_for_test
 
 @pytest.mark.asyncio
 async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
+    await activate_event_for_test(db, event)
     # 1. Seed ParticipantRoles
     role_del = ParticipantRole(
         event_id=event.id,

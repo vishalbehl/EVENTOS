@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -22,6 +22,8 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
+  const emailId = useId();
+  const passwordId = useId();
 
   // If already authenticated as admin, redirect to overview console
   useEffect(() => {
@@ -64,7 +66,7 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#07070a] flex items-center justify-center relative overflow-hidden px-6">
+    <main className="min-h-screen bg-[#07070a] flex items-center justify-center relative overflow-hidden px-6">
       {/* Background gradients themed with deep violet/purple */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,color-mix(in_srgb,var(--pri)_15%,transparent)_0%,transparent_60%)] animate-pulse" />
@@ -108,10 +110,11 @@ export default function AdminLoginPage() {
                 >
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1">Admin Identity</label>
+                      <label htmlFor={emailId} className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1">Admin Identity</label>
                       <div className="relative rounded-2xl border border-white/10 bg-white/3 overflow-hidden focus-within:border-purple-500/40 transition-colors">
                         <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-white/30" />
                         <Input
+                          id={emailId}
                           type="email"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
@@ -123,10 +126,11 @@ export default function AdminLoginPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1">Access Key</label>
+                      <label htmlFor={passwordId} className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1">Access Key</label>
                       <div className="relative rounded-2xl border border-white/10 bg-white/3 overflow-hidden focus-within:border-purple-500/40 transition-colors">
                         <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-white/30" />
                         <Input
+                          id={passwordId}
                           type="password"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
@@ -143,6 +147,8 @@ export default function AdminLoginPage() {
                       <button
                         type="button"
                         onClick={() => setRememberMe(!rememberMe)}
+                        aria-label="Remember session"
+                        aria-pressed={rememberMe}
                         className={cn(
                           "relative h-5 w-10 rounded-full transition-all duration-300 p-0.5 border border-white/10",
                           rememberMe ? "bg-purple-600/30 border-purple-500/40" : "bg-white/5"
@@ -228,6 +234,6 @@ export default function AdminLoginPage() {
           </div>
         </div>
       </motion.div>
-    </div>
+    </main>
   );
 }

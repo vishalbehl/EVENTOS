@@ -32,7 +32,7 @@ async def login(
     try:
         result = await auth_service.login(
             db, payload.email, payload.password,
-            ip_address=ip, user_agent=ua,
+            ip_address=ip, user_agent=ua, mfa_code=payload.mfa_code,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
@@ -83,7 +83,10 @@ async def refresh_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
 
     await db.commit()
-    new_access = auth_service.create_access_token(user)
+    new_access = auth_service.create_access_token(
+        user,
+        mfa_authenticated_at=record.mfa_authenticated_at,
+    )
     return TokenResponse(
         access_token=new_access,
         refresh_token=new_plain,

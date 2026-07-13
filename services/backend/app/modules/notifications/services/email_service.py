@@ -455,18 +455,12 @@ async def send_email(
         return None
 
     if event_id and db:
+        from app.modules.billing.services.limit_guard import LimitGuard
         from app.modules.events.models.event import Event
-        from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
-        limit = await db.scalar(
-            select(SubscriptionPlan.max_emails_per_event)
-            .join(OrganizationSubscription, OrganizationSubscription.plan_id == SubscriptionPlan.id)
-            .join(Event, Event.organization_id == OrganizationSubscription.organization_id)
-            .where(Event.id == event_id, OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]))
-        )
-        if limit is not None:
-            sent_count = await db.scalar(select(func.count(EmailLog.id)).where(EmailLog.event_id == event_id, EmailLog.status == "sent")) or 0
-            if sent_count >= limit:
-                raise HTTPException(status_code=429, detail=f"Email allowance of {limit} per event has been reached")
+
+        event = await db.scalar(select(Event).where(Event.id == event_id))
+        if event:
+            await LimitGuard.check_event_email_headroom(db, event.organization_id, event_id)
 
     # Generate log ID early if we want to track opens
     log_id = uuid.uuid4()

@@ -11,6 +11,11 @@ from app.worker import celery_app
 from app.config import settings
 from app.modules.pricing.models import CurrencyRate, RevenueForecast
 from app.modules.inventory.models import HardwareItem, HardwareStock
+from app.tasks.tenant_job_scope import (
+    TenantJobScopeRequired,
+    parse_required_organization_id,
+    tenant_job_session,
+)
 
 def _run_async(coro):
     """Run an async coroutine from a sync Celery task."""
@@ -104,10 +109,12 @@ def update_exchange_rates() -> str:
 
 
 @celery_app.task(name="app.tasks.platform_commercial.calculate_forecasts")
-def calculate_forecasts() -> str:
-    """Calculates/syncs monthly actuals and projects next month's forecast values."""
+def calculate_forecasts(organization_id_str: str | None = None) -> str:
+    """Calculates/syncs forecast values for one organization."""
+    org_id = parse_required_organization_id(organization_id_str)
+
     async def _forecast():
-        async with await get_task_db_session() as db:
+        async with tenant_job_session(org_id) as db:
             # Gather unique organization IDs from catalogs/forecasts
             # For demonstration, generate mock forecast records for current organization(s)
             # Create forecast entries for current month and next month
@@ -115,15 +122,6 @@ def calculate_forecasts() -> str:
             start_of_month = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
             next_month = start_of_month + timedelta(days=32)
             start_of_next_month = datetime(next_month.year, next_month.month, 1, tzinfo=timezone.utc)
-
-            # Insert/update a dummy organization forecast if any organizations exist
-            # Select first organisation/organization
-            from app.modules.platform.models.organization import Organization
-            orgs_stmt = select(Organization.id).limit(1)
-            org_id = (await db.execute(orgs_stmt)).scalar()
-            if not org_id:
-                # Default system organization fallback
-                org_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
             # Check existing forecast for next month
             forecast_stmt = select(RevenueForecast).where(
@@ -156,6 +154,10 @@ def calculate_forecasts() -> str:
 @celery_app.task(name="app.tasks.platform_commercial.low_stock_alerts")
 def low_stock_alerts() -> str:
     """Check stock and trigger system/app notifications if items fall below threshold."""
+    raise TenantJobScopeRequired(
+        "Inventory stock alerts require an explicit control-plane inventory ownership contract."
+    )
+
     async def _check():
         async with await get_task_db_session() as db:
             stmt = (
@@ -180,6 +182,10 @@ def low_stock_alerts() -> str:
 @celery_app.task(name="app.tasks.platform_commercial.maintenance_reminders")
 def maintenance_reminders() -> str:
     """Raise reminders for items in POOR or FAIR condition, or with upcoming service logs."""
+    raise TenantJobScopeRequired(
+        "Inventory maintenance reminders require an explicit control-plane inventory ownership contract."
+    )
+
     async def _remind():
         async with await get_task_db_session() as db:
             stmt = select(HardwareItem).where(HardwareItem.condition.in_(["POOR", "FAIR"]))

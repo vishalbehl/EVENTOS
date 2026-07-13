@@ -12,12 +12,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-def _make_event(name="Test Conference"):
+def _make_event(name="Test Conference", organization_id=None):
     e = MagicMock()
     e.id = uuid.uuid4()
+    e.organization_id = organization_id or uuid.uuid4()
     e.name = name
     e.upload_deadline = datetime(2026, 9, 1, 18, 0, tzinfo=timezone.utc)
     return e
+
+
+def _make_requester(organization_id):
+    user = MagicMock()
+    user.id = uuid.uuid4()
+    user.organization_id = organization_id
+    user.email = "organizer@example.com"
+    return user
 
 
 def _make_session(event_id):
@@ -49,10 +58,10 @@ def _make_speaker(event_id):
 
 
 @contextmanager
-def _mock_db_report(event, sessions, speakers, files=None):
+def _mock_db_report(event, sessions, speakers, files=None, requester=None):
     session = MagicMock()
-    # .get() returns event
-    session.get.return_value = event
+    requester = requester or _make_requester(event.organization_id)
+    session.get.side_effect = [event, requester, requester]
 
     # .query() chain supports different models
     q = MagicMock()
@@ -62,7 +71,7 @@ def _mock_db_report(event, sessions, speakers, files=None):
     session.query.return_value = q
 
     @contextmanager
-    def _ctx():
+    def _ctx(*_args, **_kwargs):
         yield session
 
     with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx):
@@ -74,6 +83,7 @@ class TestGenerateEventSummaryReport:
         from workers.tasks.report_tasks import generate_event_summary_report
 
         event = _make_event()
+        requester = _make_requester(event.organization_id)
         sessions = [_make_session(event.id)]
         speakers = [_make_speaker(event.id)]
 
@@ -82,20 +92,21 @@ class TestGenerateEventSummaryReport:
         def capture_upload(bucket, key, data, content_type=None):
             xlsx_bytes[0] = data
 
-        with _mock_db_report(event, sessions, speakers):
+        with _mock_db_report(event, sessions, speakers, requester=requester):
             with patch("workers.tasks.report_tasks.r2.upload_bytes", side_effect=capture_upload), \
-                 patch("workers.tasks.report_tasks.r2.generate_presigned_url", return_value="https://dl.url"), \
                  patch("workers.tasks.report_tasks.send_email"):
 
                 result = generate_event_summary_report.apply(kwargs={
                     "event_id": str(event.id),
-                    "requested_by_user_id": str(uuid.uuid4()),
+                    "organization_id": str(event.organization_id),
+                    "requested_by_user_id": str(requester.id),
                 }).result
 
         assert result["generated"] is True
         assert result["sessions"] == 1
         assert result["speakers"] == 1
-        assert result["download_url"] == "https://dl.url"
+        assert "download_url" not in result
+        assert "expires_at" in result
 
         # Verify actual valid xlsx bytes were produced
         assert xlsx_bytes[0] is not None
@@ -109,38 +120,63 @@ class TestGenerateEventSummaryReport:
         session.get.return_value = None
 
         @contextmanager
-        def _ctx():
+        def _ctx(*_args, **_kwargs):
             yield session
 
         with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx):
             result = generate_event_summary_report.apply(kwargs={
                 "event_id": str(uuid.uuid4()),
+                "organization_id": str(uuid.uuid4()),
                 "requested_by_user_id": str(uuid.uuid4()),
             }).result
 
         assert result["generated"] is False
         assert "not found" in result["error"]
 
-    def test_report_key_contains_event_id(self):
+    def test_report_key_is_tenant_and_event_scoped(self):
         from workers.tasks.report_tasks import generate_event_summary_report
 
         event = _make_event()
+        requester = _make_requester(event.organization_id)
         event_id = str(event.id)
 
-        with _mock_db_report(event, [], []):
+        with _mock_db_report(event, [], [], requester=requester):
             with patch("workers.tasks.report_tasks.r2.upload_bytes") as mock_upload, \
-                 patch("workers.tasks.report_tasks.r2.generate_presigned_url", return_value="https://x"), \
                  patch("workers.tasks.report_tasks.send_email"):
 
                 generate_event_summary_report.apply(kwargs={
                     "event_id": event_id,
-                    "requested_by_user_id": str(uuid.uuid4()),
+                    "organization_id": str(event.organization_id),
+                    "requested_by_user_id": str(requester.id),
                 })
 
-        # Report key should include event_id
+        # Report key must carry the tenant namespace and event scope.
         call_args = mock_upload.call_args
         report_key = call_args[1]["key"] if call_args[1] else call_args[0][1]
+        assert report_key.startswith(f"{event.organization_id}/events/{event_id}/exports/")
         assert event_id in report_key
+
+    def test_rejects_event_owned_by_another_organization(self):
+        from workers.tasks.report_tasks import generate_event_summary_report
+
+        event = _make_event()
+        session = MagicMock()
+        session.get.return_value = event
+
+        @contextmanager
+        def _ctx(*_args, **_kwargs):
+            yield session
+
+        with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx), \
+             patch("workers.tasks.report_tasks.r2.upload_bytes") as upload:
+            result = generate_event_summary_report.apply(kwargs={
+                "event_id": str(event.id),
+                "organization_id": str(uuid.uuid4()),
+                "requested_by_user_id": str(uuid.uuid4()),
+            }).result
+
+        assert result["generated"] is False
+        upload.assert_not_called()
 
 
 class TestGenerateSessionReadinessCsv:
@@ -151,6 +187,7 @@ class TestGenerateSessionReadinessCsv:
 
         # Mock query rows (SessionSpeaker, Session, Speaker tuples)
         session_db = MagicMock()
+        session_db.get.return_value = event
         q = MagicMock()
         q.join.return_value = q
         q.filter.return_value = q
@@ -159,19 +196,19 @@ class TestGenerateSessionReadinessCsv:
         session_db.query.return_value = q
 
         @contextmanager
-        def _ctx():
+        def _ctx(*_args, **_kwargs):
             yield session_db
 
         with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx), \
-             patch("workers.tasks.report_tasks.r2.upload_bytes") as mock_upload, \
-             patch("workers.tasks.report_tasks.r2.generate_presigned_url", return_value="https://csv.url"):
+             patch("workers.tasks.report_tasks.r2.upload_bytes") as mock_upload:
 
             result = generate_session_readiness_csv.apply(
-                args=[str(event.id)]
+                args=[str(event.id), str(event.organization_id)]
             ).result
 
         assert result["generated"] is True
-        assert "download_url" in result
+        assert "download_url" not in result
+        assert result["report_key"].startswith(f"{event.organization_id}/events/{event.id}/exports/")
         mock_upload.assert_called_once()
 
     def test_csv_is_utf8_bom_encoded(self):
@@ -183,6 +220,8 @@ class TestGenerateSessionReadinessCsv:
             uploaded_data[0] = data
 
         session_db = MagicMock()
+        event = _make_event()
+        session_db.get.return_value = event
         q = MagicMock()
         q.join.return_value = q
         q.filter.return_value = q
@@ -191,14 +230,13 @@ class TestGenerateSessionReadinessCsv:
         session_db.query.return_value = q
 
         @contextmanager
-        def _ctx():
+        def _ctx(*_args, **_kwargs):
             yield session_db
 
         with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx), \
-             patch("workers.tasks.report_tasks.r2.upload_bytes", side_effect=capture), \
-             patch("workers.tasks.report_tasks.r2.generate_presigned_url", return_value="x"):
+             patch("workers.tasks.report_tasks.r2.upload_bytes", side_effect=capture):
 
-            generate_session_readiness_csv.apply(args=[str(uuid.uuid4())])
+            generate_session_readiness_csv.apply(args=[str(event.id), str(event.organization_id)])
 
         # UTF-8 BOM marker
         assert uploaded_data[0] is not None

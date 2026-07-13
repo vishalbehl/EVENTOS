@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, require_active_user
+from app.dependencies import TokenDep, get_db, require_active_user
 from app.modules.identity.models.user import User
 from app.modules.developer.models.developer_registry import ApiKey, OAuthClient
 from app.modules.developer.schemas.developer_schemas import (
@@ -15,6 +15,18 @@ from app.modules.developer.schemas.developer_schemas import (
 from app.modules.developer.services.developer_service import DeveloperService
 
 router = APIRouter(prefix="/developer", tags=["developer"])
+
+
+@router.get("/service-identity")
+async def get_service_identity(token_data: TokenDep) -> dict:
+    """Return machine identity scope without granting access to user-managed resources."""
+    if token_data.role != "developer" or "api_key" not in token_data.amr:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API key identity required.")
+    return {
+        "identity_type": "service",
+        "organization_id": str(token_data.organization_id),
+        "authentication_method": "api_key",
+    }
 
 # ── API Key Management ────────────────────────────────────────
 

@@ -1,4 +1,3 @@
-import uuid
 from typing import Any
 from starlette.types import ASGIApp
 from starlette.requests import Request
@@ -22,21 +21,7 @@ class TenantContextMiddleware:
         # 1. Resolve tenant ID from state (populated by AuthMiddleware JWT parse)
         org_id = getattr(request.state, "org_id", None)
         
-        # Super admins bypass tenant filtering globally to allow cross-tenant management
-        role = getattr(request.state, "user_role", None)
-        if role == "super_admin":
-            org_id = None
-        
-        # 2. Fallback to custom API header for service calls or kiosk stations
-        if not org_id and role != "super_admin":
-            x_org_id = request.headers.get("X-Organization-ID")
-            if x_org_id:
-                try:
-                    org_id = uuid.UUID(x_org_id)
-                except ValueError:
-                    pass
-
-        # 3. Set the context variable
+        # Tenant context may only originate from a verified user or machine identity.
         token = tenant_org_id.set(org_id)
         try:
             await self.app(scope, receive, send)

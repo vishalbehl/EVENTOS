@@ -29,7 +29,7 @@ async def pull_event_queue(event_id: str):
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 url, 
-                headers={"X-Internal-Secret": settings.CLOUD_API_KEY},
+                headers={"X-Device-Key": settings.CLOUD_DEVICE_KEY},
                 timeout=10.0
             )
             response.raise_for_status()

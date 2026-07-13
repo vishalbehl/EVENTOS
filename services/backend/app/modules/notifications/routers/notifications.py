@@ -589,7 +589,7 @@ async def send_campaign_trigger(
     await db.commit()
 
     # Dispatch to Celery
-    process_email_campaign.delay(str(campaign_id))
+    process_email_campaign.delay(str(campaign_id), str(event.organization_id))
     
     return MessageResponse(message="Campaign dispatch initiated.")
 
@@ -758,7 +758,7 @@ async def send_to_speakers(
     if data.send_immediately:
         campaign.status = "sending"
         await db.commit()
-        process_email_campaign.delay(str(campaign.id))
+        process_email_campaign.delay(str(campaign.id), str(event.organization_id))
 
     return CampaignResponse.model_validate(campaign)
 
@@ -854,7 +854,7 @@ async def auto_invite_speakers(
     # ── 4. Dispatch Celery task ──────────────────────────
     campaign.status = "sending"
     await db.commit()
-    process_email_campaign.delay(str(campaign.id))
+    process_email_campaign.delay(str(campaign.id), str(event.organization_id))
 
     return AutoInviteResponse(
         campaign_id=campaign.id,
@@ -883,7 +883,7 @@ async def resend_failed_emails(
         .values(status="queued", error_message=None)
     )
     
-    process_email_campaign.delay(str(campaign_id))
+    process_email_campaign.delay(str(campaign_id), str(event.organization_id))
     await db.commit()
     return MessageResponse(message="Retry task dispatched for failed emails.")
 

@@ -65,7 +65,7 @@ except ImportError as e:
     default_retry_delay=60,
     acks_late=True,
 )
-def validate_presentation_file(self, file_id: str) -> dict:
+def validate_presentation_file(self, file_id: str, organization_id: str) -> dict:
     """
     Download and validate a presentation file.
 
@@ -76,9 +76,10 @@ def validate_presentation_file(self, file_id: str) -> dict:
         dict with keys: is_valid, errors, warnings, slide_count.
     """
     file_uuid = uuid.UUID(file_id)
+    organization_uuid = uuid.UUID(organization_id)
     logger.info(f"[validate] Starting validation for file {file_id}")
 
-    with get_db_session() as db:
+    with get_db_session(organization_uuid) as db:
         pf: PresentationFile | None = db.get(PresentationFile, file_uuid)
         if pf is None:
             logger.error(f"[validate] PresentationFile {file_id} not found.")
@@ -173,7 +174,7 @@ def validate_presentation_file(self, file_id: str) -> dict:
 
         # Chain: if valid, generate thumbnail
         if is_valid:
-            generate_file_thumbnail.delay(file_id)
+            generate_file_thumbnail.delay(file_id, organization_id)
 
         return {
             "file_id": file_id,
@@ -192,12 +193,13 @@ def validate_presentation_file(self, file_id: str) -> dict:
     max_retries=2,
     default_retry_delay=30,
 )
-def generate_file_thumbnail(self, file_id: str) -> dict:
+def generate_file_thumbnail(self, file_id: str, organization_id: str) -> dict:
     """Generate and upload a WEBP thumbnail for a presentation file."""
     file_uuid = uuid.UUID(file_id)
+    organization_uuid = uuid.UUID(organization_id)
     logger.info(f"[thumbnail] Generating thumbnail for file {file_id}")
 
-    with get_db_session() as db:
+    with get_db_session(organization_uuid) as db:
         pf: PresentationFile | None = db.get(PresentationFile, file_uuid)
         if pf is None:
             return {"error": "File record not found."}
@@ -227,7 +229,7 @@ def generate_file_thumbnail(self, file_id: str) -> dict:
             return {"file_id": file_id, "thumbnail_generated": False}
 
         # Upload to thumbnails bucket
-        thumb_key = f"thumbnails/{pf.id}.webp"
+        thumb_key = f"{organization_uuid}/thumbnails/{pf.id}.webp"
         r2.upload_bytes(
             bucket=settings.S3_BUCKET_THUMBNAILS,
             key=thumb_key,
@@ -251,12 +253,13 @@ def generate_file_thumbnail(self, file_id: str) -> dict:
     max_retries=2,
     default_retry_delay=60,
 )
-def convert_presentation_to_pdf(self, file_id: str) -> dict:
+def convert_presentation_to_pdf(self, file_id: str, organization_id: str) -> dict:
     """Convert a PPTX/PPT to PDF for browser preview in Command Center."""
     file_uuid = uuid.UUID(file_id)
+    organization_uuid = uuid.UUID(organization_id)
     logger.info(f"[pdf-convert] Starting PDF conversion for file {file_id}")
 
-    with get_db_session() as db:
+    with get_db_session(organization_uuid) as db:
         pf: PresentationFile | None = db.get(PresentationFile, file_uuid)
         if pf is None:
             return {"error": "File record not found."}
@@ -275,7 +278,7 @@ def convert_presentation_to_pdf(self, file_id: str) -> dict:
             logger.warning(f"[pdf-convert] Conversion returned None for {file_id}.")
             return {"file_id": file_id, "converted": False}
 
-        pdf_key = f"pdf_previews/{pf.id}.pdf"
+        pdf_key = f"{organization_uuid}/pdf_previews/{pf.id}.pdf"
         r2.upload_bytes(
             bucket=settings.S3_BUCKET_THUMBNAILS,
             key=pdf_key,
@@ -359,32 +362,40 @@ def _mark_failed(db: Session, pf: PresentationFile, reason: str) -> None:
     default_retry_delay=60,
     acks_late=True,
 )
-def scan_file_for_viruses(self, asset_id: str) -> dict:
+def scan_file_for_viruses(
+    self, asset_id: str, organization_id: str
+) -> dict:
     """
     Downloads the file from storage and simulates a ClamAV scan.
     Flags standard eicar threat files.
     """
     asset_uuid = uuid.UUID(asset_id)
+    organization_uuid = uuid.UUID(organization_id)
     logger.info(f"[virus-scan] Starting scan for asset {asset_id}")
 
     from app.modules.files.models.file import Asset, VirusScan
     from workers.db import get_db_session
     from workers.lib.r2_client import r2
 
-    with get_db_session() as db:
+    with get_db_session(organization_uuid) as db:
         asset: Asset | None = db.get(Asset, asset_uuid)
-        if asset is None:
+        if asset is None or asset.organization_id != organization_uuid:
             logger.error(f"[virus-scan] Asset {asset_id} not found.")
             return {"error": "Asset not found."}
 
-        # Create VirusScan record as pending
-        scan = VirusScan(
-            id=uuid.uuid4(),
-            asset_id=asset_uuid,
-            status="pending",
-            scanned_at=datetime.now(timezone.utc),
-        )
-        db.add(scan)
+        scan = db.query(VirusScan).filter(
+            VirusScan.asset_id == asset_uuid,
+            VirusScan.status == "pending",
+        ).order_by(VirusScan.scanned_at.desc()).first()
+        if scan is None:
+            scan = VirusScan(
+                id=uuid.uuid4(),
+                asset_id=asset_uuid,
+                status="pending",
+                scanned_at=datetime.now(timezone.utc),
+            )
+            db.add(scan)
+        asset.processing_status = "SCANNING"
         db.commit()
 
         try:
@@ -393,6 +404,7 @@ def scan_file_for_viruses(self, asset_id: str) -> dict:
         except Exception as exc:
             scan.status = "error"
             scan.scan_result = f"Download failed: {exc}"
+            asset.processing_status = "SCAN_FAILED"
             db.commit()
             raise self.retry(exc=exc)
 
@@ -401,10 +413,12 @@ def scan_file_for_viruses(self, asset_id: str) -> dict:
         if eicar_signature in data or b"eicar" in asset.name.lower().encode() or b"virus" in asset.name.lower().encode():
             scan.status = "infected"
             scan.scan_result = "Threat detected: EICAR Standard Antivirus Test Signature"
+            asset.processing_status = "INFECTED"
             logger.warning(f"[virus-scan] Asset {asset_id} is INFECTED!")
         else:
             scan.status = "clean"
             scan.scan_result = "Scan complete. No threats detected."
+            asset.processing_status = "READY"
             logger.info(f"[virus-scan] Asset {asset_id} is clean.")
 
         scan.scanned_at = datetime.now(timezone.utc)

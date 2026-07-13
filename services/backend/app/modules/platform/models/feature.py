@@ -16,6 +16,7 @@ class FeatureCatalog(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(50), default="core")
+    scope_type: Mapped[str] = mapped_column(String(30), default="ORG_SCOPED", nullable=False)
     category_order: Mapped[int] = mapped_column(Integer, default=0)
     feature_order: Mapped[int] = mapped_column(Integer, default=0)
     

@@ -3,6 +3,7 @@ import { apiGet } from "@/lib/api-client";
 import { hasPermission, PermissionCode } from "@/lib/permissions";
 import { useMemo } from "react";
 import { useAuthStore } from "@/store/use-auth-store";
+import { queryKeys } from "@/lib/query-keys";
 
 /**
  * Conference Platform — Permission Hook
@@ -15,7 +16,7 @@ import { useAuthStore } from "@/store/use-auth-store";
 export function usePermissions(eventId?: string) {
   const { isAuthenticated, accessToken } = useAuthStore();
   const { data, isLoading, error } = useQuery({
-    queryKey: ["permissions", eventId],
+    queryKey: queryKeys.permissions.effective(eventId),
     queryFn: () => {
       const url = eventId ? `/me/permissions?event_id=${eventId}` : '/me/permissions';
       return apiGet<{ permissions: string[] }>(url);

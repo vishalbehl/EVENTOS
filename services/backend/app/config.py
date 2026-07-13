@@ -10,7 +10,7 @@
 from pathlib import Path
 from typing import Any, List
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,12 +31,26 @@ class Settings(BaseSettings):
     # Async URL for FastAPI / SQLAlchemy async engine.
     # Defaults to the sync URL with the driver swapped to asyncpg.
     DATABASE_URL_ASYNC: str = ""
+    REQUIRE_RLS_SAFE_RUNTIME_ROLE: bool = False
 
     # ── JWT ───────────────────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480          # 8 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    ENFORCE_PRIVILEGED_MFA: bool = False
+    MFA_STEP_UP_MAX_AGE_SECONDS: int = 600
+    WS_AUTH_TIMEOUT_SECONDS: int = 10
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:3003",
+        "http://127.0.0.1:3003",
+    ]
 
     # ── Pagination ────────────────────────────────────────
     DEFAULT_PAGE_SIZE: int = 20
@@ -53,6 +67,7 @@ class Settings(BaseSettings):
     S3_BUCKET_THUMBNAILS: str = "thumbnails"
     S3_BUCKET_IMPORTS: str = "imports"
     S3_BUCKET_ASSETS: str = "assets"
+    S3_BUCKET_EXPORTS: str = "exports"
     S3_REGION: str = "auto"
     S3_PRESIGNED_EXPIRY_SECONDS: int = 3600        # 1 hour
 
@@ -141,6 +156,39 @@ class Settings(BaseSettings):
             if normalized in {"0", "false", "no", "off", "prod", "production", "release"}:
                 return False
         return value
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if not self.is_production:
+            return self
+
+        errors: list[str] = []
+        if self.JWT_SECRET_KEY == "change-me-in-production" or len(self.JWT_SECRET_KEY) < 32:
+            errors.append("JWT_SECRET_KEY must be a rotated secret of at least 32 characters")
+        if self.CLOUD_API_KEY == "dev_internal_secret_do_not_use_in_prod" or len(self.CLOUD_API_KEY) < 32:
+            errors.append("CLOUD_API_KEY must be a rotated secret of at least 32 characters")
+        if not self.FERNET_KEY:
+            errors.append("FERNET_KEY is required")
+        if not self.PORTAL_JWT_SECRET or len(self.PORTAL_JWT_SECRET) < 32:
+            errors.append("PORTAL_JWT_SECRET must be at least 32 characters")
+        if not self.ENFORCE_PRIVILEGED_MFA:
+            errors.append("ENFORCE_PRIVILEGED_MFA must be enabled")
+        if not self.REQUIRE_RLS_SAFE_RUNTIME_ROLE:
+            errors.append("REQUIRE_RLS_SAFE_RUNTIME_ROLE must be enabled")
+        if self.ACCESS_TOKEN_EXPIRE_MINUTES > 60:
+            errors.append("ACCESS_TOKEN_EXPIRE_MINUTES must not exceed 60 in production")
+        if any("localhost" in origin or "127.0.0.1" in origin or "0.0.0.0" in origin for origin in self.CORS_ORIGINS):
+            errors.append("CORS_ORIGINS must contain only production origins")
+        if errors:
+            raise ValueError("Unsafe production configuration: " + "; ".join(errors))
+        return self
 
     @property
     def database_url(self) -> str:

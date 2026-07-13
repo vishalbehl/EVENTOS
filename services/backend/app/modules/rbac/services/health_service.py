@@ -16,7 +16,12 @@ class OrganizationHealthService:
         warnings = []
         
         # 1. Billing Status (Critical impact)
-        sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == organization_id)
+        sub_stmt = (
+            select(OrganizationSubscription)
+            .where(OrganizationSubscription.organization_id == organization_id)
+            .order_by(OrganizationSubscription.created_at.desc())
+            .limit(1)
+        )
         sub = (await db.execute(sub_stmt)).scalar_one_or_none()
         
         if sub:

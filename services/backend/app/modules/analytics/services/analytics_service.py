@@ -43,6 +43,7 @@ from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.redis import redis_client
 import json
 from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
+from app.core.cache_keys import TenantCacheKey
 
 
 # ── Top-level snapshot ────────────────────────────────────────
@@ -60,7 +61,7 @@ async def build_analytics_snapshot(
     
     Gracefully falls back to a fresh build if Redis is unreachable.
     """
-    cache_key = f"analytics:snapshot:{event_id}"
+    cache_key = TenantCacheKey.event(event_id, "analytics", "snapshot")
     
     if use_cache:
         try:
@@ -484,7 +485,7 @@ async def get_event_email_analytics(db: AsyncSession, event_id: uuid.UUID, targe
     Fetch aggregated email metrics for the event.
     Uses Redis caching (10s) and aggregate DB queries.
     """
-    cache_key = f"analytics:emails:{target_type}:{event_id}"
+    cache_key = TenantCacheKey.event(event_id, "analytics", "emails", target_type)
     
     if use_cache:
         try:

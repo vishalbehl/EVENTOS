@@ -43,6 +43,12 @@ class RoomDevice(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("platform.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("events.events.id", ondelete="CASCADE"),
@@ -59,6 +65,22 @@ class RoomDevice(Base):
     # presentation_pc | technician_tablet | moderator_tablet | kiosk | signage
     device_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     device_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    device_key_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
+    device_key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    device_key_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    device_key_rotated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    device_key_revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    device_key_revocation_reason: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
     hostname: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # ── Hardware Telemetry & Health ──────────────────────

@@ -1,0 +1,11 @@
+.env
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.log
+data
+htmlcov
+tests
+tenant-inventory.json
+tenant-rls-audit.json

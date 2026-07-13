@@ -12,7 +12,8 @@ class VenueSettings(BaseSettings):
 
     # Cloud Connection (Where to sync from)
     CLOUD_API_URL: str = "http://localhost:8000"
-    CLOUD_API_KEY: str = "dev_internal_secret_do_not_use_in_prod"  # To auth against cloud endpoints
+    CLOUD_API_KEY: str = "dev_internal_secret_do_not_use_in_prod"  # Legacy cloud-to-venue authentication
+    CLOUD_DEVICE_KEY: str = ""  # One-time registered cloud device credential
 
     # Local Database (PostgreSQL - Must match cloud schema structure)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:venue_password@localhost:5433/venue_db"

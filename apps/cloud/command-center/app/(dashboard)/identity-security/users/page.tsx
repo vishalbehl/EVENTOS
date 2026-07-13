@@ -26,6 +26,8 @@ import {
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/store/use-auth-store";
+import type { UserRole } from "@/types/models";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -111,13 +113,25 @@ export default function GlobalUsersPage() {
         reason: "Administrative support session"
       });
       if (res.access_token) {
-        toast.success(`Impersonating ${user.first_name || user.email}`);
-        localStorage.setItem("is_impersonating", "true");
-        localStorage.setItem("impersonator_token", localStorage.getItem("token") || "");
-        localStorage.setItem("impersonated_user_name", `${user.first_name} ${user.last_name}`.trim());
-        localStorage.setItem("token", res.access_token);
-        // Redirect to Organiser Portal on port 3001
-        window.open("http://localhost:3001/dashboard", "_blank");
+        const displayName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || user.email;
+        useAuthStore.getState().startImpersonation(
+          {
+            id: user.id,
+            email: user.email,
+            first_name: user.first_name || "",
+            last_name: user.last_name || "",
+            role: (user.role || "viewer") as UserRole,
+            organization_id: user.organization_id,
+            is_2fa_enabled: user.is_2fa_enabled,
+            is_platform_admin: user.is_platform_admin,
+            platform_role: user.platform_role,
+          },
+          res.access_token,
+          user.organization_name || "Unknown organization",
+          displayName
+        );
+        toast.success(`Impersonation session started for ${displayName}`);
+        window.open("/", "_blank", "noopener,noreferrer");
       }
     } catch {
       toast.error("Failed to initialize impersonation session");
@@ -246,17 +260,20 @@ export default function GlobalUsersPage() {
       cell: ({ row }) => <StatusBadge status={row.original.is_active ? "active" : "disabled"} />,
     },
     {
-      id: "risk",
-      header: "Risk Score",
+      id: "assurance",
+      header: "Assurance",
       cell: ({ row }) => {
-        // Mock a risk score
-        const score = row.original.email.includes("demo") ? 78 : row.original.is_platform_admin ? 12 : 28;
-        let color = "text-[var(--success)]";
-        if (score > 60) color = "text-[var(--danger)]";
-        else if (score > 30) color = "text-[var(--warning)]";
+        const user = row.original;
+        const requiresReview = !user.is_active || (user.is_platform_admin && !user.is_2fa_enabled);
+        const label = requiresReview ? "Review" : user.is_2fa_enabled ? "MFA" : "Basic";
+        const color = requiresReview
+          ? "text-[var(--warning)]"
+          : user.is_2fa_enabled
+            ? "text-[var(--success)]"
+            : "text-[var(--text-tertiary)]";
         return (
           <span className={cn("font-mono text-xs font-semibold", color)}>
-            {score}/100
+            {label}
           </span>
         );
       }
@@ -317,13 +334,22 @@ export default function GlobalUsersPage() {
   });
 
   // KPI Metrics
-  const metrics = [
-    { label: "Total Users", value: "8,346", icon: Users },
-    { label: "Active Users", value: "7,982", icon: UserCheck },
-    { label: "2FA Enabled", value: "6,427 (76.9%)", icon: ShieldCheck },
-    { label: "Super Admins", value: "24", icon: Shield },
-    { label: "Impersonated Sessions", value: "18", icon: Eye, delta: "2 active" },
-  ];
+  const metrics = useMemo(() => {
+    const visibleCount = users.length;
+    const activeCount = users.filter((user) => user.is_active).length;
+    const twoFactorCount = users.filter((user) => user.is_2fa_enabled).length;
+    const platformAdminCount = users.filter((user) => user.is_platform_admin || Boolean(user.platform_role)).length;
+    const disabledCount = users.filter((user) => !user.is_active).length;
+    const twoFactorPercent = visibleCount > 0 ? Math.round((twoFactorCount / visibleCount) * 100) : 0;
+
+    return [
+      { label: "Total Users", value: data?.total ?? visibleCount, icon: Users },
+      { label: "Visible Active", value: activeCount, icon: UserCheck },
+      { label: "2FA Visible", value: `${twoFactorCount}/${visibleCount}`, icon: ShieldCheck, delta: `${twoFactorPercent}%` },
+      { label: "Platform Admins", value: platformAdminCount, icon: Shield },
+      { label: "Disabled Visible", value: disabledCount, icon: UserX },
+    ];
+  }, [data?.total, users]);
 
   return (
     <PageContainer>

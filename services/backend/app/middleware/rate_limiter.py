@@ -12,8 +12,10 @@ from starlette.types import ASGIApp
 
 from app.redis import redis_client
 from app.database import AsyncSessionLocal
+from app.core.cache_keys import TenantCacheKey
 from app.modules.developer.models.developer_registry import RateLimit
 from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
+from app.middleware.rate_limit import _find_rule, _ip_limiter
 from sqlalchemy import select
 
 _UUID_PATTERN = re.compile(
@@ -35,21 +37,18 @@ async def fetch_db_rate_limits(org_id: uuid.UUID) -> Tuple[int, int]:
 
         # 2. Fallback to plan tier limit
         stmt = (
-            select(SubscriptionPlan.name)
+            select(SubscriptionPlan.name, RateLimit.requests_per_minute, RateLimit.requests_per_day)
             .select_from(OrganizationSubscription)
             .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
+            .outerjoin(RateLimit, RateLimit.plan_tier.ilike(SubscriptionPlan.name))
             .where(OrganizationSubscription.organization_id == org_id)
             .execution_options(skip_tenant_filter=True)
         )
         res = await db.execute(stmt)
-        plan_name = res.scalar_one_or_none()
-        
-        if plan_name:
-            stmt = select(RateLimit).where(RateLimit.plan_tier.ilike(plan_name)).execution_options(skip_tenant_filter=True)
-            res = await db.execute(stmt)
-            limit_row = res.scalar_one_or_none()
-            if limit_row:
-                return limit_row.requests_per_minute, limit_row.requests_per_day
+        rows = res.all()
+        valid_limits = [(row[1], row[2]) for row in rows if row[1] is not None and row[2] is not None]
+        if valid_limits:
+            return max(valid_limits, key=lambda item: (item[1], item[0]))
                 
         # Default fallback (Starter)
         return 60, 10000
@@ -116,6 +115,26 @@ class RateLimiterMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Apply IP/path protection before tenant-plan limits so unauthenticated
+        # traffic is still bounded.
+        ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if not ip:
+            ip = request.client.host if request.client else "unknown"
+        path_rule = _find_rule(path)
+        if not _ip_limiter.is_allowed(ip, path_rule.max_requests, path_rule.window_seconds):
+            response = JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Too many requests."},
+                headers={
+                    "Retry-After": str(path_rule.window_seconds),
+                    "X-RateLimit-Limit": str(path_rule.max_requests),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(path_rule.window_seconds),
+                },
+            )
+            await response(scope, receive, send)
+            return
+
         # Extract org_id from request state (set by AuthMiddleware)
         org_id = getattr(request.state, "org_id", None)
         if not org_id:
@@ -142,7 +161,7 @@ class RateLimiterMiddleware:
             return
 
         # Resolve rate limit values
-        limit_config_key = f"rate:limit:config:{org_id}"
+        limit_config_key = TenantCacheKey.rate_limit_config(org_id)
         try:
             cached_config = await redis_client.get(limit_config_key)
             if cached_config:
@@ -161,8 +180,8 @@ class RateLimiterMiddleware:
             req_per_min, req_per_day = 60, 10000
 
         # Perform ZSET sliding window checks
-        min_key = f"rl:{org_id}:minute"
-        day_key = f"rl:{org_id}:day"
+        min_key = TenantCacheKey.rate_limit_window(org_id, "minute")
+        day_key = TenantCacheKey.rate_limit_window(org_id, "day")
 
         try:
             min_ok, min_count, reset_min = await check_sliding_window(min_key, req_per_min, 60)
@@ -220,8 +239,14 @@ class RateLimiterMiddleware:
         if 200 <= status_code[0] < 300:
             try:
                 normalized_endpoint = _UUID_PATTERN.sub("{id}", path)
-                redis_key = f"api_usage:{org_id}:{normalized_endpoint}"
+                redis_key, endpoint_fingerprint = TenantCacheKey.api_usage(
+                    org_id, normalized_endpoint
+                )
+                metadata_key = TenantCacheKey.api_usage_metadata(
+                    org_id, endpoint_fingerprint
+                )
                 await redis_client.incr(redis_key)
-                await redis_client.sadd("api_usage_keys", redis_key)
+                await redis_client.setex(metadata_key, 86400, normalized_endpoint)
+                await redis_client.sadd("control:api_usage_keys", redis_key)
             except Exception as e:
                 logger.warning(f"[RateLimiter] Usage tracking failed: {e}")

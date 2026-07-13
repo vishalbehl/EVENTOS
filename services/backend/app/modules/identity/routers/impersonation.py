@@ -3,12 +3,13 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.dependencies import get_db
+from app.dependencies import StepUpAuth, get_db
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.audit.models.audit_domain_tables import ImpersonationLog
 from app.dependencies import get_current_user
 from app.modules.identity.services.auth_service import create_access_token
+from app.core.tenant_context import TenantContextGuard
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/auth/impersonation", tags=["Impersonation"])
@@ -22,6 +23,7 @@ class ImpersonationRequest(BaseModel):
 async def start_impersonation(
     payload: ImpersonationRequest,
     request: Request,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -32,10 +34,20 @@ async def start_impersonation(
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Only Super Admins can initiate impersonation")
 
+    if payload.target_user_id is None:
+        raise HTTPException(status_code=422, detail="target_user_id is required for impersonation")
+
     # 1. Verify target exists
     target_org = await db.get(Organization, payload.target_organization_id)
     if not target_org:
         raise HTTPException(status_code=404, detail="Target organization not found")
+
+    # Cross-tenant access is restricted to this step-up-protected workflow. The
+    # transaction context is restored before audit persistence continues.
+    async with TenantContextGuard.scoped(db, target_org.id):
+        target_user = await db.get(User, payload.target_user_id)
+    if not target_user or target_user.organization_id != target_org.id or not target_user.is_active:
+        raise HTTPException(status_code=404, detail="Target user not found")
 
     # 2. Audit Log the start
     log = ImpersonationLog(
@@ -52,22 +64,18 @@ async def start_impersonation(
 
     # 3. Generate Scoped Token
     # The token payload includes impersonator_id to track actions in audit logs
-    token_data = {
-        "sub": str(payload.target_user_id or current_user.id),
-        "organization_id": str(payload.target_organization_id),
-        "impersonator_id": str(current_user.id),
-        "exp": datetime.now(timezone.utc) + timedelta(hours=1) # Short lived
-    }
-    
-    # Assuming a token service exists
-    from app.modules.identity.services.auth_service import create_access_token
-    token = create_access_token(data=token_data)
+    token = create_access_token(
+        target_user,
+        mfa_authenticated_at=step_up.auth_time,
+        impersonator_id=current_user.id,
+        expires_minutes=15,
+    )
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "target_organization": target_org.name,
-        "expires_in": 3600
+        "expires_in": 900
     }
 
 

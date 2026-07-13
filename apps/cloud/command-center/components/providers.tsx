@@ -2,64 +2,44 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Toaster } from "sonner";
 
-export function Providers({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient({
+import { ApiError } from "@/lib/api-client";
+
+function shouldRetry(failureCount: number, error: unknown) {
+  if (failureCount >= 2) return false;
+  if (!(error instanceof ApiError)) return failureCount < 1;
+  if (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.status === 422) {
+    return false;
+  }
+  return error.retryable;
+}
+
+export function createCommandCenterQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 60 * 1000,
-        retry: 1,
+        staleTime: 60_000,
+        gcTime: 5 * 60_000,
+        retry: shouldRetry,
+        refetchOnWindowFocus: false,
+      },
+      mutations: {
+        retry: false,
       },
     },
-  }));
+  });
+}
 
-  useEffect(() => {
-    const checkOverlays = () => {
-      const overlays = Array.from(document.querySelectorAll('.fixed.inset-0, [role="dialog"], [data-state="open"]'));
-      const hasActiveOverlay = overlays.some(el => {
-        if (el.getAttribute('data-state') === 'open') return true;
-        if (el.getAttribute('role') === 'dialog') return true;
-        
-        const style = window.getComputedStyle(el);
-        if (style.position === 'fixed' && style.display !== 'none' && style.visibility !== 'hidden') {
-          if (style.pointerEvents === 'none') {
-            return el.querySelector('.pointer-events-auto') !== null;
-          }
-          return true;
-        }
-        return false;
-      });
-
-      if (hasActiveOverlay) {
-        document.body.style.overflow = 'hidden';
-      } else {
-        document.body.style.overflow = '';
-      }
-    };
-
-    checkOverlays();
-
-    const observer = new MutationObserver(checkOverlays);
-    observer.observe(document.body, { 
-      childList: true, 
-      subtree: true, 
-      attributes: true, 
-      attributeFilter: ['data-state', 'class', 'style'] 
-    });
-
-    return () => {
-      observer.disconnect();
-      document.body.style.overflow = '';
-    };
-  }, []);
+export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(createCommandCenterQueryClient);
 
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      <Toaster position="top-right" richColors />
-      <ReactQueryDevtools initialIsOpen={false} />
+      <Toaster position="top-right" richColors closeButton />
+      {process.env.NODE_ENV === "development" && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   );
 }

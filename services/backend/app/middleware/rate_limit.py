@@ -219,8 +219,19 @@ class RateLimitMiddleware:
             from app.redis import redis_client
             import json
             import uuid
+            from app.core.cache_keys import TenantCacheKey
 
-            limit_config_key = f"rate:limit:config:{org_id}"
+            try:
+                org_uuid = org_id if isinstance(org_id, uuid.UUID) else uuid.UUID(str(org_id))
+            except (TypeError, ValueError):
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": "Verified tenant context is required."},
+                )
+                await response(scope, receive, send)
+                return
+
+            limit_config_key = TenantCacheKey.rate_limit_config(org_uuid)
             try:
                 cached_config = await redis_client.get(limit_config_key)
                 if cached_config:
@@ -228,7 +239,7 @@ class RateLimitMiddleware:
                     req_per_min = config["minute"]
                     req_per_day = config["day"]
                 else:
-                    req_per_min, req_per_day = await self._fetch_db_rate_limits(org_id)
+                    req_per_min, req_per_day = await self._fetch_db_rate_limits(org_uuid)
                     await redis_client.setex(
                         limit_config_key,
                         300,  # cache for 5 minutes
@@ -243,8 +254,12 @@ class RateLimitMiddleware:
             min_ts = int(now_ts // 60)
             day_ts = int(now_ts // 86400)
 
-            min_key = f"rate:dev:min:{org_id}:{min_ts}"
-            day_key = f"rate:dev:day:{org_id}:{day_ts}"
+            min_key = TenantCacheKey.build(
+                "rate-limit", "developer", "minute", min_ts, organization_id=org_uuid
+            )
+            day_key = TenantCacheKey.build(
+                "rate-limit", "developer", "day", day_ts, organization_id=org_uuid
+            )
 
             try:
                 # Use a pipeline to check and increment counts
@@ -304,50 +319,60 @@ class RateLimitMiddleware:
         await self.app(scope, receive, send)
 
     async def _fetch_db_rate_limits(self, org_id: Any) -> tuple[int, int]:
-        from app.database import AsyncSessionLocal
+        import uuid
+
+        from app.core.tenant_context import TenantContextGuard
+        from app.database import AsyncSessionLocal, tenant_org_id
         from sqlalchemy import select
         from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
         from app.modules.developer.models.developer_registry import RateLimit
+
+        org_uuid = org_id if isinstance(org_id, uuid.UUID) else uuid.UUID(str(org_id))
         
-        async with AsyncSessionLocal() as db:
+        token = tenant_org_id.set(org_uuid)
+        try:
+            async with AsyncSessionLocal() as db:
+                await TenantContextGuard.apply(db, org_uuid)
             # 1. Try to find the tier-specific limits mapped to Organization's Subscription Plan Name
-            stmt = (
-                select(RateLimit.requests_per_minute, RateLimit.requests_per_day)
-                .select_from(OrganizationSubscription)
-                .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-                .join(RateLimit, RateLimit.plan_tier == SubscriptionPlan.name)
-                .where(OrganizationSubscription.organization_id == org_id)
-            )
-            res = await db.execute(stmt)
-            limits = res.first()
-            print(f"DEBUG RATE LIMITS Step 1: org_id={org_id} limits={limits}")
-            if limits:
-                return limits[0], limits[1]
-                
-            # 2. Fallback: try to find any subscription plan and match the tier name case-insensitively or find "Starter"
-            stmt = (
-                select(SubscriptionPlan.name)
-                .select_from(OrganizationSubscription)
-                .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
-                .where(OrganizationSubscription.organization_id == org_id)
-            )
-            res = await db.execute(stmt)
-            plan_name = res.scalar_one_or_none()
-            print(f"DEBUG RATE LIMITS Step 2: plan_name={plan_name}")
-            
-            if plan_name:
-                stmt = select(RateLimit.requests_per_minute, RateLimit.requests_per_day).where(
-                    RateLimit.plan_tier.ilike(plan_name)
+                stmt = (
+                    select(RateLimit.requests_per_minute, RateLimit.requests_per_day)
+                    .select_from(OrganizationSubscription)
+                    .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
+                    .join(RateLimit, RateLimit.plan_tier == SubscriptionPlan.name)
+                    .where(OrganizationSubscription.organization_id == org_uuid)
                 )
                 res = await db.execute(stmt)
-                limits = res.first()
-                print(f"DEBUG RATE LIMITS Step 3: limits={limits}")
+                limits = res.all()
                 if limits:
-                    return limits[0], limits[1]
-            
-            # Default fallback: Basic
-            print("DEBUG RATE LIMITS Step 4: fallback to Basic (60, 10000)")
-            return 60, 10000
+                    return max(((row[0], row[1]) for row in limits), key=lambda item: (item[1], item[0]))
+
+                # 2. Fallback: match any tenant-owned plan name to configured rate tiers.
+                stmt = (
+                    select(SubscriptionPlan.name)
+                    .select_from(OrganizationSubscription)
+                    .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
+                    .where(OrganizationSubscription.organization_id == org_uuid)
+                )
+                res = await db.execute(stmt)
+                plan_names = [row[0] for row in res.all()]
+
+                if plan_names:
+                    matches = []
+                    for plan_name in plan_names:
+                        stmt = select(RateLimit.requests_per_minute, RateLimit.requests_per_day).where(
+                            RateLimit.plan_tier.ilike(plan_name)
+                        )
+                        res = await db.execute(stmt)
+                        limits = res.first()
+                        if limits:
+                            matches.append((limits[0], limits[1]))
+                    if matches:
+                        return max(matches, key=lambda item: (item[1], item[0]))
+
+                # Default fallback: Basic
+                return 60, 10000
+        finally:
+            tenant_org_id.reset(token)
 
     @staticmethod
     def _get_ip(request: Request) -> str:

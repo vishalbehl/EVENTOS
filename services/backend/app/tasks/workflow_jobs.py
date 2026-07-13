@@ -6,13 +6,26 @@ from loguru import logger
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 
-from app.database import AsyncSessionLocal
 from app.worker import celery_app
-from app.modules.platform_workflows.instances.models import ApprovalInstance, ApprovalInstanceStep
-from app.modules.platform_workflows.workflows.models import ApprovalWorkflowStep
-from app.modules.platform_workflows.history.models import ApprovalHistory
-from app.modules.identity.models.user import User
-from app.modules.platform_workflows.approvals.service import ApprovalService
+from app.tasks.tenant_job_scope import (
+    TenantJobScopeRequired,
+    parse_required_organization_id,
+    tenant_job_session,
+)
+
+
+def _load_workflow_models():
+    try:
+        from app.modules.platform_workflows.instances.models import ApprovalInstanceStep
+        from app.modules.platform_workflows.workflows.models import ApprovalWorkflowStep
+        from app.modules.platform_workflows.history.models import ApprovalHistory
+        from app.modules.identity.models.user import User
+        from app.modules.platform_workflows.approvals.service import ApprovalService
+    except ModuleNotFoundError as exc:
+        raise TenantJobScopeRequired(
+            "Workflow jobs are dormant until platform_workflows is restored and tenant-scoped."
+        ) from exc
+    return ApprovalInstanceStep, ApprovalWorkflowStep, ApprovalHistory, User, ApprovalService
 
 def _run_async(coro):
     import threading
@@ -48,38 +61,33 @@ def _run_async(coro):
 # ── Celery Tasks ───────────────────────────────────────────────
 
 @celery_app.task(name="app.tasks.workflow_jobs.check_expired_approvals")
-def check_expired_approvals() -> None:
+def check_expired_approvals(organization_id_str: str | None = None) -> None:
     logger.info("[Celery] Starting check_expired_approvals job")
-    try:
-        _run_async(_check_expired_approvals_async())
-        logger.info("[Celery] Finished check_expired_approvals job")
-    except Exception as exc:
-        logger.exception(f"[Celery] Error in check_expired_approvals: {exc}")
+    org_id = parse_required_organization_id(organization_id_str)
+    _run_async(_check_expired_approvals_async(org_id))
+    logger.info("[Celery] Finished check_expired_approvals job")
 
 @celery_app.task(name="app.tasks.workflow_jobs.check_escalations")
-def check_escalations() -> None:
+def check_escalations(organization_id_str: str | None = None) -> None:
     logger.info("[Celery] Starting check_escalations job")
-    try:
-        _run_async(_check_escalations_async())
-        logger.info("[Celery] Finished check_escalations job")
-    except Exception as exc:
-        logger.exception(f"[Celery] Error in check_escalations: {exc}")
+    org_id = parse_required_organization_id(organization_id_str)
+    _run_async(_check_escalations_async(org_id))
+    logger.info("[Celery] Finished check_escalations job")
 
 @celery_app.task(name="app.tasks.workflow_jobs.send_reminders")
-def send_reminders() -> None:
+def send_reminders(organization_id_str: str | None = None) -> None:
     logger.info("[Celery] Starting send_reminders job")
-    try:
-        _run_async(_send_reminders_async())
-        logger.info("[Celery] Finished send_reminders job")
-    except Exception as exc:
-        logger.exception(f"[Celery] Error in send_reminders: {exc}")
+    org_id = parse_required_organization_id(organization_id_str)
+    _run_async(_send_reminders_async(org_id))
+    logger.info("[Celery] Finished send_reminders job")
 
 
 # ── Async Implementations ──────────────────────────────────────
 
-async def _check_expired_approvals_async() -> None:
+async def _check_expired_approvals_async(org_id: uuid.UUID) -> None:
+    ApprovalInstanceStep, _, ApprovalHistory, _, _ = _load_workflow_models()
     now = datetime.now(timezone.utc)
-    async with AsyncSessionLocal() as db:
+    async with tenant_job_session(org_id) as db:
         stmt = select(ApprovalInstanceStep).where(
             and_(
                 ApprovalInstanceStep.status == "PENDING",
@@ -112,9 +120,10 @@ async def _check_expired_approvals_async() -> None:
 
         await db.commit()
 
-async def _check_escalations_async() -> None:
+async def _check_escalations_async(org_id: uuid.UUID) -> None:
+    ApprovalInstanceStep, ApprovalWorkflowStep, _, User, ApprovalService = _load_workflow_models()
     now = datetime.now(timezone.utc)
-    async with AsyncSessionLocal() as db:
+    async with tenant_job_session(org_id) as db:
         # Find pending step instances whose workflow definitions have escalation_hours set
         stmt = select(ApprovalInstanceStep).join(
             ApprovalWorkflowStep,
@@ -157,8 +166,9 @@ async def _check_escalations_async() -> None:
 
         await db.commit()
 
-async def _send_reminders_async() -> None:
-    async with AsyncSessionLocal() as db:
+async def _send_reminders_async(org_id: uuid.UUID) -> None:
+    ApprovalInstanceStep, _, _, _, _ = _load_workflow_models()
+    async with tenant_job_session(org_id) as db:
         stmt = select(ApprovalInstanceStep).where(
             ApprovalInstanceStep.status == "PENDING"
         ).options(

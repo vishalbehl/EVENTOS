@@ -67,6 +67,47 @@ from app.models import (  # ensures all models are registered with Base
 from app.modules.identity.services.auth_service import hash_password
 
 
+async def activate_event_for_test(db: AsyncSession, event: Event) -> None:
+    """Create a real snapshot-first license for tests that mutate paid resources."""
+    from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
+    from app.modules.billing.services.activation_service import ActivationService
+
+    plan = SubscriptionPlan(
+        name=f"Test Licensed Plan {uuid.uuid4().hex[:8]}",
+        max_events=1,
+        max_event_team_members=100,
+        max_registrations=10000,
+        max_speakers=1000,
+        max_sessions=1000,
+        max_rooms=100,
+        max_ticket_categories=100,
+        max_badge_templates=100,
+        max_certificate_templates=100,
+        max_emails_per_event=100000,
+        storage_quota_mb=10240,
+    )
+    db.add(plan)
+    await db.flush()
+    subscription = OrganizationSubscription(
+        organization_id=event.organization_id,
+        plan_id=plan.id,
+        status="ACTIVE",
+    )
+    db.add(subscription)
+    await db.flush()
+    await ActivationService.activate_event(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        subscription_id=subscription.id,
+        grant_id=None,
+        activation_policy="SNAPSHOT_LOCKED",
+        idempotency_key=f"test-activation-{event.id}",
+        actor_id=event.created_by,
+    )
+    await db.commit()
+
+
 # ── Test database URL ─────────────────────────────────────────
 # Derives async test DB URL from the configured sync URL,
 # pointing to a separate "test" database.
@@ -129,17 +170,44 @@ async def setup_test_database():
     ]
     
     async with _test_engine.begin() as conn:
+        # Interrupted test processes can leave a partially initialized schema.
+        # This database is dedicated to tests, so reset it before every session.
         for schema in schemas:
-            await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        for schema in schemas:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
-        
-        # Create default partitions for test runs
-        await conn.execute(text("CREATE TABLE IF NOT EXISTS inventory.hardware_movements_default PARTITION OF inventory.hardware_movements DEFAULT"))
-        await conn.execute(text("CREATE TABLE IF NOT EXISTS pricing.pricing_simulations_default PARTITION OF pricing.pricing_simulations DEFAULT"))
-        await conn.execute(text("CREATE TABLE IF NOT EXISTS pricing.revenue_forecasts_default PARTITION OF pricing.revenue_forecasts DEFAULT"))
-        await conn.execute(text("CREATE TABLE IF NOT EXISTS technology_services.request_history_default PARTITION OF technology_services.request_history DEFAULT"))
-        await conn.execute(text("CREATE TABLE IF NOT EXISTS operations_planning.project_tasks_default PARTITION OF operations_planning.project_tasks DEFAULT"))
-        await conn.execute(text("CREATE TABLE IF NOT EXISTS deployment_management.deployment_logs_default PARTITION OF deployment_management.deployment_logs DEFAULT"))
+
+        # Create default partitions for test runs only when parent tables exist in metadata/schema.
+        partition_specs = [
+            ("inventory", "hardware_movements", "hardware_movements_default"),
+            ("pricing", "pricing_simulations", "pricing_simulations_default"),
+            ("pricing", "revenue_forecasts", "revenue_forecasts_default"),
+            ("technology_services", "request_history", "request_history_default"),
+            ("operations_planning", "project_tasks", "project_tasks_default"),
+            ("deployment_management", "deployment_logs", "deployment_logs_default"),
+        ]
+        for schema_name, parent_table, default_table in partition_specs:
+            exists = await conn.scalar(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = :schema_name
+                          AND table_name = :table_name
+                    )
+                    """
+                ),
+                {"schema_name": schema_name, "table_name": parent_table},
+            )
+            if exists:
+                await conn.execute(
+                    text(
+                        f"CREATE TABLE IF NOT EXISTS {schema_name}.{default_table} "
+                        f"PARTITION OF {schema_name}.{parent_table} DEFAULT"
+                    )
+                )
 
     
     yield

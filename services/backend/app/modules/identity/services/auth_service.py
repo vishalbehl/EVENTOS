@@ -49,7 +49,13 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def create_access_token(user: User) -> str:
+def create_access_token(
+    user: User,
+    *,
+    mfa_authenticated_at: Optional[datetime] = None,
+    impersonator_id: Optional[uuid.UUID] = None,
+    expires_minutes: Optional[int] = None,
+) -> str:
     """
     Create a short-lived JWT access token for the given user.
 
@@ -62,7 +68,10 @@ def create_access_token(user: User) -> str:
         exp  → expiry timestamp
     """
     now = datetime.now(timezone.utc)
-    expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = now + timedelta(minutes=expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    amr = ["pwd"]
+    if mfa_authenticated_at:
+        amr.append("mfa")
     payload = {
         "sub": str(user.id),
         "role": user.role,
@@ -71,7 +80,11 @@ def create_access_token(user: User) -> str:
         "type": "access",
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
+        "auth_time": int((mfa_authenticated_at or now).timestamp()),
+        "amr": amr,
     }
+    if impersonator_id:
+        payload["impersonator_id"] = str(impersonator_id)
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -89,6 +102,7 @@ async def persist_refresh_token(
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     device_info: Optional[str] = None,
+    mfa_authenticated_at: Optional[datetime] = None,
 ) -> RefreshToken:
     """
     Hash and persist a new refresh token record.
@@ -105,6 +119,7 @@ async def persist_refresh_token(
         ip_address=ip_address,
         user_agent=user_agent,
         expires_at=expire,
+        mfa_authenticated_at=mfa_authenticated_at,
     )
     db.add(record)
     await db.flush()  # get the ID without committing
@@ -176,6 +191,7 @@ async def rotate_refresh_token(
         family_id=old_record.family_id,
         ip_address=ip_address,
         user_agent=user_agent,
+        mfa_authenticated_at=old_record.mfa_authenticated_at,
     )
     return new_plain, new_record
 
@@ -210,6 +226,7 @@ async def login(
     *,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    mfa_code: Optional[str] = None,
 ) -> dict:
     """
     Authenticate a user by email + password.
@@ -241,13 +258,19 @@ async def login(
     if not user.is_active:
         raise ValueError("Your account has been deactivated. Contact your administrator.")
 
+    mfa_authenticated_at = None
+    from app.modules.identity.services.mfa_service import requires_privileged_mfa, verify_user_mfa
+    if settings.ENFORCE_PRIVILEGED_MFA and requires_privileged_mfa(user):
+        mfa_authenticated_at = await verify_user_mfa(db, user, mfa_code)
+
     # Issue tokens
-    access_token = create_access_token(user)
+    access_token = create_access_token(user, mfa_authenticated_at=mfa_authenticated_at)
     plain_refresh = create_refresh_token_string()
     await persist_refresh_token(
         db, user, plain_refresh,
         ip_address=ip_address,
         user_agent=user_agent,
+        mfa_authenticated_at=mfa_authenticated_at,
     )
 
     # Update last_login_at

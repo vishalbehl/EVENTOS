@@ -1,15 +1,10 @@
 "use client";
 
-import { usePathname, useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  Bell, User, ChevronRight,
-  Settings, HelpCircle, LogOut, Clock,
-  Zap, Palette, ShieldCheck, Box, PanelLeft, Wifi, WifiOff
+  Bell, User, Settings, HelpCircle, LogOut,
+  Palette, Menu
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { cn, getTimezoneAbbrev } from "@/lib/utils";
 import { useState, useEffect, useRef } from "react";
 import { useTheme } from "@/hooks/useTheme";
@@ -18,15 +13,16 @@ import { useUIStore } from "@/store/useUIStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
 
 export function Header() {
-  const pathname = usePathname();
   const [time, setTime] = useState<Date | null>(null);
   const [timezone, setTimezone] = useState("Asia/Kolkata");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const { theme, setTheme, themes } = useTheme();
   const { user, logout } = useAuthStore();
+  const setMobileSidebarOpen = useUIStore((state) => state.setMobileSidebarOpen);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<HTMLDivElement>(null);
 
@@ -60,38 +56,19 @@ export function Header() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Simple breadcrumb logic
-  const paths = pathname.split("/").filter(Boolean);
-  const breadcrumbs: { label: string; href: string }[] = [];
-  paths.forEach((path, i) => {
-    const href = "/" + paths.slice(0, i + 1).join("/");
-    const label = path.replace(/-/g, " ");
-    breadcrumbs.push({ label, href });
-  });
-
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center gap-6 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_88%,transparent)] px-6 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center gap-3 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_88%,transparent)] px-3 backdrop-blur-xl sm:px-4 md:gap-6 md:px-6">
       {/* Breadcrumbs */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)]">
-          <ShieldCheck className="h-4 w-4 text-[var(--text)]" />
-        </div>
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          {breadcrumbs.map((crumb, i) => (
-            <div key={i} className="flex items-center gap-1.5 whitespace-nowrap">
-              <ChevronRight className="h-3.5 w-3.5 text-muted" />
-              <Link
-                href={crumb.href}
-                className={cn(
-                  "text-[10px] font-black uppercase tracking-widest transition-colors",
-                  i === breadcrumbs.length - 1 ? "text-[var(--text)]" : "text-muted hover:text-[var(--text)] cursor-pointer"
-                )}
-              >
-                {crumb.label}
-              </Link>
-            </div>
-          ))}
-        </div>
+        <button
+          type="button"
+          aria-label="Open navigation"
+          onClick={() => setMobileSidebarOpen(true)}
+          className="grid size-9 shrink-0 place-items-center rounded-md border border-[var(--border)] bg-[var(--card)] text-[var(--text-secondary)] md:hidden"
+        >
+          <Menu aria-hidden className="size-4" />
+        </button>
+        <Breadcrumbs />
       </div>
 
       {/* Control Station */}
@@ -105,15 +82,16 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Link href="/notifications">
-            <button className="relative flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]">
-              <Bell className="h-4.5 w-4.5" />
+          <Link aria-label="Notifications" href="/notifications" className="relative flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]">
+              <Bell aria-hidden className="h-4.5 w-4.5" />
               <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-[var(--surf)] bg-[var(--dan)]" />
-            </button>
           </Link>
 
           <div className="relative" ref={themeMenuRef}>
             <button
+              type="button"
+              aria-label="Choose theme"
+              aria-expanded={isThemeMenuOpen}
               onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
               className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]"
             >
@@ -156,15 +134,16 @@ export function Header() {
             </AnimatePresence>
           </div>
 
-          <Link href="/docs">
-            <button className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)]">
-              <HelpCircle className="h-4.5 w-4.5" />
-            </button>
+          <Link aria-label="Documentation" href="/docs" className="hidden h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-muted transition-all hover:border-[var(--text)] hover:text-[var(--text)] sm:flex">
+            <HelpCircle aria-hidden className="h-4.5 w-4.5" />
           </Link>
         </div>
 
         <div className="flex items-center gap-3 pl-4 border-l border-default relative" ref={userMenuRef}>
-          <div 
+          <button
+            type="button"
+            aria-label="Open account menu"
+            aria-expanded={isUserMenuOpen}
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
             className="flex items-center gap-2.5 cursor-pointer group"
           >
@@ -189,7 +168,7 @@ export function Header() {
                 />
               )}
             </div>
-          </div>
+          </button>
 
           <AnimatePresence>
             {isUserMenuOpen && (

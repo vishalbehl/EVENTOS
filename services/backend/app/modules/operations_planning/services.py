@@ -13,6 +13,7 @@ class ProjectService:
         organization_id: uuid.UUID,
         event_id: uuid.UUID,
         name: str,
+        service_request_id: Optional[uuid.UUID] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         project_manager_id: Optional[uuid.UUID] = None
@@ -23,6 +24,7 @@ class ProjectService:
             id=uuid.uuid4(),
             organization_id=organization_id,
             event_id=event_id,
+            service_request_id=service_request_id,
             project_code=project_code,
             name=name,
             status="INITIATED",

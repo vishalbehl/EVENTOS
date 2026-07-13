@@ -95,11 +95,17 @@ async def reprint_badge(
     Queue a reprint job for an existing badge, specifying the reason (damaged, correction, lost).
     """
     badge = await db.get(Badge, payload.badge_id)
-    if not badge:
+    participant = await db.get(Participant, badge.participant_id) if badge else None
+    if not badge or not participant or participant.event_id != event.id:
         raise HTTPException(status_code=404, detail="Badge not found")
 
     # Verify printer exists
-    printer = await db.get(Printer, payload.printer_id)
+    printer = await db.scalar(select(Printer).where(
+        Printer.id == payload.printer_id,
+        Printer.organization_id == event.organization_id,
+        Printer.event_id == event.id,
+        Printer.retired_at.is_(None),
+    ))
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
 
@@ -138,7 +144,8 @@ async def regenerate_qr(
     Regenerate a QR token for a badge, invalidating the old QR token for offline validation.
     """
     badge = await db.get(Badge, id)
-    if not badge:
+    participant = await db.get(Participant, badge.participant_id) if badge else None
+    if not badge or not participant or participant.event_id != event.id:
         raise HTTPException(status_code=404, detail="Badge not found")
 
     old_qr = badge.qr_token
@@ -191,10 +198,16 @@ async def print_badge_job(
     Directly queue a print job for a badge.
     """
     badge = await db.get(Badge, id)
-    if not badge:
+    participant = await db.get(Participant, badge.participant_id) if badge else None
+    if not badge or not participant or participant.event_id != event.id:
         raise HTTPException(status_code=404, detail="Badge not found")
 
-    printer = await db.get(Printer, printer_id)
+    printer = await db.scalar(select(Printer).where(
+        Printer.id == printer_id,
+        Printer.organization_id == event.organization_id,
+        Printer.event_id == event.id,
+        Printer.retired_at.is_(None),
+    ))
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
 

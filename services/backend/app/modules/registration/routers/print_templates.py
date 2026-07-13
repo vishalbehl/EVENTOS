@@ -34,6 +34,13 @@ async def create_print_template(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> PrintTemplateResponse:
+    from app.modules.billing.services.limit_guard import LimitGuard
+
+    if payload.template_type == "badge":
+        await LimitGuard.check_badge_templates(db, event.organization_id, event.id)
+    elif payload.template_type == "certificate":
+        await LimitGuard.check_certificate_templates(db, event.organization_id, event.id)
+
     template = PrintTemplate(
         event_id=event.id,
         template_name=payload.template_name,

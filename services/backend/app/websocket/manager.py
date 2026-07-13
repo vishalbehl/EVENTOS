@@ -75,6 +75,10 @@ class ConnectionManager:
             room:      Room key string (e.g. "event:uuid")
         """
         await websocket.accept()
+        self.register(websocket, room)
+
+    def register(self, websocket: WebSocket, room: str) -> None:
+        """Register an already accepted and authenticated connection."""
         self._rooms[room].add(websocket)
         self._ws_room[websocket] = room
         self._heartbeats[websocket] = datetime.now(timezone.utc)

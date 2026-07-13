@@ -13,6 +13,7 @@ from app.modules.operations_planning.models import Project
 from app.modules.deployment_management.models import Deployment, DeploymentChecklist
 from app.modules.deployment_management.services import ReadinessService, DeploymentService
 from app.modules.resource_management.services import ResourcePlanningService
+from app.tasks.tenant_job_scope import parse_required_organization_id, tenant_job_session
 
 def _run_async(coro):
     """Run an async coroutine from a sync Celery task."""
@@ -68,11 +69,16 @@ async def get_task_db_session() -> AsyncSession:
 
 
 @celery_app.task(name="app.tasks.operations_jobs.calculate_all_readiness_scores")
-def calculate_all_readiness_scores() -> str:
-    """Calculate and update readiness scores for all active projects."""
+def calculate_all_readiness_scores(organization_id_str: str | None = None) -> str:
+    """Calculate and update readiness scores for one organization's active projects."""
+    org_id = parse_required_organization_id(organization_id_str)
+
     async def _calculate():
-        async with await get_task_db_session() as db:
-            stmt = select(Project.id).where(Project.status.in_(["INITIATED", "PLANNING", "ACTIVE"]))
+        async with tenant_job_session(org_id) as db:
+            stmt = select(Project.id).where(
+                Project.organization_id == org_id,
+                Project.status.in_(["INITIATED", "PLANNING", "ACTIVE"]),
+            )
             res = await db.execute(stmt)
             project_ids = res.scalars().all()
             
@@ -91,11 +97,16 @@ def calculate_all_readiness_scores() -> str:
 
 
 @celery_app.task(name="app.tasks.operations_jobs.detect_all_resource_conflicts")
-def detect_all_resource_conflicts() -> str:
-    """Scan and detect resource overlaps/conflicts for all active projects."""
+def detect_all_resource_conflicts(organization_id_str: str | None = None) -> str:
+    """Scan and detect resource overlaps/conflicts for one organization's active projects."""
+    org_id = parse_required_organization_id(organization_id_str)
+
     async def _detect():
-        async with await get_task_db_session() as db:
-            stmt = select(Project.id).where(Project.status.in_(["INITIATED", "PLANNING", "ACTIVE"]))
+        async with tenant_job_session(org_id) as db:
+            stmt = select(Project.id).where(
+                Project.organization_id == org_id,
+                Project.status.in_(["INITIATED", "PLANNING", "ACTIVE"]),
+            )
             res = await db.execute(stmt)
             project_ids = res.scalars().all()
             
@@ -114,16 +125,19 @@ def detect_all_resource_conflicts() -> str:
 
 
 @celery_app.task(name="app.tasks.operations_jobs.generate_upcoming_deployment_checklists")
-def generate_upcoming_deployment_checklists() -> str:
-    """Generate default deployment checklists for upcoming deployments in the next 7 days."""
+def generate_upcoming_deployment_checklists(organization_id_str: str | None = None) -> str:
+    """Generate default deployment checklists for one organization."""
+    org_id = parse_required_organization_id(organization_id_str)
+
     async def _generate():
-        async with await get_task_db_session() as db:
+        async with tenant_job_session(org_id) as db:
             today = date.today()
             next_week = today + timedelta(days=7)
             
             # Find deployments in next 7 days
-            stmt = select(Deployment).where(
+            stmt = select(Deployment).join(Project, Project.id == Deployment.project_id).where(
                 and_(
+                    Project.organization_id == org_id,
                     Deployment.deployment_date >= today,
                     Deployment.deployment_date <= next_week,
                     Deployment.deployment_status == "PLANNED"

@@ -129,7 +129,7 @@ class TestTenantIsolation:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_super_admin_can_see_all_events(
+    async def test_super_admin_is_tenant_scoped_without_impersonation(
         self,
         client: AsyncClient,
         event: Event,              # Event A (Org A)
@@ -141,7 +141,7 @@ class TestTenantIsolation:
         assert resp.status_code == 200
         data = resp.json()
         
-        # Super admin should see both events
+        # Privileged users remain scoped until a step-up impersonation token is issued.
         event_ids = [uuid.UUID(e["id"]) for e in data]
         assert event.id in event_ids
-        assert event_b.id in event_ids
+        assert event_b.id not in event_ids

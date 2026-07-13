@@ -1,0 +1,13 @@
+﻿
+scan                       status  tool      output notes                                                        
+----                       ------  ----      ------ -----                                                        
+Secret scan                SKIPPED gitleaks         Tool is not installed or not on PATH.                        
+Python SAST                SKIPPED bandit           Tool is not installed or not on PATH.                        
+Multi-language SAST        SKIPPED semgrep          Tool is not installed or not on PATH.                        
+Python dependency scan     SKIPPED pip-audit        Tool is not installed or not on PATH.                        
+JavaScript dependency scan SKIPPED npm audit        Skipped by caller.                                           
+Container image scan       SKIPPED trivy            Pass -ContainerImage with an immutable tag or digest.        
+API/DAST baseline          SKIPPED OWASP ZAP        Pass -ApiTargetUrl for an authorized local or staging target.
+
+
+

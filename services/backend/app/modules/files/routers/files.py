@@ -139,6 +139,15 @@ async def download_file(
     asset = await FileService.get_asset(db, org_id, asset_id)
     if not asset:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+    if asset.processing_status != "READY":
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail={
+                "code": "FILE_NOT_READY",
+                "message": "The file is quarantined until security processing completes.",
+                "status": asset.processing_status,
+            },
+        )
         
     target_path = asset.file_path
     if version:

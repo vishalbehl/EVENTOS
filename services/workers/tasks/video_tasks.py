@@ -39,7 +39,7 @@ except ImportError as e:
     soft_time_limit=900,   # 15 min soft kill
     time_limit=960,        # 16 min hard kill
 )
-def normalise_video_file(self, file_id: str) -> dict:
+def normalise_video_file(self, file_id: str, organization_id: str) -> dict:
     """
     Re-encode a video file to H.264/AAC MP4 at max 1080p.
 
@@ -50,9 +50,10 @@ def normalise_video_file(self, file_id: str) -> dict:
         file_id: UUID string of the PresentationFile record.
     """
     file_uuid = uuid.UUID(file_id)
+    organization_uuid = uuid.UUID(organization_id)
     logger.info(f"[video-norm] Starting normalisation for file {file_id}")
 
-    with get_db_session() as db:
+    with get_db_session(organization_uuid) as db:
         pf: PresentationFile | None = db.get(PresentationFile, file_uuid)
         if pf is None:
             return {"error": "File record not found."}
@@ -101,7 +102,7 @@ def normalise_video_file(self, file_id: str) -> dict:
         )
 
         # Chain thumbnail generation
-        generate_file_thumbnail.delay(file_id)
+        generate_file_thumbnail.delay(file_id, organization_id)
 
         return {
             "file_id": file_id,
@@ -114,14 +115,15 @@ def normalise_video_file(self, file_id: str) -> dict:
 @app.task(
     name="workers.tasks.video_tasks.extract_video_metadata",
 )
-def extract_video_metadata(file_id: str) -> dict:
+def extract_video_metadata(file_id: str, organization_id: str) -> dict:
     """
     Extract and persist video metadata for display in Command Center.
     Non-destructive — does not modify the stored file.
     """
     file_uuid = uuid.UUID(file_id)
+    organization_uuid = uuid.UUID(organization_id)
 
-    with get_db_session() as db:
+    with get_db_session(organization_uuid) as db:
         pf: PresentationFile | None = db.get(PresentationFile, file_uuid)
         if pf is None:
             return {"error": "File not found."}

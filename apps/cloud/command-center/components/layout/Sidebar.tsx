@@ -20,7 +20,13 @@ import { useAuthStore } from "@/store/use-auth-store";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { isSidebarCollapsed: isCollapsed, toggleSidebar } = useUIStore();
+  const {
+    isSidebarCollapsed,
+    isMobileSidebarOpen,
+    setMobileSidebarOpen,
+    toggleSidebar,
+  } = useUIStore();
+  const isCollapsed = isSidebarCollapsed && !isMobileSidebarOpen;
 
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
 
@@ -178,6 +184,10 @@ export function Sidebar() {
     });
   }, [pathname]);
 
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [pathname, setMobileSidebarOpen]);
+
 
   return (
     <motion.aside
@@ -225,7 +235,8 @@ export function Sidebar() {
               "flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)]/70 text-[var(--muted)] transition-all hover:text-[var(--text)]",
               isCollapsed ? "mt-2" : ""
             )}
-            title={isCollapsed ? "Open sidebar" : "Close sidebar"}
+            aria-label={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+            title={isCollapsed ? "Expand navigation" : "Collapse navigation"}
           >
             {isCollapsed ? (
               <ChevronRight className="h-4 w-4" />
@@ -236,7 +247,7 @@ export function Sidebar() {
         </div>
 
         {/* Navigation Items */}
-        <div className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar py-2">
+        <nav aria-label="Command Center" className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar py-2">
           {currentRoutes.map((route: any) => {
             const hasSubItems = !!route.subItems;
 
@@ -387,7 +398,7 @@ export function Sidebar() {
               </Link>
             );
           })}
-        </div>
+        </nav>
 
         {/* Bottom Navigation (Settings & Docs) */}
         <div className="mt-auto space-y-1.5 border-t border-[var(--border)] pt-4 pb-4">

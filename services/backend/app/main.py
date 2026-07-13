@@ -18,7 +18,7 @@ if sys.platform == 'win32':
     if settings.environment != "testing":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 import app.models
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,11 +27,8 @@ from slowapi.errors import RateLimitExceeded
 from app.routers import api_router
 from app.middleware.audit_middleware import AuditMiddleware
 from app.middleware.auth_middleware import AuthMiddleware
-from app.middleware.rate_limit import (
-    RateLimitMiddleware,
-    limiter,
-    rate_limit_exceeded_handler,
-)
+from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from app.middleware.rate_limiter import RateLimiterMiddleware
 from app.services.init_service import ensure_admin_user
 
 @asynccontextmanager
@@ -39,6 +36,12 @@ async def lifespan(app: FastAPI):
     # Startup logic
     from app.config import settings
     if settings.environment != "testing":
+        if settings.REQUIRE_RLS_SAFE_RUNTIME_ROLE:
+            from app.core.database_security import enforce_runtime_database_security
+            from app.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as security_session:
+                await enforce_runtime_database_security(security_session)
         await ensure_admin_user()
         
         # ── Initialize System Timezone Cache ───────────────────
@@ -47,21 +50,10 @@ async def lifespan(app: FastAPI):
         try:
             async with AsyncSessionLocal() as db:
                 await fetch_system_timezone_async(db)
-        except Exception:
-            pass  # DB might not be ready yet (e.g. initial boot before migrations)
+        except Exception as exc:
+            logger.warning(f"System timezone initialization failed: {exc}")
 
         # ── Ensure state column in speaker_profiles ────────────
-        try:
-            from sqlalchemy import text
-            async with AsyncSessionLocal() as session:
-                await session.execute(
-                    text("ALTER TABLE events.speaker_profiles ADD COLUMN IF NOT EXISTS state VARCHAR(100);")
-                )
-                await session.commit()
-        except Exception as e:
-            from loguru import logger
-            logger.warning(f"Failed to automatically add state column to speaker_profiles: {e}")
-
     # ── OTP cleanup scheduler ────────────────────────────────
     # Purge portal OTP tokens that are used or expired and older than 24h.
     # Runs every 6 hours. APScheduler is already a project dependency.
@@ -81,8 +73,8 @@ async def lifespan(app: FastAPI):
                     )
                 )
                 await session.commit()
-        except Exception:
-            pass  # Non-critical housekeeping — swallow errors
+        except Exception as exc:
+            logger.exception(f"OTP cleanup failed: {exc}")
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
@@ -156,7 +148,6 @@ from app.middleware.tenant_context import TenantContextMiddleware
 from app.middleware.plan_guard import PlanGuardMiddleware
 from app.middleware.application_guard import ApplicationGuardMiddleware
 from app.middleware.ip_allowlist import IPAllowlistMiddleware
-from app.middleware.rate_limiter import RateLimiterMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.security_middleware import SecurityMiddleware
 
@@ -169,25 +160,11 @@ app.add_middleware(RBACMiddleware)
 app.add_middleware(ApplicationGuardMiddleware)
 app.add_middleware(TenantContextMiddleware)
 app.add_middleware(RateLimiterMiddleware)
-app.add_middleware(RateLimitMiddleware)
 app.add_middleware(IPAllowlistMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://0.0.0.0:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://0.0.0.0:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
-        "http://0.0.0.0:3002",
-        "http://localhost:3003",
-        "http://127.0.0.1:3003",
-        "http://0.0.0.0:3003",
-    ],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -210,17 +187,50 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ready", tags=["health"])
+async def readiness() -> JSONResponse:
+    checks: dict[str, str] = {}
+    status_code = 200
+
+    try:
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        logger.warning(f"Readiness database check failed: {exc}")
+        checks["database"] = "failed"
+        status_code = 503
+
+    try:
+        import redis.asyncio as redis
+
+        client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1)
+        try:
+            await client.ping()
+            checks["redis"] = "ok"
+        finally:
+            await client.aclose()
+    except Exception as exc:
+        logger.warning(f"Readiness Redis check failed: {exc}")
+        checks["redis"] = "failed"
+        status_code = 503
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if status_code == 200 else "not_ready",
+            "checks": checks,
+        },
+    )
+
+
 # ── Native WebSocket Fallback for Dashboard ───────────────────
 @app.websocket("/ws/dashboard/{event_id}")
 async def ws_dashboard_fallback(websocket: WebSocket, event_id: uuid.UUID):
-    """Fallback WebSocket handler for dashboard metrics client updates."""
-    await websocket.accept()
-    try:
-        while True:
-            # Receive heartbeat ping
-            data = await websocket.receive_text()
-            # Respond with pong
-            await websocket.send_json({"type": "pong", "event_id": str(event_id)})
-    except WebSocketDisconnect:
-        pass
+    """Authenticated fallback WebSocket for dashboard event updates."""
+    from app.websocket.events import handle_monitor_connection
+    await handle_monitor_connection(websocket, event_id)
 

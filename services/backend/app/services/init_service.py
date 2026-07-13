@@ -886,7 +886,8 @@ async def ensure_admin_user():
                 org = Organization(
                     id=uuid.uuid4(),
                     name="Eventxos",
-                    slug="eventxos"
+                    slug="eventxos",
+                    is_platform_org=True
                 )
                 db.add(org)
                 await db.flush()
@@ -903,6 +904,17 @@ async def ensure_admin_user():
 
             all_orgs_res = await db.execute(select(Organization))
             for target_org in all_orgs_res.scalars().all():
+                if target_org.slug != "eventxos":
+                    continue
+                
+                # Keep Organization legacy columns in sync with Enterprise plan (unlimited for super org)
+                if ent_plan:
+                    target_org.plan = ent_plan.name.lower()
+                    target_org.max_events = 9999
+                    target_org.max_users = 9999
+                    target_org.max_storage_gb = 9999
+                    target_org.is_platform_org = True
+                
                 sub_res = await db.execute(select(OrganizationSubscription).where(OrganizationSubscription.organization_id == target_org.id))
                 org_sub = sub_res.scalar_one_or_none()
                 if not org_sub and ent_plan:
@@ -917,6 +929,9 @@ async def ensure_admin_user():
                     )
                     db.add(org_sub)
                     await db.flush()
+                    
+                if org_sub:
+                    target_org.plan_expires_at = org_sub.current_period_end
 
             # 2. Check if any Super Admin exists
             result = await db.execute(select(User).where(User.role == "super_admin"))

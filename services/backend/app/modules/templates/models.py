@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Integer, Numeric
+from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Integer, Numeric, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -167,7 +167,10 @@ class TemplateVersion(Base):
 
 class TemplateInstallation(Base):
     __tablename__ = "template_installations"
-    __table_args__ = {"schema": "templates"}
+    __table_args__ = (
+        Index("ix_rls_templates_template_installations_organization", "organization_id"),
+        {"schema": "templates"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))

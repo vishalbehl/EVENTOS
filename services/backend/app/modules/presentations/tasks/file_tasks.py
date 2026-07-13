@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import sys
 import uuid
+from contextlib import contextmanager
 from loguru import logger
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
@@ -9,6 +10,8 @@ from sqlalchemy.pool import NullPool
 from app.worker import celery_app
 from app.config import settings
 from app.modules.presentations.services.validation_service import validate_presentation_file
+from app.core.tenant_context import TenantContextGuard
+from app.database import tenant_org_id
 
 
 def _run_async(coro):
@@ -18,13 +21,24 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
+@contextmanager
+def _tenant_worker_context(organization_id: uuid.UUID):
+    """Bind the synchronous worker session to one verified organization."""
+    token = tenant_org_id.set(organization_id)
+    try:
+        yield
+    finally:
+        tenant_org_id.reset(token)
+
+
 @celery_app.task(name="app.tasks.validate_presentation", bind=True)
-def validate_presentation(self, file_id_str: str) -> None:
+def validate_presentation(self, file_id_str: str, organization_id_str: str) -> None:
     """
     Background task to perform technical auditing on an uploaded file.
     Triggered after speaker confirms upload.
     """
     file_id = uuid.UUID(file_id_str)
+    organization_id = uuid.UUID(organization_id_str)
     logger.info(f"[Celery] Validation job received for file: {file_id}")
 
     # Use a fresh engine/session to avoid loop conflicts on Windows
@@ -39,7 +53,7 @@ def validate_presentation(self, file_id_str: str) -> None:
     )
 
     try:
-        _run_async(_run_validation_async(SessionLocal, file_id))
+        _run_async(_run_validation_async(SessionLocal, file_id, organization_id))
         logger.info(f"[Celery] Validation job completed for file: {file_id}")
     except Exception as exc:
         logger.exception(f"[Celery] Validation failed for file {file_id}: {exc}")
@@ -48,13 +62,20 @@ def validate_presentation(self, file_id_str: str) -> None:
         _run_async(engine.dispose())
 
 
-async def _run_validation_async(session_factory, file_id: uuid.UUID):
+async def _run_validation_async(
+    session_factory, file_id: uuid.UUID, organization_id: uuid.UUID
+):
     async with session_factory() as db:
-        await validate_presentation_file(db, file_id)
+        token = tenant_org_id.set(organization_id)
+        try:
+            await TenantContextGuard.apply(db, organization_id)
+            await validate_presentation_file(db, file_id)
+        finally:
+            tenant_org_id.reset(token)
 
 
 @celery_app.task(name="app.tasks.validate_poster", bind=True)
-def validate_poster(self, poster_id_str: str) -> None:
+def validate_poster(self, poster_id_str: str, organization_id_str: str) -> None:
     """
     Background task to audit an ePoster submission.
 
@@ -68,9 +89,12 @@ def validate_poster(self, poster_id_str: str) -> None:
     from app.services import upload_service
 
     poster_id = uuid.UUID(poster_id_str)
+    organization_id = uuid.UUID(organization_id_str)
     logger.info(f"[Celery] Poster validation received for: {poster_id}")
 
-    with SessionLocal() as db:
+    # The shared SQLAlchemy hook issues SET LOCAL when the poster query opens
+    # its transaction, preventing an unscoped worker from reading tenant data.
+    with _tenant_worker_context(organization_id), SessionLocal() as db:
         poster = db.get(Poster, poster_id)
         if not poster:
             logger.warning(f"[Celery] Poster {poster_id} not found, skipping.")

@@ -349,11 +349,19 @@ async def test_activations_api_endpoints(client, db, organization, event, organi
 
     # 1. Activate
     payload = {"subscription_id": str(sub.id)}
-    res = await client.post(f"/billing/events/{event.id}/activate", json=payload, headers=headers)
+    res = await client.post(
+        f"/billing/events/{event.id}/activate",
+        json=payload,
+        headers={**headers, "Idempotency-Key": "activate-1"},
+    )
     assert res.status_code == 200, res.text
     data = res.json()
     assert data["status"] == "ACTIVE"
+    assert data["activation_status"] == "ACTIVE"
     assert data["event_id"] == str(event.id)
+    assert data["grant_id"] is not None
+    assert data["grant_consumption_id"] is not None
+    assert data["snapshot_summary"]["version"] == 1
     activation_id = data["id"]
 
     # 2. Get status
@@ -367,7 +375,10 @@ async def test_activations_api_endpoints(client, db, organization, event, organi
     assert len(res.json()) == 1
 
     # 4. Deactivate
-    res = await client.post(f"/billing/events/{event.id}/deactivate", headers=headers)
+    res = await client.post(
+        f"/billing/events/{event.id}/deactivate",
+        headers={**headers, "Idempotency-Key": "deactivate-1"},
+    )
     assert res.status_code == 200
     assert res.json()["status"] == "DEACTIVATED"
 

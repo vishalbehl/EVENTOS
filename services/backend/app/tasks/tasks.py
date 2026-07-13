@@ -12,6 +12,8 @@ from app.modules.registration.services.excel_import_service import run_import
 from app.modules.registration.models.import_job import ImportJob
 from app.modules.events.models.event import Event
 from app.config import settings
+from app.core.tenant_context import TenantContextGuard
+from app.database import tenant_org_id
 
 
 def _run_async(coro):
@@ -28,16 +30,17 @@ def _run_async(coro):
 
 
 @celery_app.task(name="app.tasks.run_excel_import", bind=True)
-def run_excel_import(self, job_id_str: str) -> None:
+def run_excel_import(self, job_id_str: str, organization_id_str: str) -> None:
     """
     Celery task to process an Excel schedule import.
     Synchronous entry point — delegates to the async pipeline via _run_async().
     """
     job_id = uuid.UUID(job_id_str)
+    organization_id = uuid.UUID(organization_id_str)
     logger.info(f"[Celery] Import job received: {job_id}")
 
     try:
-        _run_async(_run_excel_import_async(job_id))
+        _run_async(_run_excel_import_async(job_id, organization_id))
         logger.info(f"[Celery] Import job completed: {job_id}")
     except Exception as exc:
         logger.exception(f"[Celery] Unhandled error for job {job_id}: {exc}")
@@ -45,7 +48,9 @@ def run_excel_import(self, job_id_str: str) -> None:
         raise
 
 
-async def _run_excel_import_async(job_id: uuid.UUID) -> None:
+async def _run_excel_import_async(
+    job_id: uuid.UUID, organization_id: uuid.UUID
+) -> None:
     """Async implementation of the import pipeline."""
     # We must create a local engine and session factory here.
     # Reusing the global engine across multiple asyncio.run() calls in a 
@@ -70,8 +75,10 @@ async def _run_excel_import_async(job_id: uuid.UUID) -> None:
         autocommit=False,
     )
 
+    context_token = tenant_org_id.set(organization_id)
     try:
         async with TaskSessionLocal() as db:
+            await TenantContextGuard.apply(db, organization_id)
             # 1. Fetch the job record
             result = await db.execute(select(ImportJob).where(ImportJob.id == job_id))
             job = result.scalar_one_or_none()
@@ -115,5 +122,6 @@ async def _run_excel_import_async(job_id: uuid.UUID) -> None:
                 import_type=job.job_type,
             )
     finally:
+        tenant_org_id.reset(context_token)
         # Dispose of the local engine to clean up connections for this task loop
         await task_engine.dispose()

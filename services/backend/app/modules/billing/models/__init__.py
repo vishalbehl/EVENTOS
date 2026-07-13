@@ -10,6 +10,15 @@ from app.modules.billing.models.subscription import (
     RevenueMetric,
 )
 from app.modules.billing.models.event_activation import EventActivation
+from app.modules.billing.models.licensing import (
+    ActivationTransferPolicy,
+    BillingOperationRequest,
+    EntitlementGrant,
+    EventEntitlementSnapshotItem,
+    EventEntitlementSnapshotSet,
+    EventLimitSnapshotItem,
+    GrantConsumption,
+)
 from app.modules.billing.models.billing_domain_tables import (
     Invoice,
     InvoiceItem,
@@ -35,6 +44,13 @@ __all__ = [
     "RevenueMetric",
     # Event activation
     "EventActivation",
+    "EntitlementGrant",
+    "GrantConsumption",
+    "EventEntitlementSnapshotSet",
+    "EventEntitlementSnapshotItem",
+    "EventLimitSnapshotItem",
+    "BillingOperationRequest",
+    "ActivationTransferPolicy",
     # Billing domain
     "Invoice",
     "InvoiceItem",

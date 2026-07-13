@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { 
   usePlatformAudit, 
-  useAdminOrgs, 
-  useExportAuditLogs
+  useAdminOrgs
 } from "@/services/super-admin-service";
 import { 
   Receipt, RefreshCw, Search, Calendar, Lock, Unlock, ShieldCheck, ShieldAlert, 
@@ -34,6 +33,7 @@ export interface AuditLog {
   new_state?: Record<string, any>;
   occurred_at?: string;
   request_id?: string;
+  correlation_id?: string;
 }
 
 export default function AuditExplorerPage() {
@@ -53,8 +53,8 @@ export default function AuditExplorerPage() {
   
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [verifiedStatus, setVerifiedStatus] = useState<"idle" | "success" | "tampered">("idle");
-  const [tamperedIds, setTamperedIds] = useState<string[]>([]);
+  const [verifiedStatus, setVerifiedStatus] = useState<"idle" | "success" | "incomplete">("idle");
+  const [missingIntegrityIds, setMissingIntegrityIds] = useState<string[]>([]);
   const [showJsonPanel, setShowJsonPanel] = useState(false);
   const [copiedHash, setCopiedHash] = useState(false);
 
@@ -71,7 +71,6 @@ export default function AuditExplorerPage() {
   const hasNext = data?.has_next || false;
   const nextCursorVal = data?.next_cursor || null;
 
-  // Simulated filtration
   const logs = useMemo(() => {
     return rawLogs.filter(log => {
       const matchActor = actorQuery === "" || 
@@ -100,6 +99,27 @@ export default function AuditExplorerPage() {
     });
   }, [rawLogs, actorQuery, selectedActionGroup, dateFrom, dateTo]);
 
+  const actionGroups = useMemo(() => {
+    const countFor = (id: string) => {
+      if (id === "ALL") return rawLogs.length;
+      if (id === "SECURITY") return rawLogs.filter((log) => ["PASSWORD_RESET", "2FA_DISABLE"].includes(log.action_type)).length;
+      if (id === "BILLING") return rawLogs.filter((log) => log.action_type === "PLAN_CHANGE").length;
+      return rawLogs.filter((log) => log.action_type === id).length;
+    };
+
+    return [
+      { id: "ALL", label: "All Logs", count: countFor("ALL") },
+      { id: "CREATE", label: "Create", count: countFor("CREATE") },
+      { id: "UPDATE", label: "Update", count: countFor("UPDATE") },
+      { id: "DELETE", label: "Delete", count: countFor("DELETE") },
+      { id: "LOGIN", label: "Login", count: countFor("LOGIN") },
+      { id: "LOGOUT", label: "Logout", count: countFor("LOGOUT") },
+      { id: "IMPERSONATE", label: "Impersonate", count: countFor("IMPERSONATE") },
+      { id: "SECURITY", label: "Security", count: countFor("SECURITY") },
+      { id: "BILLING", label: "Billing", count: countFor("BILLING") },
+    ];
+  }, [rawLogs]);
+
   // Set default selected log on data load
   useEffect(() => {
     if (logs.length > 0 && !selectedLog) {
@@ -111,19 +131,17 @@ export default function AuditExplorerPage() {
   const handleVerify = async () => {
     setIsVerifying(true);
     setVerifiedStatus("idle");
-    setTamperedIds([]);
+    setMissingIntegrityIds([]);
     
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    
-    // Simulate that the second log is tampered for demonstration if > 1 logs exist
-    if (logs.length > 1) {
-      const tamperedId = logs[1].id;
-      setTamperedIds([tamperedId]);
-      setVerifiedStatus("tampered");
-      toast.error(`Compliance warning: Tampering detected on log ID ${tamperedId.slice(0,8)}!`);
+    const missingIds = logs.filter((log) => !log.row_hash).map((log) => log.id);
+
+    if (missingIds.length > 0) {
+      setMissingIntegrityIds(missingIds);
+      setVerifiedStatus("incomplete");
+      toast.warning(`Integrity metadata missing on ${missingIds.length} visible audit entr${missingIds.length === 1 ? "y" : "ies"}.`);
     } else {
       setVerifiedStatus("success");
-      toast.success(`Verification complete: All ${logs.length} logs are cryptographically verified.`);
+      toast.success(`Integrity metadata present on all ${logs.length} visible audit entr${logs.length === 1 ? "y" : "ies"}.`);
     }
     setIsVerifying(false);
   };
@@ -154,11 +172,17 @@ export default function AuditExplorerPage() {
               ) : (
                 <Fingerprint className="w-3.5 h-3.5 mr-2" />
               )}
-              {isVerifying ? "Verifying..." : "Verify Integrity"}
+              {isVerifying ? "Checking..." : "Check Integrity Metadata"}
             </Button>
-            <Button variant="outline" size="sm" className="border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              title="Audit exports require durable export-job records and authorization-gated downloads before exposure."
+              className="border-border"
+            >
               <Download className="w-3.5 h-3.5 mr-2" />
-              Export
+              Export unavailable
             </Button>
           </div>
         }
@@ -173,17 +197,7 @@ export default function AuditExplorerPage() {
               Action Type
             </span>
             <div className="space-y-1">
-              {[
-                { id: "ALL", label: "All Logs", count: "256.8k" },
-                { id: "CREATE", label: "Create", count: "45.2k" },
-                { id: "UPDATE", label: "Update", count: "102.3k" },
-                { id: "DELETE", label: "Delete", count: "12.4k" },
-                { id: "LOGIN", label: "Login", count: "28.3k" },
-                { id: "LOGOUT", label: "Logout", count: "18.4k" },
-                { id: "IMPERSONATE", label: "Impersonate", count: "1.2k" },
-                { id: "SECURITY", label: "Security", count: "3.8k" },
-                { id: "BILLING", label: "Billing", count: "4.8k" },
-              ].map((g) => {
+              {actionGroups.map((g) => {
                 const isActive = selectedActionGroup === g.id;
                 return (
                   <button
@@ -267,13 +281,13 @@ export default function AuditExplorerPage() {
           {verifiedStatus === "success" && (
             <div className="p-3 bg-[var(--success-muted)] border border-success/20 rounded-xl text-[var(--success)] text-xs font-medium flex items-center gap-2">
               <ShieldCheck className="w-4 h-4" />
-              All visible transaction logs cryptographically verified ✓
+              Integrity metadata is present for all visible audit entries.
             </div>
           )}
-          {verifiedStatus === "tampered" && (
-            <div className="p-3 bg-[var(--danger-muted)] border border-danger/20 rounded-xl text-[var(--danger)] text-xs font-semibold flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 animate-pulse" />
-              SIEM Integrity Alert: Detected modified entries!
+          {verifiedStatus === "incomplete" && (
+            <div className="p-3 bg-[var(--warning-muted)] border border-warning/20 rounded-xl text-[var(--warning)] text-xs font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              Integrity metadata is incomplete for {missingIntegrityIds.length} visible audit entr{missingIntegrityIds.length === 1 ? "y" : "ies"}.
             </div>
           )}
 
@@ -288,7 +302,7 @@ export default function AuditExplorerPage() {
             ) : (
               logs.map((log) => {
                 const isSelected = selectedLog?.id === log.id;
-                const isTampered = tamperedIds.includes(log.id);
+                const isMissingIntegrity = missingIntegrityIds.includes(log.id);
                 return (
                   <div
                     key={log.id}
@@ -296,7 +310,7 @@ export default function AuditExplorerPage() {
                     className={cn(
                       "bg-surface border rounded-xl p-4 transition-all duration-100 cursor-pointer flex flex-col gap-2.5",
                       isSelected ? "border-[var(--brand-primary)] bg-[var(--brand-primary-muted)]" : "border-border hover:border-border/80",
-                      isTampered && "border-l-4 border-l-[var(--danger)]"
+                      isMissingIntegrity && "border-l-4 border-l-[var(--warning)]"
                     )}
                   >
                     {/* Row 1 */}
@@ -328,7 +342,7 @@ export default function AuditExplorerPage() {
 
                     {/* Row 3 */}
                     <div className="flex items-center gap-4 text-[10px] text-[var(--text-tertiary)] font-mono">
-                      <span>IP: {log.actor_ip || "127.0.0.1"}</span>
+                      <span>IP: {log.actor_ip || "Not recorded"}</span>
                       <span>Org: {log.organization_name || "Platform"}</span>
                       <span className={cn(
                         "w-2 h-2 rounded-full ml-auto",
@@ -356,8 +370,8 @@ export default function AuditExplorerPage() {
               {/* Attributes */}
               <div className="space-y-3">
                 {[
-                  { label: "Request ID", val: selectedLog.request_id || "req_01j7h8x" },
-                  { label: "Correlation ID", val: "corr_01j7h8x92" },
+                  { label: "Request ID", val: selectedLog.request_id || "Not recorded" },
+                  { label: "Correlation ID", val: selectedLog.correlation_id || "Not recorded" },
                 ].map((item, idx) => (
                   <div key={idx} className="space-y-1">
                     <span className="text-[10px] text-[var(--text-tertiary)] font-medium">{item.label}</span>
@@ -394,18 +408,18 @@ export default function AuditExplorerPage() {
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                   <div>
                     <span className="text-[9px] text-[var(--text-tertiary)] block">IP Address</span>
-                    <span className="font-mono font-bold text-[var(--text-primary)]">{selectedLog.actor_ip || "127.0.0.1"}</span>
+                    <span className="font-mono font-bold text-[var(--text-primary)]">{selectedLog.actor_ip || "Not recorded"}</span>
                   </div>
                   <div>
                     <span className="text-[9px] text-[var(--text-tertiary)] block">OS / Agent</span>
-                    <span className="font-bold text-[var(--text-primary)] truncate block max-w-[100px]">{selectedLog.actor_user_agent || "Firefox/Windows"}</span>
+                    <span className="font-bold text-[var(--text-primary)] truncate block max-w-[100px]">{selectedLog.actor_user_agent || "Not recorded"}</span>
                   </div>
                 </div>
 
                 <div className="space-y-1">
                   <span className="text-[10px] text-[var(--text-tertiary)] font-medium">SIEM Cryptographic Hash</span>
                   <div className="flex items-center gap-2 font-mono text-[9px] bg-surface-2 p-1.5 rounded text-[var(--text-tertiary)]">
-                    <span className="truncate flex-1">{selectedLog.row_hash || "sha256_e3b0c44298fc1c149afbf4c8996"}</span>
+                    <span className="truncate flex-1">{selectedLog.row_hash || "Integrity hash not recorded"}</span>
                     <button onClick={() => handleCopyHash(selectedLog.row_hash)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                       {copiedHash ? <Check className="w-3.5 h-3.5 text-[var(--success)]" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>

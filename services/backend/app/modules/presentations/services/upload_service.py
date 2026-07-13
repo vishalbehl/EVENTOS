@@ -23,14 +23,32 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 import os
+import time
 from pathlib import Path
+from urllib.parse import urlencode, quote
 from loguru import logger
 
 from app.config import settings
 from app.database import tenant_org_id
+from app.core.storage_security import create_local_storage_capability
 
 # Local storage root from settings
 LOCAL_STORAGE_ROOT = Path(settings.STORAGE_LOCAL_PATH)
+
+
+def _require_tenant_org_id() -> uuid.UUID:
+    organization_id = tenant_org_id.get()
+    if not isinstance(organization_id, uuid.UUID):
+        raise RuntimeError("Verified tenant context is required for storage operations.")
+    return organization_id
+
+
+def _assert_tenant_storage_path(storage_path: str) -> uuid.UUID:
+    organization_id = _require_tenant_org_id()
+    normalized = storage_path.replace("\\", "/").lstrip("/")
+    if not normalized.startswith(f"{organization_id}/"):
+        raise RuntimeError("Storage object key is outside the verified tenant namespace.")
+    return organization_id
 
 
 # ── S3 client factory (boto3 is thread-safe at the client level) ──
@@ -109,8 +127,8 @@ def build_presentation_path(
         # Default filename format should be a collision-resistant UUID
         stored_filename = f"{uuid.uuid4()}.{ext}"
         
-    org_id = tenant_org_id.get()
-    prefix = f"{org_id}/" if org_id else ""
+    org_id = _require_tenant_org_id()
+    prefix = f"{org_id}/"
 
     if any([event_name, hall_name, session_date, session_name, speaker_name]):
         storage_path = prefix + "/".join(
@@ -153,8 +171,8 @@ def build_poster_path(
     else:
         stored_filename = f"{base_name}.{ext}"
 
-    org_id = tenant_org_id.get()
-    prefix = f"{org_id}/" if org_id else ""
+    org_id = _require_tenant_org_id()
+    prefix = f"{org_id}/"
 
     if any([event_name, hall_name, session_name, speaker_name]):
         storage_path = prefix + "/".join(
@@ -175,8 +193,8 @@ def build_poster_path(
 
 def build_import_path(event_id: uuid.UUID, original_filename: str) -> tuple[str, str]:
     """Storage path for Excel schedule import files."""
-    org_id = tenant_org_id.get()
-    prefix = f"{org_id}/" if org_id else ""
+    org_id = _require_tenant_org_id()
+    prefix = f"{org_id}/"
     ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "xlsx"
     stored_filename = f"{uuid.uuid4()}.{ext}"
     storage_path = f"{prefix}imports/{event_id}/{stored_filename}"
@@ -185,8 +203,8 @@ def build_import_path(event_id: uuid.UUID, original_filename: str) -> tuple[str,
 
 def build_thumbnail_path(file_id: uuid.UUID) -> str:
     """Storage path for first-slide thumbnail images."""
-    org_id = tenant_org_id.get()
-    prefix = f"{org_id}/" if org_id else ""
+    org_id = _require_tenant_org_id()
+    prefix = f"{org_id}/"
     return f"{prefix}thumbnails/{file_id}.webp"
 
 
@@ -214,11 +232,25 @@ def create_presigned_upload(
             "expires_in": int,          # Seconds until URL expires
         }
     """
+    organization_id = _assert_tenant_storage_path(storage_path)
     if settings.STORAGE_MODE == "local":
-        # Simulate S3 Presigned PUT for local development
-        # We pass bucket and key as query params for simplicity in local mode
+        expires_at = int(time.time()) + expiry_seconds
+        signature = create_local_storage_capability(
+            method="PUT",
+            bucket=bucket,
+            key=storage_path,
+            organization_id=organization_id,
+            expires_at=expires_at,
+        )
+        query = urlencode({
+            "bucket": bucket,
+            "key": storage_path,
+            "organization_id": str(organization_id),
+            "expires_at": expires_at,
+            "signature": signature,
+        })
         return {
-            "url": f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/local-upload?bucket={bucket}&key={storage_path}",
+            "url": f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/local-upload?{query}",
             "fields": {},
             "storage_path": storage_path,
             "expires_in": expiry_seconds,
@@ -264,18 +296,32 @@ def create_presigned_download(
 
     Returns the pre-signed URL string.
     """
+    organization_id = _assert_tenant_storage_path(storage_path)
     if settings.STORAGE_MODE == "local":
-        url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
-        params = []
+        expires_at = int(time.time()) + expiry_seconds
+        signature = create_local_storage_capability(
+            method="GET",
+            bucket=bucket,
+            key=storage_path,
+            organization_id=organization_id,
+            expires_at=expires_at,
+        )
+        url = (
+            f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/"
+            f"{quote(bucket, safe='')}/{quote(storage_path, safe='/')}"
+        )
+        params = [
+            ("organization_id", str(organization_id)),
+            ("expires_at", str(expires_at)),
+            ("signature", signature),
+        ]
         if filename:
-            params.append(f"filename={filename}")
+            params.append(("filename", filename))
         if inline:
-            params.append("disposition=inline")
+            params.append(("disposition", "inline"))
         else:
-            params.append("disposition=attachment")
-        if params:
-            url += "?" + "&".join(params)
-        return url
+            params.append(("disposition", "attachment"))
+        return url + "?" + urlencode(params)
 
     s3 = _get_s3_client()
     params: dict = {"Bucket": bucket, "Key": storage_path}
@@ -450,6 +496,7 @@ def get_object_bytes(bucket: str, storage_path: str) -> bytes:
     Download and return the raw bytes of an object.
     Supports local filesystem fallback in development.
     """
+    _assert_tenant_storage_path(storage_path)
     if settings.STORAGE_MODE == "local":
         # Strategy 1: Direct combination (as saved by the app)
         local_path = (LOCAL_STORAGE_ROOT / bucket / storage_path).absolute()
@@ -474,19 +521,6 @@ def get_object_bytes(bucket: str, storage_path: str) -> bytes:
         if final_path.exists():
             return final_path.read_bytes()
 
-        # Strategy 4: Nuclear Walk (Recursive find by filename as absolute last resort)
-        logger.debug(f"[Storage] Seeking file (Strategy 4 - Nuclear Walk): Looking for {os.path.basename(storage_path)}")
-        target_filename = os.path.basename(storage_path)
-        bucket_root = (LOCAL_STORAGE_ROOT / bucket).absolute()
-        
-        if bucket_root.exists():
-            for root, dirs, files in os.walk(bucket_root):
-                if target_filename in files:
-                    found_path = Path(root) / target_filename
-                    logger.debug(f"[Storage] NUCLEAR FIND! Found at: {found_path}")
-                    return found_path.read_bytes()
-
-        logger.error(f"[Storage] Local file NOT FOUND after NUCLEAR WALK. Last checked bucket: {bucket_root}")
         raise RuntimeError(f"Local file not found: {storage_path}")
         
     s3 = _get_s3_client()
@@ -508,6 +542,7 @@ def upload_bytes(
     Upload raw bytes to storage.
     Supports local filesystem fallback in development.
     """
+    _assert_tenant_storage_path(storage_path)
     if settings.STORAGE_MODE == "local":
         local_path = LOCAL_STORAGE_ROOT / bucket / storage_path
         local_path.parent.mkdir(parents=True, exist_ok=True)

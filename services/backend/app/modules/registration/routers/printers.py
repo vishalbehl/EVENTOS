@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
 from app.modules.venue.models.printer import Printer
 from app.modules.registration.schemas.badge import PrinterRegister, PrinterResponse
+from app.modules.events.models.room import Room
+from app.modules.procurement.models import Vendor
 
 router = APIRouter(prefix="/events/{event_id}/printers", tags=["printers"])
 
@@ -25,7 +27,30 @@ async def register_printer(
     """
     Register a new network or local printer at the event venue.
     """
+    if payload.room_id:
+        room = await db.scalar(select(Room).where(
+            Room.id == payload.room_id,
+            Room.event_id == event.id,
+        ))
+        if room is None:
+            raise HTTPException(status_code=404, detail="Room not found for this event")
+
+    if payload.vendor_id:
+        vendor = await db.scalar(select(Vendor).where(
+            Vendor.id == payload.vendor_id,
+            Vendor.status == "ACTIVE",
+        ))
+        if vendor is None:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+
     printer = Printer(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        vendor_id=payload.vendor_id,
+        room_id=payload.room_id,
+        external_reference=payload.external_reference,
+        deployment_starts_at=payload.deployment_starts_at,
+        deployment_ends_at=payload.deployment_ends_at,
         name=payload.name,
         ip_address=payload.ip_address,
         location=payload.location,
@@ -45,7 +70,11 @@ async def list_printers(
     """
     List all registered printers.
     """
-    q = select(Printer)
+    q = select(Printer).where(
+        Printer.organization_id == event.organization_id,
+        Printer.event_id == event.id,
+        Printer.retired_at.is_(None),
+    )
     result = await db.execute(q)
     return list(result.scalars().all())
 
@@ -59,7 +88,12 @@ async def get_printer(
     """
     Get a single printer configuration by ID.
     """
-    printer = await db.get(Printer, id)
+    printer = await db.scalar(select(Printer).where(
+        Printer.id == id,
+        Printer.organization_id == event.organization_id,
+        Printer.event_id == event.id,
+        Printer.retired_at.is_(None),
+    ))
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
     return printer

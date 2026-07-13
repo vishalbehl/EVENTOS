@@ -5,13 +5,12 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db
-from app.config import settings
+from app.dependencies import DeviceAuth, get_db
 from app.modules.events.models.session import Session
 from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.registration.models.participant import Participant
@@ -25,23 +24,18 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
-async def verify_internal_secret(x_internal_secret: str = Header(None, alias="X-Internal-Secret")):
-    if x_internal_secret != settings.CLOUD_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid Internal Sync Key"
-        )
-    return True
-
-@router.get("/events/{event_id}/queue", dependencies=[Depends(verify_internal_secret)])
+@router.get("/events/{event_id}/queue")
 async def get_sync_payload(
     event_id: uuid.UUID,
+    device_auth: DeviceAuth,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Consolidated endpoint for Venue Server to pull latest configurations, schedule,
     approved participants, badges, templates, capacity rules, and roles.
     """
+    _require_device_event(device_auth, event_id)
+
     # 1. Fetch sessions & speakers
     sessions_result = await db.execute(
         select(Session)
@@ -197,12 +191,14 @@ class PushItemSchema(BaseModel):
     created_at: datetime
 
 
-@router.post("/events/{event_id}/push", dependencies=[Depends(verify_internal_secret)])
+@router.post("/events/{event_id}/push")
 async def push_sync_payload(
     event_id: uuid.UUID,
     payload: List[PushItemSchema],
+    device_auth: DeviceAuth,
     db: AsyncSession = Depends(get_db)
 ):
+    _require_device_event(device_auth, event_id)
     processed_ids = []
     errors = []
     
@@ -210,10 +206,11 @@ async def push_sync_payload(
         try:
             if item.entity_type == "attendance_log":
                 if item.action == "create":
+                    p_id = uuid.UUID(item.payload["participant_id"])
+                    s_id = uuid.UUID(item.payload["session_id"])
+                    await _require_participant_and_session(db, event_id, p_id, s_id)
                     existing_log = await db.get(AttendanceLog, item.entity_id)
                     if not existing_log:
-                        p_id = uuid.UUID(item.payload["participant_id"])
-                        s_id = uuid.UUID(item.payload["session_id"])
                         checkin_time = datetime.fromisoformat(item.payload["checkin_time"])
                         
                         log = AttendanceLog(
@@ -244,7 +241,7 @@ async def push_sync_payload(
                             db.add(checkin)
                             
                 elif item.action == "update":
-                    log = await db.get(AttendanceLog, item.entity_id)
+                    log = await _get_event_attendance_log(db, event_id, item.entity_id)
                     if log:
                         if "checkout_time" in item.payload and item.payload["checkout_time"]:
                             log.checkout_time = datetime.fromisoformat(item.payload["checkout_time"])
@@ -253,9 +250,10 @@ async def push_sync_payload(
                             
             elif item.entity_type == "badge_scan":
                 if item.action == "create":
+                    b_id = uuid.UUID(item.payload["badge_id"])
+                    await _require_event_badge(db, event_id, b_id)
                     existing_scan = await db.get(BadgeScan, item.entity_id)
                     if not existing_scan:
-                        b_id = uuid.UUID(item.payload["badge_id"])
                         scan = BadgeScan(
                             id=item.entity_id,
                             badge_id=b_id,
@@ -267,9 +265,10 @@ async def push_sync_payload(
                         
             elif item.entity_type == "badge_print_job":
                 if item.action == "create":
+                    b_id = uuid.UUID(item.payload["badge_id"])
+                    await _require_event_badge(db, event_id, b_id)
                     existing_job = await db.get(BadgePrintJob, item.entity_id)
                     if not existing_job:
-                        b_id = uuid.UUID(item.payload["badge_id"])
                         pr_id = uuid.UUID(item.payload["printer_id"])
                         job = BadgePrintJob(
                             id=item.entity_id,
@@ -286,6 +285,8 @@ async def push_sync_payload(
                             badge = await db.get(Badge, b_id)
                             if badge:
                                 badge.status = "printed"
+            else:
+                raise ValueError("UNSUPPORTED_SYNC_ENTITY")
             
             processed_ids.append(item.id)
         except Exception as e:
@@ -293,4 +294,50 @@ async def push_sync_payload(
             
     await db.commit()
     return {"processed_ids": processed_ids, "errors": errors}
+
+
+def _require_device_event(device_auth: dict, event_id: uuid.UUID) -> None:
+    if device_auth["event_id"] != event_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+
+
+async def _require_participant_and_session(
+    db: AsyncSession,
+    event_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    session_id: uuid.UUID,
+) -> None:
+    participant_exists = await db.scalar(
+        select(Participant.id).where(
+            Participant.id == participant_id,
+            Participant.event_id == event_id,
+        )
+    )
+    session_exists = await db.scalar(
+        select(Session.id).where(Session.id == session_id, Session.event_id == event_id)
+    )
+    if participant_exists is None or session_exists is None:
+        raise ValueError("SYNC_ENTITY_OUTSIDE_DEVICE_EVENT")
+
+
+async def _require_event_badge(
+    db: AsyncSession, event_id: uuid.UUID, badge_id: uuid.UUID
+) -> None:
+    badge_exists = await db.scalar(
+        select(Badge.id)
+        .join(Participant, Participant.id == Badge.participant_id)
+        .where(Badge.id == badge_id, Participant.event_id == event_id)
+    )
+    if badge_exists is None:
+        raise ValueError("SYNC_ENTITY_OUTSIDE_DEVICE_EVENT")
+
+
+async def _get_event_attendance_log(
+    db: AsyncSession, event_id: uuid.UUID, log_id: uuid.UUID
+) -> AttendanceLog | None:
+    return await db.scalar(
+        select(AttendanceLog)
+        .join(Participant, Participant.id == AttendanceLog.participant_id)
+        .where(AttendanceLog.id == log_id, Participant.event_id == event_id)
+    )
 

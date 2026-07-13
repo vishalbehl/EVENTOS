@@ -21,6 +21,7 @@ def _make_mock_file(status="uploaded", fmt="pptx"):
     """Create a mock PresentationFile ORM object."""
     f = MagicMock()
     f.id = uuid.uuid4()
+    f.organization_id = uuid.uuid4()
     f.event_id = uuid.uuid4()
     f.speaker_id = uuid.uuid4()
     f.upload_status = status
@@ -30,6 +31,10 @@ def _make_mock_file(status="uploaded", fmt="pptx"):
     f.thumbnail_url = None
     f.file_size_bytes = 10_485_760
     return f
+
+
+def _task_args(file_obj):
+    return [str(file_obj.id), str(file_obj.organization_id)]
 
 
 @contextmanager
@@ -44,7 +49,7 @@ def _mock_db(file_obj, fv_class=None):
     session.commit.return_value = None
 
     @contextmanager
-    def _ctx():
+    def _ctx(*_args, **_kwargs):
         yield session
 
     with patch("workers.tasks.file_tasks.get_db_session", side_effect=_ctx):
@@ -67,7 +72,7 @@ class TestValidatePresentationFile:
                  patch("workers.tasks.file_tasks.generate_file_thumbnail") as mock_thumb, \
                  patch("workers.tasks.file_tasks.FileValidation"):
 
-                result = validate_presentation_file.apply(args=[str(mock_file.id)])
+                result = validate_presentation_file.apply(args=_task_args(mock_file))
 
         assert result.successful()
         data = result.result
@@ -89,7 +94,7 @@ class TestValidatePresentationFile:
                  patch("workers.tasks.file_tasks.generate_file_thumbnail") as mock_thumb, \
                  patch("workers.tasks.file_tasks.FileValidation"):
 
-                result = validate_presentation_file.apply(args=[str(mock_file.id)])
+                result = validate_presentation_file.apply(args=_task_args(mock_file))
 
         data = result.result
         assert data["is_valid"] is False
@@ -105,11 +110,11 @@ class TestValidatePresentationFile:
         mock_session.commit.return_value = None
 
         @contextmanager
-        def _ctx():
+        def _ctx(*_args, **_kwargs):
             yield mock_session
 
         with patch("workers.tasks.file_tasks.get_db_session", side_effect=_ctx):
-            result = validate_presentation_file.apply(args=[str(uuid.uuid4())])
+            result = validate_presentation_file.apply(args=[str(uuid.uuid4()), str(uuid.uuid4())])
 
         assert "error" in result.result
 
@@ -126,9 +131,9 @@ class TestValidatePresentationFile:
                  patch("workers.tasks.file_tasks.generate_file_thumbnail") as mock_thumb, \
                  patch("workers.tasks.file_tasks.FileValidation"):
 
-                validate_presentation_file.apply(args=[str(mock_file.id)])
+                validate_presentation_file.apply(args=_task_args(mock_file))
 
-        mock_thumb.delay.assert_called_once_with(str(mock_file.id))
+        mock_thumb.delay.assert_called_once_with(str(mock_file.id), str(mock_file.organization_id))
 
 
 class TestGenerateFileThumbnail:
@@ -143,10 +148,11 @@ class TestGenerateFileThumbnail:
                  patch("workers.tasks.file_tasks.generate_pptx_thumbnail", return_value=thumb_data), \
                  patch("workers.tasks.file_tasks.r2.upload_bytes") as mock_upload:
 
-                result = generate_file_thumbnail.apply(args=[str(mock_file.id)])
+                result = generate_file_thumbnail.apply(args=_task_args(mock_file))
 
         assert result.successful()
         assert result.result["thumbnail_generated"] is True
+        assert result.result["thumbnail_key"].startswith(f"{mock_file.organization_id}/thumbnails/")
         mock_upload.assert_called_once()
 
     def test_skips_upload_when_thumbnail_is_none(self):
@@ -159,7 +165,7 @@ class TestGenerateFileThumbnail:
                  patch("workers.tasks.file_tasks.generate_pptx_thumbnail", return_value=None), \
                  patch("workers.tasks.file_tasks.r2.upload_bytes") as mock_upload:
 
-                result = generate_file_thumbnail.apply(args=[str(mock_file.id)])
+                result = generate_file_thumbnail.apply(args=_task_args(mock_file))
 
         assert result.result["thumbnail_generated"] is False
         mock_upload.assert_not_called()
@@ -175,9 +181,10 @@ class TestGenerateFileThumbnail:
                  patch("workers.tasks.file_tasks.generate_pdf_thumbnail", return_value=thumb_data), \
                  patch("workers.tasks.file_tasks.r2.upload_bytes"):
 
-                result = generate_file_thumbnail.apply(args=[str(mock_file.id)])
+                result = generate_file_thumbnail.apply(args=_task_args(mock_file))
 
         assert "thumbnail_key" in result.result
+        assert result.result["thumbnail_key"].startswith(f"{mock_file.organization_id}/thumbnails/")
         assert str(mock_file.id) in result.result["thumbnail_key"]
 
 
@@ -188,7 +195,7 @@ class TestConvertPresentationToPdf:
         mock_file = _make_mock_file(fmt="mp4")
 
         with _mock_db(mock_file):
-            result = convert_presentation_to_pdf.apply(args=[str(mock_file.id)])
+            result = convert_presentation_to_pdf.apply(args=_task_args(mock_file))
 
         assert result.result.get("skipped") is True
 
@@ -203,7 +210,8 @@ class TestConvertPresentationToPdf:
                  patch("workers.tasks.file_tasks.convert_to_pdf", return_value=pdf_data), \
                  patch("workers.tasks.file_tasks.r2.upload_bytes") as mock_upload:
 
-                result = convert_presentation_to_pdf.apply(args=[str(mock_file.id)])
+                result = convert_presentation_to_pdf.apply(args=_task_args(mock_file))
 
         assert result.result["converted"] is True
+        assert result.result["pdf_key"].startswith(f"{mock_file.organization_id}/pdf_previews/")
         mock_upload.assert_called_once()

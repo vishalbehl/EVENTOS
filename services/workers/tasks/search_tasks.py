@@ -44,7 +44,7 @@ def index_entity(self, org_id: str, entity_type: str, entity_id: str) -> dict:
     entity_uuid = uuid.UUID(entity_id)
 
     try:
-        content = _extract_content(entity_type, entity_uuid)
+        content = _extract_content(org_uuid, entity_type, entity_uuid)
         if content is None:
             logger.warning(f"[search] No content extracted for {entity_type}:{entity_id}")
             return {"indexed": False, "reason": "entity_not_found"}
@@ -88,7 +88,7 @@ def reindex_organization(
         entity_types = ["events", "speakers", "participants", "sessions"]
 
     # Mark job as indexing
-    _update_job_status(job_uuid, "indexing")
+    _update_job_status(org_uuid, job_uuid, "indexing")
 
     indexed_count = 0
     failed_count = 0
@@ -100,7 +100,7 @@ def reindex_organization(
 
             for eid in entity_ids:
                 try:
-                    content = _extract_content(entity_type, eid)
+                    content = _extract_content(org_uuid, entity_type, eid)
                     if content:
                         _upsert_document(org_uuid, entity_type, str(eid), content)
                         indexed_count += 1
@@ -108,7 +108,7 @@ def reindex_organization(
                     logger.warning(f"[search] Failed to index {entity_type}:{eid}: {exc}")
                     failed_count += 1
 
-        _update_job_status(job_uuid, "completed")
+        _update_job_status(org_uuid, job_uuid, "completed")
         logger.info(
             f"[search] Reindex complete for org={org_id}: "
             f"indexed={indexed_count} failed={failed_count}"
@@ -116,22 +116,24 @@ def reindex_organization(
         return {"indexed": indexed_count, "failed": failed_count, "status": "completed"}
 
     except Exception as exc:
-        _update_job_status(job_uuid, "failed")
+        _update_job_status(org_uuid, job_uuid, "failed")
         raise self.retry(exc=exc)
 
 
 # ── Content Extractors ────────────────────────────────────────
 
-def _extract_content(entity_type: str, entity_id: uuid.UUID) -> Optional[dict]:
+def _extract_content(
+    org_id: uuid.UUID, entity_type: str, entity_id: uuid.UUID
+) -> Optional[dict]:
     """
     Load an entity from the database and convert it to a searchable
     content dictionary. Returns None if the entity is not found.
     """
-    with get_db_session() as db:
+    with get_db_session(org_id) as db:
         if entity_type == "events":
             from app.modules.events.models.event import Event
             entity = db.get(Event, entity_id)
-            if not entity:
+            if not entity or entity.organization_id != org_id:
                 return None
             return {
                 "title": entity.title or "",
@@ -144,8 +146,10 @@ def _extract_content(entity_type: str, entity_id: uuid.UUID) -> Optional[dict]:
 
         elif entity_type == "speakers":
             from app.modules.events.models.speaker import Speaker
+            from app.modules.events.models.event import Event
             entity = db.get(Speaker, entity_id)
-            if not entity:
+            event = db.get(Event, entity.event_id) if entity else None
+            if not entity or not event or event.organization_id != org_id:
                 return None
             return {
                 "name": entity.name or "",
@@ -153,31 +157,35 @@ def _extract_content(entity_type: str, entity_id: uuid.UUID) -> Optional[dict]:
                 "email": getattr(entity, "email", "") or "",
                 "organization": getattr(entity, "organization", "") or "",
                 "bio": getattr(entity, "bio", "") or "",
-                "organization_id": str(getattr(entity, "organization_id", "")),
+                "organization_id": str(org_id),
             }
 
         elif entity_type == "participants":
             from app.modules.registration.models.participant import Participant
+            from app.modules.events.models.event import Event
             entity = db.get(Participant, entity_id)
-            if not entity:
+            event = db.get(Event, entity.event_id) if entity else None
+            if not entity or not event or event.organization_id != org_id:
                 return None
             return {
                 "full_name": entity.full_name or "",
                 "email": entity.email or "",
                 "organization": getattr(entity, "organization", "") or "",
-                "organization_id": str(getattr(entity, "organization_id", "")),
+                "organization_id": str(org_id),
             }
 
         elif entity_type == "sessions":
             from app.modules.events.models.session import Session
+            from app.modules.events.models.event import Event
             entity = db.get(Session, entity_id)
-            if not entity:
+            event = db.get(Event, entity.event_id) if entity else None
+            if not entity or not event or event.organization_id != org_id:
                 return None
             return {
                 "title": entity.title or "",
                 "code": getattr(entity, "code", "") or "",
                 "description": getattr(entity, "description", "") or "",
-                "organization_id": str(getattr(entity, "organization_id", "")),
+                "organization_id": str(org_id),
             }
 
     return None
@@ -187,7 +195,7 @@ def _get_all_entity_ids(org_id: uuid.UUID, entity_type: str) -> List[uuid.UUID]:
     """Fetch all entity IDs for an org and entity type."""
     from sqlalchemy import select
 
-    with get_db_session() as db:
+    with get_db_session(org_id) as db:
         if entity_type == "events":
             from app.modules.events.models.event import Event
             result = db.execute(select(Event.id).where(Event.organization_id == org_id))
@@ -206,8 +214,11 @@ def _get_all_entity_ids(org_id: uuid.UUID, entity_type: str) -> List[uuid.UUID]:
 
         elif entity_type == "participants":
             from app.modules.registration.models.participant import Participant
+            from app.modules.events.models.event import Event
             result = db.execute(
-                select(Participant.id).where(Participant.organization_id == org_id)
+                select(Participant.id)
+                .join(Event, Event.id == Participant.event_id)
+                .where(Event.organization_id == org_id)
             )
             return [row[0] for row in result.all()]
 
@@ -234,7 +245,7 @@ def _upsert_document(
     from sqlalchemy import select, and_
     from app.modules.search.models.search import SearchIndex, SearchDocument
 
-    with get_db_session() as db:
+    with get_db_session(org_id) as db:
         # Get or create the index
         index = db.execute(
             select(SearchIndex).where(
@@ -276,15 +287,18 @@ def _upsert_document(
             doc.content = content
 
 
-def _update_job_status(job_id: uuid.UUID, status: str) -> None:
+def _update_job_status(org_id: uuid.UUID, job_id: uuid.UUID, status: str) -> None:
     """Update a SearchJob status record."""
     from app.modules.search.models.search import SearchJob
 
     try:
-        with get_db_session() as db:
+        with get_db_session(org_id) as db:
             from sqlalchemy import select
             job = db.execute(
-                select(SearchJob).where(SearchJob.id == job_id)
+                select(SearchJob).where(
+                    SearchJob.id == job_id,
+                    SearchJob.organization_id == org_id,
+                )
             ).scalar_one_or_none()
             if job:
                 job.status = status

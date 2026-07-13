@@ -561,6 +561,7 @@ function NewEventPageInner() {
   const [loading, setLoading] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [subscriptionActivated, setSubscriptionActivated] = useState(false);
+  const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
   const [successEvent, setSuccessEvent] = useState<any | null>(null);
 
   // URL param pre-selection
@@ -585,8 +586,20 @@ function NewEventPageInner() {
 
   useEffect(() => {
     setLoadingConfig(true);
-    Promise.all([orgApi.me(), orgApi.plans(), orgApi.addons()])
-      .then(([meRes, plansRes, addonsRes]) => {
+    Promise.allSettled([orgApi.me(), orgApi.plans(), orgApi.addons(), orgApi.currentBillingPlan()])
+      .then((results) => {
+        const [meResult, plansResult, addonsResult, billingResult] = results;
+        if (
+          meResult.status !== "fulfilled" ||
+          plansResult.status !== "fulfilled" ||
+          addonsResult.status !== "fulfilled"
+        ) {
+          throw new Error("Failed to load create-event configuration.");
+        }
+
+        const meRes = meResult.value;
+        const plansRes = plansResult.value;
+        const addonsRes = addonsResult.value;
         const normalizedPlans = asArray(plansRes).map(normalizePlan);
         const normalizedAddons = asArray(addonsRes).map(normalizeAddon);
 
@@ -629,6 +642,22 @@ function NewEventPageInner() {
         setAddons(normalizedAddons);
         setSelectedPlan(matchedPlan);
         if (preAddonKeys.length > 0) setSelectedAddons(preAddonKeys);
+        if (billingResult.status === "fulfilled") {
+          setSubscriptionId(billingResult.value?.subscription_id ? String(billingResult.value.subscription_id) : null);
+        } else {
+          setSubscriptionId(null);
+        }
+
+        const isSuperOrg = meRes.organization?.slug === "eventxos";
+        const currentEventLimit = meRes.plan_limits?.events ?? 0;
+        const currentEventCount = meRes.event_count ?? 0;
+        const hasActivePlan = Boolean(meRes.organization?.is_active && currentEventLimit > 0);
+        const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
+
+        if (isSuperOrg || (hasActivePlan && remainingEvents > 0)) {
+          setStep(3);
+        }
+
         setBillingName(meRes.organization.name || "");
         setBillingEmail(meRes.organization.billing_email || "");
         setFormData((current) => ({
@@ -767,8 +796,29 @@ function NewEventPageInner() {
     toast.success("Venue image removed.");
   };
 
-  const handlePaymentSuccess = () => {
+  const handlePaymentSuccess = async () => {
+    if (!selectedPlan) {
+      throw new Error("Select a plan before activating billing.");
+    }
+
+    const result = await orgApi.subscribe({
+      plan_name: selectedPlan.name,
+      addon_keys: selectedAddons,
+      is_custom: false,
+      custom_limits: null,
+      promo_code: null,
+      billing_name: billingName,
+      billing_email: billingEmail,
+      billing_phone: billingPhone || formData.organizer_details.phone || "NA",
+      gst_number: null,
+    });
+
+    const nextSubscriptionId = result?.subscription_id ? String(result.subscription_id) : null;
+    if (nextSubscriptionId) {
+      setSubscriptionId(nextSubscriptionId);
+    }
     setSubscriptionActivated(true);
+    return result;
   };
 
   const handleCreateEvent = async () => {
@@ -787,17 +837,24 @@ function NewEventPageInner() {
         ...formData,
         organizer_name: formData.organizer_details.name || null,
         upload_deadline: formData.upload_deadline ? new Date(formData.upload_deadline).toISOString() : null,
-        licensing_details: {
-          plan_name: selectedPlan.name,
-          price: selectedPlan.price || 0,
-          addons: selectedAddonRecords.map((a) => a.name),
-          activated_at: new Date().toISOString(),
-          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-          status: "active",
-        },
       };
 
       const created = await createEvent.mutateAsync(payload);
+
+      let resolvedSubscriptionId = subscriptionId;
+      if (!resolvedSubscriptionId) {
+        const currentPlan = await orgApi.currentBillingPlan();
+        resolvedSubscriptionId = currentPlan?.subscription_id ? String(currentPlan.subscription_id) : null;
+        if (resolvedSubscriptionId) {
+          setSubscriptionId(resolvedSubscriptionId);
+        }
+      }
+
+      if (!resolvedSubscriptionId) {
+        throw new Error("Subscription activation could not be completed because no active subscription was found.");
+      }
+
+      await orgApi.activateEvent(String(created.id), resolvedSubscriptionId);
       setSuccessEvent(created);
       toast.success("Event created successfully.");
     } catch (error: any) {
@@ -1647,11 +1704,15 @@ function NewEventPageInner() {
         billingEmail={billingEmail}
         billingPhone={billingPhone}
         onClose={() => setPaymentModalOpen(false)}
-        onSuccess={() => {
-          handlePaymentSuccess();
-          setPaymentModalOpen(false);
-          // After payment, auto-create the event
-          setTimeout(() => handleCreateEvent(), 200);
+        onSuccess={async () => {
+          try {
+            await handlePaymentSuccess();
+            setPaymentModalOpen(false);
+            // After payment, auto-create the event
+            setTimeout(() => handleCreateEvent(), 200);
+          } catch (error: any) {
+            toast.error(error?.message || "Failed to activate the selected plan.");
+          }
         }}
       />
     </div>

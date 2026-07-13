@@ -21,7 +21,7 @@
 import hashlib
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, List, Optional
+from typing import Annotated, AsyncIterator, List, Optional
 
 from fastapi import Depends, Header, HTTPException, Path, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -53,16 +53,10 @@ async def get_db() -> AsyncSession:
     Usage:
         async def endpoint(db: DB): ...
     """
-    from sqlalchemy import text
+    from app.core.tenant_context import TenantContextGuard
     async with AsyncSessionLocal() as session:
         org_id = tenant_org_id.get()
-        if org_id:
-            await session.execute(
-                text("SELECT set_config('app.current_organization_id', :org_id, false)"),
-                {"org_id": str(org_id)}
-            )
-        else:
-            await session.execute(text("RESET app.current_organization_id"))
+        await TenantContextGuard.apply(session, org_id)
         try:
             yield session
         except Exception:
@@ -93,7 +87,7 @@ class TokenData:
     org  = organization UUID string
     jti  = JWT ID (unique per token, for future blacklisting)
     """
-    __slots__ = ("user_id", "role", "organization_id", "jti")
+    __slots__ = ("user_id", "role", "organization_id", "jti", "amr", "auth_time", "impersonator_id")
 
     def __init__(
         self,
@@ -101,11 +95,17 @@ class TokenData:
         role: str,
         organization_id: uuid.UUID,
         jti: str,
+        amr: tuple[str, ...] = (),
+        auth_time: Optional[datetime] = None,
+        impersonator_id: Optional[uuid.UUID] = None,
     ) -> None:
         self.user_id = user_id
         self.role = role
         self.organization_id = organization_id
         self.jti = jti
+        self.amr = amr
+        self.auth_time = auth_time
+        self.impersonator_id = impersonator_id
 
 
 async def get_token_data(
@@ -129,7 +129,8 @@ async def get_token_data(
             user_id=getattr(request.state, "user_id", None),
             role="developer",
             organization_id=org_id,
-            jti="developer"
+            jti="developer",
+            amr=("api_key",),
         )
 
     _unauthorized = HTTPException(
@@ -164,6 +165,9 @@ async def get_token_data(
     org: Optional[str] = payload.get("org")
     jti: Optional[str] = payload.get("jti")
     token_type: Optional[str] = payload.get("type")
+    amr_claim = payload.get("amr") or []
+    auth_time_claim = payload.get("auth_time")
+    impersonator_claim = payload.get("impersonator_id")
 
     if not sub or not role or not org or not jti:
         raise _unauthorized
@@ -179,14 +183,25 @@ async def get_token_data(
     try:
         user_id = uuid.UUID(sub)
         organization_id = uuid.UUID(org)
+        impersonator_id = uuid.UUID(impersonator_claim) if impersonator_claim else None
     except ValueError:
         raise _unauthorized
+
+    auth_time = None
+    if auth_time_claim is not None:
+        try:
+            auth_time = datetime.fromtimestamp(int(auth_time_claim), tz=timezone.utc)
+        except (TypeError, ValueError, OSError):
+            raise _unauthorized
 
     return TokenData(
         user_id=user_id,
         role=role,
         organization_id=organization_id,
         jti=jti,
+        amr=tuple(str(item) for item in amr_claim),
+        auth_time=auth_time,
+        impersonator_id=impersonator_id,
     )
 
 
@@ -217,25 +232,16 @@ async def get_current_user(
             if user:
                 return user
 
-        # Construct virtual developer user representing the organization
-        return User(
-            id=token_data.user_id or uuid.uuid4(),
-            organization_id=token_data.organization_id,
-            email="developer@eventx.os",
-            first_name="Developer",
-            last_name="Service Account",
-            role="organiser",  # Treat developer keys with organizer role access
-            is_active=True,
-            is_platform_admin=False
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Service identities cannot use user-authorized endpoints.",
         )
 
     from sqlalchemy.orm import selectinload
-    print(f"DEBUG: get_current_user user_id={token_data.user_id} org_id={token_data.organization_id}")
     result = await db.execute(
         select(User).options(selectinload(User.organization)).where(User.id == token_data.user_id)
     )
     user = result.scalar_one_or_none()
-    print(f"DEBUG: get_current_user found={user}")
 
     if user is None:
         raise HTTPException(
@@ -244,7 +250,34 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if token_data.role != "super_admin" and user.organization_id != token_data.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token tenant does not match the user account.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return user
+
+
+async def require_step_up(token_data: TokenDep) -> TokenData:
+    if not settings.ENFORCE_PRIVILEGED_MFA and not settings.is_production:
+        return token_data
+    if "mfa" not in token_data.amr or token_data.auth_time is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "STEP_UP_REQUIRED", "message": "Recent MFA authentication is required."},
+        )
+    age = (datetime.now(timezone.utc) - token_data.auth_time).total_seconds()
+    if age < 0 or age > settings.MFA_STEP_UP_MAX_AGE_SECONDS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "STEP_UP_REQUIRED", "message": "MFA assurance has expired."},
+        )
+    return token_data
+
+
+StepUpAuth = Annotated[TokenData, Depends(require_step_up)]
 
 
 async def require_active_user(
@@ -447,8 +480,7 @@ async def get_current_event(
 ) -> Event:
     """
     Loads an Event from the path parameter {event_id}.
-    Verifies the event belongs to the user's organization.
-    Super admins can access events from any organization.
+    Verifies the event belongs to the authenticated or impersonated organization.
 
     Raises 404 if event not found.
     Raises 403 if event belongs to a different organization.
@@ -468,7 +500,13 @@ async def get_current_event(
             detail=f"Event {event_id} not found.",
         )
 
-    # Super admin can access all events regardless of org
+    if event.organization_id != user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event {event_id} not found.",
+        )
+
+    # Apply restricted-workspace assignment checks after tenant ownership.
     if user.role != "super_admin":
         if event.organization_id != user.organization_id:
             # Return 404 not 403 — don't leak existence of other orgs' events
@@ -637,7 +675,7 @@ async def verify_device_key(
             description="API key registered for this venue device",
         ),
     ] = None,
-) -> dict:
+) -> AsyncIterator[dict]:
     """
     Authenticates on-site Electron apps (kiosk, station, room PC, etc.)
     using a device API key registered in the room_devices table.
@@ -664,7 +702,9 @@ async def verify_device_key(
     key_hash = hashlib.sha256(x_device_key.encode()).hexdigest()
 
     result = await db.execute(
-        select(RoomDevice).where(RoomDevice.device_key_hash == key_hash)
+        select(RoomDevice)
+        .where(RoomDevice.device_key_hash == key_hash)
+        .execution_options(skip_tenant_filter=True)
     )
     device = result.scalar_one_or_none()
 
@@ -674,19 +714,31 @@ async def verify_device_key(
             detail="Invalid device key. Register this device in the Command Center.",
         )
 
-    if device.status == "maintenance":
+    now = datetime.now(timezone.utc)
+    if device.device_key_revoked_at is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device key has been revoked.")
+    if device.device_key_expires_at is not None and device.device_key_expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device key has expired.")
+    if device.status == "maintenance" or device.trust_status != "TRUSTED" or device.compromise_detected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="This device is in maintenance mode.",
         )
 
-    return {
-        "device_id": device.id,
-        "device_name": device.device_name,
-        "device_type": device.device_type,
-        "room_id": device.room_id,
-        "event_id": device.event_id,
-    }
+    context_token = tenant_org_id.set(device.organization_id)
+    from app.core.tenant_context import TenantContextGuard
+    await TenantContextGuard.apply(db, device.organization_id)
+    try:
+        yield {
+            "device_id": device.id,
+            "organization_id": device.organization_id,
+            "device_name": device.device_name,
+            "device_type": device.device_type,
+            "room_id": device.room_id,
+            "event_id": device.event_id,
+        }
+    finally:
+        tenant_org_id.reset(context_token)
 
 
 DeviceAuth = Annotated[dict, Depends(verify_device_key)]

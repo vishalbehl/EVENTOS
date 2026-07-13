@@ -4,13 +4,13 @@ import hashlib
 import re
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Any, Dict
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, and_, or_, desc, update, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.dependencies import get_db
+from app.dependencies import StepUpAuth, get_db
 from app.modules.identity.models.user import User
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.audit.models.audit_log import AuditLog
@@ -159,6 +159,24 @@ async def require_platform_admin(current_user: User = Depends(get_current_user))
     if not is_admin:
         raise HTTPException(status_code=403, detail="Platform Admin access required")
     return current_user
+
+
+async def _get_current_subscription(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    with_plan: bool = False,
+) -> Optional[OrganizationSubscription]:
+    stmt = select(OrganizationSubscription).where(
+        OrganizationSubscription.organization_id == org_id
+    )
+    if with_plan:
+        stmt = stmt.options(selectinload(OrganizationSubscription.plan))
+    stmt = stmt.order_by(
+        OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"]).desc(),
+        OrganizationSubscription.created_at.desc(),
+    ).limit(1)
+    return await db.scalar(stmt)
 
 # ── Endpoints ────────────────────────────────────────────
 
@@ -472,18 +490,17 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
 async def list_organizations(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin), skip: int = 0, limit: int = 100):
     """List tenants with enriched health and billing state."""
     stmt = (
-        select(Organization, OrganizationSubscription, OrganizationHealth, OrganizationUsage)
-        .outerjoin(OrganizationSubscription, Organization.id == OrganizationSubscription.organization_id)
+        select(Organization, OrganizationHealth, OrganizationUsage)
         .outerjoin(OrganizationHealth, Organization.id == OrganizationHealth.organization_id)
         .outerjoin(OrganizationUsage, Organization.id == OrganizationUsage.organization_id)
-        .options(selectinload(Organization.subscription).selectinload(OrganizationSubscription.plan))
         .offset(skip)
         .limit(limit)
     )
     result = await db.execute(stmt)
     
     response = []
-    for org, sub, health, usage in result.all():
+    for org, health, usage in result.all():
+        sub = await _get_current_subscription(db, org.id, with_plan=True)
         plan_name = sub.plan.name if sub and sub.plan else "NONE"
         mrr = 0.0
         pname = plan_name.upper()
@@ -533,8 +550,7 @@ async def get_organization_detail(org_id: uuid.UUID, db: AsyncSession = Depends(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
         
-    sub_stmt = select(OrganizationSubscription).options(selectinload(OrganizationSubscription.plan)).where(OrganizationSubscription.organization_id == org_id)
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    sub = await _get_current_subscription(db, org_id, with_plan=True)
     
     health_stmt = select(OrganizationHealth).where(OrganizationHealth.organization_id == org_id)
     health = (await db.execute(health_stmt)).scalar_one_or_none()
@@ -568,8 +584,7 @@ async def get_organization_detail(org_id: uuid.UUID, db: AsyncSession = Depends(
 async def get_organization_features(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """List all features and whether they are enabled by Plan or Override, plus default/override states."""
     # Get org subscription and plan
-    sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    sub = await _get_current_subscription(db, org_id)
     plan_id = sub.plan_id if sub else None
     
     # Get plan features
@@ -748,7 +763,6 @@ async def list_subscription_plans(
     current_user: User = Depends(require_platform_admin)
 ):
     """List all subscription plans with full details, subscriber counts, and MRR (Super Admin)."""
-    await ensure_plan_columns(db)
     plans_stmt = select(SubscriptionPlan).order_by(SubscriptionPlan.display_order.asc())
     plans = (await db.execute(plans_stmt)).scalars().all()
     
@@ -956,53 +970,12 @@ async def calculate_addon_final_price(
     return float(math.floor(total_cost / 500.0 + 0.5) * 500)
 
 
-async def ensure_addon_columns(db: AsyncSession):
-    try:
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS features_spec JSONB DEFAULT '[]'::jsonb"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS min_price_inr NUMERIC(12, 2)"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS max_price_inr NUMERIC(12, 2)"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS addon_type VARCHAR(20) NOT NULL DEFAULT 'PLAN'"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS short_description VARCHAR(255)"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS image_url TEXT"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS hardware_spec JSONB DEFAULT '[]'::jsonb"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS staff_spec JSONB DEFAULT '[]'::jsonb"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS inclusions JSONB DEFAULT '[]'::jsonb"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS exclusions JSONB DEFAULT '[]'::jsonb"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS consumables_cost NUMERIC(12, 2) DEFAULT 0"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS template_types VARCHAR[] DEFAULT '{}'"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS price_unit VARCHAR(50)"))
-        await db.execute(text("ALTER TABLE billing.addons ADD COLUMN IF NOT EXISTS final_price NUMERIC(12, 2)"))
-        # Drop legacy columns if they exist
-        await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS monthly_price CASCADE"))
-        await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS yearly_price CASCADE"))
-        await db.execute(text("ALTER TABLE billing.addons DROP COLUMN IF EXISTS stripe_product_id CASCADE"))
-        await db.commit()
-
-        # Backfill final_price for existing addons if they are null
-        stmt = select(Addon).where(Addon.final_price == None)
-        addons_to_backfill = (await db.execute(stmt)).scalars().all()
-        if addons_to_backfill:
-            for addon in addons_to_backfill:
-                addon.final_price = await calculate_addon_final_price(
-                    db,
-                    addon_type=addon.addon_type,
-                    min_price_inr=addon.min_price_inr,
-                    price_inr=addon.price_inr,
-                    hardware_spec=addon.hardware_spec or [],
-                    staff_spec=addon.staff_spec or []
-                )
-            await db.commit()
-    except Exception as e:
-        print(f"Error checking/adding features_spec column: {e}")
-        await db.rollback()
-
 @router.get("/addons")
 async def list_platform_addons(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """List all platform add-ons."""
-    await ensure_addon_columns(db)
     stmt = select(Addon).order_by(Addon.name.asc())
     addons = (await db.execute(stmt)).scalars().all()
     
@@ -1051,7 +1024,6 @@ async def create_subscription_plan(
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-    await ensure_plan_columns(db)
     plan = SubscriptionPlan(
         name=payload.name,
         tagline=payload.tagline,
@@ -1559,7 +1531,6 @@ async def list_all_invoices(
     limit: int = Query(20),
 ):
     """List all invoices across platform (Super Admin)."""
-    await ensure_invoice_columns(db)
     
     try:
         q_str = """
@@ -1856,14 +1827,19 @@ async def force_logout_user(
 @router.delete("/users/{user_id}/2fa")
 async def reset_user_2fa(
     user_id: uuid.UUID,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
+    from app.modules.identity.models.identity_domain_tables import MfaDevice
+    from app.modules.identity.services.auth_service import revoke_user_refresh_tokens
     await db.execute(
         update(User)
         .where(User.id == user_id)
         .values(is_2fa_enabled=False, two_factor_secret=None)
     )
+    await db.execute(delete(MfaDevice).where(MfaDevice.user_id == user_id))
+    await revoke_user_refresh_tokens(db, user_id, reason="admin_mfa_reset")
     await db.execute(
         text("""
         INSERT INTO audit.logs (id, actor_user_id, action_type, resource_type, 
@@ -2131,10 +2107,7 @@ async def update_organization_status(
         org.suspension_reason = None
     
     # Sync corresponding OrganizationSubscription status
-    sub_stmt = select(OrganizationSubscription).where(
-        OrganizationSubscription.organization_id == org_id
-    )
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    sub = await _get_current_subscription(db, org_id)
     if sub:
         sub.status = "SUSPENDED" if not payload.is_active else "ACTIVE"
     
@@ -2201,6 +2174,7 @@ async def start_impersonation(
     user_id: uuid.UUID,
     payload: ImpersonateStartRequest,
     request: Request,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin),
 ):
@@ -2212,12 +2186,17 @@ async def start_impersonation(
 
     # 2. Generate secure impersonation access token
     from app.modules.identity.services import auth_service
-    token = auth_service.create_access_token(target_user)
+    token = auth_service.create_access_token(
+        target_user,
+        mfa_authenticated_at=step_up.auth_time,
+        impersonator_id=current_user.id,
+        expires_minutes=15,
+    )
     token_hash = hashlib.sha256(token.encode()).hexdigest()
 
     # 3. Create ImpersonationLog row
     started_at = datetime.now(timezone.utc)
-    session_expires_at = started_at + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    session_expires_at = started_at + timedelta(minutes=15)
     
     ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else None)
     ua = request.headers.get("User-Agent")
@@ -2240,7 +2219,7 @@ async def start_impersonation(
     return {
         "access_token": token,
         "token_type": "bearer",
-        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "expires_in": 900,
         "session_id": log.id,
     }
 
@@ -2663,9 +2642,7 @@ async def get_org_feature_overrides(
     _: User = Depends(require_platform_admin)
 ):
     # Get org's current plan features
-    sub = await db.scalar(
-        select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
-    )
+    sub = await _get_current_subscription(db, org_id)
     
     # Get all features from catalog
     all_features = await db.execute(select(FeatureCatalog).order_by(FeatureCatalog.category))
@@ -2790,10 +2767,7 @@ async def change_organization_plan(
     current_user: User = Depends(require_platform_admin)
 ):
     """Change the plan tier for an organization."""
-    sub_stmt = select(OrganizationSubscription).options(selectinload(OrganizationSubscription.plan)).where(
-        OrganizationSubscription.organization_id == org_id
-    )
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    sub = await _get_current_subscription(db, org_id, with_plan=True)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
         
@@ -2895,10 +2869,7 @@ async def extend_organization_trial(
     current_user: User = Depends(require_platform_admin)
 ):
     """Extend the trial period for an organization's subscription."""
-    sub_stmt = select(OrganizationSubscription).where(
-        OrganizationSubscription.organization_id == org_id
-    )
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    sub = await _get_current_subscription(db, org_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
         
@@ -3014,6 +2985,9 @@ async def update_organization_limits(
 class AddDomainRequest(BaseModel):
     domain: str
 
+class DeleteDomainRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, min_length=8)
+
 @router.get("/organizations/{org_id}/domains")
 async def get_organization_domains(
     org_id: uuid.UUID,
@@ -3055,6 +3029,7 @@ async def add_organization_domain(
 async def delete_organization_domain(
     org_id: uuid.UUID,
     domain_id: uuid.UUID,
+    payload: Optional[DeleteDomainRequest] = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3065,8 +3040,19 @@ async def delete_organization_domain(
     dom = (await db.execute(stmt)).scalar_one_or_none()
     if not dom:
         raise HTTPException(status_code=404, detail="Domain mapping not found")
-        
+    domain_name = dom.domain
     await db.delete(dom)
+    db.add(ActivityTimeline(
+        organization_id=org_id,
+        actor_id=current_user.id,
+        action_type="ORG_DOMAIN_DELETED",
+        metadata_data={
+            "domain_id": str(domain_id),
+            "domain": domain_name,
+            "reason": payload.reason if payload else None,
+            "by": str(current_user.id),
+        }
+    ))
     await db.commit()
     return {"message": "Domain mapping deleted"}
 
@@ -3175,32 +3161,6 @@ async def update_user_status(
 
 # ── Database Migration Helpers ───────────────────────────────
 
-_invoices_altered = False
-_plans_altered = False
-
-async def ensure_invoice_columns(db: AsyncSession):
-    global _invoices_altered
-    if _invoices_altered:
-        return
-    try:
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'USD'"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS due_date TIMESTAMP WITH TIME ZONE"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS event_id UUID"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(50)"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS gst_amount NUMERIC(12, 2) DEFAULT 0"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS total_amount_inr NUMERIC(12, 2) DEFAULT 0"))
-        await db.execute(text("ALTER TABLE billing.invoices ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()"))
-        await db.execute(text("ALTER TABLE billing.invoice_items ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1"))
-        await db.commit()
-        _invoices_altered = True
-    except Exception as e:
-        print(f"Error ensuring invoice columns: {e}")
-
-async def ensure_plan_columns(db: AsyncSession):
-    pass
-
-
 # ── Plans Extensions ──────────────────────────────────────────
 
 class PlanPatchRequest(BaseModel):
@@ -3240,7 +3200,6 @@ async def patch_plan(
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
         
-    await ensure_plan_columns(db)
     plan = await db.get(SubscriptionPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -3354,7 +3313,6 @@ async def create_platform_addon(
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
         
-    await ensure_addon_columns(db)
     
     # Check duplicate key
     stmt = select(Addon).where(Addon.key == payload.key)
@@ -3423,7 +3381,6 @@ async def patch_platform_addon(
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
         
-    await ensure_addon_columns(db)
     
     addon = await db.get(Addon, addon_id)
     if not addon:
@@ -3489,8 +3446,7 @@ async def bulk_extend_trial(
 ):
     """Extend trial period for multiple organization subscriptions (Super Admin)."""
     for org_id in payload.org_ids:
-        sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
-        sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+        sub = await _get_current_subscription(db, org_id)
         if sub:
             current_trial = sub.trial_ends_at or datetime.now(timezone.utc)
             sub.trial_ends_at = current_trial + timedelta(days=payload.days)
@@ -3520,8 +3476,7 @@ async def bulk_change_plan(
         raise HTTPException(status_code=404, detail="Selected plan not found")
         
     for org_id in payload.org_ids:
-        sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
-        sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+        sub = await _get_current_subscription(db, org_id)
         if sub:
             old_plan_id = sub.plan_id
             sub.plan_id = payload.plan_id
@@ -3591,7 +3546,6 @@ async def get_invoice_items(
     current_user: User = Depends(require_platform_admin)
 ):
     """Retrieve invoice items list (Super Admin)."""
-    await ensure_invoice_columns(db)
     stmt = select(InvoiceItem).where(InvoiceItem.invoice_id == invoice_id)
     items = (await db.execute(stmt)).scalars().all()
     return [
@@ -3612,7 +3566,6 @@ async def mark_invoice_paid(
     current_user: User = Depends(require_platform_admin)
 ):
     """Manually flag an outstanding invoice as PAID offline (Super Admin)."""
-    await ensure_invoice_columns(db)
     inv = await db.get(Invoice, invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -3647,7 +3600,6 @@ async def void_invoice(
     current_user: User = Depends(require_platform_admin)
 ):
     """Void an outstanding/incorrect invoice (Super Admin)."""
-    await ensure_invoice_columns(db)
     inv = await db.get(Invoice, invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")

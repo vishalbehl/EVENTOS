@@ -68,6 +68,9 @@ export const orgApi = {
   addon: (id: string) => apiClient.get<any>("/organisations/addons/" + id),
   calculatePrice: (data: Record<string, any>) => apiClient.post<any>("/organisations/calculate-price", data),
   subscribe: (data: Record<string, unknown>) => apiClient.post<any>("/organisations/me/subscribe", data),
+  currentBillingPlan: () => apiClient.get<any>("/billing/plan"),
+  activateEvent: (eventId: string, subscriptionId: string) =>
+    apiClient.post<any>(`/billing/events/${eventId}/activate`, { subscription_id: subscriptionId }),
 };
 
 export const countries = [

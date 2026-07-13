@@ -40,6 +40,7 @@ class AssetOut(BaseModel):
     file_path: str
     file_size_bytes: int
     mime_type: str
+    processing_status: str
     created_at: datetime
     versions: List[AssetVersionOut] = []
     tags: List[str] = []
