@@ -12,4 +12,4 @@ class SystemSetting(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
 
     def __repr__(self) -> str:
-        return f"<SystemSetting key={self.key} value={self.value}>"
+        return f"<SystemSetting key={self.key}>"

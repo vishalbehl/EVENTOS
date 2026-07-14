@@ -152,7 +152,8 @@ from app.modules.developer.models.developer_domain_tables import (
 
 from app.modules.crm.models.core import Account, Contact, Lead
 from app.modules.crm.models.crm_domain_tables import (
-    PipelineStage, Opportunity, Task, Activity, Note, Contract, Proposal, CustomerHealth, Renewal
+    PipelineStage, Opportunity, Task, Activity, Note, Contract, Proposal, ProposalVersion,
+    ProposalShare, ProposalShareAccess, CustomerHealth, Renewal, CrmOperationRequest
 )
 
 from app.modules.workflow.models.workflow import (
@@ -182,7 +183,8 @@ from app.modules.platform_notifications.templates.models import NotificationTemp
 # commercial models
 from app.modules.commercial.models import (
     ServiceCategory, Service, ServiceFeature, ServicePackage,
-    PackageService, StaffRole
+    PackageService, StaffRole, CommercialQuote, CommercialQuoteLineItem,
+    CommercialQuoteRevision, QuoteApprovalWorkflow, QuoteApprovalStep
 )
 
 # inventory models

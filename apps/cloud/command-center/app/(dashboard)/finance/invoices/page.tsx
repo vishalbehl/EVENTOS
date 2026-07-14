@@ -1,9 +1,16 @@
 "use client"
 import React, { useState, useEffect } from "react"
-import { useInvoices, formatINR } from "@/services/super-admin-service"
+import { useInvoices, useVoidInvoice, formatINR } from "@/services/super-admin-service"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Search,
   AlertTriangle,
@@ -17,12 +24,19 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+type SelectedInvoice = {
+  id: string
+  number: string
+}
+
 export default function InvoicesPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL")
   const [searchVal, setSearchVal] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [page, setPage] = useState(1)
+  const [invoiceToVoid, setInvoiceToVoid] = useState<SelectedInvoice | null>(null)
   const limit = 8
+  const voidInvoice = useVoidInvoice()
 
   // Debounce search
   useEffect(() => {
@@ -71,34 +85,16 @@ export default function InvoicesPage() {
     { label: "Void", value: "VOID" },
   ]
 
-  // Handlers for invoice actions
-  const handleDownloadPDF = (invoiceId: string, invoiceNum: string) => {
-    toast.info(`Preparing download for invoice ${invoiceNum || invoiceId}...`)
-    setTimeout(() => {
-      toast.success(`Downloaded PDF for invoice ${invoiceNum || invoiceId}`)
-    }, 1000)
-  }
+  const handleVoid = async (reason?: string) => {
+    if (!invoiceToVoid || !reason) return
 
-  const handleSendReminder = (invoiceId: string, invoiceNum: string) => {
-    toast.promise(
-      new Promise((resolve) => setTimeout(resolve, 800)),
-      {
-        loading: "Sending reminder email to tenant admin...",
-        success: `Payment reminder sent for invoice ${invoiceNum || invoiceId}`,
-        error: "Failed to dispatch email",
-      }
-    )
-  }
-
-  const handleVoid = (invoiceId: string, invoiceNum: string) => {
-    toast.promise(
-      new Promise((resolve) => setTimeout(resolve, 800)),
-      {
-        loading: "Voiding invoice...",
-        success: `Invoice ${invoiceNum || invoiceId} has been voided`,
-        error: "Failed to void invoice",
-      }
-    )
+    try {
+      await voidInvoice.mutateAsync({ invoiceId: invoiceToVoid.id, reason })
+      toast.success(`Invoice ${invoiceToVoid.number} has been voided.`)
+      setInvoiceToVoid(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to void invoice")
+    }
   }
 
   return (
@@ -252,38 +248,51 @@ export default function InvoicesPage() {
 
                     {/* Actions Menu */}
                     <td className="py-3.5 px-4 text-right">
-                      <div className="relative inline-block group/menu">
-                        <button className="p-1 rounded-md hover:bg-surface-2 text-secondary">
-                          <MoreVertical className="w-4 h-4" />
-                        </button>
-                        <div className="absolute right-0 bottom-full mb-1 w-40 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl py-1 shadow-lg hidden group-hover/menu:block hover:block z-10 text-left">
-                          <button
-                            onClick={() => handleDownloadPDF(item.id, item.invoice_number)}
-                            className="w-full text-left px-3.5 py-1.5 text-xs text-primary hover:bg-surface-hover flex items-center gap-1.5"
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-secondary"
+                            aria-label={`Actions for invoice ${item.invoice_number || item.id}`}
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52 border-border bg-surface text-primary">
+                          <DropdownMenuItem
+                            disabled
+                            title="Invoice PDF generation and authorization-gated download are not implemented."
+                            className="text-xs text-tertiary"
                           >
                             <Download className="w-3.5 h-3.5 text-secondary" />
-                            Download PDF
-                          </button>
+                            PDF unavailable
+                          </DropdownMenuItem>
                           {item.status === "PENDING" && (
-                            <button
-                              onClick={() => handleSendReminder(item.id, item.invoice_number)}
-                              className="w-full text-left px-3.5 py-1.5 text-xs text-primary hover:bg-surface-hover flex items-center gap-1.5"
+                            <DropdownMenuItem
+                              disabled
+                              title="Reminder dispatch is unavailable until a durable communication job and delivery audit exist."
+                              className="text-xs text-tertiary"
                             >
                               <Mail className="w-3.5 h-3.5 text-secondary" />
-                              Send Reminder
-                            </button>
+                              Reminder unavailable
+                            </DropdownMenuItem>
                           )}
                           {item.status !== "VOID" && item.status !== "PAID" && (
-                            <button
-                              onClick={() => handleVoid(item.id, item.invoice_number)}
-                              className="w-full text-left px-3.5 py-1.5 text-xs text-danger hover:bg-red-950/20 flex items-center gap-1.5"
+                            <DropdownMenuItem
+                              onSelect={() => setInvoiceToVoid({
+                                id: item.id,
+                                number: item.invoice_number || item.id.slice(0, 8).toUpperCase(),
+                              })}
+                              className="text-xs text-danger focus:bg-red-950/20 focus:text-danger"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                               Void Invoice
-                            </button>
+                            </DropdownMenuItem>
                           )}
-                        </div>
-                      </div>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </td>
                   </tr>
                 ))}
@@ -325,6 +334,18 @@ export default function InvoicesPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDestructiveAction
+        open={invoiceToVoid !== null}
+        onOpenChange={(open) => !open && setInvoiceToVoid(null)}
+        title="Void invoice?"
+        description="This financial mutation changes the invoice lifecycle and will be recorded in the immutable audit history."
+        confirmLabel="Void invoice"
+        resourceName={invoiceToVoid?.number}
+        requireReason
+        pending={voidInvoice.isPending}
+        onConfirm={handleVoid}
+      />
     </PageContainer>
   )
 }

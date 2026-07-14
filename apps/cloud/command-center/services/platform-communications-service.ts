@@ -87,8 +87,12 @@ export function useUpdateGlobalAnnouncement() {
 export function useDeleteGlobalAnnouncement() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (announcementId: string) => apiClient.delete(`/platform/communications/announcements/${announcementId}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: platformCommunicationKeys.announcements() }),
+    mutationFn: ({ announcementId, reason }: { announcementId: string; reason: string }) =>
+      apiClient.delete(`/platform/communications/announcements/${announcementId}`, { data: { reason } }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: platformCommunicationKeys.announcements() });
+      queryClient.invalidateQueries({ queryKey: platformCommunicationKeys.announcement(variables.announcementId) });
+    },
   });
 }
 
@@ -120,7 +124,8 @@ export function useUpdateMaintenanceWindow() {
 export function useDeleteMaintenanceWindow() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (windowId: string) => apiClient.delete(`/platform/communications/maintenance-windows/${windowId}`),
+    mutationFn: ({ windowId, reason }: { windowId: string; reason: string }) =>
+      apiClient.delete(`/platform/communications/maintenance-windows/${windowId}`, { data: { reason } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: platformCommunicationKeys.maintenanceWindows() }),
   });
 }

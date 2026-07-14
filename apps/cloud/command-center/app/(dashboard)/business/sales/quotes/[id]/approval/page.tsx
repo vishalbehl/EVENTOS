@@ -1,320 +1,201 @@
 "use client"
 
 import { useState } from "react"
-import { useParams, useRouter } from "next/navigation"
-import { 
-  useQuoteDetail, useQuoteApproval, useActionApprovalStep 
-} from "@/services/super-admin-service"
-import { PageContainer } from "@/components/super-admin/ui/PageContainer"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { ArrowLeft, CheckCircle2, Clock3, FileCheck2, ShieldCheck, XCircle } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { 
-  ArrowLeft, FileText, CheckCircle2, ChevronRight, Clock, 
-  User, Check, X, ShieldAlert, Send, Eye 
-} from "lucide-react"
-import { formatIST } from "@/lib/formatters"
-import { toast } from "sonner"
+import { PageContainer } from "@/components/super-admin/ui/PageContainer"
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction"
+import {
+  useActionApprovalStep,
+  useConvertQuoteToProposal,
+  useQuoteApproval,
+  useQuoteDetail,
+  useSubmitQuoteApproval,
+} from "@/services/super-admin-service"
+
 
 export default function QuoteApprovalPage() {
+  const params = useParams<{ id: string }>()
+  const searchParams = useSearchParams()
   const router = useRouter()
-  const params = useParams()
-  const quoteId = params.id as string
+  const organizationId = searchParams.get("organization_id") || undefined
+  const quote = useQuoteDetail(params.id, organizationId)
+  const approval = useQuoteApproval(params.id, organizationId)
+  const submitApproval = useSubmitQuoteApproval(params.id, organizationId)
+  const decideApproval = useActionApprovalStep(params.id, organizationId)
+  const convertProposal = useConvertQuoteToProposal(params.id, organizationId)
+  const [submissionReason, setSubmissionReason] = useState("")
+  const [decisionReason, setDecisionReason] = useState("")
+  const [proposalReason, setProposalReason] = useState("")
+  const [submissionKey] = useState(() => `approval-submit-${crypto.randomUUID()}`)
+  const [decisionKey] = useState(() => `approval-decision-${crypto.randomUUID()}`)
+  const [proposalKey] = useState(() => `proposal-convert-${crypto.randomUUID()}`)
 
-  // Fetch API
-  const { data: quote } = useQuoteDetail(quoteId)
-  const { data: approvalData, refetch: refetchApproval } = useQuoteApproval(quoteId)
-  const actionStepMutation = useActionApprovalStep(quoteId)
+  // Step-up verification states
+  const [showStepUpModal, setShowStepUpModal] = useState(false)
+  const [stepUpAction, setStepUpAction] = useState<"APPROVE" | "REJECT" | null>(null)
+  const [stepUpConfirmText, setStepUpConfirmText] = useState("")
 
-  // Rejection Modal state
-  const [showRejectModal, setShowRejectModal] = useState(false)
-  const [rejectStepId, setRejectStepId] = useState("")
-  const [rejectionComment, setRejectionComment] = useState("")
+  const workflow = approval.data
+  const pendingStep = workflow?.steps.find(step => step.status === "PENDING")
+  const loading = quote.isLoading || approval.isLoading
 
-  if (!approvalData) {
-    return (
-      <div className="flex h-[70vh] items-center justify-center">
-        <p className="text-zinc-500 text-xs font-black uppercase tracking-widest animate-pulse">Loading Approval workflow...</p>
-      </div>
-    )
-  }
-
-  const { workflow, steps = [], comments = [] } = approvalData
-
-  // Approve action handler
-  const handleApprove = async (stepId: string) => {
-    await actionStepMutation.mutateAsync({
-      stepId,
-      action: "APPROVE",
-      comment: "Standard verification completed successfully."
+  const submit = () => {
+    if (!quote.data || submissionReason.trim().length < 3) return
+    submitApproval.mutate({
+      expectedQuoteVersion: quote.data.version,
+      reason: submissionReason.trim(),
+      idempotencyKey: submissionKey,
     })
-    refetchApproval()
   }
 
-  // Reject action handler
-  const handleRejectTrigger = (stepId: string) => {
-    setRejectStepId(stepId)
-    setRejectionComment("")
-    setShowRejectModal(true)
+  const decide = (action: "APPROVE" | "REJECT") => {
+    if (!workflow || !pendingStep || decisionReason.trim().length < 3) return
+    setStepUpAction(action)
+    setStepUpConfirmText("")
+    setShowStepUpModal(true)
   }
 
-  const handleRejectSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!rejectionComment.trim()) {
-      toast.error("Rejection comment is mandatory!")
-      return
-    }
-
-    await actionStepMutation.mutateAsync({
-      stepId: rejectStepId,
-      action: "REJECT",
-      comment: rejectionComment
+  const executeDecide = () => {
+    if (!workflow || !pendingStep || !stepUpAction || decisionReason.trim().length < 3) return
+    decideApproval.mutate({
+      stepId: pendingStep.id,
+      action: stepUpAction,
+      reason: decisionReason.trim(),
+      expectedWorkflowVersion: workflow.workflow_version,
+      idempotencyKey: decisionKey,
+    }, {
+      onSuccess: () => {
+        setShowStepUpModal(false)
+        setStepUpAction(null)
+      }
     })
-
-    setShowRejectModal(false)
-    refetchApproval()
   }
 
-  // Stakeholders list
-  const stakeholders = [
-    { name: "Super Admin", role: "Owner", status: "COMPLETED" },
-    { name: "Neha Kapoor", role: "Finance Approver", status: "PENDING" },
-    { name: "Vikram Malhotra", role: "Commercial Lead", status: "NOT_STARTED" }
-  ]
+  const createProposal = () => {
+    if (!quote.data || proposalReason.trim().length < 3) return
+    convertProposal.mutate({
+      expectedQuoteVersion: quote.data.version,
+      reason: proposalReason.trim(),
+      idempotencyKey: proposalKey,
+    }, {
+      onSuccess: proposal => {
+        const query = organizationId ? `?organization_id=${organizationId}` : ""
+        router.push(`/business/sales/proposals/${proposal.id}/preview${query}`)
+      },
+    })
+  }
+
+  if (loading) return <PageContainer><p className="text-sm text-secondary" role="status">Loading approval workflow...</p></PageContainer>
+  if (quote.isError || approval.isError || !quote.data) return <PageContainer><p className="text-sm text-destructive" role="alert">The quote approval workflow could not be loaded.</p></PageContainer>
+
+  const statusIcon = workflow?.status === "APPROVED" ? CheckCircle2 : workflow?.status === "REJECTED" ? XCircle : Clock3
+  const StatusIcon = statusIcon
 
   return (
     <PageContainer>
-      {/* Header bar */}
-      <div className="flex flex-col gap-3 mb-6">
-        <div className="flex items-center gap-2 text-xs text-tertiary">
-          <span className="hover:text-primary cursor-pointer" onClick={() => router.push("/service-requests")}>Service Requests</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-primary font-extrabold uppercase tracking-wide font-mono">{quote?.quote_number || "QTE-..."}</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-primary font-extrabold uppercase tracking-wide">Approval Workflow</span>
-        </div>
+      <div className="space-y-6">
+        <header className="flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex items-start gap-3">
+            <Button size="icon" variant="ghost" onClick={() => router.back()} aria-label="Go back"><ArrowLeft className="h-4 w-4" /></Button>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-primary">Commercial assurance</p>
+              <h1 className="mt-1 text-2xl font-black text-primary">Quote approval</h1>
+              <p className="mt-1 text-sm text-secondary">{quote.data.quote_number} / version {quote.data.version}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-surface-2 px-4 py-2 text-sm font-bold text-primary">
+            <StatusIcon className="h-4 w-4 text-brand-primary" />{workflow?.status || "NOT SUBMITTED"}
+          </div>
+        </header>
 
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div>
-            <h1 className="text-xl font-black text-primary flex items-center gap-2">
-              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={() => router.back()}>
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              Approval Workflow Timeline
-            </h1>
-            <p className="text-[10px] text-tertiary">Track internal checks, legal limits review and B2B client sign-offs</p>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-6">
+            <Card className="rounded-3xl border-border bg-surface p-6">
+              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                <div><p className="text-xs font-bold uppercase tracking-wider text-tertiary">Quote total</p><p className="mt-2 text-lg font-black text-primary">{new Intl.NumberFormat("en-IN", { style: "currency", currency: quote.data.currency }).format(Number(quote.data.total_amount))}</p></div>
+                <div><p className="text-xs font-bold uppercase tracking-wider text-tertiary">Quote version</p><p className="mt-2 text-lg font-black text-primary">v{quote.data.version}</p></div>
+                <div><p className="text-xs font-bold uppercase tracking-wider text-tertiary">Workflow version</p><p className="mt-2 text-lg font-black text-primary">{workflow ? `v${workflow.workflow_version}` : "Not created"}</p></div>
+                <div><p className="text-xs font-bold uppercase tracking-wider text-tertiary">Current state</p><p className="mt-2 text-lg font-black text-primary">{quote.data.status}</p></div>
+              </div>
+            </Card>
+
+            {workflow ? (
+              <Card className="rounded-3xl border-border bg-surface p-6">
+                <h2 className="text-lg font-black text-primary">Approval history</h2>
+                <p className="mt-1 text-sm text-secondary">Bound to quote version {workflow.quote_version}. Decisions cannot migrate to another revision.</p>
+                <ol className="mt-6 space-y-4">
+                  {workflow.steps.map(step => (
+                    <li key={step.id} className="rounded-2xl border border-border bg-surface-2 p-5">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div><p className="font-black text-primary">{step.step_order}. {step.name}</p><p className="mt-1 text-xs text-secondary">Required permission: {step.required_permission}</p></div>
+                        <span className="text-xs font-black uppercase tracking-wider text-brand-primary">{step.status}</span>
+                      </div>
+                      {step.decision_reason && <p className="mt-4 border-l-2 border-brand-primary pl-3 text-sm text-secondary">{step.decision_reason}</p>}
+                      {step.decided_at && <p className="mt-2 text-xs text-tertiary">Recorded {new Date(step.decided_at).toLocaleString()}</p>}
+                    </li>
+                  ))}
+                </ol>
+              </Card>
+            ) : (
+              <Card className="rounded-3xl border-dashed border-border bg-surface p-8">
+                <Clock3 className="h-7 w-7 text-brand-primary" />
+                <h2 className="mt-4 text-lg font-black text-primary">Not submitted</h2>
+                <p className="mt-1 text-sm text-secondary">Submitting locks this exact quote version against further editing.</p>
+              </Card>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() => router.push(`/quotes/${quoteId}/cost-breakdown`)}
-              variant="outline"
-              size="sm"
-              className="text-xs h-9 gap-1 text-secondary border-border bg-surface-2"
-            >
-              <Eye className="h-3.5 w-3.5" /> View Quote
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-9 gap-1 text-secondary border-border bg-surface-2"
-            >
-              <Send className="h-3.5 w-3.5" /> Export Workflow
-            </Button>
-          </div>
+          <aside>
+            {!workflow && quote.data.status === "DRAFT" ? (
+              <Card className="rounded-3xl border-brand-primary/30 bg-brand-primary/5 p-6">
+                <ShieldCheck className="h-6 w-6 text-brand-primary" />
+                <h2 className="mt-3 text-lg font-black text-primary">Submit for approval</h2>
+                <p className="mt-1 text-sm text-secondary">The first step is assigned to holders of <strong>quotes.approve</strong>.</p>
+                <label className="mt-5 block space-y-2 text-sm font-semibold text-secondary">Submission reason<textarea className="min-h-28 w-full rounded-xl border border-border bg-surface p-3 text-primary" value={submissionReason} onChange={event => setSubmissionReason(event.target.value)} minLength={3} maxLength={500} /></label>
+                <Button className="mt-4 w-full" disabled={submissionReason.trim().length < 3 || submitApproval.isPending} onClick={submit}>Submit version {quote.data.version}</Button>
+              </Card>
+            ) : workflow?.status === "PENDING" && pendingStep ? (
+              <Card className="rounded-3xl border-brand-primary/30 bg-brand-primary/5 p-6">
+                <ShieldCheck className="h-6 w-6 text-brand-primary" />
+                <h2 className="mt-3 text-lg font-black text-primary">Record decision</h2>
+                <p className="mt-1 text-sm text-secondary">Recent MFA assurance and <strong>{pendingStep.required_permission}</strong> are required.</p>
+                <label className="mt-5 block space-y-2 text-sm font-semibold text-secondary">Decision reason<textarea className="min-h-28 w-full rounded-xl border border-border bg-surface p-3 text-primary" value={decisionReason} onChange={event => setDecisionReason(event.target.value)} minLength={3} maxLength={1000} /></label>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <Button variant="destructive" disabled={decisionReason.trim().length < 3 || decideApproval.isPending} onClick={() => decide("REJECT")}><XCircle className="mr-2 h-4 w-4" />Reject</Button>
+                  <Button disabled={decisionReason.trim().length < 3 || decideApproval.isPending} onClick={() => decide("APPROVE")}><CheckCircle2 className="mr-2 h-4 w-4" />Approve</Button>
+                </div>
+              </Card>
+            ) : workflow?.status === "APPROVED" ? (
+              <Card className="rounded-3xl border-brand-primary/30 bg-brand-primary/5 p-6">
+                <FileCheck2 className="h-7 w-7 text-brand-primary" />
+                <h2 className="mt-3 text-lg font-black text-primary">Create client proposal</h2>
+                <p className="mt-1 text-sm text-secondary">Capture an immutable, client-safe snapshot of approved quote version {quote.data.version}.</p>
+                <label className="mt-5 block space-y-2 text-sm font-semibold text-secondary">Conversion reason<textarea className="min-h-28 w-full rounded-xl border border-border bg-surface p-3 text-primary" value={proposalReason} onChange={event => setProposalReason(event.target.value)} minLength={3} maxLength={500} /></label>
+                <Button className="mt-4 w-full" disabled={proposalReason.trim().length < 3 || convertProposal.isPending} onClick={createProposal}>
+                  {convertProposal.isPending ? "Creating proposal..." : "Create immutable proposal"}
+                </Button>
+              </Card>
+            ) : (
+              <Card className="rounded-3xl border-border bg-surface p-6"><StatusIcon className="h-7 w-7 text-brand-primary" /><h2 className="mt-3 text-lg font-black text-primary">Workflow complete</h2><p className="mt-1 text-sm text-secondary">This decision is immutable. Any future commercial change requires an explicit new workflow policy.</p></Card>
+            )}
+          </aside>
         </div>
       </div>
-
-      {/* Main Two-Column grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        
-        {/* Left Column: Approval Steps Vertical Timeline */}
-        <div className="xl:col-span-8 space-y-4">
-          <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block">
-            Approval Steps Sequence
-          </span>
-
-          <div className="space-y-4">
-            {steps.map((step: any, idx: number) => {
-              const isCompleted = step.status === "APPROVED" || step.status === "COMPLETED"
-              const isPending = step.status === "PENDING"
-              const isRejected = step.status === "REJECTED"
-              
-              const statusBadgeColor = 
-                isCompleted ? "bg-success/15 border-success/30 text-success" :
-                isRejected ? "bg-danger/15 border-danger/30 text-danger" :
-                "bg-zinc-500/10 text-tertiary border-border"
-
-              return (
-                <Card key={step.id} className={`p-5 rounded-3xl border flex gap-4 items-start relative
-                  ${isPending ? "bg-[var(--bg-surface)] border-brand-primary shadow-sm" : "bg-surface-2/40 border-border/40"}`}>
-                  
-                  {idx < steps.length - 1 && (
-                    <div className="absolute left-[31px] top-[48px] bottom-[-24px] w-[2px] bg-border/40" />
-                  )}
-
-                  <div className={`h-8 w-8 rounded-full border flex items-center justify-center text-xs font-black shrink-0
-                    ${isCompleted ? "bg-success border-success text-white" : 
-                      isRejected ? "bg-danger border-danger text-white" : 
-                      isPending ? "bg-brand-primary border-brand-primary text-white scale-105" : 
-                      "bg-surface-2 border-border text-tertiary"}`}>
-                    {idx + 1}
-                  </div>
-
-                  <div className="flex-1 space-y-3.5">
-                    <div className="flex justify-between items-start gap-2">
-                      <div>
-                        <h4 className="text-xs font-black text-primary">{step.step_name}</h4>
-                        <span className="text-[9px] text-tertiary block font-semibold">Assigned: {step.assigned_to_name}</span>
-                      </div>
-                      <Badge className={`text-[8px] border font-black uppercase tracking-wider ${statusBadgeColor}`}>
-                        {step.status}
-                      </Badge>
-                    </div>
-
-                    {/* Pending Action Buttons */}
-                    {isPending && (
-                      <div className="flex items-center gap-2 pt-1">
-                        <Button 
-                          onClick={() => handleApprove(step.id)} 
-                          className="bg-success text-white text-[10px] font-bold h-7 gap-1 px-3.5 hover:bg-success/90"
-                        >
-                          <Check className="h-3.5 w-3.5" /> Approve Step
-                        </Button>
-                        <Button 
-                          onClick={() => handleRejectTrigger(step.id)} 
-                          variant="outline" 
-                          className="border-danger/30 text-danger bg-danger/5 hover:bg-danger/10 text-[10px] font-bold h-7 gap-1 px-3.5"
-                        >
-                          <X className="h-3.5 w-3.5" /> Reject Step
-                        </Button>
-                      </div>
-                    )}
-
-                    {step.actioned_at && (
-                      <span className="text-[8px] text-tertiary block font-mono font-medium">
-                        Actioned: {formatIST(step.actioned_at)}
-                      </span>
-                    )}
-                  </div>
-                </Card>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Right Column: Workflow Summary, Stakeholders, and Comments */}
-        <div className="xl:col-span-4 space-y-6">
-          
-          {/* Summary Panel */}
-          <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-5 space-y-4">
-            <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block border-b border-border/40 pb-2">
-              Workflow Status Summary
-            </span>
-
-            <div className="space-y-3 text-xs text-secondary font-semibold">
-              <div className="flex justify-between"><span>Current Step:</span> <span className="text-primary font-bold">{workflow.current_step}</span></div>
-              <div className="flex justify-between"><span>Overall Status:</span> <Badge className="bg-brand-primary/10 border-brand-primary/20 text-brand-primary text-[8px] uppercase tracking-wider font-black">{workflow.status}</Badge></div>
-              <div className="flex justify-between"><span>Elapsed Triage:</span> <span className="font-mono text-primary flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-tertiary" /> 18 hours</span></div>
-            </div>
-          </Card>
-
-          {/* Stakeholders Section */}
-          <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-5 space-y-4">
-            <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block">
-              Workflow Stakeholders
-            </span>
-
-            <div className="space-y-3">
-              {stakeholders.map((s, idx) => (
-                <div key={idx} className="flex justify-between items-center p-2 rounded-xl bg-surface-2 border border-border/40">
-                  <div className="flex items-center gap-2">
-                    <div className="h-6 w-6 rounded-full bg-brand-primary/10 border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black uppercase">
-                      {s.name[0]}
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-primary font-bold block">{s.name}</span>
-                      <span className="text-[8px] text-tertiary block font-semibold">{s.role}</span>
-                    </div>
-                  </div>
-                  <Badge className={`text-[8px] uppercase font-black ${s.status === "COMPLETED" ? "bg-success/10 text-success" : s.status === "PENDING" ? "bg-amber-500/10 text-amber-500 animate-pulse" : "bg-zinc-500/10 text-tertiary"}`}>
-                    {s.status}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* Approval Comments Section (append-only) */}
-          <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-5 space-y-4">
-            <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block border-b border-border/40 pb-2">
-              Approvers Comment Logs (Append-Only)
-            </span>
-
-            <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
-              {comments.map((c: any, idx: number) => (
-                <div key={idx} className={`p-2.5 rounded-2xl border ${c.is_rejection ? "bg-danger/5 border-danger/10" : "bg-surface-2/40 border-border/30"} space-y-1`}>
-                  <div className="flex justify-between text-[8px] font-bold text-tertiary">
-                    <span className="flex items-center gap-1 text-primary"><User className="h-2.5 w-2.5" /> {c.user_name} ({c.step_name})</span>
-                    <span>{new Date(c.created_at).toLocaleTimeString("en-IN")}</span>
-                  </div>
-                  <p className="text-[10px] text-secondary leading-normal">{c.comment_text}</p>
-                </div>
-              ))}
-              {comments.length === 0 && (
-                <span className="text-[9px] text-tertiary block text-center py-6">No action comments logged.</span>
-              )}
-            </div>
-          </Card>
-
-        </div>
-
-      </div>
-
-      {/* Rejection comment Mandatory Modal */}
-      {showRejectModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-6 w-full max-w-md space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-border">
-              <h3 className="text-xs font-black text-danger uppercase tracking-wider flex items-center gap-1.5">
-                <ShieldAlert className="h-4 w-4 text-danger animate-bounce" /> Rejection Comment Required
-              </h3>
-              <button onClick={() => setShowRejectModal(false)} className="text-secondary hover:text-primary">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleRejectSubmit} className="space-y-4">
-              <div>
-                <label className="text-[9px] uppercase tracking-wider font-extrabold text-secondary block mb-1.5">
-                  Reason for Rejection *
-                </label>
-                <textarea
-                  required
-                  value={rejectionComment}
-                  onChange={e => setRejectionComment(e.target.value)}
-                  placeholder="Explain why the quote pricing or margins rules require adjustment..."
-                  className="w-full h-24 bg-surface-2 border border-border rounded-xl p-3 text-xs text-primary outline-none focus:border-danger/60"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-border">
-                <Button type="button" variant="ghost" onClick={() => setShowRejectModal(false)} className="text-xs">
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={!rejectionComment.trim()}
-                  className="bg-danger text-white text-xs font-bold px-4 rounded-xl"
-                >
-                  Submit Rejection
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ConfirmDestructiveAction
+        open={showStepUpModal}
+        onOpenChange={setShowStepUpModal}
+        title={stepUpAction === "APPROVE" ? "Confirm Quote Approval?" : "Confirm Quote Rejection?"}
+        description={`This action will record an official ${stepUpAction === "APPROVE" ? "approval" : "rejection"} on this quote. A security-assurance step-up confirmation is required.`}
+        confirmLabel={stepUpAction === "APPROVE" ? "Confirm Approval" : "Confirm Rejection"}
+        resourceName={quote.data?.quote_number}
+        requireReason
+        pending={decideApproval.isPending}
+        onConfirm={executeDecide}
+      />
     </PageContainer>
   )
 }

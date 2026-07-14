@@ -7,6 +7,7 @@ import {
 } from "@/services/super-admin-service"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction"
 import { MetricRow } from "@/components/super-admin/ui/MetricRow"
 import { PremiumTemplateCard } from "@/components/super-admin/ui/PremiumTemplateCard"
 import { TemplateDetailSheet } from "@/components/super-admin/ui/TemplateDetailSheet"
@@ -24,6 +25,7 @@ export default function RegistrationTemplatesPage() {
   const [editingTemplate, setEditingTemplate] = useState<any>(null)
   const [showActionsFor, setShowActionsFor] = useState<any>(null)
   const [detailTemplate, setDetailTemplate] = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useBodyScrollLock(Boolean(showActionsFor || showCreateModal || editingTemplate))
 
@@ -223,11 +225,8 @@ export default function RegistrationTemplatesPage() {
                 )}
 
                 <Button
-                  onClick={async () => {
-                    if (confirm("Are you sure you want to delete this template?")) {
-                      await deleteTemplate.mutateAsync(showActionsFor.slug)
-                      setShowActionsFor(null)
-                    }
+                  onClick={() => {
+                    setDeleteTarget(showActionsFor.slug)
                   }}
                   variant="outline"
                   className="w-full text-xs font-bold gap-2 justify-start h-10 border-danger/30 text-danger hover:bg-danger/5"
@@ -275,6 +274,22 @@ export default function RegistrationTemplatesPage() {
           </div>
         )
       }
+      <ConfirmDestructiveAction
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete registration template?"
+        description="Are you sure you want to delete this template blueprint?"
+        confirmLabel="Delete Template"
+        requireReason={false}
+        pending={deleteTemplate.isPending}
+        onConfirm={async () => {
+          if (deleteTarget) {
+            await deleteTemplate.mutateAsync(deleteTarget)
+            setDeleteTarget(null)
+            setShowActionsFor(null)
+          }
+        }}
+      />
     </PageContainer >
   )
 }

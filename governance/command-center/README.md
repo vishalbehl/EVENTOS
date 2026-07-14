@@ -11,6 +11,8 @@ This directory is the authoritative implementation control surface for completin
 - `SHARED_COMPONENT_INVENTORY.md`: approved shared UI foundations and identified gaps.
 - `MOCK_REMOVAL_REGISTER.md`: production mock/static/fallback closure register.
 - `DEPENDENCY_EXECUTION_MAP.md`: implementation order and cross-domain dependencies.
+- `PHASE3_CHANGE_MANIFEST.md`: active guardrail for Phase 3 batch implementation, including allowed files, banned production patterns, high-risk mutation rules, verification gates, and manifest expansion rules.
+- `CURRENT_PHASE_STATUS.md`: dated evidence-based phase percentages, latest change review, blockers, and immediate execution order.
 
 Regenerate the route inventory from repository truth:
 
@@ -19,8 +21,10 @@ python governance/command-center/generate_inventory.py
 python governance/command-center/generate_inventory.py --check
 ```
 
-The CSV is intentionally conservative. A generated status is never `COMPLETE`; completion requires human-reviewed API, authorization, accessibility, test, and evidence fields.
+The generator refreshes repository-discovered structure while preserving human-reviewed evidence fields already present in the CSV. A newly generated status is never `COMPLETE`; completion requires human-reviewed API, authorization, accessibility, test, and evidence fields.
 
 ## Completion rule
 
 A route can be marked `COMPLETE` only when it has real source-of-truth data, server-side authorization, complete operational states, mutation audit coverage, accessibility review, responsive verification, and automated journey evidence. Production mock fallbacks are prohibited.
+
+The current status document is a planning snapshot, not a substitute for feature-matrix evidence. Percentages change only after repository verification and acceptance evidence are updated.

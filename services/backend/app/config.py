@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # ── JWT ───────────────────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
+    PROPOSAL_SHARE_SECRET: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480          # 8 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ENFORCE_PRIVILEGED_MFA: bool = False
@@ -172,6 +173,8 @@ class Settings(BaseSettings):
         errors: list[str] = []
         if self.JWT_SECRET_KEY == "change-me-in-production" or len(self.JWT_SECRET_KEY) < 32:
             errors.append("JWT_SECRET_KEY must be a rotated secret of at least 32 characters")
+        if not self.PROPOSAL_SHARE_SECRET or len(self.PROPOSAL_SHARE_SECRET) < 32:
+            errors.append("PROPOSAL_SHARE_SECRET must be an independent secret of at least 32 characters")
         if self.CLOUD_API_KEY == "dev_internal_secret_do_not_use_in_prod" or len(self.CLOUD_API_KEY) < 32:
             errors.append("CLOUD_API_KEY must be a rotated secret of at least 32 characters")
         if not self.FERNET_KEY:

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import { usePricingSimulations, useDeletePricingSimulation, formatINR } from "@/services/super-admin-service"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction"
 import { Button } from "@/components/ui/button"
 import { Trash2, FileText, Calendar, History, RefreshCw, Eye, Printer, Package, Users } from "lucide-react"
 import { buildAllocationReportHtml, buildSavedQuoteFallbackHtml, openPrintWindow } from "./quote-print-utils"
@@ -12,14 +13,16 @@ export default function SavedSimulationsPage() {
   const { data: simulations = [], isLoading, refetch } = usePricingSimulations()
   const deleteSim = useDeletePricingSimulation()
   const [activeSimulation, setActiveSimulation] = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this saved quote?")) {
-      await deleteSim.mutateAsync(id)
-      refetch()
-      if (activeSimulation?.id === id) setActiveSimulation(null)
-    }
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return
+    await deleteSim.mutateAsync(deleteTarget)
+    refetch()
+    if (activeSimulation?.id === deleteTarget) setActiveSimulation(null)
+    setDeleteTarget(null)
   }
+
 
   const handlePrintQuote = (sim: any) => {
     const savedHtml = sim?.output_data?.quote_snapshot?.proposal_html
@@ -103,7 +106,7 @@ export default function SavedSimulationsPage() {
                         <Button size="sm" variant="outline" onClick={() => handlePrintAllocation(sim)} className="h-8 text-xs font-semibold gap-1">
                           <Printer className="h-3.5 w-3.5" /> Allocation PDF
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleDelete(sim.id)} className="h-8 text-danger hover:text-danger/80">
+                        <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(sim.id)} className="h-8 text-danger hover:text-danger/80">
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -228,6 +231,16 @@ export default function SavedSimulationsPage() {
           </div>
         </div>
       )}
+      <ConfirmDestructiveAction
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete saved quote simulation?"
+        description="This action is permanent and will delete the saved pricing simulation snapshot."
+        confirmLabel="Delete Simulation"
+        requireReason={false}
+        pending={deleteSim.isPending}
+        onConfirm={handleDeleteConfirm}
+      />
     </PageContainer>
   )
 }

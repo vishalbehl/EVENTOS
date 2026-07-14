@@ -41,11 +41,14 @@ api_router = APIRouter()
 
 # ── Phase 5: Commercial Catalog, Inventory & Pricing Engine ────
 from app.modules.commercial.router import router as commercial_router
+from app.modules.commercial.quotes_router import public_router as commercial_public_proposals_router, router as commercial_quotes_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.pricing.router import router as pricing_router
 from app.modules.procurement.router import router as procurement_router
 
 api_router.include_router(commercial_router)
+api_router.include_router(commercial_quotes_router)
+api_router.include_router(commercial_public_proposals_router)
 api_router.include_router(inventory_router)
 api_router.include_router(pricing_router)
 api_router.include_router(procurement_router)

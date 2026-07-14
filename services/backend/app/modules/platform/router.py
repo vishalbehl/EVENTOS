@@ -4,7 +4,7 @@ import hashlib
 import re
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Any, Dict
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func, and_, or_, desc, update, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -124,7 +124,6 @@ class DashboardMetrics(BaseModel):
     venue_servers_online: int
     active_users_30d: int
     churn_rate: float
-    nps_score: int
     open_tickets: int
     events_this_month: int
     revenue_today: float
@@ -146,6 +145,7 @@ class DashboardMetrics(BaseModel):
     top_orgs_by_mrr: List[Dict[str, Any]]  # {org_id, org_name, mrr, plan_name}
     platform_status: str
     services_degraded: int
+    checked_at: str
 
 # ── Dependencies ─────────────────────────────────────────
 
@@ -296,7 +296,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         .group_by(func.date(RevenueMetric.created_at))
     )
     mrr_trend_map = {row.day: float(row.mrr_sum) for row in mrr_trend_res if row.mrr_sum is not None}
-    mrr_trend = [mrr_trend_map.get(today - timedelta(days=i), mrr_current) for i in range(6, -1, -1)]
+    mrr_trend = [mrr_trend_map.get(today - timedelta(days=i), 0.0) for i in range(6, -1, -1)]
 
     # revenue_trend — daily payment_transactions sums for last 7 days
     try:
@@ -463,7 +463,6 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         "venue_servers_online": 0,
         "active_users_30d": active_users_30d,
         "churn_rate": churn_rate,
-        "nps_score": 0,
         "open_tickets": open_tickets,
         "events_this_month": events_this_month,
         "revenue_today": revenue_today,
@@ -483,7 +482,8 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         "trials_expiring": trials_expiring,
         "top_orgs_by_mrr": top_orgs_by_mrr,
         "platform_status": platform_status,
-        "services_degraded": services_degraded
+        "services_degraded": services_degraded,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
 @router.get("/organizations")
@@ -620,17 +620,30 @@ async def get_organization_features(org_id: uuid.UUID, db: AsyncSession = Depend
 class FeatureOverrideRequest(BaseModel):
     feature_id: uuid.UUID
     is_enabled: bool
+    reason: str = Field(..., min_length=8, max_length=1000)
+
+
+class FeatureOverrideDeleteRequest(BaseModel):
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 @router.put("/organizations/{org_id}/features/overrides")
 async def override_organization_feature(org_id: uuid.UUID, payload: FeatureOverrideRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Manual feature unlock without upgrading plan."""
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required for overrides")
+
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    feature = await db.get(FeatureCatalog, payload.feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
         
     stmt = select(OrganizationFeature).where(
         and_(OrganizationFeature.organization_id == org_id, OrganizationFeature.feature_id == payload.feature_id)
     )
     override = (await db.execute(stmt)).scalar_one_or_none()
+    previous_override = override.is_enabled if override else None
     
     if override:
         override.is_enabled = payload.is_enabled
@@ -639,8 +652,31 @@ async def override_organization_feature(org_id: uuid.UUID, payload: FeatureOverr
         db.add(new_override)
         
     # Log timeline event
-    log = ActivityTimeline(organization_id=org_id, actor_id=current_user.id, action_type="FEATURE_OVERRIDE_CHANGED", metadata_data={"feature_id": str(payload.feature_id), "enabled": payload.is_enabled})
+    log = ActivityTimeline(
+        organization_id=org_id,
+        actor_id=current_user.id,
+        action_type="FEATURE_OVERRIDE_CHANGED",
+        metadata_data={
+            "feature_id": str(payload.feature_id),
+            "feature_key": feature.key,
+            "previous_override": previous_override,
+            "enabled": payload.is_enabled,
+            "reason": payload.reason,
+        },
+    )
     db.add(log)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="FEATURE_OVERRIDE_CHANGED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state={"feature_id": str(payload.feature_id), "feature_key": feature.key, "override": previous_override},
+        new_state={"feature_id": str(payload.feature_id), "feature_key": feature.key, "override": payload.is_enabled},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     
     await db.commit()
     return {"message": "Override applied successfully"}
@@ -649,12 +685,27 @@ async def override_organization_feature(org_id: uuid.UUID, payload: FeatureOverr
 async def delete_organization_feature_override(
     org_id: uuid.UUID,
     feature_id: uuid.UUID,
+    payload: FeatureOverrideDeleteRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Remove a manual feature override so it reverts to plan default."""
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required for overrides")
+
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    feature = await db.get(FeatureCatalog, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    existing = await db.scalar(
+        select(OrganizationFeature).where(
+            and_(OrganizationFeature.organization_id == org_id, OrganizationFeature.feature_id == feature_id)
+        )
+    )
+    previous_override = existing.is_enabled if existing else None
         
     await db.execute(
         delete(OrganizationFeature).where(
@@ -667,9 +718,27 @@ async def delete_organization_feature_override(
         organization_id=org_id,
         actor_id=current_user.id,
         action_type="FEATURE_OVERRIDE_REMOVED",
-        metadata_data={"feature_id": str(feature_id), "by": str(current_user.id)}
+        metadata_data={
+            "feature_id": str(feature_id),
+            "feature_key": feature.key,
+            "previous_override": previous_override,
+            "by": str(current_user.id),
+            "reason": payload.reason,
+        }
     )
     db.add(log)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="FEATURE_OVERRIDE_REMOVED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state={"feature_id": str(feature_id), "feature_key": feature.key, "override": previous_override},
+        new_state={"feature_id": str(feature_id), "feature_key": feature.key, "override": None},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     await db.commit()
     return {"message": "Override removed successfully"}
 
@@ -752,7 +821,10 @@ class SubscriptionPlanIn(BaseModel):
 
 class OrgStatusUpdate(BaseModel):
     is_active: bool
-    suspension_reason: Optional[str] = None
+    suspension_reason: str = Field(..., min_length=8, max_length=1000)
+
+class ReasonRequiredRequest(BaseModel):
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 
 # ── Subscription Plans CRUD ────────────────────────────────────
@@ -1799,9 +1871,13 @@ async def get_platform_users(
 
 
 # C2: Force logout (revoke all sessions)
+class UserAdminActionRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, min_length=8)
+
 @router.delete("/users/{user_id}/sessions")
 async def force_logout_user(
     user_id: uuid.UUID,
+    payload: Optional[UserAdminActionRequest] = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -1815,9 +1891,14 @@ async def force_logout_user(
         INSERT INTO audit.logs (id, actor_user_id, action_type, resource_type, 
         resource_id, new_state, occurred_at)
         VALUES (:id, :actor, 'FORCE_LOGOUT', 'user', :target, 
-        '{"reason":"admin_force_logout"}'::jsonb, NOW())
+        jsonb_build_object('reason', :reason), NOW())
         """),
-        {"id": str(uuid.uuid4()), "actor": str(current_user.id), "target": str(user_id)}
+        {
+            "id": str(uuid.uuid4()),
+            "actor": str(current_user.id),
+            "target": str(user_id),
+            "reason": payload.reason if payload else "admin_force_logout",
+        }
     )
     await db.commit()
     return {"revoked": result.rowcount}
@@ -1828,6 +1909,7 @@ async def force_logout_user(
 async def reset_user_2fa(
     user_id: uuid.UUID,
     step_up: StepUpAuth,
+    payload: Optional[UserAdminActionRequest] = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -1843,10 +1925,15 @@ async def reset_user_2fa(
     await db.execute(
         text("""
         INSERT INTO audit.logs (id, actor_user_id, action_type, resource_type, 
-        resource_id, occurred_at)
-        VALUES (:id, :actor, '2FA_RESET', 'user', :target, NOW())
+        resource_id, new_state, occurred_at)
+        VALUES (:id, :actor, '2FA_RESET', 'user', :target, jsonb_build_object('reason', :reason), NOW())
         """),
-        {"id": str(uuid.uuid4()), "actor": str(current_user.id), "target": str(user_id)}
+        {
+            "id": str(uuid.uuid4()),
+            "actor": str(current_user.id),
+            "target": str(user_id),
+            "reason": payload.reason if payload else "admin_mfa_reset",
+        }
     )
     await db.commit()
     return {"success": True}
@@ -1970,7 +2057,10 @@ async def get_security_events(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    # Severity summary (last 24h)
+    limit = min(max(limit, 1), 200)
+    skip = max(skip, 0)
+
+    # Summary and trend remain global when the feed is filtered.
     severity_counts = await db.execute(text("""
     SELECT risk_level, COUNT(*) as cnt
     FROM identity.security_events
@@ -1988,21 +2078,41 @@ async def get_security_events(
     ORDER BY day
     """))
     
-    # Event feed
+    total = await db.scalar(
+        text("""
+        SELECT COUNT(*)
+        FROM identity.security_events
+        WHERE (CAST(:severity AS VARCHAR) IS NULL OR risk_level = CAST(:severity AS VARCHAR))
+          AND (CAST(:event_type AS VARCHAR) IS NULL OR event_type = CAST(:event_type AS VARCHAR))
+        """),
+        {"severity": severity, "event_type": event_type},
+    ) or 0
+
     q = text("""
     SELECT se.id, se.event_type, se.risk_level, se.severity_score,
            se.user_id, u.email as user_email,
            se.ip_address, se.geo_metadata, se.action_taken,
-           se.is_resolved, se.occurred_at
+           se.correlation_id, se.occurred_at
     FROM identity.security_events se
     LEFT JOIN identity.users u ON u.id = se.user_id
-    WHERE (:severity IS NULL OR se.risk_level = :severity)
-      AND (:event_type IS NULL OR se.event_type = :event_type)
+    WHERE (CAST(:severity AS VARCHAR) IS NULL OR se.risk_level = CAST(:severity AS VARCHAR))
+      AND (CAST(:event_type AS VARCHAR) IS NULL OR se.event_type = CAST(:event_type AS VARCHAR))
     ORDER BY se.occurred_at DESC
     OFFSET :skip LIMIT :limit
     """)
     rows = await db.execute(q, {"severity": severity, "event_type": event_type, "skip": skip, "limit": limit})
-    
+
+    trend_by_day: Dict[str, Dict[str, Any]] = {}
+    for row in trend_data:
+        day = str(row.day)
+        bucket = trend_by_day.setdefault(
+            day,
+            {"day": day, "low": 0, "medium": 0, "high": 0, "critical": 0},
+        )
+        level = str(row.risk_level or "").lower()
+        if level in {"low", "medium", "high", "critical"}:
+            bucket[level] = int(row.cnt or 0)
+
     return {
         "severity_summary": {
             "CRITICAL": sev_map.get("CRITICAL", 0),
@@ -2011,8 +2121,8 @@ async def get_security_events(
             "LOW": sev_map.get("LOW", 0),
             "total_24h": sum(sev_map.values()),
         },
-        "trend": [{"day": str(r.day), "level": r.risk_level, "count": r.cnt} for r in trend_data],
-        "events": [
+        "trend": sorted(trend_by_day.values(), key=lambda item: item["day"]),
+        "items": [
             {
                 "id": str(r.id),
                 "event_type": r.event_type,
@@ -2022,11 +2132,13 @@ async def get_security_events(
                 "ip_address": r.ip_address,
                 "geo_metadata": r.geo_metadata,
                 "action_taken": r.action_taken,
-                "is_resolved": r.is_resolved if hasattr(r, 'is_resolved') else None,
+                "correlation_id": str(r.correlation_id) if r.correlation_id else None,
                 "occurred_at": r.occurred_at.isoformat(),
             }
             for r in rows
-        ]
+        ],
+        "total": int(total),
+        "has_next": skip + limit < int(total),
     }
 
 
@@ -2097,7 +2209,12 @@ async def update_organization_status(
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    
+    old_state = {
+        "is_active": org.is_active,
+        "suspended_at": org.suspended_at.isoformat() if org.suspended_at else None,
+        "suspension_reason": org.suspension_reason,
+    }
+
     org.is_active = payload.is_active
     if not payload.is_active:
         org.suspended_at = datetime.now(timezone.utc)
@@ -2119,6 +2236,23 @@ async def update_organization_status(
         metadata_data={"reason": payload.suspension_reason, "by": str(current_user.id)}
     )
     db.add(log)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="ORG_SUSPENDED" if not payload.is_active else "ORG_ACTIVATED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state=old_state,
+        new_state={
+            "is_active": org.is_active,
+            "suspended_at": org.suspended_at.isoformat() if org.suspended_at else None,
+            "suspension_reason": org.suspension_reason,
+            "subscription_status": sub.status if sub else None,
+        },
+        change_diff={"reason": payload.suspension_reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     await db.commit()
     return {"message": f"Organization {'suspended' if not payload.is_active else 'activated'} successfully"}
 
@@ -2126,6 +2260,7 @@ async def update_organization_status(
 @router.delete("/organizations/{org_id}")
 async def delete_organization(
     org_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -2137,7 +2272,27 @@ async def delete_organization(
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-        
+
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="ORGANIZATION_HARD_DELETED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state={
+            "name": org.name,
+            "slug": org.slug,
+            "plan": org.plan,
+            "is_active": org.is_active,
+            "custom_domain": org.custom_domain,
+        },
+        new_state=None,
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
+    await db.flush()
+
     await db.delete(org)
     await db.commit()
     return {"message": "Organization and all associated data successfully deleted"}
@@ -2146,22 +2301,15 @@ async def delete_organization(
 
 # ── Applications Registry ──────────────────────────────────────
 
-PLATFORM_APPLICATIONS = [
-    {"id": "organizer-portal", "name": "Organizer Portal", "description": "Main event management workspace for organizers", "category": "core", "version": "3.0.0", "status": "active"},
-    {"id": "registration-portal", "name": "Registration Portal", "description": "Attendee-facing registration and check-in system", "category": "core", "version": "2.5.0", "status": "active"},
-    {"id": "speaker-portal", "name": "Speaker Portal", "description": "Speaker-facing file upload and session management", "category": "core", "version": "2.0.0", "status": "active"},
-    {"id": "venue-portal", "name": "Venue Portal", "description": "On-site kiosk and venue operations interface", "category": "operations", "version": "1.5.0", "status": "active"},
-    {"id": "developer-portal", "name": "Developer Portal", "description": "API gateway, OAuth2 and developer tools", "category": "platform", "version": "1.0.0", "status": "active"},
-    {"id": "ai-assistant", "name": "AI Assistant", "description": "RAG-powered event intelligence assistant", "category": "ai", "version": "1.0.0", "status": "beta"},
-]
-
 @router.get("/applications")
 async def list_platform_applications(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_platform_admin)
+    _: User = Depends(require_platform_admin),
 ):
     """List the platform application registry (Super Admin)."""
-    return PLATFORM_APPLICATIONS
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Application registry is unavailable until persisted release and health records are authoritative",
+    )
 
 
 # ── Impersonation Logs ─────────────────────────────────────────
@@ -2416,15 +2564,18 @@ async def export_audit_logs(
     current_user: User = Depends(require_platform_admin)
 ):
     """Trigger audit log export (Super Admin)."""
-    # Create background data export record mock/simulation
-    db.add(ActivityTimeline(
-        organization_id=current_user.organization_id,
-        actor_id=current_user.id,
-        action_type="AUDIT_EXPORT_TRIGGERED",
-        metadata_data={"export_format": payload.get("format", "csv"), "by": str(current_user.id)}
-    ))
-    await db.commit()
-    return {"message": "Audit export job queued successfully. The report will be emailed to you."}
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "code": "AUDIT_EXPORT_NOT_AVAILABLE",
+            "message": (
+                "Audit export requires a durable export-job record, authorization-gated "
+                "download endpoint, and immutable export audit trail before it can be enabled."
+            ),
+            "requested_format": payload.get("format", "csv"),
+            "required_contract": "durable_export_job",
+        },
+    )
 
 
 # ── Platform Health Check ─────────────────────────────────────
@@ -2434,71 +2585,15 @@ async def get_platform_health(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
-    import time
-    services = []
-    
-    # PostgreSQL
+    from app.modules.platform_health.router import collect_platform_health
+
     try:
-        start = time.time()
-        await db.execute(text("SELECT 1"))
-        pg_ms = round((time.time() - start) * 1000)
-        pool_info = await db.execute(text("""
-        SELECT count(*) as total,
-               count(*) FILTER (WHERE state = 'active') as active,
-               count(*) FILTER (WHERE state = 'idle') as idle
-        FROM pg_stat_activity WHERE datname = current_database()
-        """))
-        pool = pool_info.fetchone()
-        services.append({"name": "PostgreSQL", "status": "healthy", "response_ms": pg_ms,
-                         "uptime_pct": 99.99, "detail": f"{pool.active}/{pool.total} connections"})
-    except Exception as e:
-        services.append({"name": "PostgreSQL", "status": "down", "error": str(e)})
-    
-    # Redis
-    try:
-        import redis.asyncio as aioredis
-        r = aioredis.from_url(settings.REDIS_URL)
-        start = time.time()
-        await r.ping()
-        redis_ms = round((time.time() - start) * 1000)
-        info = await r.info()
-        await r.aclose()
-        services.append({"name": "Redis Cluster", "status": "healthy", "response_ms": redis_ms,
-                         "uptime_pct": 99.97, "detail": f"{info.get('connected_clients',0)} clients"})
-    except Exception as e:
-        services.append({"name": "Redis Cluster", "status": "down", "error": str(e)})
-    
-    # Celery workers
-    try:
-        from app.worker import celery_app
-        inspect = celery_app.control.inspect(timeout=2.0)
-        active = inspect.active()
-        worker_count = len(active) if active else 0
-        services.append({"name": "Celery Workers", "status": "healthy" if worker_count > 0 else "degraded",
-                         "detail": f"{worker_count} active workers", "response_ms": 0})
-    except Exception:
-        services.append({"name": "Celery Workers", "status": "degraded", "detail": "Cannot reach broker"})
-    
-    # Stripe API
-    try:
-        import httpx
-        start = time.time()
-        async with httpx.AsyncClient() as client:
-            resp = await client.get("https://status.stripe.com/api/v2/status.json", timeout=3.0)
-        stripe_ms = round((time.time() - start) * 1000)
-        stripe_data = resp.json()
-        stripe_status = "healthy" if stripe_data.get("status",{}).get("indicator") == "none" else "degraded"
-        services.append({"name": "Stripe API", "status": stripe_status, "response_ms": stripe_ms})
-    except Exception:
-        services.append({"name": "Stripe API", "status": "unknown", "response_ms": None})
-    
-    overall = "healthy"
-    if any(s["status"] == "down" for s in services):
-        overall = "down"
-    elif any(s["status"] in ["degraded", "unknown"] for s in services):
-        overall = "degraded"
-    
-    return {"overall": overall, "services": services, "checked_at": datetime.now(timezone.utc).isoformat()}
+        return await collect_platform_health(db)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Platform health collection failed",
+        ) from exc
 
 
 # TASK 10: Celery queue depths from Redis
@@ -2521,14 +2616,11 @@ async def get_queue_stats(
                          else "DEGRADED" if length < 500
                          else "OVERLOADED"
             })
-    except Exception as e:
-        for q in queues:
-            stats.append({
-                "name": q,
-                "depth": 0,
-                "status": "HEALTHY",
-                "error": str(e)
-            })
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Queue telemetry is unavailable because the broker could not be reached",
+        ) from exc
     finally:
         await r.aclose()
     return stats
@@ -2552,6 +2644,7 @@ async def get_database_stats(
     
     # Slow queries (with safe catalog check to prevent aborting transactions)
     slow_queries = []
+    slow_query_stats_available = False
     try:
         check = await db.execute(text("""
         SELECT EXISTS (
@@ -2560,6 +2653,7 @@ async def get_database_stats(
         """))
         has_statements = check.scalar() or False
         if has_statements:
+            slow_query_stats_available = True
             slow_q = await db.execute(text("""
             SELECT query, round(mean_exec_time::numeric, 2) as avg_ms, calls
             FROM pg_stat_statements
@@ -2568,7 +2662,7 @@ async def get_database_stats(
             """))
             slow_queries = [{"query": r.query[:120], "avg_ms": float(r.avg_ms), "calls": r.calls} for r in slow_q]
     except Exception:
-        pass
+        slow_query_stats_available = False
     
     # Table sizes
     table_sizes = await db.execute(text("""
@@ -2599,6 +2693,7 @@ async def get_database_stats(
     return {
         "connections": {"total": c.total, "active": c.active, "idle": c.idle, "waiting": c.waiting},
         "slow_queries": slow_queries,
+        "slow_query_stats_available": slow_query_stats_available,
         "table_sizes": [{"name": r.table_name, "size": r.size, "bytes": r.size_bytes} for r in table_sizes],
         "cache_hit_ratio": float(cache_ratio),
         "database_size_bytes": db_size,
@@ -2606,7 +2701,7 @@ async def get_database_stats(
     }
 
 
-# D3: Background jobs (real data from jobs schema - dropped, returning mock/empty data)
+# D3: Background jobs aggregate over existing domain job tables.
 @router.get("/operations/jobs")
 async def get_background_jobs(
     status: Optional[str] = None,
@@ -2616,22 +2711,215 @@ async def get_background_jobs(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_platform_admin)
 ):
+    async def table_exists(regclass_name: str) -> bool:
+        return bool(await db.scalar(text("SELECT to_regclass(:table_name)"), {"table_name": regclass_name}))
+
+    def normalize_status(raw_status: Optional[str]) -> str:
+        value = (raw_status or "queued").lower()
+        if value in {"uploaded", "validating", "validated", "pending", "queued", "scheduled"}:
+            return "queued"
+        if value in {"importing", "indexing", "processing", "in_progress", "running"}:
+            return "running"
+        if value in {"completed", "success", "succeeded"}:
+            return "success"
+        if value in {"retrying"}:
+            return "retrying"
+        if value in {"failed", "scan_failed", "upload_failed", "processing_failed"}:
+            return "failed"
+        return value
+
+    def duration_seconds(started_at: Any, finished_at: Any) -> Optional[float]:
+        if not started_at or not finished_at:
+            return None
+        return max((finished_at - started_at).total_seconds(), 0.0)
+
+    source_queries = [
+        {
+            "table": "registration.import_jobs",
+            "source": "registration_import",
+            "sql": """
+                SELECT id::text AS id,
+                       id::text AS job_id,
+                       status,
+                       created_at AS started_at,
+                       completed_at AS finished_at,
+                       ('registration.import.' || COALESCE(job_type, 'schedule')) AS task_name,
+                       'imports' AS queue,
+                       NULL::text AS error_message
+                FROM registration.import_jobs
+                ORDER BY created_at DESC
+                LIMIT 500
+            """,
+        },
+        {
+            "table": "search.search_jobs",
+            "source": "search_index",
+            "sql": """
+                SELECT id::text AS id,
+                       id::text AS job_id,
+                       status,
+                       created_at AS started_at,
+                       NULL::timestamptz AS finished_at,
+                       'search.reindex' AS task_name,
+                       'search' AS queue,
+                       NULL::text AS error_message
+                FROM search.search_jobs
+                ORDER BY created_at DESC
+                LIMIT 500
+            """,
+        },
+        {
+            "table": "presentations.processing_jobs",
+            "source": "presentation_processing",
+            "sql": """
+                SELECT id::text AS id,
+                       id::text AS job_id,
+                       status,
+                       created_at AS started_at,
+                       NULL::timestamptz AS finished_at,
+                       'presentation.processing' AS task_name,
+                       'presentations' AS queue,
+                       logs AS error_message
+                FROM presentations.processing_jobs
+                ORDER BY created_at DESC
+                LIMIT 500
+            """,
+        },
+        {
+            "table": "registration.badge_print_jobs",
+            "source": "badge_print",
+            "sql": """
+                SELECT id::text AS id,
+                       id::text AS job_id,
+                       status,
+                       queued_at AS started_at,
+                       printed_at AS finished_at,
+                       'badge.print' AS task_name,
+                       'badges' AS queue,
+                       NULL::text AS error_message
+                FROM registration.badge_print_jobs
+                ORDER BY queued_at DESC
+                LIMIT 500
+            """,
+        },
+        {
+            "table": "venue.sync_jobs",
+            "source": "venue_sync",
+            "sql": """
+                SELECT id::text AS id,
+                       id::text AS job_id,
+                       status,
+                       COALESCE(started_at, created_at) AS started_at,
+                       completed_at AS finished_at,
+                       ('venue.sync.' || COALESCE(sync_type, 'download')) AS task_name,
+                       'venue-sync' AS queue,
+                       error_message
+                FROM venue.sync_jobs
+                ORDER BY created_at DESC
+                LIMIT 500
+            """,
+        },
+    ]
+
+    items: List[Dict[str, Any]] = []
+    unavailable_sources: List[Dict[str, str]] = []
+
+    for source in source_queries:
+        if not await table_exists(source["table"]):
+            unavailable_sources.append({
+                "source": source["source"],
+                "reason": f"{source['table']} is not present in this database.",
+            })
+            continue
+        try:
+            result = await db.execute(text(source["sql"]))
+            for row in result.mappings():
+                normalized = normalize_status(row.get("status"))
+                item = {
+                    "id": row["id"],
+                    "job_id": row["job_id"],
+                    "status": normalized,
+                    "raw_status": row.get("status"),
+                    "started_at": row["started_at"].isoformat() if row.get("started_at") else None,
+                    "finished_at": row["finished_at"].isoformat() if row.get("finished_at") else None,
+                    "duration_seconds": duration_seconds(row.get("started_at"), row.get("finished_at")),
+                    "task_name": row.get("task_name"),
+                    "queue": row.get("queue"),
+                    "source": source["source"],
+                    "error_message": row.get("error_message") if normalized == "failed" else None,
+                }
+                items.append(item)
+        except Exception as exc:
+            unavailable_sources.append({
+                "source": source["source"],
+                "reason": f"Could not read {source['table']}: {exc.__class__.__name__}",
+            })
+
+    if queue and queue != "ALL":
+        items = [item for item in items if item.get("queue") == queue]
+    if status:
+        normalized_filter = normalize_status(status)
+        items = [item for item in items if item.get("status") == normalized_filter]
+
+    items.sort(key=lambda item: item.get("started_at") or "", reverse=True)
+    total = len(items)
+    paged_items = items[skip: skip + limit]
+    completed_24h_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    completed_24h = [
+        item for item in items
+        if item["status"] == "success"
+        and item.get("finished_at")
+        and datetime.fromisoformat(item["finished_at"]) >= completed_24h_cutoff
+    ]
+    failed_24h = [
+        item for item in items
+        if item["status"] == "failed"
+        and item.get("started_at")
+        and datetime.fromisoformat(item["started_at"]) >= completed_24h_cutoff
+    ]
+    completed_total = len([item for item in items if item["status"] == "success"])
+    failed_total = len([item for item in items if item["status"] == "failed"])
+    terminal_total = completed_total + failed_total
+    durations = [
+        item["duration_seconds"] * 1000
+        for item in items
+        if item.get("duration_seconds") is not None
+    ]
+    summary = {
+        "running": len([item for item in items if item["status"] == "running"]),
+        "pending": len([item for item in items if item["status"] == "queued"]),
+        "queued": len([item for item in items if item["status"] == "queued"]),
+        "completed_24h": len(completed_24h),
+        "failed_24h": len(failed_24h),
+        "success_rate": round((completed_total / terminal_total) * 100, 2) if terminal_total else 0.0,
+        "avg_duration_ms": round(sum(durations) / len(durations), 2) if durations else 0.0,
+        "total_jobs": total,
+        "active_jobs": len([item for item in items if item["status"] in {"queued", "running", "retrying"}]),
+        "total_executions": total,
+        "succeeded": completed_total,
+        "failed": failed_total,
+        "retrying": len([item for item in items if item["status"] == "retrying"]),
+        "unavailable_sources": unavailable_sources,
+    }
+
     return {
-        "items": [],
-        "summary": {
-            "running": 0,
-            "pending": 0,
-            "completed_24h": 0,
-            "failed_24h": 0,
-            "success_rate": 0.0,
-            "avg_duration_ms": 0.0,
-        }
+        "items": paged_items,
+        "summary": summary,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "unavailable_sources": unavailable_sources,
     }
 
 
 class FeatureOverrideItem(BaseModel):
     feature_id: UUID
     override: Optional[bool] = None  # None = remove override
+
+
+class FeatureOverrideBulkRequest(BaseModel):
+    overrides: list[FeatureOverrideItem]
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 
 # E1: Get org feature overrides (3-state: null=plan_default, true=force_enable, false=force_disable)
@@ -2689,11 +2977,20 @@ async def get_org_feature_overrides(
 @router.put("/organizations/{org_id}/feature-overrides")
 async def save_org_feature_overrides(
     org_id: UUID,
-    overrides: list[FeatureOverrideItem],
+    payload: FeatureOverrideBulkRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
-    for item in overrides:
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    audit_changes = []
+    for item in payload.overrides:
+        feature = await db.get(FeatureCatalog, item.feature_id)
+        if not feature:
+            raise HTTPException(status_code=404, detail=f"Feature not found: {item.feature_id}")
+
         existing = await db.scalar(
             select(OrganizationFeature)
             .where(
@@ -2701,6 +2998,7 @@ async def save_org_feature_overrides(
                 OrganizationFeature.feature_id == item.feature_id
             )
         )
+        previous_override = existing.is_enabled if existing else None
         if item.override is None:
             # Remove override (revert to plan default)
             if existing:
@@ -2718,6 +3016,12 @@ async def save_org_feature_overrides(
                     override_by=current_user.id,
                     override_at=datetime.now(timezone.utc)
                 ))
+        audit_changes.append({
+            "feature_id": str(item.feature_id),
+            "feature_key": feature.key,
+            "previous_override": previous_override,
+            "new_override": item.override,
+        })
     
     # Save ORM AuditLog to automatically trigger row hashing hook
     log = AuditLog(
@@ -2727,13 +3031,16 @@ async def save_org_feature_overrides(
         action_type="FEATURE_OVERRIDE",
         resource_type="organization",
         resource_id=org_id,
-        new_state={"overrides_updated": len(overrides)},
+        old_state={"organization_id": str(org_id), "organization_name": org.name},
+        new_state={"overrides_updated": len(payload.overrides), "changes": audit_changes},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
         occurred_at=datetime.now(timezone.utc)
     )
     db.add(log)
     
     await db.commit()
-    return {"success": True, "updated": len(overrides)}
+    return {"success": True, "updated": len(payload.overrides)}
 
 
 # ── Subscription Health Summary ───────────────────────────────
@@ -2759,6 +3066,7 @@ async def get_subscriptions_health_summary(
 
 class ChangePlanRequest(BaseModel):
     plan_id: uuid.UUID
+    reason: str = Field(..., min_length=8, max_length=1000)
 @router.patch("/organizations/{org_id}/subscription/plan")
 async def change_organization_plan(
     org_id: uuid.UUID,
@@ -2776,6 +3084,12 @@ async def change_organization_plan(
         raise HTTPException(status_code=404, detail="Selected plan not found")
         
     old_plan_name = sub.plan.name if sub.plan else "None"
+    old_state = {
+        "subscription_id": str(sub.id),
+        "plan_id": str(sub.plan_id) if sub.plan_id else None,
+        "plan_name": old_plan_name,
+        "status": sub.status,
+    }
     sub.plan_id = payload.plan_id
     
     # 3. INSERT billing.financial_audit_trail (activity_type='PLAN_CHANGED')
@@ -2788,6 +3102,7 @@ async def change_organization_plan(
         details={
             "from_plan": old_plan_name,
             "to_plan": plan.name,
+            "reason": payload.reason,
             "actor": str(current_user.id)
         }
     )
@@ -2801,10 +3116,28 @@ async def change_organization_plan(
         metadata_data={
             "from_plan": old_plan_name,
             "to_plan": plan.name,
+            "reason": payload.reason,
             "actor": str(current_user.id)
         }
     )
     db.add(log)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="PLAN_CHANGED",
+        resource_type="subscription",
+        resource_id=sub.id,
+        old_state=old_state,
+        new_state={
+            "subscription_id": str(sub.id),
+            "plan_id": str(sub.plan_id),
+            "plan_name": plan.name,
+            "status": sub.status,
+        },
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     
     await db.commit()
     return {
@@ -2818,10 +3151,44 @@ async def change_organization_plan(
 @router.delete("/organizations/{org_id}/subscription")
 async def delete_organization_subscription(
     org_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Delete the active subscription, addons, and limits override for an organization (Super Admin)."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    subscriptions = (await db.execute(select(OrganizationSubscription).where(
+        OrganizationSubscription.organization_id == org_id
+    ))).scalars().all()
+    addons = (await db.execute(select(OrganizationAddon).where(
+        OrganizationAddon.organization_id == org_id
+    ))).scalars().all()
+    limits = (await db.execute(select(TenantLimit).where(
+        TenantLimit.organization_id == org_id
+    ))).scalars().all()
+    old_state = {
+        "organization": {
+            "plan": org.plan,
+            "plan_expires_at": org.plan_expires_at.isoformat() if org.plan_expires_at else None,
+            "max_events": org.max_events,
+            "max_users": org.max_users,
+            "max_storage_gb": org.max_storage_gb,
+        },
+        "subscriptions": [
+            {
+                "id": str(sub.id),
+                "plan_id": str(sub.plan_id) if sub.plan_id else None,
+                "status": sub.status,
+            }
+            for sub in subscriptions
+        ],
+        "addon_ids": [str(addon.id) for addon in addons],
+        "limits": {limit.limit_key: limit.limit_value for limit in limits},
+    }
+
     # 1. Delete active subscription
     await db.execute(delete(OrganizationSubscription).where(
         OrganizationSubscription.organization_id == org_id
@@ -2838,19 +3205,35 @@ async def delete_organization_subscription(
     ))
     
     # 4. Reset Organization fields
-    org = await db.get(Organization, org_id)
-    if org:
-        org.plan = "trial"
-        org.plan_expires_at = None
-        org.max_events = 1
-        org.max_users = 2
-        org.max_storage_gb = 10
+    org.plan = "trial"
+    org.plan_expires_at = None
+    org.max_events = 1
+    org.max_users = 2
+    org.max_storage_gb = 10
         
     db.add(ActivityTimeline(
         organization_id=org_id,
         actor_id=current_user.id,
         action_type="SUBSCRIPTION_REMOVED",
-        metadata_data={"by": str(current_user.id)}
+        metadata_data={"reason": payload.reason, "by": str(current_user.id)}
+    ))
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="SUBSCRIPTION_REMOVED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state=old_state,
+        new_state={
+            "plan": org.plan,
+            "plan_expires_at": org.plan_expires_at.isoformat() if org.plan_expires_at else None,
+            "max_events": org.max_events,
+            "max_users": org.max_users,
+            "max_storage_gb": org.max_storage_gb,
+        },
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
     ))
     await db.commit()
     return {"message": "Subscription removed successfully"}
@@ -2860,7 +3243,7 @@ async def delete_organization_subscription(
 
 class ExtendTrialRequest(BaseModel):
     days: int = Field(ge=1, le=90)
-    reason: str = Field(min_length=5)
+    reason: str = Field(..., min_length=8, max_length=1000)
 @router.patch("/organizations/{org_id}/trial/extend")
 async def extend_organization_trial(
     org_id: uuid.UUID,
@@ -2872,7 +3255,12 @@ async def extend_organization_trial(
     sub = await _get_current_subscription(db, org_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
-        
+
+    old_state = {
+        "subscription_id": str(sub.id),
+        "status": sub.status,
+        "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
+    }
     current_trial = sub.trial_ends_at or datetime.now(timezone.utc)
     if current_trial.tzinfo is None:
         current_trial = current_trial.replace(tzinfo=timezone.utc)
@@ -2908,6 +3296,22 @@ async def extend_organization_trial(
         }
     )
     db.add(log)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="TRIAL_EXTENDED",
+        resource_type="subscription",
+        resource_id=sub.id,
+        old_state=old_state,
+        new_state={
+            "subscription_id": str(sub.id),
+            "status": sub.status,
+            "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
+        },
+        change_diff={"days": payload.days, "reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     
     await db.commit()
     return {
@@ -2919,9 +3323,9 @@ async def extend_organization_trial(
 # ── Apply Billing Credit ──────────────────────────────────────
 
 class ApplyCreditRequest(BaseModel):
-    amount: float
+    amount: float = Field(gt=0)
     currency: str = "USD"
-    reason: str
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 @router.post("/organizations/{org_id}/apply-credit")
 async def apply_organization_credit(
@@ -2931,6 +3335,10 @@ async def apply_organization_credit(
     current_user: User = Depends(require_platform_admin)
 ):
     """Apply a manual billing credit to an organization."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
     # Write to Activity Timeline (acts as a payment/credit event log)
     log = ActivityTimeline(
         organization_id=org_id,
@@ -2944,11 +3352,30 @@ async def apply_organization_credit(
         }
     )
     db.add(log)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="CREDIT_APPLIED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state=None,
+        new_state={
+            "amount": payload.amount,
+            "currency": payload.currency,
+        },
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     await db.commit()
     return {"message": "Credit applied successfully", "amount": payload.amount}
 
 
 # ── Tenant Limits Override ────────────────────────────────────
+
+class TenantLimitsUpdateRequest(BaseModel):
+    limits: Dict[str, int]
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 @router.get("/organizations/{org_id}/limits")
 async def get_organization_limits(
@@ -2964,18 +3391,49 @@ async def get_organization_limits(
 @router.put("/organizations/{org_id}/limits")
 async def update_organization_limits(
     org_id: uuid.UUID,
-    payload: Dict[str, int],
+    payload: TenantLimitsUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Replace customized limits overrides for a tenant."""
-    # Clear existing
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    existing_limits = (await db.execute(
+        select(TenantLimit).where(TenantLimit.organization_id == org_id)
+    )).scalars().all()
+    old_state = {limit.limit_key: limit.limit_value for limit in existing_limits}
+    new_state = dict(payload.limits)
+
     await db.execute(delete(TenantLimit).where(TenantLimit.organization_id == org_id))
-    
-    # Add new
-    for key, value in payload.items():
+
+    for key, value in new_state.items():
         db.add(TenantLimit(organization_id=org_id, limit_key=key, limit_value=value))
-        
+
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="TENANT_LIMITS_UPDATED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state=old_state,
+        new_state=new_state,
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
+    db.add(ActivityTimeline(
+        organization_id=org_id,
+        actor_id=current_user.id,
+        action_type="TENANT_LIMITS_UPDATED",
+        metadata_data={
+            "reason": payload.reason,
+            "updated_keys": sorted(new_state.keys()),
+            "by": str(current_user.id),
+        },
+    ))
+
     await db.commit()
     return {"message": "Limits updated successfully"}
 
@@ -2984,9 +3442,13 @@ async def update_organization_limits(
 
 class AddDomainRequest(BaseModel):
     domain: str
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 class DeleteDomainRequest(BaseModel):
-    reason: Optional[str] = Field(default=None, min_length=8)
+    reason: str = Field(..., min_length=8, max_length=1000)
+
+class VerifyDomainRequest(BaseModel):
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 @router.get("/organizations/{org_id}/domains")
 async def get_organization_domains(
@@ -3014,8 +3476,35 @@ async def add_organization_domain(
     current_user: User = Depends(require_platform_admin)
 ):
     """Add a new custom domain for an organization."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
     dom = OrganizationDomain(organization_id=org_id, domain=payload.domain, is_verified=False)
     db.add(dom)
+    await db.flush()
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="ORG_DOMAIN_ADDED",
+        resource_type="organization_domain",
+        resource_id=dom.id,
+        old_state=None,
+        new_state={"domain": payload.domain, "is_verified": False},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
+    db.add(ActivityTimeline(
+        organization_id=org_id,
+        actor_id=current_user.id,
+        action_type="ORG_DOMAIN_ADDED",
+        metadata_data={
+            "domain": payload.domain,
+            "reason": payload.reason,
+            "by": str(current_user.id),
+        }
+    ))
     await db.commit()
     await db.refresh(dom)
     return {
@@ -3029,7 +3518,7 @@ async def add_organization_domain(
 async def delete_organization_domain(
     org_id: uuid.UUID,
     domain_id: uuid.UUID,
-    payload: Optional[DeleteDomainRequest] = Body(default=None),
+    payload: DeleteDomainRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3041,7 +3530,24 @@ async def delete_organization_domain(
     if not dom:
         raise HTTPException(status_code=404, detail="Domain mapping not found")
     domain_name = dom.domain
+    old_state = {
+        "domain_id": str(domain_id),
+        "domain": domain_name,
+        "is_verified": dom.is_verified,
+    }
     await db.delete(dom)
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="ORG_DOMAIN_DELETED",
+        resource_type="organization_domain",
+        resource_id=domain_id,
+        old_state=old_state,
+        new_state=None,
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     db.add(ActivityTimeline(
         organization_id=org_id,
         actor_id=current_user.id,
@@ -3049,7 +3555,7 @@ async def delete_organization_domain(
         metadata_data={
             "domain_id": str(domain_id),
             "domain": domain_name,
-            "reason": payload.reason if payload else None,
+            "reason": payload.reason,
             "by": str(current_user.id),
         }
     ))
@@ -3060,6 +3566,7 @@ async def delete_organization_domain(
 async def verify_organization_domain(
     org_id: uuid.UUID,
     domain_id: uuid.UUID,
+    payload: VerifyDomainRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3070,14 +3577,49 @@ async def verify_organization_domain(
     dom = (await db.execute(stmt)).scalar_one_or_none()
     if not dom:
         raise HTTPException(status_code=404, detail="Domain mapping not found")
-        
-    dom.is_verified = True
-    
-    # Update on main organization record
+
     org = await db.get(Organization, org_id)
-    if org:
-        org.custom_domain = dom.domain
-        
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    old_state = {
+        "domain_id": str(domain_id),
+        "domain": dom.domain,
+        "is_verified": dom.is_verified,
+        "custom_domain": org.custom_domain,
+    }
+    dom.is_verified = True
+    org.custom_domain = dom.domain
+
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=org_id,
+        action_type="ORG_DOMAIN_VERIFIED",
+        resource_type="organization_domain",
+        resource_id=domain_id,
+        old_state=old_state,
+        new_state={
+            "domain_id": str(domain_id),
+            "domain": dom.domain,
+            "is_verified": True,
+            "custom_domain": org.custom_domain,
+        },
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
+    db.add(ActivityTimeline(
+        organization_id=org_id,
+        actor_id=current_user.id,
+        action_type="ORG_DOMAIN_VERIFIED",
+        metadata_data={
+            "domain_id": str(domain_id),
+            "domain": dom.domain,
+            "reason": payload.reason,
+            "by": str(current_user.id),
+        },
+    ))
+
     await db.commit()
     return {"message": "Domain successfully verified", "domain": dom.domain}
 
@@ -3142,6 +3684,7 @@ async def list_payment_events(
 
 class UserStatusUpdateRequest(BaseModel):
     is_active: bool
+    reason: Optional[str] = Field(default=None, min_length=8)
 
 @router.patch("/users/{user_id}/status")
 async def update_user_status(
@@ -3155,6 +3698,17 @@ async def update_user_status(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.is_active = payload.is_active
+    db.add(ActivityTimeline(
+        organization_id=user.organization_id,
+        actor_id=current_user.id,
+        action_type="USER_ACTIVATED" if payload.is_active else "USER_DEACTIVATED",
+        metadata_data={
+            "target_user_id": str(user_id),
+            "target_email": user.email,
+            "reason": payload.reason,
+            "by": str(current_user.id),
+        }
+    ))
     await db.commit()
     return {"message": f"User account {'activated' if payload.is_active else 'deactivated'} successfully"}
 
@@ -3420,6 +3974,7 @@ async def patch_platform_addon(
 @router.delete("/addons/{addon_id}", status_code=204)
 async def delete_platform_addon(
     addon_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3427,6 +3982,24 @@ async def delete_platform_addon(
     addon = await db.get(Addon, addon_id)
     if not addon:
         raise HTTPException(status_code=404, detail="Add-on not found")
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=None,
+        action_type="ADDON_DELETED",
+        resource_type="addon",
+        resource_id=addon_id,
+        old_state={
+            "id": str(addon.id),
+            "name": addon.name,
+            "key": getattr(addon, "key", None),
+            "is_active": getattr(addon, "is_active", None),
+            "billing_unit": getattr(addon, "billing_unit", None),
+        },
+        new_state=None,
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
     await db.delete(addon)
     await db.commit()
 
@@ -3435,8 +4008,8 @@ async def delete_platform_addon(
 
 class BulkExtendTrialRequest(BaseModel):
     org_ids: List[uuid.UUID]
-    days: int
-    reason: str
+    days: int = Field(ge=1, le=90)
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 @router.post("/subscriptions/bulk-extend")
 async def bulk_extend_trial(
@@ -3448,6 +4021,11 @@ async def bulk_extend_trial(
     for org_id in payload.org_ids:
         sub = await _get_current_subscription(db, org_id)
         if sub:
+            old_state = {
+                "subscription_id": str(sub.id),
+                "status": sub.status,
+                "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
+            }
             current_trial = sub.trial_ends_at or datetime.now(timezone.utc)
             sub.trial_ends_at = current_trial + timedelta(days=payload.days)
             db.add(ActivityTimeline(
@@ -3456,6 +4034,22 @@ async def bulk_extend_trial(
                 action_type="TRIAL_EXTENDED",
                 metadata_data={"days_extended": payload.days, "reason": payload.reason, "bulk": True}
             ))
+            db.add(AuditLog(
+                actor_user_id=current_user.id,
+                organization_id=org_id,
+                action_type="TRIAL_EXTENDED",
+                resource_type="subscription",
+                resource_id=sub.id,
+                old_state=old_state,
+                new_state={
+                    "subscription_id": str(sub.id),
+                    "status": sub.status,
+                    "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
+                },
+                change_diff={"days": payload.days, "reason": payload.reason, "bulk": True},
+                is_sensitive=True,
+                occurred_at=datetime.now(timezone.utc),
+            ))
     await db.commit()
     return {"message": f"Successfully extended trial for {len(payload.org_ids)} tenants"}
 
@@ -3463,6 +4057,7 @@ async def bulk_extend_trial(
 class BulkChangePlanRequest(BaseModel):
     org_ids: List[uuid.UUID]
     plan_id: uuid.UUID
+    reason: str = Field(..., min_length=8, max_length=1000)
 
 @router.post("/subscriptions/bulk-change-plan")
 async def bulk_change_plan(
@@ -3479,6 +4074,11 @@ async def bulk_change_plan(
         sub = await _get_current_subscription(db, org_id)
         if sub:
             old_plan_id = sub.plan_id
+            old_state = {
+                "subscription_id": str(sub.id),
+                "plan_id": str(old_plan_id) if old_plan_id else None,
+                "status": sub.status,
+            }
             sub.plan_id = payload.plan_id
             db.add(ActivityTimeline(
                 organization_id=org_id,
@@ -3488,8 +4088,26 @@ async def bulk_change_plan(
                     "old_plan_id": str(old_plan_id),
                     "new_plan_id": str(payload.plan_id),
                     "new_plan_name": plan.name,
+                    "reason": payload.reason,
                     "bulk": True
                 }
+            ))
+            db.add(AuditLog(
+                actor_user_id=current_user.id,
+                organization_id=org_id,
+                action_type="PLAN_CHANGED",
+                resource_type="subscription",
+                resource_id=sub.id,
+                old_state=old_state,
+                new_state={
+                    "subscription_id": str(sub.id),
+                    "plan_id": str(sub.plan_id),
+                    "plan_name": plan.name,
+                    "status": sub.status,
+                },
+                change_diff={"reason": payload.reason, "bulk": True},
+                is_sensitive=True,
+                occurred_at=datetime.now(timezone.utc),
             ))
     await db.commit()
     return {"message": f"Successfully migrated plan to {plan.name} for {len(payload.org_ids)} tenants"}
@@ -3498,6 +4116,7 @@ async def bulk_change_plan(
 @router.post("/subscriptions/{subscription_id}/cancel")
 async def cancel_subscription(
     subscription_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3505,12 +4124,25 @@ async def cancel_subscription(
     sub = await db.get(OrganizationSubscription, subscription_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
+    old_state = {"subscription_id": str(sub.id), "status": sub.status}
     sub.status = "CANCELLED"
     db.add(ActivityTimeline(
         organization_id=sub.organization_id,
         actor_id=current_user.id,
         action_type="SUBSCRIPTION_CANCELLED",
-        metadata_data={"by": str(current_user.id)}
+        metadata_data={"reason": payload.reason, "by": str(current_user.id)}
+    ))
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=sub.organization_id,
+        action_type="SUBSCRIPTION_CANCELLED",
+        resource_type="subscription",
+        resource_id=sub.id,
+        old_state=old_state,
+        new_state={"subscription_id": str(sub.id), "status": sub.status},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
     ))
     await db.commit()
     return {"message": "Subscription cancelled successfully"}
@@ -3519,6 +4151,7 @@ async def cancel_subscription(
 @router.post("/subscriptions/{subscription_id}/reactivate")
 async def reactivate_subscription(
     subscription_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3526,12 +4159,25 @@ async def reactivate_subscription(
     sub = await db.get(OrganizationSubscription, subscription_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
+    old_state = {"subscription_id": str(sub.id), "status": sub.status}
     sub.status = "ACTIVE"
     db.add(ActivityTimeline(
         organization_id=sub.organization_id,
         actor_id=current_user.id,
         action_type="SUBSCRIPTION_REACTIVATED",
-        metadata_data={"by": str(current_user.id)}
+        metadata_data={"reason": payload.reason, "by": str(current_user.id)}
+    ))
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=sub.organization_id,
+        action_type="SUBSCRIPTION_REACTIVATED",
+        resource_type="subscription",
+        resource_id=sub.id,
+        old_state=old_state,
+        new_state={"subscription_id": str(sub.id), "status": sub.status},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
     ))
     await db.commit()
     return {"message": "Subscription reactivated successfully"}
@@ -3562,6 +4208,7 @@ async def get_invoice_items(
 @router.post("/invoices/{invoice_id}/mark-paid")
 async def mark_invoice_paid(
     invoice_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3569,6 +4216,12 @@ async def mark_invoice_paid(
     inv = await db.get(Invoice, invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    old_state = {
+        "invoice_id": str(inv.id),
+        "status": inv.status,
+        "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
+        "amount": float(inv.amount),
+    }
     inv.status = "PAID"
     inv.paid_at = datetime.now(timezone.utc)
     
@@ -3576,7 +4229,29 @@ async def mark_invoice_paid(
         organization_id=inv.organization_id,
         actor_id=current_user.id,
         action_type="INVOICE_MARKED_PAID",
-        metadata_data={"invoice_id": str(invoice_id), "amount": float(inv.amount), "by": str(current_user.id)}
+        metadata_data={
+            "invoice_id": str(invoice_id),
+            "amount": float(inv.amount),
+            "reason": payload.reason,
+            "by": str(current_user.id),
+        }
+    ))
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=inv.organization_id,
+        action_type="INVOICE_MARKED_PAID",
+        resource_type="invoice",
+        resource_id=invoice_id,
+        old_state=old_state,
+        new_state={
+            "invoice_id": str(inv.id),
+            "status": inv.status,
+            "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
+            "amount": float(inv.amount),
+        },
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
     ))
     await db.commit()
     return {"message": "Invoice status updated to PAID"}
@@ -3585,17 +4260,55 @@ async def mark_invoice_paid(
 @router.post("/invoices/{invoice_id}/send-reminder")
 async def send_invoice_reminder(
     invoice_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Trigger payment reminder notifications for overdue invoices (Super Admin)."""
-    # Mocking notification dispatch via communications module
-    return {"message": "Payment reminder notification queued successfully"}
+    inv = await db.get(Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    db.add(ActivityTimeline(
+        organization_id=inv.organization_id,
+        actor_id=current_user.id,
+        action_type="INVOICE_REMINDER_UNAVAILABLE",
+        metadata_data={
+            "invoice_id": str(invoice_id),
+            "reason": payload.reason,
+            "by": str(current_user.id),
+        },
+    ))
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=inv.organization_id,
+        action_type="INVOICE_REMINDER_UNAVAILABLE",
+        resource_type="invoice",
+        resource_id=invoice_id,
+        old_state={
+            "invoice_id": str(inv.id),
+            "status": inv.status,
+            "amount": float(inv.amount),
+        },
+        new_state=None,
+        change_diff={
+            "reason": payload.reason,
+            "blocked_reason": "Durable invoice reminder job is not implemented.",
+        },
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+    raise HTTPException(
+        status_code=501,
+        detail="Invoice reminders are not available until a durable communications job is implemented.",
+    )
 
 
 @router.post("/invoices/{invoice_id}/void")
 async def void_invoice(
     invoice_id: uuid.UUID,
+    payload: ReasonRequiredRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -3603,13 +4316,40 @@ async def void_invoice(
     inv = await db.get(Invoice, invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    old_state = {
+        "invoice_id": str(inv.id),
+        "status": inv.status,
+        "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
+        "amount": float(inv.amount),
+    }
     inv.status = "VOID"
     
     db.add(ActivityTimeline(
         organization_id=inv.organization_id,
         actor_id=current_user.id,
         action_type="INVOICE_VOIDED",
-        metadata_data={"invoice_id": str(invoice_id), "by": str(current_user.id)}
+        metadata_data={
+            "invoice_id": str(invoice_id),
+            "reason": payload.reason,
+            "by": str(current_user.id),
+        }
+    ))
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=inv.organization_id,
+        action_type="INVOICE_VOIDED",
+        resource_type="invoice",
+        resource_id=invoice_id,
+        old_state=old_state,
+        new_state={
+            "invoice_id": str(inv.id),
+            "status": inv.status,
+            "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
+            "amount": float(inv.amount),
+        },
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
     ))
     await db.commit()
     return {"message": "Invoice voided successfully"}
@@ -4086,80 +4826,6 @@ async def get_financial_audit_trail(
         "total": total_count
     }
 
-@router.get("/security/events")
-async def get_security_events_route(
-    severity: Optional[str] = None,
-    event_type: Optional[str] = None,
-    skip: int = 0,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_platform_admin)
-):
-    events = []
-    total_count = 0
-    trend_list = []
-    try:
-        query_str = "SELECT id, severity, event_type, ip_address, description, occurred_at FROM identity.security_events"
-        where_clauses = []
-        params = {"limit": limit, "offset": skip}
-        if severity:
-            where_clauses.append("severity = :severity")
-            params["severity"] = severity
-        if event_type:
-            where_clauses.append("event_type = :event_type")
-            params["event_type"] = event_type
-            
-        if where_clauses:
-            query_str += " WHERE " + " AND ".join(where_clauses)
-            
-        query_str += " ORDER BY occurred_at DESC LIMIT :limit OFFSET :offset"
-        res = await db.execute(text(query_str), params)
-        events = [{
-            "id": str(r.id),
-            "severity": r.severity,
-            "event_type": r.event_type,
-            "ip_address": r.ip_address,
-            "description": r.description,
-            "occurred_at": r.occurred_at.isoformat(),
-            "actor": "admin@eventx.com",
-            "org": "Eventxos"
-        } for r in res.fetchall()]
-        
-        count_query = "SELECT count(*) FROM identity.security_events"
-        if where_clauses:
-            count_query += " WHERE " + " AND ".join(where_clauses)
-        total_res = await db.execute(text(count_query), {k: v for k, v in params.items() if k not in ("limit", "offset")})
-        total_count = total_res.scalar() or 0
-
-        # Calculate incident trend over last 7 days dynamically
-        trend_res = await db.execute(text("""
-            SELECT
-                TO_CHAR(occurred_at, 'YYYY-MM-DD') as day,
-                severity,
-                COUNT(*) as count
-            FROM identity.security_events
-            WHERE occurred_at >= NOW() - INTERVAL '7 days'
-            GROUP BY TO_CHAR(occurred_at, 'YYYY-MM-DD'), severity
-            ORDER BY day
-        """))
-        trend_data = {}
-        for r in trend_res.fetchall():
-            d = r.day
-            sev = r.severity.lower()
-            cnt = int(r.count or 0)
-            if d not in trend_data:
-                trend_data[d] = {"day": d, "low": 0, "medium": 0, "high": 0, "critical": 0}
-            trend_data[d][sev] = cnt
-        trend_list = sorted(trend_data.values(), key=lambda x: x["day"])
-    except Exception:
-        pass
-        
-    return {
-        "items": events,
-        "total": total_count,
-        "trend": trend_list
-    }
-
 @router.get("/impersonation-logs")
 async def get_impersonation_logs_route(
     skip: int = 0,
@@ -4216,116 +4882,26 @@ async def get_impersonation_logs_route(
 async def get_ai_dashboard(
     _: User = Depends(require_platform_admin)
 ):
-    return {
-        "total_requests": 0,
-        "tokens_used": 0,
-        "total_cost_inr": 0.0,
-        "avg_cost_per_1k_tokens": 0.0,
-        "success_rate": 0.0,
-        "requests_over_time": [],
-        "tokens_over_time": [],
-        "usage_by_model": [],
-        "cost_trend": [],
-        "top_use_cases": []
-    }
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="AI dashboard is unavailable until usage and cost ledgers are authoritative",
+    )
 
 @router.get("/ai/prompts")
 async def get_ai_prompts(
     _: User = Depends(require_platform_admin)
 ):
-    return []
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="AI prompt library is unavailable until its versioned governance contract is implemented",
+    )
 
 @router.get("/ai/models")
 async def get_ai_models(
     _: User = Depends(require_platform_admin)
 ):
-    models = [
-        {"name": "gpt-4o", "provider": "OpenAI", "type": "chat", "context": "128k", "cost_in": 5.0, "cost_out": 15.0, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "gpt-4-turbo", "provider": "OpenAI", "type": "chat", "context": "128k", "cost_in": 10.0, "cost_out": 30.0, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "gpt-3.5-turbo", "provider": "OpenAI", "type": "chat", "context": "16k", "cost_in": 0.5, "cost_out": 1.5, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "claude-3-5-sonnet", "provider": "Anthropic", "type": "chat", "context": "200k", "cost_in": 3.0, "cost_out": 15.0, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "claude-3-haiku", "provider": "Anthropic", "type": "chat", "context": "200k", "cost_in": 0.25, "cost_out": 1.25, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "gemini-1.5-pro", "provider": "Google", "type": "chat", "context": "1m", "cost_in": 7.0, "cost_out": 21.0, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "gemini-1.5-flash", "provider": "Google", "type": "chat", "context": "1m", "cost_in": 0.35, "cost_out": 1.05, "status": "ACTIVE", "usage_7d": 0},
-        {"name": "llama-3-8b", "provider": "Meta (self-hosted)", "type": "chat", "context": "8k", "cost_in": 0.0, "cost_out": 0.0, "status": "ACTIVE", "usage_7d": 0}
-    ]
-    return {
-        "models": models,
-        "auto_routing": True,
-        "routing_strategy": "Cost Optimized",
-        "fallback_model": "gpt-3.5-turbo"
-    }
-
-
-@router.get("/health")
-async def get_platform_health_delegated(
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_platform_admin)
-):
-    try:
-        from app.modules.platform_health.router import _check_db, _check_redis, _check_celery, _check_stripe, _check_email
-        import asyncio
-        db_result, redis_result, celery_result, stripe_result, email_result = await asyncio.gather(
-            _check_db(db),
-            _check_redis(),
-            _check_celery(),
-            _check_stripe(),
-            _check_email(),
-        )
-        services = [db_result, redis_result, celery_result, stripe_result, email_result]
-        services.insert(0, {
-            "name": "API Gateway",
-            "status": "healthy",
-            "response_ms": 0,
-            "detail": "Self",
-            "uptime_pct": 99.99,
-        })
-        services.append({
-            "name": "WebSocket Service",
-            "status": "healthy",
-            "response_ms": 1,
-            "detail": "socket.io active",
-        })
-        services.append({
-            "name": "Object Storage (R2)",
-            "status": "healthy",
-            "response_ms": 2.5,
-            "detail": "Bucket: cloud-center-assets",
-        })
-        
-        down_count = sum(1 for s in services if s["status"] == "down")
-        degraded_count = sum(1 for s in services if s["status"] == "degraded")
-        if down_count > 0:
-            overall = "down"
-        elif degraded_count > 0:
-            overall = "degraded"
-        else:
-            overall = "healthy"
-            
-        return {
-            "overall": overall,
-            "overall_status": overall,
-            "uptime_pct": 99.99 if overall == "healthy" else 99.5,
-            "services": services,
-            "incidents": [],
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
-    except Exception:
-        return {
-            "overall": "healthy",
-            "overall_status": "healthy",
-            "uptime_pct": 99.99,
-            "services": [
-                {"name": "API Gateway", "status": "healthy", "response_ms": 0, "detail": "Self", "uptime_pct": 99.99},
-                {"name": "PostgreSQL", "status": "healthy", "response_ms": 5, "detail": "Active", "uptime_pct": 99.99},
-                {"name": "Redis Cluster", "status": "healthy", "response_ms": 2, "detail": "Active", "uptime_pct": 99.99},
-                {"name": "Celery Workers", "status": "healthy", "response_ms": 12, "detail": "Active", "uptime_pct": 99.99},
-                {"name": "Object Storage (R2)", "status": "healthy", "response_ms": 15, "detail": "Active", "uptime_pct": 99.99},
-                {"name": "Email Service", "status": "healthy", "response_ms": 1, "detail": "Active", "uptime_pct": 99.99},
-                {"name": "Stripe API", "status": "healthy", "response_ms": 120, "detail": "Active", "uptime_pct": 99.99},
-                {"name": "WebSocket Service", "status": "healthy", "response_ms": 1, "detail": "Active", "uptime_pct": 99.99}
-            ],
-            "incidents": [],
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="AI model registry is unavailable until provider and routing records are authoritative",
+    )
 

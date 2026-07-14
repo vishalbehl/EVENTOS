@@ -5,6 +5,7 @@ import { ArrowRight, Check, CheckCircle2, Cpu, Edit3, ImagePlus, Layers3, MapPin
 import { toast } from "sonner"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -81,6 +82,7 @@ export default function AddonsManagementPage() {
   const [search, setSearch] = useState("")
   const [editing, setEditing] = useState<Addon | null>(null)
   const [previewAddon, setPreviewAddon] = useState<Addon | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Addon | null>(null)
   const [form, setForm] = useState<FormState | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
@@ -302,15 +304,32 @@ export default function AddonsManagementPage() {
               staffMap={staffMap}
               onOpen={() => setPreviewAddon(addon)}
               onEdit={() => openEdit(addon)}
-              onDelete={async () => {
-                if (!confirm(`Delete ${addon.name}?`)) return
-                await deleteAddon.mutateAsync(addon.id)
-                toast.success("Add-on deleted")
-              }}
+              onDelete={() => setDeleteTarget(addon)}
             />
           ))}
         </div>
       )}
+
+      <ConfirmDestructiveAction
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete add-on?"
+        description="This removes a commercial add-on from the platform catalogue and can affect future sales, subscriptions, and entitlement configuration. Capture the commercial or operational reason."
+        confirmLabel="Delete add-on"
+        resourceName={deleteTarget?.name}
+        requireReason
+        pending={deleteAddon.isPending}
+        onConfirm={async (reason) => {
+          if (!deleteTarget) return
+          if (!reason) {
+            toast.error("A reason is required to delete an add-on")
+            return
+          }
+          await deleteAddon.mutateAsync({ addonId: deleteTarget.id, reason })
+          toast.success("Add-on deleted")
+          setDeleteTarget(null)
+        }}
+      />
 
       <Dialog open={!!form} onOpenChange={(open) => !open && setForm(null)}>
         <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto border-[var(--border-default)] bg-[var(--bg-surface)] p-0 text-[var(--text-primary)]">

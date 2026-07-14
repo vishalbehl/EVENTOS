@@ -600,6 +600,14 @@ function UsersTab({ orgId }: { orgId: string }) {
 
 function EventsTab({ orgId }: { orgId: string }) {
   const { data: events = [], isLoading } = useOrgEvents(orgId);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  const totalPages = Math.ceil(events.length / pageSize);
+  const paginatedEvents = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return events.slice(start, start + pageSize);
+  }, [events, currentPage]);
 
   return (
     <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm space-y-4">
@@ -622,46 +630,73 @@ function EventsTab({ orgId }: { orgId: string }) {
           No events created yet.
         </div>
       ) : (
-        <div className="border border-border/60 rounded-xl overflow-hidden bg-surface-2/10">
-          <table className="w-full border-collapse text-left text-xs">
-            <thead className="bg-surface border-b border-border font-extrabold text-[var(--text-tertiary)] uppercase tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Event Name</th>
-                <th className="px-4 py-3">Code</th>
-                <th className="px-4 py-3">Schedule Duration</th>
-                <th className="px-4 py-3">Registrations</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/40 font-medium text-[var(--text-secondary)]">
-              {events.map((e: any) => (
-                <tr key={e.id} className="hover:bg-surface-hover/20 transition-colors">
-                  <td className="px-4 py-3 font-bold text-[var(--text-primary)]">{e.name}</td>
-                  <td className="px-4 py-3 font-mono text-indigo-400 font-bold">{e.short_code}</td>
-                  <td className="px-4 py-3 font-mono text-[10px] text-[var(--text-tertiary)]">
-                    {e.start_date ? new Date(e.start_date).toLocaleDateString("en-IN", { dateStyle: "short" }) : "—"}
-                    {" → "}
-                    {e.end_date ? new Date(e.end_date).toLocaleDateString("en-IN", { dateStyle: "short" }) : "—"}
-                  </td>
-                  <td className="px-4 py-3 font-bold font-mono text-[var(--text-primary)]">
-                    {e.registration_count?.toLocaleString() || 0}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant="outline" className={cn(
-                      "font-extrabold text-[9px] uppercase",
-                      e.status === "active"
-                        ? "border-emerald-500/20 text-emerald-400 bg-emerald-500/5"
-                        : e.status === "completed"
-                        ? "border-blue-500/20 text-blue-400 bg-blue-500/5"
-                        : "border-border text-[var(--text-tertiary)]"
-                    )}>
-                      {e.status}
-                    </Badge>
-                  </td>
+        <div className="space-y-4">
+          <div className="border border-border/60 rounded-xl overflow-hidden bg-surface-2/10">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead className="bg-surface border-b border-border font-extrabold text-[var(--text-tertiary)] uppercase tracking-wider">
+                <tr>
+                  <th className="px-4 py-3">Event Name</th>
+                  <th className="px-4 py-3">Code</th>
+                  <th className="px-4 py-3">Schedule Duration</th>
+                  <th className="px-4 py-3">Registrations</th>
+                  <th className="px-4 py-3">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border/40 font-medium text-[var(--text-secondary)]">
+                {paginatedEvents.map((e: any) => (
+                  <tr key={e.id} className="hover:bg-surface-hover/20 transition-colors">
+                    <td className="px-4 py-3 font-bold text-[var(--text-primary)]">{e.name}</td>
+                    <td className="px-4 py-3 font-mono text-indigo-400 font-bold">{e.short_code}</td>
+                    <td className="px-4 py-3 font-mono text-[10px] text-[var(--text-tertiary)]">
+                      {e.start_date ? new Date(e.start_date).toLocaleDateString("en-IN", { dateStyle: "short" }) : "—"}
+                      {" → "}
+                      {e.end_date ? new Date(e.end_date).toLocaleDateString("en-IN", { dateStyle: "short" }) : "—"}
+                    </td>
+                    <td className="px-4 py-3 font-bold font-mono text-[var(--text-primary)]">
+                      {e.registration_count?.toLocaleString() || 0}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className={cn(
+                        "font-extrabold text-[9px] uppercase",
+                        e.status === "active"
+                          ? "border-emerald-500/20 text-emerald-400 bg-emerald-500/5"
+                          : e.status === "completed"
+                          ? "border-blue-500/20 text-blue-400 bg-blue-500/5"
+                          : "border-border text-[var(--text-tertiary)]"
+                      )}>
+                        {e.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-border/40 pt-3 text-xs">
+              <Button
+                variant="outline"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
+                className="h-8 text-xs font-semibold px-4 border-border"
+              >
+                Previous
+              </Button>
+              <span className="text-secondary font-medium">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
+                className="h-8 text-xs font-semibold px-4 border-border"
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -724,7 +759,10 @@ function SettingsTab({ orgId }: { orgId: string }) {
 
   const handleSaveLimits = async () => {
     try {
-      await updateLimitsMutation.mutateAsync(localLimits);
+      await updateLimitsMutation.mutateAsync({
+        limits: localLimits,
+        reason: "Administrative limit adjustment",
+      });
       toast.success("Numerical quotas and limits updated successfully");
     } catch {
       toast.error("Failed to update limits");
@@ -743,7 +781,10 @@ function SettingsTab({ orgId }: { orgId: string }) {
     e.preventDefault();
     if (!newDomain.trim()) return;
     try {
-      await addDomainMutation.mutateAsync(newDomain);
+      await addDomainMutation.mutateAsync({
+        domain: newDomain,
+        reason: "Administrative domain mapping configuration",
+      });
       toast.success("Domain mapping added");
       setNewDomain("");
       refetchDomains();
@@ -754,7 +795,10 @@ function SettingsTab({ orgId }: { orgId: string }) {
 
   const handleDeleteDomain = async (id: string, reason?: string) => {
     try {
-      await deleteDomainMutation.mutateAsync({ domainId: id, reason });
+      await deleteDomainMutation.mutateAsync({
+        domainId: id,
+        reason: reason || "Administrative domain removal",
+      });
       toast.success("Domain mapping removed");
       setDomainDeleteTarget(null);
       refetchDomains();
@@ -763,9 +807,12 @@ function SettingsTab({ orgId }: { orgId: string }) {
     }
   };
 
-  const handleVerifyDomain = async (id: string) => {
+  const handleVerifyDomain = async (id: string, reason?: string) => {
     try {
-      await verifyDomainMutation.mutateAsync(id);
+      await verifyDomainMutation.mutateAsync({
+        domainId: id,
+        reason: reason || "Verification confirmed",
+      });
       toast.success("Domain successfully verified and activated!");
       refetchDomains();
       queryClient.invalidateQueries({ queryKey: adminKeys.orgDetail(orgId) });
@@ -798,7 +845,11 @@ function SettingsTab({ orgId }: { orgId: string }) {
     }));
 
     try {
-      await saveOverrides.mutateAsync({ orgId, overrides: payload });
+      await saveOverrides.mutateAsync({
+        orgId,
+        overrides: payload,
+        reason: "Administrative feature override update",
+      });
       toast.success("Feature override configuration saved");
       setDirty({});
       refetchFeatures();
@@ -1275,7 +1326,11 @@ export default function OrgDetailPage() {
     if (!detail) return;
     const isCurrentlyActive = detail.subscription?.status !== "SUSPENDED";
     try {
-      await updateStatus({ id: orgId, isActive: !isCurrentlyActive, reason });
+      await updateStatus({
+        id: orgId,
+        isActive: !isCurrentlyActive,
+        reason: reason || "Administrative status change",
+      });
       toast.success(isCurrentlyActive ? "Organization suspended" : "Organization activated");
       setStatusConfirmOpen(false);
     } catch {

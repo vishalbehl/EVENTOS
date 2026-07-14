@@ -26,6 +26,238 @@ from workers.tasks.notification_tasks import send_email
 logger = get_task_logger(__name__)
 
 
+COMMERCIAL_REPORT_FORMATS = {
+    "hardware_catalog": ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    "staff_catalog": ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    "pricing_simulations": ("csv", "text/csv; charset=utf-8"),
+    "pricing_rules": ("pdf", "application/pdf"),
+}
+
+
+def _cell_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    return str(value)
+
+
+def _build_commercial_report_artifact(report_type: str, rows: list[dict]) -> tuple[bytes, str, str]:
+    """Build a deterministic artifact from already-authorized source rows."""
+    if report_type not in COMMERCIAL_REPORT_FORMATS:
+        raise ValueError(f"Unsupported commercial report type: {report_type}")
+    extension, content_type = COMMERCIAL_REPORT_FORMATS[report_type]
+    columns = list(rows[0]) if rows else ["status"]
+    safe_rows = rows or [{"status": "No records found"}]
+
+    if extension == "csv":
+        stream = io.StringIO(newline="")
+        writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows({key: _cell_value(row.get(key)) for key in columns} for row in safe_rows)
+        return b"\xef\xbb\xbf" + stream.getvalue().encode("utf-8"), extension, content_type
+
+    if extension == "xlsx":
+        import xlsxwriter
+
+        buffer = io.BytesIO()
+        workbook = xlsxwriter.Workbook(buffer, {"in_memory": True})
+        sheet = workbook.add_worksheet("Report")
+        header = workbook.add_format({"bold": True, "bg_color": "#12372A", "font_color": "#FFFFFF"})
+        for column_index, column in enumerate(columns):
+            sheet.write(0, column_index, column, header)
+            sheet.set_column(column_index, column_index, min(max(len(column) + 4, 14), 40))
+        for row_index, row in enumerate(safe_rows, start=1):
+            for column_index, column in enumerate(columns):
+                sheet.write(row_index, column_index, _cell_value(row.get(column)))
+        sheet.autofilter(0, 0, max(len(safe_rows), 1), max(len(columns) - 1, 0))
+        sheet.freeze_panes(1, 0)
+        workbook.close()
+        return buffer.getvalue(), extension, content_type
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=landscape(A4), title="Commercial pricing rules")
+    styles = getSampleStyleSheet()
+    table_rows = [columns] + [[_cell_value(row.get(column)) for column in columns] for row in safe_rows]
+    table = Table(table_rows, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#12372A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+    ]))
+    document.build([
+        Paragraph("Pricing and Margin Rules Overview", styles["Title"]),
+        Paragraph("Generated from persisted pricing rule records.", styles["Normal"]),
+        Spacer(1, 12),
+        table,
+    ])
+    return buffer.getvalue(), extension, content_type
+
+
+def _commercial_report_rows(db, organization_uuid: uuid.UUID, report_type: str) -> list[dict]:
+    if report_type == "hardware_catalog":
+        from app.modules.inventory.models import HardwareCategory, HardwareItem, HardwareStock
+
+        records = (
+            db.query(HardwareItem, HardwareCategory, HardwareStock)
+            .join(HardwareCategory, HardwareCategory.id == HardwareItem.category_id)
+            .outerjoin(HardwareStock, HardwareStock.hardware_id == HardwareItem.id)
+            .order_by(HardwareCategory.name, HardwareItem.name)
+            .all()
+        )
+        return [{
+            "asset_code": item.asset_code,
+            "category": category.name,
+            "name": item.name,
+            "brand": item.brand,
+            "model": item.model,
+            "purchase_cost": item.purchase_cost,
+            "renting_price": item.renting_price,
+            "pricing_unit": item.pricing_unit,
+            "status": item.status,
+            "quantity": stock.quantity if stock else 0,
+            "available_quantity": stock.available_quantity if stock else 0,
+        } for item, category, stock in records]
+
+    if report_type == "staff_catalog":
+        from app.modules.commercial.models import StaffRole
+
+        records = db.query(StaffRole).order_by(StaffRole.team_category, StaffRole.role_name).all()
+        return [{
+            "role_code": item.role_code,
+            "role_name": item.role_name,
+            "team_category": item.team_category,
+            "grade": item.grade,
+            "cost_per_day": item.cost_per_day,
+            "selling_per_day": item.selling_per_day,
+            "available_count": item.available_count,
+            "status": item.status,
+        } for item in records]
+
+    if report_type == "pricing_simulations":
+        from app.modules.pricing.models import PricingSimulation
+
+        records = (
+            db.query(PricingSimulation)
+            .filter(PricingSimulation.organization_id == organization_uuid)
+            .order_by(PricingSimulation.created_at.desc())
+            .limit(5000)
+            .all()
+        )
+        return [{
+            "simulation_id": item.id,
+            "name": item.name,
+            "min_attendees": item.min_attendees,
+            "max_attendees": item.max_attendees,
+            "desk_count": item.desk_count,
+            "min_speakers": item.min_speakers,
+            "max_speakers": item.max_speakers,
+            "calculated_total": (item.output_data or {}).get("grand_total", (item.output_data or {}).get("total")),
+            "created_at": item.created_at,
+        } for item in records]
+
+    if report_type == "pricing_rules":
+        from app.modules.pricing.models import PricingRule
+
+        records = (
+            db.query(PricingRule)
+            .filter((PricingRule.organization_id == organization_uuid) | (PricingRule.organization_id.is_(None)))
+            .order_by(PricingRule.priority.desc(), PricingRule.name)
+            .all()
+        )
+        return [{
+            "code": item.code,
+            "name": item.name,
+            "scope": "ORGANIZATION" if item.organization_id else "GLOBAL",
+            "status": item.status,
+            "priority": item.priority,
+            "effective_from": item.effective_from,
+            "effective_to": item.effective_to,
+            "description": item.description,
+        } for item in records]
+
+    raise ValueError(f"Unsupported commercial report type: {report_type}")
+
+
+def _build_quote_proposal_pdf(snapshot: dict, proposal_number: str, proposal_version: int) -> bytes:
+    """Render only the immutable client-safe proposal snapshot."""
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm,
+        topMargin=18 * mm, bottomMargin=18 * mm,
+        title=proposal_number, author="EventX OS",
+    )
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("Commercial Proposal", styles["Title"]),
+        Paragraph(f"{escape(proposal_number)} &nbsp; | &nbsp; Version {proposal_version}", styles["Normal"]),
+        Spacer(1, 10 * mm),
+        Paragraph(escape(str(snapshot.get("title") or "Event services")), styles["Heading1"]),
+        Paragraph(
+            f"Quote reference: {escape(str(snapshot.get('quote_number') or ''))} &nbsp; | &nbsp; "
+            f"Valid until: {escape(str(snapshot.get('valid_until') or 'Not specified'))}",
+            styles["Normal"],
+        ),
+        Spacer(1, 7 * mm),
+    ]
+    rows = [["Category", "Description", "Qty", "Days", "Rate", "Amount"]]
+    for item in snapshot.get("line_items", []):
+        rows.append([
+            str(item.get("category") or ""), str(item.get("name") or ""),
+            str(item.get("quantity") or "0"), str(item.get("duration_days") or "1"),
+            str(item.get("unit_rate") or "0"), str(item.get("line_subtotal") or "0"),
+        ])
+    table = Table(rows, colWidths=[25 * mm, 55 * mm, 14 * mm, 14 * mm, 25 * mm, 28 * mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#12372A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+    ]))
+    story.extend([table, Spacer(1, 8 * mm)])
+    currency = escape(str(snapshot.get("currency") or "INR"))
+    totals = [
+        ["Subtotal", f"{currency} {snapshot.get('subtotal', '0.00')}"],
+        ["Discount", f"{currency} {snapshot.get('discount_amount', '0.00')}"],
+        [f"Tax ({snapshot.get('tax_rate', '0')}%)", f"{currency} {snapshot.get('tax_amount', '0.00')}"],
+        ["Total", f"{currency} {snapshot.get('total_amount', '0.00')}"],
+    ]
+    totals_table = Table(totals, colWidths=[45 * mm, 45 * mm], hAlign="RIGHT")
+    totals_table.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#12372A")),
+        ("TOPPADDING", (0, -1), (-1, -1), 6),
+    ]))
+    story.extend([
+        totals_table, Spacer(1, 12 * mm),
+        Paragraph("This document was generated from an approved, version-locked quote snapshot.", styles["Italic"]),
+    ])
+    document.build(story)
+    return buffer.getvalue()
+
+
 def _set_export_status(
     organization_uuid: uuid.UUID,
     export_uuid: uuid.UUID | None,
@@ -53,6 +285,82 @@ def _set_export_status(
         if status == "COMPLETED":
             export.completed_at = datetime.now(timezone.utc)
         db.commit()
+
+
+@app.task(
+    bind=True,
+    name="workers.tasks.report_tasks.generate_commercial_report_export",
+    max_retries=2,
+    default_retry_delay=60,
+    soft_time_limit=300,
+)
+def generate_commercial_report_export(
+    self,
+    organization_id: str,
+    requested_by_user_id: str,
+    export_id: str,
+    report_type: str,
+) -> dict:
+    organization_uuid = uuid.UUID(organization_id)
+    requester_uuid = uuid.UUID(requested_by_user_id)
+    export_uuid = uuid.UUID(export_id)
+    _set_export_status(organization_uuid, export_uuid, status="RUNNING")
+
+    try:
+        with get_db_session(organization_uuid) as db:
+            from app.modules.audit.models.audit_domain_tables import DataExport
+
+            export = db.get(DataExport, export_uuid)
+            expected_type = f"commercial_{report_type}"
+            if (
+                export is None
+                or export.organization_id != organization_uuid
+                or export.requested_by != requester_uuid
+                or export.source_type != "commercial_report"
+                or export.export_type != expected_type
+            ):
+                raise ValueError("Commercial export contract mismatch.")
+            rows = _commercial_report_rows(db, organization_uuid, report_type)
+
+        artifact, extension, content_type = _build_commercial_report_artifact(report_type, rows)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        storage_key = (
+            f"{organization_uuid}/platform-exports/"
+            f"{report_type}_{export_uuid}_{timestamp}.{extension}"
+        )
+        r2.upload_bytes(
+            bucket=settings.S3_BUCKET_EXPORTS,
+            key=storage_key,
+            data=artifact,
+            content_type=content_type,
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        _set_export_status(
+            organization_uuid,
+            export_uuid,
+            status="COMPLETED",
+            storage_key=storage_key,
+            expires_at=expires_at,
+        )
+        return {
+            "generated": True,
+            "export_id": str(export_uuid),
+            "report_type": report_type,
+            "row_count": len(rows),
+            "storage_key": storage_key,
+            "expires_at": expires_at.isoformat(),
+        }
+    except Exception as exc:
+        logger.exception("[report] Commercial export failed: %s", report_type)
+        _set_export_status(
+            organization_uuid,
+            export_uuid,
+            status="FAILED",
+            failure_reason=str(exc)[:1000],
+        )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        raise
 
 
 # ── Task 1: Event summary report (Excel) ─────────────────────
@@ -262,6 +570,73 @@ def generate_event_summary_report(
         "sessions": len(sessions),
         "speakers": len(speakers),
     }
+
+
+@app.task(
+    bind=True,
+    name="workers.tasks.report_tasks.generate_quote_proposal_pdf",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 2},
+    soft_time_limit=180,
+)
+def generate_quote_proposal_pdf(
+    self,
+    organization_id: str,
+    proposal_id: str,
+    proposal_version_id: str,
+    requested_by_user_id: str,
+    export_id: str,
+) -> dict:
+    organization_uuid = uuid.UUID(organization_id)
+    proposal_uuid = uuid.UUID(proposal_id)
+    version_uuid = uuid.UUID(proposal_version_id)
+    requester_uuid = uuid.UUID(requested_by_user_id)
+    export_uuid = uuid.UUID(export_id)
+    _set_export_status(organization_uuid, export_uuid, status="RUNNING")
+
+    try:
+        with get_db_session(organization_uuid) as db:
+            from app.modules.audit.models.audit_domain_tables import DataExport
+            from app.modules.crm.models.crm_domain_tables import Proposal, ProposalVersion
+
+            export = db.get(DataExport, export_uuid)
+            proposal = db.get(Proposal, proposal_uuid)
+            version = db.get(ProposalVersion, version_uuid)
+            if (
+                export is None or export.organization_id != organization_uuid
+                or export.requested_by != requester_uuid or export.source_id != proposal_uuid
+                or proposal is None or proposal.organization_id != organization_uuid
+                or version is None or version.organization_id != organization_uuid
+                or version.proposal_id != proposal_uuid or version.version != export.source_version
+            ):
+                raise ValueError("Proposal document command scope is invalid.")
+            snapshot = dict(version.snapshot_json)
+            proposal_number = proposal.proposal_number or str(proposal.id)
+            event_id = proposal.event_id
+
+        pdf_data = _build_quote_proposal_pdf(snapshot, proposal_number, version.version)
+        event_segment = f"events/{event_id}" if event_id else "control-plane"
+        storage_key = f"{organization_uuid}/{event_segment}/proposals/{proposal_uuid}/v{version.version}/{proposal_number}.pdf"
+        r2.upload_bytes(
+            bucket=settings.S3_BUCKET_EXPORTS, key=storage_key,
+            data=pdf_data, content_type="application/pdf",
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        _set_export_status(
+            organization_uuid, export_uuid, status="COMPLETED", event_uuid=event_id,
+            storage_key=storage_key, expires_at=expires_at,
+        )
+        return {
+            "generated": True, "proposal_id": proposal_id,
+            "proposal_version": version.version, "export_id": export_id,
+            "storage_key": storage_key, "expires_at": expires_at.isoformat(),
+        }
+    except Exception as exc:
+        _set_export_status(
+            organization_uuid, export_uuid, status="FAILED", failure_reason=str(exc),
+        )
+        raise
 
 
 # ── Task 2: Session readiness CSV ─────────────────────────────

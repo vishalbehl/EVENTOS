@@ -53,6 +53,21 @@ describe("apiClient", () => {
     expect(authState.updateActivity).toHaveBeenCalled();
   });
 
+  it("preserves an explicit authorization header for bounded session operations", async () => {
+    server.use(
+      http.post("http://127.0.0.1:8000/api/v1/auth/logout", ({ request }) =>
+        HttpResponse.json({ authorization: request.headers.get("authorization") }),
+      ),
+    );
+
+    const { apiPost } = await import("./api-client");
+    const result = await apiPost<{ authorization: string | null }>("/auth/logout", undefined, {
+      headers: { Authorization: "Bearer bounded-token" },
+    });
+
+    expect(result.authorization).toBe("Bearer bounded-token");
+  });
+
   it("maps problem responses into ApiError with a stable code", async () => {
     server.use(
       http.get("http://127.0.0.1:8000/api/v1/health", () => {

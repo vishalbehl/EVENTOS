@@ -31,6 +31,15 @@ app.conf.task_serializer = "json"
 app.conf.result_serializer = "json"
 app.conf.accept_content = ["json"]
 app.conf.result_expires = 60 * 60 * 24  # 24 hours
+app.conf.imports = (
+    "workers.tasks.file_tasks",
+    "workers.tasks.import_tasks",
+    "workers.tasks.notification_tasks",
+    "workers.tasks.report_tasks",
+    "workers.tasks.search_tasks",
+    "workers.tasks.sync_tasks",
+    "workers.tasks.video_tasks",
+)
 
 # ── Timezone ─────────────────────────────────────────────────
 app.conf.timezone = "UTC"

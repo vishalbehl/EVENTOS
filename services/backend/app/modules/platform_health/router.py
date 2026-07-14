@@ -6,6 +6,7 @@
 # =============================================================
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -27,8 +28,8 @@ async def _check_db(db: AsyncSession) -> dict:
         await db.execute(text("SELECT 1"))
         ms = round((time.monotonic() - t0) * 1000, 1)
         return {"name": "PostgreSQL", "status": "healthy", "response_ms": ms, "detail": f"{ms}ms"}
-    except Exception as e:
-        return {"name": "PostgreSQL", "status": "down", "response_ms": None, "detail": str(e)}
+    except Exception:
+        return {"name": "PostgreSQL", "status": "down", "response_ms": None, "detail": "Database check failed"}
 
 
 async def _check_redis() -> dict:
@@ -38,8 +39,8 @@ async def _check_redis() -> dict:
         await redis_client.ping()
         ms = round((time.monotonic() - t0) * 1000, 1)
         return {"name": "Redis Cluster", "status": "healthy", "response_ms": ms, "detail": f"{ms}ms"}
-    except Exception as e:
-        return {"name": "Redis Cluster", "status": "down", "response_ms": None, "detail": str(e)}
+    except Exception:
+        return {"name": "Redis Cluster", "status": "down", "response_ms": None, "detail": "Redis check failed"}
 
 
 async def _check_celery() -> dict:
@@ -74,17 +75,84 @@ async def _check_stripe() -> dict:
 
 
 async def _check_email() -> dict:
-    """Check SMTP/email service by resolving config."""
+    """Report email configuration without claiming provider reachability."""
     try:
         from app.config import settings
         host = getattr(settings, "SMTP_HOST", None) or getattr(settings, "smtp_host", None)
         if host:
-            return {"name": "Email Service", "status": "healthy", "response_ms": 0,
-                    "detail": f"SMTP: {host}"}
+            return {"name": "Email Service", "status": "unverified", "response_ms": None,
+                    "detail": "Configured; delivery health is not checked"}
         return {"name": "Email Service", "status": "degraded", "response_ms": None,
                 "detail": "SMTP not configured"}
     except Exception:
         return {"name": "Email Service", "status": "degraded", "response_ms": None, "detail": "Config error"}
+
+
+async def _check_object_storage() -> dict:
+    """Report storage configuration without claiming bucket reachability."""
+    try:
+        from app.config import settings
+        bucket = (
+            getattr(settings, "R2_BUCKET", None)
+            or getattr(settings, "AWS_S3_BUCKET", None)
+            or getattr(settings, "S3_BUCKET", None)
+        )
+        if bucket:
+            return {
+                "name": "Object Storage",
+                "status": "unverified",
+                "response_ms": None,
+                "detail": "Configured; bucket reachability is not checked",
+            }
+        return {
+            "name": "Object Storage",
+            "status": "degraded",
+            "response_ms": None,
+            "detail": "Storage bucket is not configured",
+        }
+    except Exception:
+        return {
+            "name": "Object Storage",
+            "status": "degraded",
+            "response_ms": None,
+            "detail": "Storage configuration check failed",
+        }
+
+
+async def collect_platform_health(db: AsyncSession) -> dict:
+    """Collect current dependency snapshots without deriving uptime claims."""
+    dependency_results = await asyncio.gather(
+        _check_db(db),
+        _check_redis(),
+        _check_celery(),
+        _check_stripe(),
+        _check_email(),
+        _check_object_storage(),
+    )
+    services = [
+        {
+            "name": "Command Center API",
+            "status": "healthy",
+            "response_ms": None,
+            "detail": "Current health request completed",
+        },
+        *dependency_results,
+    ]
+
+    statuses = {service["status"] for service in services}
+    if "down" in statuses:
+        overall = "down"
+    elif statuses.intersection({"degraded", "unverified"}):
+        overall = "degraded"
+    else:
+        overall = "healthy"
+
+    return {
+        "overall": overall,
+        "overall_status": overall,
+        "services": services,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/superadmin/operations/infrastructure/health", tags=["superadmin-operations"])
@@ -92,84 +160,13 @@ async def superadmin_infrastructure_health(
     _: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Aggregate health check for all platform services.
-    Returns overall_status, per-service details, uptime_pct, and recent incidents.
-    """
-    import asyncio
-    db_result, redis_result, celery_result, stripe_result, email_result = await asyncio.gather(
-        _check_db(db),
-        _check_redis(),
-        _check_celery(),
-        _check_stripe(),
-        _check_email(),
-    )
-
-    services = [db_result, redis_result, celery_result, stripe_result, email_result]
+    """Return current dependency snapshots; uptime requires a metrics backend."""
+    return await collect_platform_health(db)
 
     # Add API Gateway (self — always healthy if we're responding)
-    services.insert(0, {
-        "name": "API Gateway",
-        "status": "healthy",
-        "response_ms": 0,
-        "detail": "Self",
-        "uptime_pct": 99.99,
-    })
-
     # Add WebSocket service
-    services.append({
-        "name": "WebSocket Service",
-        "status": "healthy",
-        "response_ms": 1,
-        "detail": "socket.io active",
-    })
-
     # Add Object Storage (R2 / S3) — config check only
-    try:
-        from app.config import settings
-        r2 = getattr(settings, "R2_BUCKET", None) or getattr(settings, "AWS_S3_BUCKET", None)
-        services.append({
-            "name": "Object Storage (R2)",
-            "status": "healthy" if r2 else "degraded",
-            "response_ms": None,
-            "detail": f"Bucket: {r2}" if r2 else "Not configured",
-        })
-    except Exception:
-        services.append({"name": "Object Storage (R2)", "status": "degraded",
-                         "response_ms": None, "detail": "Config error"})
-
-    down_count = sum(1 for s in services if s["status"] == "down")
-    degraded_count = sum(1 for s in services if s["status"] == "degraded")
-
-    if down_count > 0:
-        overall = "down"
-    elif degraded_count > 0:
-        overall = "degraded"
-    else:
-        overall = "healthy"
-
     # Fetch recent incidents from system_settings JSON key
-    incidents: list = []
-    try:
-        from sqlalchemy import select
-        from app.modules.platform.models.platform_domain_tables import SystemSetting
-        row = (await db.execute(
-            select(SystemSetting).where(SystemSetting.key == "recent_incidents")
-        )).scalar_one_or_none()
-        if row and row.value:
-            import json
-            incidents = json.loads(row.value) if isinstance(row.value, str) else row.value
-    except Exception:
-        pass
-
-    return {
-        "overall": overall,
-        "overall_status": overall,
-        "uptime_pct": 99.97 if overall == "healthy" else (99.5 if overall == "degraded" else 98.0),
-        "services": services,
-        "incidents": incidents,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-    }
 
 
 @router.get("/superadmin/operations/infrastructure/resource-usage", tags=["superadmin-operations"])

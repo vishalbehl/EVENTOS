@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # Valid feature toggle keys — prevents arbitrary keys being stored
@@ -164,9 +164,9 @@ class GlobalSettingsResponse(BaseModel):
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
-    smtp_password: str = ""
+    smtp_password_configured: bool = False
     support_email: str = "support@eventos.com"
-    slack_webhook_url: str = ""
+    slack_webhook_configured: bool = False
     security_max_lockout_attempts: int = 5
     security_idle_timeout_min: int = 30
     security_enforce_2fa_super_admin: bool = False
@@ -177,7 +177,8 @@ class GlobalSettingsResponse(BaseModel):
 
 
 class GlobalSettingsUpdate(BaseModel):
-    timezone: str
+    reason: str = Field(min_length=8, max_length=1000)
+    timezone: Optional[str] = None
     maintenance_mode: Optional[bool] = None
     broadcast_enabled: Optional[bool] = None
     broadcast_message: Optional[str] = None
@@ -198,7 +199,9 @@ class GlobalSettingsUpdate(BaseModel):
 
     @field_validator("timezone")
     @classmethod
-    def validate_timezone(cls, v: str) -> str:
+    def validate_timezone(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
         try:
             from zoneinfo import ZoneInfo
             ZoneInfo(v)

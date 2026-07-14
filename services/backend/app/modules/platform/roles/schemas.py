@@ -20,6 +20,10 @@ class RoleUpdate(BaseModel):
     access_level: Optional[str] = Field(None, max_length=50)
 
 
+class DestructiveActionRequest(BaseModel):
+    reason: str = Field(..., min_length=8, max_length=1000)
+
+
 class RoleSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

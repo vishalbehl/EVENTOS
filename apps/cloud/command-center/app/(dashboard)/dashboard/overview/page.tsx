@@ -5,14 +5,13 @@ import { ChartCard } from "@/components/super-admin/ui/ChartCard"
 import { StatusBadge } from "@/components/super-admin/ui/StatusBadge"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
-import { Building2, Users, TrendingUp, Calendar, TicketCheck, BadgeIndianRupee, ChevronDown, AlertTriangle } from "lucide-react"
+import { Building2, Users, TrendingUp, Calendar, TicketCheck, BadgeIndianRupee, AlertTriangle } from "lucide-react"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 
 export default function SuperAdminDashboard() {
   const { data, isLoading, error, refetch } = useAdminDashboard()
   const router = useRouter()
-  const [healthExpanded, setHealthExpanded] = useState(false)
   const [extendTrialOrg, setExtendTrialOrg] = useState<string|null>(null)
 
   if (isLoading) return <DashboardSkeleton />
@@ -64,13 +63,12 @@ export default function SuperAdminDashboard() {
       {/* ── PLATFORM HEALTH BANNER ────────────────────── */}
       <div
         className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border
-          cursor-pointer transition-colors
           ${data.platform_status === 'healthy'
             ? 'bg-success-muted border-success/20'
             : data.platform_status === 'degraded'
             ? 'bg-warning-muted border-warning/20'
             : 'bg-danger-muted border-danger/20'}`}
-        onClick={() => setHealthExpanded(v => !v)}
+        role="status"
       >
         <span className={`w-2 h-2 rounded-full animate-pulse
           ${data.platform_status === 'healthy' ? 'bg-success'
@@ -81,21 +79,19 @@ export default function SuperAdminDashboard() {
             : data.platform_status === 'degraded' ? 'text-warning'
             : 'text-danger'}`}>
           {data.platform_status === 'healthy'
-            ? 'All systems operational'
+            ? 'Database and Redis checks passed'
             : data.platform_status === 'degraded'
-            ? `${data.services_degraded} service(s) degraded`
-            : 'Platform experiencing issues'}
+            ? `${data.services_degraded} of 2 core dependency checks degraded`
+            : 'Database and Redis checks failed'}
         </span>
         <span className="ml-auto text-xs text-secondary">
-          Last checked: just now
+          Checked {new Date(data.checked_at).toLocaleTimeString('en-IN')}
         </span>
-        <ChevronDown className={`h-4 w-4 text-secondary transition-transform
-          ${healthExpanded ? 'rotate-180' : ''}`} />
       </div>
 
       {/* ── ROW 1: KPI CARDS (5) ──────────────────────── */}
-      <div className="grid grid-cols-5 gap-4">
-        <div onClick={() => router.push('/organizations')} className="cursor-pointer">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <button type="button" onClick={() => router.push('/organizations')} className="text-left">
           <KpiCard
             title="Total Organizations"
             value={data.total_organizations.toLocaleString('en-IN')}
@@ -105,7 +101,7 @@ export default function SuperAdminDashboard() {
             icon={Building2}
             iconColor="brand"
           />
-        </div>
+        </button>
         <KpiCard
           title="Active Users (30d)"
           value={data.active_users_30d.toLocaleString('en-IN')}
@@ -115,7 +111,7 @@ export default function SuperAdminDashboard() {
           icon={Users}
           iconColor="info"
         />
-        <div onClick={() => router.push('/business/revenue')} className="cursor-pointer">
+        <button type="button" onClick={() => router.push('/business/revenue')} className="text-left">
           <KpiCard
             title="MRR"
             value={formatINR(data.mrr_current)}
@@ -125,7 +121,7 @@ export default function SuperAdminDashboard() {
             icon={TrendingUp}
             iconColor="success"
           />
-        </div>
+        </button>
         <KpiCard
           title="Events This Month"
           value={data.events_this_month.toLocaleString('en-IN')}
@@ -135,7 +131,7 @@ export default function SuperAdminDashboard() {
           icon={Calendar}
           iconColor="brand"
         />
-        <div onClick={() => router.push('/support/tickets')} className="cursor-pointer">
+        <button type="button" onClick={() => router.push('/support-center/tickets')} className="text-left">
           <KpiCard
             title="Open Tickets"
             value={data.open_tickets.toLocaleString('en-IN')}
@@ -145,11 +141,11 @@ export default function SuperAdminDashboard() {
             icon={TicketCheck}
             iconColor="warning"
           />
-        </div>
+        </button>
       </div>
 
       {/* ── ROW 2: KPI CARDS (4 more) ─────────────────── */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <KpiCard
           title="ARR"
           value={formatINR(data.arr_current)}
@@ -169,19 +165,13 @@ export default function SuperAdminDashboard() {
           delta={0} deltaLabel="" trend={[]}
           icon={TrendingUp} iconColor="danger"
         />
-        <KpiCard
-          title="NPS Score"
-          value={data.nps_score.toString()}
-          delta={0} deltaLabel="" trend={[]}
-          icon={Users} iconColor="info"
-        />
       </div>
 
       {/* ── ROW 3: MRR CHART + TOP ORGS ──────────────── */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <ChartCard
           title="MRR Overview (Last 7 Days)"
-          className="col-span-2"
+          className="lg:col-span-2"
           height={220}
         >
           <ResponsiveContainer width="100%" height={180}>
@@ -206,8 +196,8 @@ export default function SuperAdminDashboard() {
         <ChartCard title="Top 5 Orgs by MRR" height={220}>
           <div className="space-y-3 mt-2">
             {data.top_orgs_by_mrr.map((org, i) => (
-              <div key={org.org_id}
-                className="flex items-center gap-3 cursor-pointer hover:bg-surface-hover rounded-lg p-1.5 -mx-1.5"
+              <button key={org.org_id} type="button"
+                className="flex w-full items-center gap-3 rounded-lg p-1.5 -mx-1.5 text-left hover:bg-surface-hover"
                 onClick={() => router.push(`/organizations/${org.org_id}`)}>
                 <span className="text-sm text-tertiary font-mono w-4">
                   {i + 1}
@@ -225,7 +215,7 @@ export default function SuperAdminDashboard() {
                 <span className="text-sm font-mono text-success font-semibold">
                   {formatINR(org.mrr)}
                 </span>
-              </div>
+              </button>
             ))}
             {data.top_orgs_by_mrr.length === 0 && (
               <p className="text-sm text-tertiary text-center py-6">
@@ -237,7 +227,7 @@ export default function SuperAdminDashboard() {
       </div>
 
       {/* ── ROW 4: SUBSCRIPTION HEALTH + ACTIVITY + TRIALS ── */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Subscription Health Matrix */}
         <div className="bg-surface border border-border rounded-xl p-5">
           <h3 className="text-base font-semibold text-primary mb-4">
@@ -245,14 +235,7 @@ export default function SuperAdminDashboard() {
           </h3>
           <div className="grid grid-cols-2 gap-3">
             {Object.entries(STATUS_MAP).map(([key, { count, label, color }]) => (
-              <button
-                key={key}
-                onClick={() => router.push(
-                  `/business/subscription/add-ons?status=${key}`
-                )}
-                className="flex flex-col p-3 rounded-lg bg-surface-2 hover:bg-surface-hover
-                  transition-colors text-left"
-              >
+              <div key={key} className="flex flex-col rounded-lg bg-surface-2 p-3">
                 <span className={`text-2xl font-bold
                   ${color === 'success' ? 'text-success'
                     : color === 'warning' ? 'text-warning'
@@ -262,7 +245,7 @@ export default function SuperAdminDashboard() {
                   {count.toLocaleString('en-IN')}
                 </span>
                 <span className="text-xs text-secondary mt-1">{label}</span>
-              </button>
+              </div>
             ))}
           </div>
         </div>
@@ -274,14 +257,14 @@ export default function SuperAdminDashboard() {
               Recent Activity
             </h3>
             <button
-              onClick={() => router.push('/security/audit')}
+              onClick={() => router.push('/identity-security/audit-logs')}
               className="text-xs text-brand-primary hover:underline">
               View all →
             </button>
           </div>
           <div className="space-y-3 overflow-y-auto max-h-48">
-            {data.recent_activity.map((item, i) => (
-              <div key={i} className="flex items-start gap-3">
+            {data.recent_activity.map((item) => (
+              <div key={`${item.org_id}:${item.action}:${item.occurred_at}`} className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-full bg-brand-muted
                   flex items-center justify-center text-xs font-bold
                   text-brand-primary shrink-0 mt-0.5">
@@ -416,21 +399,21 @@ function DashboardSkeleton() {
   return (
     <PageContainer>
       <div className="h-10 bg-surface-2 animate-pulse rounded-xl" />
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {Array.from({length: 5}).map((_,i) => (
           <div key={i} className="h-28 bg-surface-2 animate-pulse rounded-xl" />
         ))}
       </div>
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {Array.from({length: 4}).map((_,i) => (
           <div key={i} className="h-28 bg-surface-2 animate-pulse rounded-xl" />
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 h-60 bg-surface-2 animate-pulse rounded-xl" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="h-60 bg-surface-2 animate-pulse rounded-xl lg:col-span-2" />
         <div className="h-60 bg-surface-2 animate-pulse rounded-xl" />
       </div>
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {Array.from({length: 3}).map((_,i) => (
           <div key={i} className="h-64 bg-surface-2 animate-pulse rounded-xl" />
         ))}

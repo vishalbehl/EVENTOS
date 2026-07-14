@@ -1,10 +1,10 @@
 # app/modules/platform/permissions/router.py
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app.dependencies import get_db, OrganizerOrAbove, SuperAdminOnly
-from app.modules.platform.permissions.schemas import PermissionResponse
+from app.modules.platform.permissions.schemas import PermissionResponse, RolePermissionToggleRequest
 from app.modules.platform.permissions.service import PermissionService
 from app.modules.platform.permissions.dependencies import get_permission_service
 from app.schemas.common import MessageResponse
@@ -43,7 +43,14 @@ async def toggle_role_permission(
     role_id: uuid.UUID,
     permission_id: uuid.UUID,
     current_user: OrganizerOrAbove,
+    payload: RolePermissionToggleRequest = Body(...),
     service: PermissionService = Depends(get_permission_service)
 ):
-    msg = await service.toggle_role_permission(role_id, permission_id)
+    msg = await service.toggle_role_permission(
+        org_id=current_user.organization_id,
+        actor_id=current_user.id,
+        role_id=role_id,
+        permission_id=permission_id,
+        reason=payload.reason,
+    )
     return MessageResponse(message=msg)

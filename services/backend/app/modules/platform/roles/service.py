@@ -13,6 +13,7 @@ from app.modules.platform.roles.repository import RoleRepository
 from app.modules.platform.roles.schemas import RoleCreate, RoleUpdate, UserAssignmentCreate
 from app.modules.platform.departments.repository import DepartmentRepository
 from app.modules.platform.teams.repository import TeamRepository
+from app.modules.audit.models.audit_log import AuditLog
 
 
 class RoleService:
@@ -122,8 +123,23 @@ class RoleService:
         await self.db.commit()
         return role
 
-    async def delete_role(self, org_id: uuid.UUID, id: uuid.UUID, deleter_id: uuid.UUID) -> None:
+    async def delete_role(self, org_id: uuid.UUID, id: uuid.UUID, deleter_id: uuid.UUID, reason: str) -> None:
         role = await self.get_role(org_id, id)
+        self.db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=deleter_id,
+            resource_type="platform_role",
+            resource_id=role.id,
+            action_type="PLATFORM_ROLE_DELETED",
+            old_state={
+                "name": role.name,
+                "code": role.code,
+                "department_id": str(role.department_id) if role.department_id else None,
+                "access_level": role.access_level,
+            },
+            change_diff={"reason": reason},
+            is_sensitive=True,
+        ))
         role.deleted_at = datetime.now(timezone.utc)
         role.deleted_by = deleter_id
         await self.repository.save_role(role)

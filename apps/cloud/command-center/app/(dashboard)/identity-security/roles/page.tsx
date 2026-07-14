@@ -294,10 +294,14 @@ export default function PlatformRolesPage() {
         requireReason
         resourceName={deleteTarget?.name}
         pending={deleteRole.isPending}
-        onConfirm={async () => {
+        onConfirm={async (reason) => {
           if (!deleteTarget) return;
+          if (!reason) {
+            toast.error("A reason is required to delete a platform role.");
+            return;
+          }
           try {
-            await deleteRole.mutateAsync(deleteTarget.id);
+            await deleteRole.mutateAsync({ roleId: deleteTarget.id, reason });
             toast.success("Role deleted.");
             setDeleteTarget(null);
           } catch (error: any) {

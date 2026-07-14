@@ -5,6 +5,7 @@ import { KeyRound, RefreshCw, Search, ShieldCheck, Sparkles, ToggleLeft } from "
 import { toast } from "sonner";
 
 import { RecoverableError } from "@/components/super-admin/ui/AsyncState";
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction";
 import { MetricRow } from "@/components/super-admin/ui/MetricRow";
 import { PageContainer } from "@/components/super-admin/ui/PageContainer";
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader";
@@ -33,6 +34,10 @@ function groupPermissions(permissions: PlatformPermission[]) {
 export default function PlatformPermissionsPage() {
   const [search, setSearch] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>();
+  const [pendingToggle, setPendingToggle] = useState<{
+    permission: PlatformPermission;
+    enabled: boolean;
+  } | null>(null);
 
   const rolesQuery = usePlatformRoles({ limit: 100 });
   const permissionsQuery = usePlatformPermissions();
@@ -241,15 +246,7 @@ export default function PlatformPermissionsPage() {
                             size="sm"
                             variant={enabled ? "primary" : "outline"}
                             disabled={!selectedRoleId || togglePermission.isPending || rolePermissionsQuery.isLoading}
-                            onClick={async () => {
-                              if (!selectedRoleId) return;
-                              try {
-                                await togglePermission.mutateAsync({ roleId: selectedRoleId, permissionId: permission.id });
-                                toast.success(enabled ? "Permission removed from role." : "Permission added to role.");
-                              } catch (toggleError: any) {
-                                toast.error(toggleError?.message || "Could not update role permission.");
-                              }
-                            }}
+                            onClick={() => setPendingToggle({ permission, enabled })}
                           >
                             {enabled ? "Enabled" : "Disabled"}
                           </Button>
@@ -263,6 +260,38 @@ export default function PlatformPermissionsPage() {
           </section>
         </div>
       )}
+      <ConfirmDestructiveAction
+        open={Boolean(pendingToggle)}
+        onOpenChange={(open) => !open && setPendingToggle(null)}
+        title={pendingToggle?.enabled ? "Remove role permission?" : "Add role permission?"}
+        description={
+          pendingToggle?.enabled
+            ? "This changes the selected role's effective access. Existing users with this role may immediately lose the permission."
+            : "This changes the selected role's effective access. Existing users with this role may immediately gain the permission."
+        }
+        confirmLabel={pendingToggle?.enabled ? "Remove permission" : "Add permission"}
+        requireReason
+        resourceName={pendingToggle?.permission.code}
+        pending={togglePermission.isPending}
+        onConfirm={async (reason) => {
+          if (!selectedRoleId || !pendingToggle) return;
+          if (!reason) {
+            toast.error("A reason is required to change role permissions.");
+            return;
+          }
+          try {
+            await togglePermission.mutateAsync({
+              roleId: selectedRoleId,
+              permissionId: pendingToggle.permission.id,
+              reason,
+            });
+            toast.success(pendingToggle.enabled ? "Permission removed from role." : "Permission added to role.");
+            setPendingToggle(null);
+          } catch (toggleError: any) {
+            toast.error(toggleError?.message || "Could not update role permission.");
+          }
+        }}
+      />
     </PageContainer>
   );
 }

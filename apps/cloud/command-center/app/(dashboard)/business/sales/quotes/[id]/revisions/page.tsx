@@ -1,287 +1,184 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useParams, useRouter } from "next/navigation"
-import { 
-  useQuoteDetail, useQuoteRevisions, useCreateQuoteRevision 
-} from "@/services/super-admin-service"
-import { PageContainer } from "@/components/super-admin/ui/PageContainer"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { 
-  ArrowLeft, Plus, GitMerge, FileText, CheckCircle2, 
-  ChevronRight, Calendar, User, ArrowDown, ArrowUp 
-} from "lucide-react"
-import { formatIST, formatLakhRupee } from "@/lib/formatters"
-import { toast } from "sonner"
+import { useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, CheckCircle2, FileText, Plus, ShieldAlert, User } from "lucide-react";
+import { useCreateQuoteRevision, useQuoteDetail, useQuoteRevisions } from "@/services/super-admin-service";
+import { PageContainer } from "@/components/super-admin/ui/PageContainer";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { formatIST, formatLakhRupee } from "@/lib/formatters";
 
 export default function QuoteRevisionsPage() {
-  const router = useRouter()
-  const params = useParams()
-  const quoteId = params.id as string
+  const router = useRouter();
+  const params = useParams();
+  const quoteId = params.id as string;
 
-  // Fetch API
-  const { data: quote } = useQuoteDetail(quoteId)
-  const { data: revisions = [], refetch: refetchRevisions } = useQuoteRevisions(quoteId)
-  const createRevisionMutation = useCreateQuoteRevision(quoteId)
+  const { data: quote } = useQuoteDetail(quoteId);
+  const { data: revisions = [], refetch: refetchRevisions } = useQuoteRevisions(quoteId);
+  const createRevisionMutation = useCreateQuoteRevision(quoteId);
 
-  // Version selection
-  const [selectedVerId, setSelectedVerId] = useState<string>("")
-  const [verX, setVerX] = useState<string>("")
-  const [verY, setVerY] = useState<string>("")
-  const [compareMode, setCompareMode] = useState(false)
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string>("");
+  const [noteInput, setNoteInput] = useState("");
 
-  // New Revision Notes State
-  const [noteInput, setNoteInput] = useState("")
-
-  const activeRevision = revisions.find((r: any) => r.id === selectedVerId) || revisions[0]
+  const activeRevision = revisions.find((revision: any) => revision.id === selectedRevisionId) || revisions[0];
 
   const handleCreateRevision = async () => {
     await createRevisionMutation.mutateAsync({
-      notes: [noteInput || "Regular quota adjustment revision."]
-    })
-    setNoteInput("")
-    refetchRevisions()
-  }
-
-  // Mock comparison list mapping category costs
-  const comparisonData = [
-    { category: "Hardware", valX: 120000, valY: 105000 },
-    { category: "Staffing", valX: 80000, valY: 95000 },
-    { category: "Logistics", valX: 15000, valY: 15000 }
-  ]
+      notes: [noteInput || "Revision created without additional notes."],
+    });
+    setNoteInput("");
+    refetchRevisions();
+  };
 
   return (
     <PageContainer>
-      {/* Header bar */}
-      <div className="flex flex-col gap-3 mb-6">
-        <div className="flex items-center gap-2 text-xs text-tertiary">
-          <span className="hover:text-primary cursor-pointer" onClick={() => router.push("/service-requests")}>Service Requests</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-primary font-extrabold uppercase tracking-wide">{quote?.quote_number || "QTE-..."}</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-primary font-extrabold uppercase tracking-wide">Revisions</span>
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-2">
+          <Button size="sm" variant="ghost" className="h-8 gap-2 px-0 text-xs text-secondary" onClick={() => router.back()}>
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Button>
+          <div>
+            <h1 className="text-xl font-black text-primary">Quote Revision Manager</h1>
+            <p className="text-xs text-tertiary">
+              Real revision history for {quote?.quote_number || quoteId}. Fabricated comparison data has been removed.
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div>
-            <h1 className="text-xl font-black text-primary flex items-center gap-2">
-              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={() => router.back()}>
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              Quote Revision Manager
-            </h1>
-            <p className="text-[10px] text-tertiary">Trace quotations version progression and audit category deltas</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() => setCompareMode(!compareMode)}
-              variant="outline"
-              size="sm"
-              className={`text-xs h-9 gap-1 text-secondary border-border bg-surface-2 ${compareMode ? "border-brand-primary" : ""}`}
-            >
-              <GitMerge className="h-3.5 w-3.5" /> Compare Revisions
-            </Button>
-            <Button
-              onClick={handleCreateRevision}
-              className="bg-brand-primary text-white text-xs font-bold h-9 px-4 rounded-xl"
-            >
-              <Plus className="h-3.5 w-3.5" /> Create Revision
-            </Button>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1 border-border bg-surface-2 text-xs text-secondary"
+            title="Revision comparison requires persisted delta snapshots before it can be enabled."
+          >
+            <ShieldAlert className="h-3.5 w-3.5" />
+            Compare Unavailable
+          </Button>
+          <Button
+            onClick={handleCreateRevision}
+            disabled={createRevisionMutation.isPending}
+            className="h-9 gap-1 rounded-xl bg-brand-primary px-4 text-xs font-bold text-white"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {createRevisionMutation.isPending ? "Creating..." : "Create Revision"}
+          </Button>
         </div>
       </div>
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        
-        {/* Left Panel: Vertical Version Card List */}
-        <div className="xl:col-span-4 space-y-4">
-          <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block">
-            Revision Versions List
-          </span>
+      <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
+        <div className="space-y-4 xl:col-span-4">
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-secondary">Revision versions</span>
 
           <div className="space-y-3">
-            {revisions.map((rev: any) => {
-              const isActive = rev.id === selectedVerId || (!selectedVerId && rev.id === revisions[0]?.id)
+            {revisions.map((revision: any) => {
+              const isActive = revision.id === selectedRevisionId || (!selectedRevisionId && revision.id === revisions[0]?.id);
               return (
                 <Card
-                  key={rev.id}
-                  onClick={() => setSelectedVerId(rev.id)}
-                  className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between h-28
-                    ${isActive ? "bg-[var(--bg-surface)] border-brand-primary/50 shadow-md" : "bg-surface-2 border-border/40 hover:border-brand-primary/30"}`}
+                  key={revision.id}
+                  onClick={() => setSelectedRevisionId(revision.id)}
+                  className={`flex h-28 cursor-pointer flex-col justify-between rounded-2xl border p-4 transition-all ${
+                    isActive ? "border-brand-primary/50 bg-[var(--bg-surface)] shadow-md" : "border-border/40 bg-surface-2 hover:border-brand-primary/30"
+                  }`}
                 >
-                  <div className="flex justify-between items-start">
-                    <span className="text-xs font-black text-primary">Version {rev.version_number}</span>
-                    <Badge className="bg-success/15 border-success/30 text-success border text-[8px] font-black uppercase">
-                      {rev.status || "REVISED"}
+                  <div className="flex items-start justify-between">
+                    <span className="text-xs font-black text-primary">Version {revision.version_number}</span>
+                    <Badge className="border border-success/30 bg-success/15 text-[8px] font-black uppercase text-success">
+                      {revision.status || "REVISED"}
                     </Badge>
                   </div>
 
-                  <div className="flex justify-between items-baseline pt-2">
-                    <span className="text-sm font-black font-mono text-primary">{formatLakhRupee(rev.total_amount)}</span>
-                    <span className="text-[9px] text-tertiary font-bold flex items-center gap-1">
-                      <User className="h-3 w-3" /> Super Admin
+                  <div className="flex items-baseline justify-between pt-2">
+                    <span className="font-mono text-sm font-black text-primary">{formatLakhRupee(revision.total_amount)}</span>
+                    <span className="flex items-center gap-1 text-[9px] font-bold text-tertiary">
+                      <User className="h-3 w-3" />
+                      Super Admin
                     </span>
                   </div>
 
-                  <span className="text-[8px] text-tertiary block font-mono border-t border-border/20 pt-1.5 mt-1.5">
-                    Created: {formatIST(rev.created_at)}
+                  <span className="mt-1.5 block border-t border-border/20 pt-1.5 font-mono text-[8px] text-tertiary">
+                    Created: {formatIST(revision.created_at)}
                   </span>
                 </Card>
-              )
+              );
             })}
 
             {revisions.length === 0 && (
-              <span className="text-[10px] text-tertiary block text-center py-8">No previous revisions stored.</span>
+              <Card className="rounded-2xl border border-border/50 bg-surface p-8 text-center text-xs text-secondary">
+                No revisions are stored for this quote yet.
+              </Card>
             )}
           </div>
         </div>
 
-        {/* Right Panel: Compare Revisions Mode OR Notes View */}
-        <div className="xl:col-span-8 space-y-6">
-          
-          {compareMode ? (
-            /* Compare Revisions Panel */
-            <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-6 space-y-6">
-              <div className="flex justify-between items-center border-b border-border pb-3">
-                <span className="text-xs font-bold text-primary">Revisions Cost Comparison delta</span>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={verX}
-                    onChange={e => setVerX(e.target.value)}
-                    className="bg-surface-2 border border-border text-xs rounded-xl px-3 py-1 text-primary outline-none"
-                  >
-                    <option value="">Compare Version X</option>
-                    {revisions.map((r: any) => (
-                      <option key={r.id} value={r.version_number}>Version {r.version_number}</option>
-                    ))}
-                  </select>
-                  <span className="text-xs text-tertiary font-bold">vs</span>
-                  <select
-                    value={verY}
-                    onChange={e => setVerY(e.target.value)}
-                    className="bg-surface-2 border border-border text-xs rounded-xl px-3 py-1 text-primary outline-none"
-                  >
-                    <option value="">Compare Version Y</option>
-                    {revisions.map((r: any) => (
-                      <option key={r.id} value={r.version_number}>Version {r.version_number}</option>
-                    ))}
-                  </select>
-                </div>
+        <div className="space-y-6 xl:col-span-8">
+          <Card className="rounded-3xl border border-amber-500/20 bg-amber-500/5 p-5">
+            <div className="flex gap-3 text-xs text-secondary">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+              <div className="space-y-1">
+                <p className="font-black uppercase tracking-[0.18em] text-amber-300">Comparison disabled</p>
+                <p>
+                  The previous comparison table used fabricated category totals. Re-enable this only after the backend exposes persisted revision line-item
+                  deltas, source snapshots, authorization, and audit evidence.
+                </p>
               </div>
-
-              {/* Comparison table */}
-              <div className="overflow-hidden border border-border/40 rounded-2xl text-xs font-semibold text-secondary">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-surface-2 border-b border-border text-secondary text-[10px]">
-                      <th className="p-3">Category</th>
-                      <th className="p-3 text-right">Ver {verX || "X"} (INR)</th>
-                      <th className="p-3 text-right">Ver {verY || "Y"} (INR)</th>
-                      <th className="p-3 text-right">Difference</th>
-                      <th className="p-3 text-center">Change %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {comparisonData.map((item, idx) => {
-                      const diff = item.valY - item.valX
-                      const pct = item.valX > 0 ? (diff / item.valX) * 100 : 0
-                      const isIncrease = diff > 0
-                      return (
-                        <tr key={idx} className="border-b border-border/20 text-secondary hover:bg-surface-hover/10">
-                          <td className="p-3 text-primary">{item.category}</td>
-                          <td className="p-3 text-right font-mono text-tertiary">₹{item.valX.toLocaleString()}</td>
-                          <td className="p-3 text-right font-mono text-primary">₹{item.valY.toLocaleString()}</td>
-                          <td className={`p-3 text-right font-mono font-bold ${isIncrease ? "text-danger" : "text-success"}`}>
-                            {isIncrease ? "+" : ""}₹{diff.toLocaleString()}
-                          </td>
-                          <td className="p-3 text-center">
-                            <Badge className={`text-[8px] font-black border ${isIncrease ? "bg-danger/10 text-danger border-danger/20" : "bg-success/10 text-success border-success/20"}`}>
-                              {isIncrease ? <ArrowUp className="h-2.5 w-2.5 inline mr-0.5" /> : <ArrowDown className="h-2.5 w-2.5 inline mr-0.5" />}
-                              {Math.abs(pct).toFixed(1)}%
-                            </Badge>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          ) : (
-            /* Selected Version Detail: Notes & Inputs */
-            <div className="space-y-6">
-              
-              {/* Revision Notes List */}
-              <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-5 space-y-4">
-                <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block border-b border-border/40 pb-2">
-                  Revision Changelog Notes: Version {activeRevision?.version_number}
-                </span>
-
-                <div className="space-y-2">
-                  {activeRevision?.notes?.map((note: string, idx: number) => (
-                    <div key={idx} className="flex gap-2 items-start text-xs font-semibold text-secondary">
-                      <FileText className="h-4 w-4 text-brand-primary shrink-0 mt-0.5" />
-                      <span>{note}</span>
-                    </div>
-                  ))}
-                  {(!activeRevision?.notes || activeRevision?.notes?.length === 0) && (
-                    <span className="text-[9px] text-tertiary block">No notes configured for this version revision.</span>
-                  )}
-                </div>
-              </Card>
-
-              {/* Create new revision notes editor */}
-              <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-5 space-y-3">
-                <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block">
-                  Add Revision Notes
-                </span>
-                <textarea
-                  value={noteInput}
-                  onChange={e => setNoteInput(e.target.value)}
-                  placeholder="Summarize changes for the new version revision..."
-                  className="w-full h-20 bg-surface-2 border border-border rounded-2xl p-3 text-xs text-primary outline-none focus:border-brand-primary"
-                />
-              </Card>
-
             </div>
-          )}
+          </Card>
 
+          <Card className="space-y-4 rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-5">
+            <span className="block border-b border-border/40 pb-2 text-[10px] font-extrabold uppercase tracking-wider text-secondary">
+              Revision notes: Version {activeRevision?.version_number || "Not selected"}
+            </span>
+
+            <div className="space-y-2">
+              {activeRevision?.notes?.map((note: string, index: number) => (
+                <div key={`${activeRevision.id}-${index}`} className="flex items-start gap-2 text-xs font-semibold text-secondary">
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-brand-primary" />
+                  <span>{note}</span>
+                </div>
+              ))}
+              {(!activeRevision?.notes || activeRevision.notes.length === 0) && (
+                <span className="block text-[9px] text-tertiary">No notes configured for this revision.</span>
+              )}
+            </div>
+          </Card>
+
+          <Card className="space-y-3 rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-5">
+            <span className="block text-[10px] font-extrabold uppercase tracking-wider text-secondary">Add revision notes</span>
+            <textarea
+              value={noteInput}
+              onChange={(event) => setNoteInput(event.target.value)}
+              placeholder="Summarize changes for the new revision..."
+              className="h-20 w-full rounded-2xl border border-border bg-surface-2 p-3 text-xs text-primary outline-none focus:border-brand-primary"
+            />
+          </Card>
         </div>
-
       </div>
 
-      {/* Revision History Timeline (Bottom) */}
-      <Card className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl p-6 mt-8">
-        <span className="text-[10px] uppercase tracking-wider font-extrabold text-secondary block mb-4 border-b border-border/40 pb-2">
-          Revision Dispatch Timeline History
+      <Card className="mt-8 rounded-3xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-6">
+        <span className="mb-4 block border-b border-border/40 pb-2 text-[10px] font-extrabold uppercase tracking-wider text-secondary">
+          Revision timeline
         </span>
 
         <div className="space-y-5">
-          {revisions.map((rev: any, idx: number) => (
-            <div key={idx} className="flex gap-3 text-xs font-semibold text-secondary relative items-start">
-              {idx < revisions.length - 1 && (
-                <div className="absolute left-[13px] top-[26px] bottom-[-26px] w-[2px] bg-border/40" />
-              )}
-              <div className="h-7 w-7 rounded-full bg-brand-primary/10 border border-brand-primary/20 text-brand-primary flex items-center justify-center shrink-0">
+          {revisions.map((revision: any, index: number) => (
+            <div key={revision.id} className="relative flex items-start gap-3 text-xs font-semibold text-secondary">
+              {index < revisions.length - 1 && <div className="absolute bottom-[-26px] left-[13px] top-[26px] w-[2px] bg-border/40" />}
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-primary/20 bg-brand-primary/10 text-brand-primary">
                 <CheckCircle2 className="h-4 w-4" />
               </div>
               <div className="space-y-1">
-                <p className="text-primary font-bold">
-                  Version {rev.version_number} generated to status '{rev.status || "REVISED"}'
-                </p>
-                <span className="text-[9px] text-tertiary block font-mono">
-                  {formatIST(rev.created_at)} — Super Admin
-                </span>
+                <p className="font-bold text-primary">Version {revision.version_number} moved to {revision.status || "REVISED"}</p>
+                <span className="block font-mono text-[9px] text-tertiary">{formatIST(revision.created_at)}</span>
               </div>
             </div>
           ))}
         </div>
       </Card>
     </PageContainer>
-  )
+  );
 }

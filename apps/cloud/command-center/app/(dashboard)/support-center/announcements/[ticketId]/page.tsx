@@ -68,7 +68,7 @@ export default function AnnouncementDetailPage() {
         breadcrumb={["Console", "Support", "Announcements", announcementId.slice(0, 8)]}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push("/support/announcements")}>
+            <Button variant="outline" size="sm" onClick={() => router.push("/support-center/announcements")}>
               <ArrowLeft className="mr-2 size-4" />
               Back
             </Button>
@@ -172,11 +172,15 @@ export default function AnnouncementDetailPage() {
         requireReason
         resourceName={announcementQuery.data?.title}
         pending={deleteAnnouncement.isPending}
-        onConfirm={async () => {
+        onConfirm={async (reason) => {
+          if (!reason) {
+            toast.error("A reason is required to delete an announcement.");
+            return;
+          }
           try {
-            await deleteAnnouncement.mutateAsync(announcementId);
+            await deleteAnnouncement.mutateAsync({ announcementId, reason });
             toast.success("Announcement deleted.");
-            router.push("/support/announcements");
+            router.push("/support-center/announcements");
           } catch (error: any) {
             toast.error(error?.message || "Could not delete announcement.");
           }

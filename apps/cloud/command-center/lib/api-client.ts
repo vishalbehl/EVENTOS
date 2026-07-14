@@ -113,7 +113,9 @@ class ApiClient {
   private initializeRequestInterceptor() {
     this.client.interceptors.request.use((config) => {
       const { accessToken, updateActivity } = useAuthStore.getState();
-      if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
+      if (accessToken && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${accessToken}`;
+      }
 
       const requestId = String(config.headers["X-Request-ID"] || newRequestId());
       config.headers["X-Request-ID"] = requestId;

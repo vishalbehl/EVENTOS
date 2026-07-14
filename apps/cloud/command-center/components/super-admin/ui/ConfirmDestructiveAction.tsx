@@ -25,6 +25,9 @@ interface ConfirmDestructiveActionProps {
   requireReason?: boolean;
   pending?: boolean;
   resourceName?: string;
+  minimumReasonLength?: number;
+  destructive?: boolean;
+  cancelLabel?: string;
 }
 
 export function ConfirmDestructiveAction({
@@ -37,10 +40,13 @@ export function ConfirmDestructiveAction({
   requireReason = false,
   pending = false,
   resourceName,
+  minimumReasonLength = 8,
+  destructive = true,
+  cancelLabel = "Keep resource",
 }: ConfirmDestructiveActionProps) {
   const [reason, setReason] = useState("");
   const reasonId = useId();
-  const valid = !requireReason || reason.trim().length >= 8;
+  const valid = !requireReason || reason.trim().length >= minimumReasonLength;
 
   useEffect(() => {
     if (!open) setReason("");
@@ -48,9 +54,9 @@ export function ConfirmDestructiveAction({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-      <DialogContent className="border-[var(--status-danger)]/25 bg-[var(--bg-surface)] sm:max-w-md">
+      <DialogContent className={`${destructive ? "border-[var(--status-danger)]/25" : "border-[var(--brand-primary)]/25"} bg-[var(--bg-surface)] sm:max-w-md`}>
         <DialogHeader>
-          <span className="mb-2 grid size-10 place-items-center rounded-xl bg-[var(--status-danger-muted)] text-[var(--status-danger)]">
+          <span className={`mb-2 grid size-10 place-items-center rounded-xl ${destructive ? "bg-[var(--status-danger-muted)] text-[var(--status-danger)]" : "bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"}`}>
             <AlertTriangle aria-hidden className="size-5" />
           </span>
           <DialogTitle>{title}</DialogTitle>
@@ -71,18 +77,18 @@ export function ConfirmDestructiveAction({
               disabled={pending}
             />
             <p id={`${reasonId}-help`} className="text-xs text-[var(--text-tertiary)]">
-              Enter at least 8 characters. The reason will be recorded in the audit history.
+              Enter at least {minimumReasonLength} characters. The reason will be recorded in the audit history.
             </p>
           </div>
         )}
 
         <DialogFooter className="gap-2 sm:space-x-0">
           <Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>
-            Keep resource
+            {cancelLabel}
           </Button>
           <Button
             type="button"
-            variant="destructive"
+            variant={destructive ? "destructive" : "primary"}
             disabled={!valid || pending}
             onClick={() => void onConfirm(reason.trim() || undefined)}
           >

@@ -190,7 +190,7 @@ export default function SupportKanbanPage() {
                     <motion.div
                       whileHover={{ y: -2 }}
                       key={ticket.id}
-                      onClick={() => router.push(`/support/tickets/${ticket.id}`)}
+                      onClick={() => router.push(`/support-center/tickets/${ticket.id}`)}
                       className="rounded-xl border border-border bg-surface-2 hover:border-border/80 p-3.5 transition-all cursor-pointer relative group flex flex-col gap-2.5 shadow-sm"
                     >
                       <div className="flex justify-between items-start gap-2">

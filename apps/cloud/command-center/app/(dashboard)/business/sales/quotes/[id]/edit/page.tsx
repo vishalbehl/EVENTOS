@@ -1,11 +1,11 @@
 "use client"
 
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
+
 import QuoteForm from "@/components/quotes/QuoteForm"
 
 export default function EditQuotePage() {
-  const params = useParams()
-  const id = params.id as string
-
-  return <QuoteForm quoteId={id} />
+  const params = useParams<{ id: string }>()
+  const searchParams = useSearchParams()
+  return <QuoteForm quoteId={params.id} organizationId={searchParams.get("organization_id") || undefined} />
 }

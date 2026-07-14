@@ -9,6 +9,7 @@ from app.modules.platform.permissions.models import PlatformPermission, Platform
 from app.modules.platform.permissions.repository import PermissionRepository
 from app.modules.platform.permissions.constants import DEFAULT_PERMISSIONS
 from app.modules.platform.roles.models import DepartmentRole, UserAssignment
+from app.modules.audit.models.audit_log import AuditLog
 
 
 class PermissionService:
@@ -44,19 +45,56 @@ class PermissionService:
         perms = await self.repository.get_permissions_for_role(role_id)
         return [p.code for p in perms]
 
-    async def toggle_role_permission(self, role_id: uuid.UUID, permission_id: uuid.UUID) -> str:
+    async def toggle_role_permission(
+        self,
+        org_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        role_id: uuid.UUID,
+        permission_id: uuid.UUID,
+        reason: str,
+    ) -> str:
+        from fastapi import HTTPException
+
+        role = await self.db.get(DepartmentRole, role_id)
+        if not role or role.organization_id != org_id or role.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Role not found.")
+
         perm = await self.repository.get_permission_by_id(permission_id)
         if not perm:
-            from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Permission not found.")
 
         existing = await self.repository.get_role_permission(role_id, permission_id)
         if existing:
             await self.repository.remove_role_permission(role_id, permission_id)
+            action_type = "ROLE_PERMISSION_REMOVED"
             msg = "Permission removed from role"
         else:
             await self.repository.add_role_permission(role_id, permission_id)
+            action_type = "ROLE_PERMISSION_ADDED"
             msg = "Permission added to role"
+        self.db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=actor_id,
+            resource_type="platform_role_permission",
+            resource_id=role_id,
+            action_type=action_type,
+            old_state={
+                "role_id": str(role_id),
+                "role_code": role.code,
+                "permission_id": str(permission_id),
+                "permission_code": perm.code,
+                "was_assigned": bool(existing),
+            },
+            new_state={
+                "role_id": str(role_id),
+                "role_code": role.code,
+                "permission_id": str(permission_id),
+                "permission_code": perm.code,
+                "is_assigned": not bool(existing),
+            },
+            change_diff={"reason": reason},
+            is_sensitive=True,
+        ))
         await self.db.commit()
         return msg
 

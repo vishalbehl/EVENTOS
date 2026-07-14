@@ -1,14 +1,14 @@
 # app/modules/platform/roles/router.py
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_db, OrganizerOrAbove, get_current_user
 from app.modules.identity.models.user import User
 from app.modules.platform.roles.schemas import (
     RoleCreate, RoleUpdate, RoleResponse, RoleSummary,
-    UserAssignmentCreate, UserAssignmentResponse
+    UserAssignmentCreate, UserAssignmentResponse, DestructiveActionRequest
 )
 from app.modules.platform.roles.service import RoleService
 from app.modules.platform.roles.dependencies import get_role_service
@@ -165,9 +165,11 @@ async def update_role(
 async def delete_role(
     id: uuid.UUID,
     current_user: OrganizerOrAbove,
+    payload: DestructiveActionRequest = Body(...),
     service: RoleService = Depends(get_role_service)
 ):
-    await service.delete_role(current_user.organization_id, id, current_user.id)
+    await service.delete_role(current_user.organization_id, id, current_user.id, payload.reason)
+    return MessageResponse(message="Role deleted.")
     return MessageResponse(message="Role deleted successfully.")
 
 

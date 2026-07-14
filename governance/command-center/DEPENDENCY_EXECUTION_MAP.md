@@ -20,8 +20,11 @@ Phase 0 inventory
 |---|---|
 | Any administrative mutation | authenticated API client, permission contract, audit insertion and error model |
 | Commercial workflow | canonical pricing snapshots and idempotency |
+| CRM administration | platform-support tenant access policy, typed pagination, lifecycle permissions and audit |
 | Event entitlement UI | grant, consumption, activation and current snapshot APIs |
+| Cross-tenant billing intelligence | reviewed privileged read service, RLS-safe role model, cursor contract and access audit |
 | Finance mutation | internal ledger, verified provider event and reconciliation state |
+| Report download | durable export record, server artifact, object authorization, expiry and download audit |
 | Operations action | durable job state, authorization and retry/cancellation policy |
 | Provider integration | secret lifecycle, webhook verification and redacted logs |
 | Campaign dispatch | consent/suppression decision and durable job |
@@ -30,3 +33,16 @@ Phase 0 inventory
 | Production release | tenant isolation, accessibility, security and rollback gates |
 
 Work may run in parallel only after its shared dependencies have passed their exit gates.
+
+## Current Critical Path
+
+```text
+Durable report export and authorized download [implemented]
+  -> live broker/object-storage E2E evidence
+Platform-support tenant read contract [implemented and isolation-tested]
+Typed CRM and billing cursor pagination [implemented and tested]
+CRM core record lifecycle [implemented and tested]
+  -> CRM activities, tasks, notes and conversion
+  -> billing and finance lifecycle mutations
+  -> Phase 4 end-to-end journeys
+```

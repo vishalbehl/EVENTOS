@@ -55,7 +55,6 @@ export interface DashboardMetrics {
   open_tickets: number
   revenue_today_inr: number
   churn_rate: number
-  nps_score: number
   orgs_trend: number[]
   users_trend: number[]
   mrr_trend: number[]
@@ -72,6 +71,7 @@ export interface DashboardMetrics {
   top_orgs_by_mrr: TopOrgByMrr[]
   platform_status: 'healthy' | 'degraded' | 'down'
   services_degraded: number
+  checked_at: string
 }
 
 export interface AdminOrg {
@@ -382,10 +382,38 @@ export interface JobExecution {
   id: string;
   job_id: string;
   status: "queued" | "running" | "success" | "failed" | "retrying";
+  raw_status?: string;
   started_at?: string;
   finished_at?: string;
   duration_seconds?: number;
   task_name?: string;
+  queue?: string;
+  source?: string;
+  error_message?: string | null;
+}
+
+export type CommercialReportType =
+  | "hardware_catalog"
+  | "staff_catalog"
+  | "pricing_simulations"
+  | "pricing_rules";
+
+export interface CommercialExport {
+  export_id: string;
+  organization_id: string;
+  report_type: CommercialReportType;
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+  file_format: "xlsx" | "csv" | "pdf";
+  created_at: string;
+  completed_at?: string | null;
+  expires_at?: string | null;
+  failure_reason?: string | null;
+}
+
+export interface CommercialExportDownload {
+  download_url: string;
+  filename: string;
+  expires_in: number;
 }
 
 export interface SecurityLog {
@@ -408,6 +436,7 @@ export interface SupportTicket {
   id: string;
   organization_id: string;
   subject: string;
+  description?: string;
   status: string;
   priority: string;
   created_at: string;
@@ -442,9 +471,9 @@ export interface GlobalSettings {
   smtp_host: string;
   smtp_port: number;
   smtp_user: string;
-  smtp_password: string;
+  smtp_password_configured: boolean;
   support_email: string;
-  slack_webhook_url: string;
+  slack_webhook_configured: boolean;
   security_max_lockout_attempts: number;
   security_idle_timeout_min: number;
   security_enforce_2fa_super_admin: boolean;
@@ -465,14 +494,51 @@ export interface TicketComment {
 }
 
 export interface ServiceHealth {
-  service: string;
-  status: string;
-  latency_ms?: number;
-  pool_usage_pct?: number;
-  memory_usage_pct?: number;
-  active_workers?: number;
-  pending_tasks?: number;
-  storage_usage_pct?: number;
+  name: string;
+  status: 'healthy' | 'degraded' | 'down' | 'unverified';
+  response_ms: number | null;
+  detail: string;
+  worker_count?: number;
+}
+
+export interface PlatformHealth {
+  overall: 'healthy' | 'degraded' | 'down';
+  overall_status: 'healthy' | 'degraded' | 'down';
+  services: ServiceHealth[];
+  checked_at: string;
+}
+
+export interface SecurityEventItem {
+  id: string;
+  event_type: string;
+  risk_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  severity_score: number;
+  user_email: string | null;
+  ip_address: string | null;
+  geo_metadata: Record<string, unknown> | null;
+  action_taken: string | null;
+  correlation_id: string | null;
+  occurred_at: string;
+}
+
+export interface SecurityEventsResponse {
+  severity_summary: {
+    CRITICAL: number;
+    HIGH: number;
+    MEDIUM: number;
+    LOW: number;
+    total_24h: number;
+  };
+  trend: Array<{
+    day: string;
+    low: number;
+    medium: number;
+    high: number;
+    critical: number;
+  }>;
+  items: SecurityEventItem[];
+  total: number;
+  has_next: boolean;
 }
 
 export interface StatusCounts {
@@ -547,6 +613,7 @@ export const adminKeys = {
   paymentEvents: (params?: any) => ["admin", "payment-events", params] as const,
   revenueAnalytics: ["admin", "revenue-analytics"] as const,
   invoiceItems: (invId: string) => ["admin", "invoice-items", invId] as const,
+  commercialExports: (organizationId?: string) => ["admin", "commercial-exports", organizationId] as const,
 };
 
 // ── API Functions ─────────────────────────────────────────────
@@ -570,13 +637,14 @@ export const adminApi = {
   getOrgFeatures: (id: string) =>
     apiClient.get<OrgFeature[]>(`/platform/organizations/${id}/features`),
 
-  overrideOrgFeature: (id: string, featureId: string, isEnabled: boolean) =>
+  overrideOrgFeature: (id: string, featureId: string, isEnabled: boolean, reason?: string) =>
     apiClient.put(`/platform/organizations/${id}/features/overrides`, {
       feature_id: featureId,
       is_enabled: isEnabled,
+      reason,
     }),
 
-  updateOrgStatus: (id: string, isActive: boolean, reason?: string) =>
+  updateOrgStatus: (id: string, isActive: boolean, reason: string) =>
     apiClient.patch<any>(`/platform/organizations/${id}/status`, {
       is_active: isActive,
       suspension_reason: reason,
@@ -610,8 +678,8 @@ export const adminApi = {
   patchAddon: (addonId: string, data: any) =>
     apiClient.patch<any>(`/platform/addons/${addonId}`, data),
 
-  deleteAddon: (addonId: string) =>
-    apiClient.delete(`/platform/addons/${addonId}`),
+  deleteAddon: (addonId: string, reason: string) =>
+    apiClient.delete(`/platform/addons/${addonId}`, { data: { reason } }),
 
   getPlanFeatures: (planId: string) =>
     apiClient.get<string[]>(`/platform/subscription-plans/${planId}/features`),
@@ -637,13 +705,23 @@ export const adminApi = {
   getImpersonationLogs: (params?: { skip?: number; limit?: number }) =>
     apiClient.get<PaginatedResponse<ImpersonationLog>>("/platform/impersonation-logs", { params }),
 
-  getJobStats: () =>
-    apiClient.get<JobStats>("/jobs/stats"),
+  getJobStats: async () => {
+    const response = await apiClient.get<any>("/platform/operations/jobs", { params: { limit: 1 } });
+    return response.summary as JobStats;
+  },
 
-  getJobExecutions: (params?: { status?: string; page?: number; page_size?: number }) =>
-    apiClient.get<{ items: JobExecution[]; total: number; page: number; page_size: number }>(
-      "/jobs/executions", { params }
-    ),
+  getJobExecutions: async (params?: { status?: string; page?: number; page_size?: number }) => {
+    const page = params?.page || 1;
+    const pageSize = params?.page_size || 50;
+    const response = await apiClient.get<any>("/platform/operations/jobs", {
+      params: {
+        status: params?.status,
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
+      },
+    });
+    return { items: response.items as JobExecution[], total: response.total as number, page, page_size: pageSize };
+  },
 
   getSecurityLogs: (params?: { severity?: string; page?: number; page_size?: number }) =>
     apiClient.get<{ items: SecurityLog[]; total: number }>("/audit/security-logs", { params }),
@@ -691,13 +769,13 @@ export const adminApi = {
     apiClient.patch("/platform/feature-orders/reorder", { category, feature_ids: featureIds }),
 
   getHealth: () =>
-    apiClient.get<any>("/platform/health"),
+    apiClient.get<PlatformHealth>("/platform/health"),
 
   getSubscriptionsHealthSummary: () =>
     apiClient.get<StatusCounts>("/platform/subscriptions/health-summary"),
 
-  changeOrgPlan: (orgId: string, planId: string) =>
-    apiClient.patch<any>(`/platform/organizations/${orgId}/subscription/plan`, { plan_id: planId }),
+  changeOrgPlan: (orgId: string, planId: string, reason: string) =>
+    apiClient.patch<any>(`/platform/organizations/${orgId}/subscription/plan`, { plan_id: planId, reason }),
 
   extendTrial: (orgId: string, days: number, reason: string) =>
     apiClient.patch<any>(`/platform/organizations/${orgId}/trial/extend`, { days, reason }),
@@ -705,28 +783,30 @@ export const adminApi = {
   applyCredit: (orgId: string, amount: number, currency: string, reason: string) =>
     apiClient.post<any>(`/platform/organizations/${orgId}/apply-credit`, { amount, currency, reason }),
 
-  reset2FA: (userId: string) =>
-    apiClient.delete(`/platform/users/${userId}/2fa`),
+  reset2FA: (userId: string, reason?: string) =>
+    apiClient.delete(`/platform/users/${userId}/2fa`, {
+      data: reason ? { reason } : undefined,
+    }),
 
   getOrgLimits: (orgId: string) =>
     apiClient.get<Record<string, number>>(`/platform/organizations/${orgId}/limits`),
 
-  updateOrgLimits: (orgId: string, limits: Record<string, number>) =>
-    apiClient.put(`/platform/organizations/${orgId}/limits`, limits),
+  updateOrgLimits: (orgId: string, limits: Record<string, number>, reason: string) =>
+    apiClient.put(`/platform/organizations/${orgId}/limits`, { limits, reason }),
 
   getOrgDomains: (orgId: string) =>
     apiClient.get<OrgDomain[]>(`/platform/organizations/${orgId}/domains`),
 
-  addOrgDomain: (orgId: string, domain: string) =>
-    apiClient.post<OrgDomain>(`/platform/organizations/${orgId}/domains`, { domain }),
+  addOrgDomain: (orgId: string, domain: string, reason: string) =>
+    apiClient.post<OrgDomain>(`/platform/organizations/${orgId}/domains`, { domain, reason }),
 
-  deleteOrgDomain: (orgId: string, domainId: string, reason?: string) =>
+  deleteOrgDomain: (orgId: string, domainId: string, reason: string) =>
     apiClient.delete(`/platform/organizations/${orgId}/domains/${domainId}`, {
-      data: reason ? { reason } : undefined,
+      data: { reason },
     }),
 
-  verifyOrgDomain: (orgId: string, domainId: string) =>
-    apiClient.post<any>(`/platform/organizations/${orgId}/domains/${domainId}/verify`),
+  verifyOrgDomain: (orgId: string, domainId: string, reason: string) =>
+    apiClient.post<any>(`/platform/organizations/${orgId}/domains/${domainId}/verify`, { reason }),
 
   getOrgEvents: (orgId: string) =>
     apiClient.get<OrgEvent[]>(`/platform/organizations/${orgId}/events`),
@@ -743,14 +823,14 @@ export const adminApi = {
   getPaymentEvents: (params?: { limit?: number }) =>
     apiClient.get<any[]>("/platform/payment-events", { params }),
 
-  deleteOrg: (orgId: string) =>
-    apiClient.delete(`/platform/organizations/${orgId}`),
+  deleteOrg: (orgId: string, reason: string) =>
+    apiClient.delete(`/platform/organizations/${orgId}`, { data: { reason } }),
 
-  updateUserStatus: (userId: string, isActive: boolean) =>
-    apiClient.patch<any>(`/platform/users/${userId}/status`, { is_active: isActive }),
+  updateUserStatus: (userId: string, isActive: boolean, reason?: string) =>
+    apiClient.patch<any>(`/platform/users/${userId}/status`, { is_active: isActive, reason }),
 
-  deleteOrgFeatureOverride: (orgId: string, featureId: string) =>
-    apiClient.delete(`/platform/organizations/${orgId}/features/overrides/${featureId}`),
+  deleteOrgFeatureOverride: (orgId: string, featureId: string, reason: string) =>
+    apiClient.delete(`/platform/organizations/${orgId}/features/overrides/${featureId}`, { data: { reason } }),
 
   getPlatformAudit: (params?: {
     action_type?: string;
@@ -772,47 +852,49 @@ export const adminApi = {
   bulkExtendTrial: (data: { org_ids: string[]; days: number; reason: string }) =>
     apiClient.post<any>(`/platform/subscriptions/bulk-extend`, data),
 
-  bulkChangePlan: (data: { org_ids: string[]; plan_id: string }) =>
+  bulkChangePlan: (data: { org_ids: string[]; plan_id: string; reason: string }) =>
     apiClient.post<any>(`/platform/subscriptions/bulk-change-plan`, data),
 
-  cancelSubscription: (subId: string) =>
-    apiClient.post<any>(`/platform/subscriptions/${subId}/cancel`),
+  cancelSubscription: (subId: string, reason: string) =>
+    apiClient.post<any>(`/platform/subscriptions/${subId}/cancel`, { reason }),
 
-  reactivateSubscription: (subId: string) =>
-    apiClient.post<any>(`/platform/subscriptions/${subId}/reactivate`),
+  reactivateSubscription: (subId: string, reason: string) =>
+    apiClient.post<any>(`/platform/subscriptions/${subId}/reactivate`, { reason }),
 
   getInvoiceItems: (invoiceId: string) =>
     apiClient.get<any[]>(`/platform/invoices/${invoiceId}/items`),
 
-  markInvoicePaid: (invoiceId: string) =>
-    apiClient.post<any>(`/platform/invoices/${invoiceId}/mark-paid`),
+  markInvoicePaid: (invoiceId: string, reason: string) =>
+    apiClient.post<any>(`/platform/invoices/${invoiceId}/mark-paid`, { reason }),
 
-  sendInvoiceReminder: (invoiceId: string) =>
-    apiClient.post<any>(`/platform/invoices/${invoiceId}/send-reminder`),
+  sendInvoiceReminder: (invoiceId: string, reason: string) =>
+    apiClient.post<any>(`/platform/invoices/${invoiceId}/send-reminder`, { reason }),
 
-  voidInvoice: (invoiceId: string) =>
-    apiClient.post<any>(`/platform/invoices/${invoiceId}/void`),
+  voidInvoice: (invoiceId: string, reason: string) =>
+    apiClient.post<any>(`/platform/invoices/${invoiceId}/void`, { reason }),
 
   getRevenueAnalytics: () =>
     apiClient.get<any>("/platform/revenue/analytics"),
 
-  forceLogoutUser: (userId: string) =>
-    apiClient.delete(`/platform/users/${userId}/sessions`),
+  forceLogoutUser: (userId: string, reason?: string) =>
+    apiClient.delete(`/platform/users/${userId}/sessions`, {
+      data: reason ? { reason } : undefined,
+    }),
 
   exportAuditLogs: (payload: any) =>
     apiClient.post<any>(`/platform/audit/export`, payload),
 
-  retryJobExecution: (executionId: string) =>
-    apiClient.post<any>(`/jobs/executions/${executionId}/retry`),
+  retryJobExecution: (_executionId: string) =>
+    Promise.reject(new Error("Job retry requires a durable job-control API before it can be enabled.")),
 
-  cancelJobExecution: (executionId: string) =>
-    apiClient.delete(`/jobs/executions/${executionId}`),
+  cancelJobExecution: (_executionId: string) =>
+    Promise.reject(new Error("Job cancellation requires a durable job-control API before it can be enabled.")),
 
   endImpersonationSession: (sessionId: string) =>
     apiClient.post<any>(`/platform/impersonation/${sessionId}/end`),
 
-  getJobFailures: (executionId: string) =>
-    apiClient.get<any>(`/jobs/executions/${executionId}/failures`),
+  getJobFailures: (_executionId: string) =>
+    Promise.reject(new Error("Job failure trace retrieval requires a durable job-control API before it can be enabled.")),
 };
 
 // ── React Query Hooks ─────────────────────────────────────────
@@ -906,10 +988,53 @@ export const useUpdateAddon = () => {
 export const useDeleteAddon = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (addonId: string) => adminApi.deleteAddon(addonId),
+    mutationFn: ({ addonId, reason }: { addonId: string; reason: string }) =>
+      adminApi.deleteAddon(addonId, reason),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.addons }),
   });
 };
+
+export const useCommercialExports = (organizationId?: string) =>
+  useQuery({
+    queryKey: adminKeys.commercialExports(organizationId),
+    queryFn: () => apiClient.get<CommercialExport[]>("/superadmin/reports/exports", {
+      params: { organization_id: organizationId },
+    }),
+    enabled: !!organizationId,
+    refetchInterval: query => query.state.data?.some(
+      item => item.status === "QUEUED" || item.status === "RUNNING",
+    ) ? 3_000 : false,
+  });
+
+export const useCreateCommercialExport = (organizationId?: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ reportType, reason, idempotencyKey }: {
+      reportType: CommercialReportType;
+      reason: string;
+      idempotencyKey: string;
+    }) => {
+      if (!organizationId) throw new Error("Select an organization before requesting an export.");
+      return apiClient.post<CommercialExport>("/superadmin/reports/exports", {
+        organization_id: organizationId,
+        report_type: reportType,
+        reason,
+      }, {
+        headers: { "Idempotency-Key": idempotencyKey },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: adminKeys.commercialExports(organizationId) });
+      toast.success("Commercial export queued");
+    },
+    onError: (error: any) => toast.error(error.message || "Commercial export could not be queued"),
+  });
+};
+
+export const downloadCommercialExport = (exportId: string, organizationId: string) =>
+  apiClient.get<CommercialExportDownload>(`/superadmin/reports/exports/${exportId}/download`, {
+    params: { organization_id: organizationId },
+  });
 
 export const useUpdatePlanLimits = () => {
   const queryClient = useQueryClient();
@@ -1070,7 +1195,7 @@ export const usePlatformPaymentEvents = (params?: { limit?: number }) =>
 export const useUpdateOrgStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, isActive, reason }: { id: string; isActive: boolean; reason?: string }) =>
+    mutationFn: ({ id, isActive, reason }: { id: string; isActive: boolean; reason: string }) =>
       adminApi.updateOrgStatus(id, isActive, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
@@ -1081,8 +1206,8 @@ export const useUpdateOrgStatus = () => {
 export const useOverrideFeature = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ featureId, isEnabled }: { featureId: string; isEnabled: boolean }) =>
-      adminApi.overrideOrgFeature(orgId, featureId, isEnabled),
+    mutationFn: ({ featureId, isEnabled, reason }: { featureId: string; isEnabled: boolean; reason?: string }) =>
+      adminApi.overrideOrgFeature(orgId, featureId, isEnabled, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgFeatures(orgId) });
     },
@@ -1159,8 +1284,8 @@ export const useUpdateGlobalSettings = () => {
 export const useChangePlan = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ orgId, planId }: { orgId: string; planId: string }) =>
-      adminApi.changeOrgPlan(orgId, planId),
+    mutationFn: ({ orgId, planId, reason }: { orgId: string; planId: string; reason: string }) =>
+      adminApi.changeOrgPlan(orgId, planId, reason),
     onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDetail(variables.orgId) });
       qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
@@ -1204,7 +1329,8 @@ export const useApplyCredit = () => {
 export const useReset2FA = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (userId: string) => apiClient.delete(`/platform/users/${userId}/2fa`),
+    mutationFn: ({ userId, reason }: { userId: string; reason?: string }) =>
+      adminApi.reset2FA(userId, reason),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
   });
 };
@@ -1212,7 +1338,8 @@ export const useReset2FA = () => {
 export const useUpdateOrgLimits = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (limits: Record<string, number>) => adminApi.updateOrgLimits(orgId, limits),
+    mutationFn: ({ limits, reason }: { limits: Record<string, number>; reason: string }) =>
+      adminApi.updateOrgLimits(orgId, limits, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgLimits(orgId) });
     },
@@ -1234,7 +1361,8 @@ export const useUpdateOrgDetail = (orgId: string) => {
 export const useAddOrgDomain = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (domain: string) => adminApi.addOrgDomain(orgId, domain),
+    mutationFn: ({ domain, reason }: { domain: string; reason: string }) =>
+      adminApi.addOrgDomain(orgId, domain, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDomains(orgId) });
     },
@@ -1244,7 +1372,7 @@ export const useAddOrgDomain = (orgId: string) => {
 export const useDeleteOrgDomain = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ domainId, reason }: { domainId: string; reason?: string }) =>
+    mutationFn: ({ domainId, reason }: { domainId: string; reason: string }) =>
       adminApi.deleteOrgDomain(orgId, domainId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDomains(orgId) });
@@ -1255,7 +1383,8 @@ export const useDeleteOrgDomain = (orgId: string) => {
 export const useVerifyOrgDomain = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (domainId: string) => adminApi.verifyOrgDomain(orgId, domainId),
+    mutationFn: ({ domainId, reason }: { domainId: string; reason: string }) =>
+      adminApi.verifyOrgDomain(orgId, domainId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDomains(orgId) });
       qc.invalidateQueries({ queryKey: adminKeys.orgDetail(orgId) });
@@ -1273,8 +1402,8 @@ export const useImpersonateUser = () => {
 export const useUpdateUserStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, isActive }: { userId: string; isActive: boolean }) =>
-      adminApi.updateUserStatus(userId, isActive),
+    mutationFn: ({ userId, isActive, reason }: { userId: string; isActive: boolean; reason?: string }) =>
+      adminApi.updateUserStatus(userId, isActive, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "global-users"] });
     },
@@ -1284,8 +1413,8 @@ export const useUpdateUserStatus = () => {
 export const useDeleteOrgFeatureOverride = (orgId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (featureId: string) =>
-      adminApi.deleteOrgFeatureOverride(orgId, featureId),
+    mutationFn: ({ featureId, reason }: { featureId: string; reason: string }) =>
+      adminApi.deleteOrgFeatureOverride(orgId, featureId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgFeatures(orgId) });
     },
@@ -1316,7 +1445,7 @@ export const useOrgAddons = (orgId: string) =>
 export const useDeleteOrg = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (orgId: string) => adminApi.deleteOrg(orgId),
+    mutationFn: ({ orgId, reason }: { orgId: string; reason: string }) => adminApi.deleteOrg(orgId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
     },
@@ -1352,7 +1481,7 @@ export const useBulkExtendTrial = () => {
 export const useBulkChangePlan = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { org_ids: string[]; plan_id: string }) =>
+    mutationFn: (data: { org_ids: string[]; plan_id: string; reason: string }) =>
       adminApi.bulkChangePlan(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
@@ -1364,7 +1493,8 @@ export const useBulkChangePlan = () => {
 export const useCancelSubscription = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (subId: string) => adminApi.cancelSubscription(subId),
+    mutationFn: ({ subId, reason }: { subId: string; reason: string }) =>
+      adminApi.cancelSubscription(subId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
@@ -1375,7 +1505,8 @@ export const useCancelSubscription = () => {
 export const useReactivateSubscription = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (subId: string) => adminApi.reactivateSubscription(subId),
+    mutationFn: ({ subId, reason }: { subId: string; reason: string }) =>
+      adminApi.reactivateSubscription(subId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
@@ -1393,8 +1524,9 @@ export const useInvoiceItems = (invoiceId: string) =>
 export const useMarkInvoicePaid = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (invoiceId: string) => adminApi.markInvoicePaid(invoiceId),
-    onSuccess: (_, invoiceId) => {
+    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
+      adminApi.markInvoicePaid(invoiceId, reason),
+    onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
       qc.invalidateQueries({ queryKey: adminKeys.invoiceItems(invoiceId) });
     },
@@ -1403,15 +1535,18 @@ export const useMarkInvoicePaid = () => {
 
 export const useSendInvoiceReminder = () =>
   useMutation({
-    mutationFn: (invoiceId: string) => adminApi.sendInvoiceReminder(invoiceId),
+    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
+      adminApi.sendInvoiceReminder(invoiceId, reason),
   });
 
 export const useVoidInvoice = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (invoiceId: string) => adminApi.voidInvoice(invoiceId),
+    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
+      adminApi.voidInvoice(invoiceId, reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin-invoices"] });
     },
   });
 };
@@ -1420,7 +1555,8 @@ export const useVoidInvoice = () => {
 
 export const useForceLogoutUser = () =>
   useMutation({
-    mutationFn: (userId: string) => adminApi.forceLogoutUser(userId),
+    mutationFn: ({ userId, reason }: { userId: string; reason?: string }) =>
+      adminApi.forceLogoutUser(userId, reason),
   });
 
 export const useExportAuditLogs = () =>
@@ -1564,10 +1700,10 @@ export const useInvoices = (params?: {
     staleTime: 30_000,
   });
 
-export const useSecurityEvents = (params?: { severity?: string; event_type?: string; skip?: number }) =>
+export const useSecurityEvents = (params?: { severity?: string; event_type?: string; skip?: number; limit?: number }) =>
   useQuery({
     queryKey: ['security-events', params],
-    queryFn: () => apiClient.get<any>('/platform/security/events', { params }),
+    queryFn: () => apiClient.get<SecurityEventsResponse>('/platform/security/events', { params }),
     refetchInterval: 30_000,  // auto-refresh every 30s
     staleTime: 15_000,
   });
@@ -1598,15 +1734,254 @@ export const useForceLogout = () => {
   });
 };
 
+export interface DatabaseStats {
+  connections: {
+    total: number
+    active: number
+    idle: number
+    waiting: number
+  }
+  slow_queries: Array<{
+    query: string
+    avg_ms: number
+    calls: number
+  }>
+  slow_query_stats_available: boolean
+  table_sizes: Array<{
+    name: string
+    size: string
+    bytes: number
+  }>
+  cache_hit_ratio: number
+  database_size_bytes: number
+  dead_tuples: number
+}
+
+export interface QuoteLineItemInput {
+  category: string
+  name: string
+  description?: string | null
+  quantity: number
+  duration_days: number
+  unit_rate: number
+}
+
+export interface CommercialQuote {
+  id: string
+  organization_id: string
+  event_id: string
+  service_request_id?: string | null
+  quote_number: string
+  title: string
+  status: string
+  currency: string
+  validity_days: number
+  valid_until?: string | null
+  discount_type: "NONE" | "PERCENTAGE" | "FIXED"
+  discount_value: string
+  tax_rate: string
+  subtotal: string
+  discount_amount: string
+  taxable_amount: string
+  tax_amount: string
+  total_amount: string
+  version: number
+  internal_notes?: string | null
+  created_at: string
+  updated_at: string
+  line_items: Array<QuoteLineItemInput & { id: string; line_subtotal: string; sort_order: number }>
+}
+
+export interface QuotePayload {
+  organization_id: string
+  event_id: string
+  service_request_id?: string | null
+  title: string
+  currency: string
+  validity_days: number
+  discount_type: "NONE" | "PERCENTAGE" | "FIXED"
+  discount_value: number
+  tax_rate: number
+  internal_notes?: string | null
+  line_items: QuoteLineItemInput[]
+}
+
+export interface QuoteTotals {
+  subtotal: string
+  discount_amount: string
+  taxable_amount: string
+  tax_amount: string
+  total_amount: string
+}
+
+export interface QuoteApprovalStep {
+  id: string
+  workflow_id: string
+  organization_id: string
+  step_order: number
+  name: string
+  assigned_user_id?: string | null
+  required_permission: string
+  status: string
+  decided_by?: string | null
+  decision_reason?: string | null
+  decided_at?: string | null
+}
+
+export interface QuoteApprovalWorkflow {
+  id: string
+  organization_id: string
+  quote_id: string
+  quote_version: number
+  status: string
+  workflow_version: number
+  submission_reason: string
+  submitted_by: string
+  submitted_at: string
+  completed_at?: string | null
+  steps: QuoteApprovalStep[]
+}
+
+export interface ProposalSnapshotLineItem {
+  category: string
+  name: string
+  description?: string | null
+  quantity: string
+  duration_days: number
+  unit_rate: string
+  line_subtotal: string
+  sort_order: number
+}
+
+export interface ProposalSnapshot {
+  quote_id: string
+  organization_id: string
+  event_id: string
+  service_request_id?: string | null
+  quote_number: string
+  title: string
+  status: string
+  currency: string
+  validity_days: number
+  valid_until?: string | null
+  discount_type: string
+  discount_value: string
+  tax_rate: string
+  subtotal: string
+  discount_amount: string
+  taxable_amount: string
+  tax_amount: string
+  total_amount: string
+  version: number
+  line_items: ProposalSnapshotLineItem[]
+}
+
+export interface ProposalVersion {
+  id: string
+  organization_id: string
+  proposal_id: string
+  version: number
+  source_quote_id: string
+  source_quote_version: number
+  snapshot_json: ProposalSnapshot
+  reason: string
+  created_by: string
+  created_at: string
+}
+
+export interface CommercialProposal {
+  id: string
+  organization_id: string
+  event_id?: string | null
+  quote_id?: string | null
+  proposal_number?: string | null
+  title: string
+  status: string
+  current_version: number
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+  versions: ProposalVersion[]
+}
+
+export interface ProposalDocument {
+  export_id: string
+  proposal_id: string
+  proposal_version: number
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED"
+  file_format: string
+  created_at: string
+  completed_at?: string | null
+  expires_at?: string | null
+  failure_reason?: string | null
+}
+
+export interface ProposalDocumentDownload {
+  download_url: string
+  expires_in: number
+  filename: string
+}
+
+export interface ProposalShare {
+  id: string
+  proposal_id: string
+  proposal_version: number
+  recipient_name: string
+  recipient_email: string
+  status: "ACTIVE" | "EXPIRED" | "REVOKED" | "ACCEPTED" | "REJECTED"
+  expires_at: string
+  created_by: string
+  created_at: string
+  last_accessed_at?: string | null
+  access_count: number
+  decision?: string | null
+  decision_reason?: string | null
+  signer_name?: string | null
+  signer_title?: string | null
+  decided_at?: string | null
+  revoked_at?: string | null
+  revocation_reason?: string | null
+}
+
+export interface ProposalShareCreated extends ProposalShare {
+  token: string
+}
+
+export interface PublicProposal {
+  proposal_id: string
+  proposal_number?: string | null
+  title: string
+  proposal_version: number
+  recipient_name: string
+  status: string
+  expires_at: string
+  snapshot: ProposalSnapshot
+  decided_at?: string | null
+}
+
+export interface PublicProposalDecisionResult {
+  proposal_id: string
+  proposal_version: number
+  decision: "ACCEPTED" | "REJECTED"
+  signer_name: string
+  decided_at: string
+}
+
+export interface QueueStat {
+  name: string
+  depth: number
+  status: 'HEALTHY' | 'DEGRADED' | 'OVERLOADED'
+}
+
 export const useDatabaseStats = () =>
   useQuery({
     queryKey: ['db-stats'],
-    queryFn: () => apiClient.get<any>('/platform/operations/database'),
+    queryFn: () => apiClient.get<DatabaseStats>('/platform/operations/database'),
     refetchInterval: 30_000,
     staleTime: 15_000,
   });
 
-export const useBackgroundJobs = (params?: { status?: string; queue?: string; skip?: number }) =>
+export const useBackgroundJobs = (params?: { status?: string; queue?: string; skip?: number; limit?: number }) =>
   useQuery({
     queryKey: ['bg-jobs', params],
     queryFn: () => apiClient.get<any>('/platform/operations/jobs', { params }),
@@ -1624,8 +1999,11 @@ export const useOrgFeatureOverrides = (orgId: string) =>
 
 export const useSaveFeatureOverrides = () =>
   useMutation({
-    mutationFn: (data: { orgId: string; overrides: { feature_id: string; override: boolean | null }[] }) =>
-      apiClient.put<any>(`/platform/organizations/${data.orgId}/feature-overrides`, data.overrides),
+    mutationFn: (data: { orgId: string; overrides: { feature_id: string; override: boolean | null }[]; reason: string }) =>
+      apiClient.put<any>(`/platform/organizations/${data.orgId}/feature-overrides`, {
+        overrides: data.overrides,
+        reason: data.reason,
+      }),
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['org-feature-overrides', vars.orgId] });
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
@@ -1779,7 +2157,7 @@ export const useFinancialAuditTrail = (params?: { date_from?: string; date_to?: 
 export const useQueueStats = () =>
   useQuery({
     queryKey: ['queue-stats'],
-    queryFn: () => apiClient.get<any[]>('/platform/operations/queues'),
+    queryFn: () => apiClient.get<QueueStat[]>('/platform/operations/queues'),
     refetchInterval: 10_000,
     staleTime: 5_000,
   })
@@ -2149,25 +2527,61 @@ export const useDeletePricingSimulation = () => {
 
 // ── Service Requests Workflow Hooks ─────────────────────────────────
 
-export const useServiceRequestsKpi = (eventId: string) =>
+export interface ServiceRequestKpiResponse {
+  total: number
+  open: number
+  status_counts: Record<string, number>
+}
+
+export interface ServiceRequestKanbanCard {
+  id: string
+  request_number: string
+  title: string
+  priority: string
+  request_type: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ServiceRequestKanbanColumn {
+  key: string
+  label: string
+  count: number
+  cards: ServiceRequestKanbanCard[]
+}
+
+export interface ServiceRequestKanbanResponse {
+  columns: ServiceRequestKanbanColumn[]
+  limit: number
+  offset: number
+}
+
+export const useServiceRequestsKpi = (organizationId: string, eventId: string) =>
   useQuery({
-    queryKey: ['service-requests-kpi', eventId],
-    queryFn: () => apiClient.get<any>(`/service-requests/kpi-strip?event_id=${eventId}`),
-    enabled: !!eventId,
+    queryKey: ['service-requests-kpi', organizationId, eventId],
+    queryFn: () => apiClient.get<ServiceRequestKpiResponse>('/service-requests/kpi-strip', {
+      params: { organization_id: organizationId, event_id: eventId },
+    }),
+    enabled: !!organizationId && !!eventId,
   })
 
-export const useServiceRequestsKanban = (eventId: string, limit = 10, offset = 0) =>
+export const useServiceRequestsKanban = (organizationId: string, eventId: string, limit = 10, offset = 0) =>
   useQuery({
-    queryKey: ['service-requests-kanban', eventId, limit, offset],
-    queryFn: () => apiClient.get<any>(`/service-requests/kanban-columns?event_id=${eventId}&limit=${limit}&offset=${offset}`),
-    enabled: !!eventId,
+    queryKey: ['service-requests-kanban', organizationId, eventId, limit, offset],
+    queryFn: () => apiClient.get<ServiceRequestKanbanResponse>('/service-requests/kanban-columns', {
+      params: { organization_id: organizationId, event_id: eventId, limit, offset },
+    }),
+    enabled: !!organizationId && !!eventId,
   })
 
 export const useCreateServiceRequest = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ eventId, ...body }: { eventId: string; title: string; description?: string; priority?: string; request_type?: string }) =>
-      apiClient.post<any>(`/service-requests?event_id=${eventId}`, body),
+    mutationFn: ({ eventId, organizationId, ...body }: { eventId: string; organizationId: string; title: string; description?: string; priority?: string; request_type?: string }) =>
+      apiClient.post<any>('/service-requests', body, {
+        params: { event_id: eventId, organization_id: organizationId },
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
       qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
@@ -2372,37 +2786,52 @@ export const useServiceRequestActivityLogs = (id: string) =>
 
 // ── B2B Quoting & Proposals React Query Hooks ───────────────────────
 
-export const useAllQuotes = (requestId?: string, status?: string) =>
+export const useAllQuotes = (requestId?: string, status?: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['all-quotes', requestId, status],
-    queryFn: () => apiClient.get<any>(`/service-requests/all-quotes`, {
-      params: { request_id: requestId, status }
+    queryKey: ['all-quotes', organizationId, requestId, status],
+    queryFn: () => apiClient.get<CommercialQuote[]>(`/service-requests/all-quotes`, {
+      params: { organization_id: organizationId, request_id: requestId, status }
     }),
+    enabled: !!organizationId || !!requestId,
   })
 
-export const useQuoteDetail = (quoteId: string) =>
+export const useQuoteDetail = (quoteId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['quote-detail', quoteId],
-    queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}`),
+    queryKey: ['quote-detail', organizationId, quoteId],
+    queryFn: () => apiClient.get<CommercialQuote>(`/service-requests/quotes/${quoteId}`, {
+      params: { organization_id: organizationId },
+    }),
     enabled: !!quoteId,
   })
 
 export const useCreateQuote = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: any) => apiClient.post<any>(`/service-requests/quotes`, payload),
-    onSuccess: (res: any) => {
+    mutationFn: ({ payload, idempotencyKey }: { payload: QuotePayload; idempotencyKey: string }) =>
+      apiClient.post<CommercialQuote>(`/service-requests/quotes`, payload, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-quotes'] })
-      toast.success('Quote generated successfully')
+      toast.success('Draft quote created')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
   })
 }
 
-export const useUpdateQuote = (quoteId: string) => {
+export const useCalculateQuote = () =>
+  useMutation({
+    mutationFn: (payload: Pick<QuotePayload, 'line_items' | 'discount_type' | 'discount_value' | 'tax_rate'>) =>
+      apiClient.post<QuoteTotals>(`/service-requests/quotes/calculate`, payload),
+  })
+
+export const useUpdateQuote = (quoteId: string, organizationId?: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: any) => apiClient.patch<any>(`/service-requests/quotes/${quoteId}`, payload),
+    mutationFn: (payload: Omit<QuotePayload, 'organization_id' | 'event_id' | 'service_request_id'> & { expected_version: number; reason: string }) =>
+      apiClient.patch<CommercialQuote>(`/service-requests/quotes/${quoteId}`, payload, {
+        params: { organization_id: organizationId },
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-quotes'] })
       qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
@@ -2440,125 +2869,206 @@ export const useCreateQuoteRevision = (quoteId: string) => {
   })
 }
 
-export const useQuoteApproval = (quoteId: string) =>
+export const useQuoteApproval = (quoteId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['quote-approval', quoteId],
-    queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}/approval`),
+    queryKey: ['quote-approval', organizationId, quoteId],
+    queryFn: () => apiClient.get<QuoteApprovalWorkflow | null>(`/service-requests/quotes/${quoteId}/approval`, {
+      params: { organization_id: organizationId },
+    }),
     enabled: !!quoteId,
   })
 
-export const useActionApprovalStep = (quoteId: string) => {
+export const useSubmitQuoteApproval = (quoteId: string, organizationId?: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ stepId, action, comment }: { stepId: string; action: string; comment?: string }) =>
-      apiClient.post<any>(`/service-requests/quotes/${quoteId}/approval/steps/${stepId}/action`, { action, comment }),
+    mutationFn: ({ expectedQuoteVersion, reason, idempotencyKey }: { expectedQuoteVersion: number; reason: string; idempotencyKey: string }) =>
+      apiClient.post<QuoteApprovalWorkflow>(`/service-requests/quotes/${quoteId}/approval/submit`, {
+        expected_quote_version: expectedQuoteVersion,
+        reason,
+      }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quote-approval', quoteId] })
-      qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
-      toast.success('Approval step updated successfully')
+      qc.invalidateQueries({ queryKey: ['quote-approval', organizationId, quoteId] })
+      qc.invalidateQueries({ queryKey: ['quote-detail', organizationId, quoteId] })
+      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      toast.success('Quote submitted for approval')
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+    onError: (e: any) => toast.error(e.message || 'Quote submission failed'),
   })
 }
 
-export const useAllProposals = (requestId?: string, status?: string) =>
+export const useActionApprovalStep = (quoteId: string, organizationId?: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ stepId, action, reason, expectedWorkflowVersion, idempotencyKey }: { stepId: string; action: 'APPROVE' | 'REJECT'; reason: string; expectedWorkflowVersion: number; idempotencyKey: string }) =>
+      apiClient.post<QuoteApprovalWorkflow>(`/service-requests/quotes/${quoteId}/approval/steps/${stepId}/action`, {
+        action,
+        reason,
+        expected_workflow_version: expectedWorkflowVersion,
+      }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['quote-approval', organizationId, quoteId] })
+      qc.invalidateQueries({ queryKey: ['quote-detail', organizationId, quoteId] })
+      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      toast.success('Approval decision recorded')
+    },
+    onError: (e: any) => toast.error(e.message || 'Approval decision failed')
+  })
+}
+
+export const useConvertQuoteToProposal = (quoteId: string, organizationId?: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ expectedQuoteVersion, reason, idempotencyKey }: { expectedQuoteVersion: number; reason: string; idempotencyKey: string }) =>
+      apiClient.post<CommercialProposal>(`/service-requests/quotes/${quoteId}/proposal`, {
+        expected_quote_version: expectedQuoteVersion,
+        reason,
+      }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['quote-detail', organizationId, quoteId] })
+      qc.invalidateQueries({ queryKey: ['all-proposals'] })
+      toast.success('Approved quote converted to an immutable proposal')
+    },
+    onError: (e: any) => toast.error(e.message || 'Proposal conversion failed'),
+  })
+}
+
+export const useProposalDetail = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['all-proposals', requestId, status],
-    queryFn: () => apiClient.get<any>(`/service-requests/proposals/list`, {
-      params: { request_id: requestId, status }
+    queryKey: ['proposal-detail', organizationId, propId],
+    queryFn: () => apiClient.get<CommercialProposal>(`/service-requests/proposals/${propId}`, {
+      params: { organization_id: organizationId },
     }),
-  })
-
-export const useProposalDetail = (propId: string) =>
-  useQuery({
-    queryKey: ['proposal-detail', propId],
-    queryFn: () => apiClient.get<any>(`/service-requests/proposals/${propId}`),
     enabled: !!propId,
   })
 
-export const useCreateProposal = () => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: any) => apiClient.post<any>(`/service-requests/proposals`, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['all-proposals'] })
-      toast.success('Proposal created successfully')
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
-  })
-}
-
-export const useUpdateProposal = (propId: string) => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: any) => apiClient.patch<any>(`/service-requests/proposals/${propId}`, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['all-proposals'] })
-      qc.invalidateQueries({ queryKey: ['proposal-detail', propId] })
-      toast.success('Proposal updated')
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
-  })
-}
-
-export const useProposalDocuments = (propId: string) =>
+export const useProposalDocuments = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['proposal-documents', propId],
-    queryFn: () => apiClient.get<any>(`/service-requests/proposals/${propId}/documents`),
+    queryKey: ['proposal-documents', organizationId, propId],
+    queryFn: () => apiClient.get<ProposalDocument[]>(`/service-requests/proposals/${propId}/documents`, {
+      params: { organization_id: organizationId },
+    }),
+    enabled: !!propId,
+    refetchInterval: query => query.state.data?.some(document => document.status === 'QUEUED' || document.status === 'RUNNING') ? 3_000 : false,
+  })
+
+export const useGenerateProposalDocument = (propId: string, organizationId?: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ expectedVersion, reason, idempotencyKey }: { expectedVersion: number; reason: string; idempotencyKey: string }) =>
+      apiClient.post<ProposalDocument>(`/service-requests/proposals/${propId}/documents`, {
+        expected_version: expectedVersion,
+        reason,
+      }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['proposal-documents', organizationId, propId] })
+      toast.success('Proposal PDF queued for generation')
+    },
+    onError: (e: any) => toast.error(e.message || 'Proposal PDF generation could not be queued')
+  })
+}
+
+export const downloadProposalDocument = (propId: string, exportId: string, organizationId?: string) =>
+  apiClient.get<ProposalDocumentDownload>(`/service-requests/proposals/${propId}/documents/${exportId}/download`, {
+    params: { organization_id: organizationId },
+  })
+
+export const useProposalVersionHistory = (propId: string, organizationId?: string) =>
+  useQuery({
+    queryKey: ['proposal-version-history', organizationId, propId],
+    queryFn: () => apiClient.get<ProposalVersion[]>(`/service-requests/proposals/${propId}/version-history`, {
+      params: { organization_id: organizationId },
+    }),
     enabled: !!propId,
   })
 
-export const useGenerateProposalDocuments = (propId: string) => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => apiClient.post<any>(`/service-requests/proposals/${propId}/documents/generate`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['proposal-documents', propId] })
-      toast.success('Document generation triggered asynchronously')
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
-  })
-}
-
-export const useProposalVersionHistory = (propId: string) =>
+export const useProposalShares = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['proposal-version-history', propId],
-    queryFn: () => apiClient.get<any>(`/service-requests/proposals/${propId}/version-history`),
+    queryKey: ['proposal-shares', organizationId, propId],
+    queryFn: () => apiClient.get<ProposalShare[]>(`/service-requests/proposals/${propId}/shares`, {
+      params: { organization_id: organizationId },
+    }),
     enabled: !!propId,
   })
 
-export const useCreateProposalVersion = (propId: string) => {
+export const useCreateProposalShare = (propId: string, organizationId?: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { description: string; changes_count?: number }) =>
-      apiClient.post<any>(`/service-requests/proposals/${propId}/versions`, payload),
+    mutationFn: ({ expectedVersion, recipientName, recipientEmail, expiresInHours, reason, idempotencyKey }: { expectedVersion: number; recipientName: string; recipientEmail: string; expiresInHours: number; reason: string; idempotencyKey: string }) =>
+      apiClient.post<ProposalShareCreated>(`/service-requests/proposals/${propId}/shares`, {
+        expected_version: expectedVersion,
+        recipient_name: recipientName,
+        recipient_email: recipientEmail,
+        expires_in_hours: expiresInHours,
+        reason,
+      }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['proposal-version-history', propId] })
-      qc.invalidateQueries({ queryKey: ['proposal-detail', propId] })
-      toast.success('Proposal version successfully created')
+      qc.invalidateQueries({ queryKey: ['proposal-shares', organizationId, propId] })
+      toast.success('Secure proposal link created')
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
+    onError: (e: any) => toast.error(e.message || 'Proposal link could not be created'),
   })
 }
+
+export const useRevokeProposalShare = (propId: string, organizationId?: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ shareId, reason, idempotencyKey }: { shareId: string; reason: string; idempotencyKey: string }) =>
+      apiClient.post<ProposalShare>(`/service-requests/proposals/${propId}/shares/${shareId}/revoke`, { reason }, {
+        params: { organization_id: organizationId },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['proposal-shares', organizationId, propId] })
+      toast.success('Proposal link revoked')
+    },
+    onError: (e: any) => toast.error(e.message || 'Proposal link could not be revoked'),
+  })
+}
+
+export const usePublicProposal = (token: string) =>
+  useQuery({
+    queryKey: ['public-proposal', token.length, token.slice(-12)],
+    queryFn: () => apiClient.get<PublicProposal>('/public/proposals/share', {
+      headers: { Authorization: `ProposalShare ${token}` },
+    }),
+    enabled: !!token,
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+
+export const useDecidePublicProposal = (token: string) =>
+  useMutation({
+    mutationFn: ({ decision, signerName, signerTitle, reason, consentConfirmed, idempotencyKey }: { decision: 'ACCEPTED' | 'REJECTED'; signerName: string; signerTitle?: string; reason: string; consentConfirmed: boolean; idempotencyKey: string }) =>
+      apiClient.post<PublicProposalDecisionResult>('/public/proposals/share/decision', {
+        decision,
+        signer_name: signerName,
+        signer_title: signerTitle || null,
+        reason,
+        consent_confirmed: consentConfirmed,
+      }, { headers: { Authorization: `ProposalShare ${token}`, 'Idempotency-Key': idempotencyKey } }),
+    onSuccess: result => toast.success(`Proposal ${result.decision.toLowerCase()}`),
+    onError: (e: any) => toast.error(e.message || 'Your proposal decision could not be recorded'),
+  })
 
 export const usePricingRulesCatalog = () =>
   useQuery({
     queryKey: ['pricing-rules-catalog'],
     queryFn: () => apiClient.get<any>(`/service-requests/pricing-rules-catalog`),
   })
-
-export const useCreateProposalShareLink = (propId: string) =>
-  useMutation({
-    mutationFn: (payload: { expires_in_hours: number }) =>
-      apiClient.post<any>(`/service-requests/proposals/${propId}/share`, payload),
-    onSuccess: () => {
-      toast.success('Configurable public share link copied')
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
-  })
-
-
-
-
 
 

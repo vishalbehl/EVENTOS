@@ -49,7 +49,10 @@ class TenantContextGuard:
             yield
         finally:
             tenant_org_id.reset(token)
-            await TenantContextGuard.apply(session, previous)
+            # A failed flush leaves SQLAlchemy in pending-rollback state. Do not
+            # mask the original exception by issuing another statement here.
+            if session.is_active:
+                await TenantContextGuard.apply(session, previous)
 
 
 @event.listens_for(Session, "after_begin")

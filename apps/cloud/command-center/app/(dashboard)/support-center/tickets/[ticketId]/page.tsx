@@ -163,7 +163,7 @@ export default function TicketWorkspacePage() {
         <Button 
           variant="ghost" 
           size="sm" 
-          onClick={() => router.push("/support/tickets")}
+          onClick={() => router.push("/support-center/tickets")}
           className="h-8 px-2 text-[var(--text-secondary)] border border-transparent hover:bg-surface-2"
         >
           <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> Back to Board

@@ -49,6 +49,7 @@ import { PageContainer } from "@/components/super-admin/ui/PageContainer";
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader";
 import { DataTable } from "@/components/super-admin/ui/DataTable";
 import { StatusBadge } from "@/components/super-admin/ui/StatusBadge";
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction";
 
 // ── Health Badge ──────────────────────────────────────────────
 
@@ -469,12 +470,14 @@ export default function OrganizationsPage() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<AdminOrg | null>(null);
+  const [activateTarget, setActivateTarget] = useState<AdminOrg | null>(null);
+  const [planChangeTarget, setPlanChangeTarget] = useState<{ org: AdminOrg; planId: string; planName: string } | null>(null);
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [changingPlanOrgId, setChangingPlanOrgId] = useState<string | null>(null);
 
   const { data: orgs = [], isLoading, refetch } = useAdminOrgs({ limit: 100 });
   const { data: plans = [] } = useSubscriptionPlans();
-  const { mutateAsync: updateStatus } = useUpdateOrgStatus();
+  const { mutateAsync: updateStatus, isPending: statusUpdating } = useUpdateOrgStatus();
   const { mutateAsync: changePlan } = useChangeOrgPlan();
 
   // Impersonate owner handler
@@ -514,21 +517,31 @@ export default function OrganizationsPage() {
     }
   };
 
-  const handleActivate = async (org: AdminOrg) => {
+  const handleActivate = async (org: AdminOrg, reason?: string) => {
+    if (!reason) {
+      toast.error("A reason is required to reactivate an organization");
+      return;
+    }
     try {
-      await updateStatus({ id: org.id, isActive: true });
+      await updateStatus({ id: org.id, isActive: true, reason });
       toast.success(`${org.name} activated`);
+      setActivateTarget(null);
       refetch();
     } catch {
       toast.error("Failed to activate organization");
     }
   };
 
-  const handleChangePlan = async (orgId: string, planId: string) => {
+  const handleChangePlan = async (orgId: string, planId: string, reason?: string) => {
+    if (!reason) {
+      toast.error("A reason is required to change an organization plan");
+      return;
+    }
     try {
-      await changePlan({ orgId, planId });
+      await changePlan({ orgId, planId, reason });
       toast.success("Plan updated successfully");
       setChangingPlanOrgId(null);
+      setPlanChangeTarget(null);
       refetch();
     } catch {
       toast.error("Failed to change subscription plan");
@@ -593,7 +606,16 @@ export default function OrganizationsPage() {
             {changingPlanOrgId === row.original.id ? (
               <select
                 value={plans.find((p) => p.name.toUpperCase() === row.original.plan.toUpperCase())?.id || ""}
-                onChange={(e) => handleChangePlan(row.original.id, e.target.value)}
+                onChange={(e) => {
+                  const planId = e.target.value;
+                  if (!planId) return;
+                  const selectedPlan = plans.find((p) => p.id === planId);
+                  setPlanChangeTarget({
+                    org: row.original,
+                    planId,
+                    planName: selectedPlan?.name || "selected plan",
+                  });
+                }}
                 className="bg-surface border border-border rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
               >
                 <option value="">Select Plan</option>
@@ -660,7 +682,7 @@ export default function OrganizationsPage() {
             </button>
             {row.original.status === "SUSPENDED" ? (
               <button
-                onClick={() => handleActivate(row.original)}
+                onClick={() => setActivateTarget(row.original)}
                 title="Activate Tenant"
                 className="p-1.5 rounded-lg hover:bg-emerald-500/10 text-[var(--text-tertiary)] hover:text-emerald-400 transition-colors"
               >
@@ -875,6 +897,39 @@ export default function OrganizationsPage() {
         org={suspendTarget}
         onClose={() => setSuspendTarget(null)}
         onSuccess={() => refetch()}
+      />
+
+      <ConfirmDestructiveAction
+        open={!!activateTarget}
+        onOpenChange={(open) => !open && setActivateTarget(null)}
+        title="Reactivate organization?"
+        description="This restores tenant access according to backend policy. Confirm the support, billing, or security reason before reactivation."
+        confirmLabel="Reactivate tenant"
+        resourceName={activateTarget?.name}
+        requireReason
+        pending={statusUpdating}
+        onConfirm={(reason) => {
+          if (activateTarget) void handleActivate(activateTarget, reason);
+        }}
+      />
+
+      <ConfirmDestructiveAction
+        open={!!planChangeTarget}
+        onOpenChange={(open) => !open && setPlanChangeTarget(null)}
+        title="Change organization plan?"
+        description="This changes the tenant subscription plan and may alter billing, entitlements, and future event activation behavior. Confirm the commercial reason before saving."
+        confirmLabel="Change plan"
+        resourceName={
+          planChangeTarget
+            ? `${planChangeTarget.org.name} -> ${planChangeTarget.planName}`
+            : undefined
+        }
+        requireReason
+        onConfirm={(reason) => {
+          if (planChangeTarget) {
+            void handleChangePlan(planChangeTarget.org.id, planChangeTarget.planId, reason);
+          }
+        }}
       />
     </PageContainer>
   );

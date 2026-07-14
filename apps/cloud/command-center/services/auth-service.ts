@@ -8,14 +8,36 @@ export interface LoginResponse {
   user: User;
 }
 
+export interface LoginCredentials {
+  email: string;
+  password: string;
+  mfa_code: string;
+}
+
+function isPlatformAdministrator(user: User): boolean {
+  return user.platform_role === 'SUPER_ADMIN' || user.is_platform_admin === true || user.role === 'super_admin';
+}
+
 export const authService = {
   /**
    * Authenticate with email and password
    */
-  login: async (credentials: any, rememberMe = false): Promise<LoginResponse> => {
+  login: async (credentials: LoginCredentials, rememberMe = false): Promise<LoginResponse> => {
     const data = await apiClient.post<LoginResponse>('/auth/login', credentials);
-    
-    // Update store
+
+    if (!isPlatformAdministrator(data.user)) {
+      try {
+        await apiClient.post('/auth/logout', undefined, {
+          headers: { Authorization: `Bearer ${data.access_token}` },
+        });
+      } catch {
+        // Local denial remains fail-closed even if server-side revocation is temporarily unavailable.
+      } finally {
+        useAuthStore.getState().logout();
+      }
+      throw new Error('Administrator privileges are required for Command Center.');
+    }
+
     useAuthStore.getState().setAuth(
       data.user,
       data.access_token,

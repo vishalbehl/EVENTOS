@@ -87,7 +87,8 @@ export function useUpdatePlatformRole() {
 export function useDeletePlatformRole() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (roleId: string) => apiClient.delete(`/platform/roles/${roleId}`),
+    mutationFn: ({ roleId, reason }: { roleId: string; reason: string }) =>
+      apiClient.delete(`/platform/roles/${roleId}`, { data: { reason } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.all }),
   });
 }
@@ -103,8 +104,8 @@ export function useSeedPlatformPermissions() {
 export function useToggleRolePermission() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ roleId, permissionId }: { roleId: string; permissionId: string }) =>
-      apiClient.post(`/platform/roles/${roleId}/permissions/${permissionId}/toggle`),
+    mutationFn: ({ roleId, permissionId, reason }: { roleId: string; permissionId: string; reason: string }) =>
+      apiClient.post(`/platform/roles/${roleId}/permissions/${permissionId}/toggle`, { reason }),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: platformAccessKeys.roles() });
       queryClient.invalidateQueries({ queryKey: platformAccessKeys.rolePermissions(variables.roleId) });

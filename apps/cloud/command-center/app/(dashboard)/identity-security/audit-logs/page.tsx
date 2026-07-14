@@ -13,6 +13,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useDebounce } from "@/hooks/use-debounce";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/super-admin/ui/PageContainer";
@@ -58,6 +59,8 @@ export default function AuditExplorerPage() {
   const [showJsonPanel, setShowJsonPanel] = useState(false);
   const [copiedHash, setCopiedHash] = useState(false);
 
+  const debouncedActor = useDebounce(actorQuery, 400);
+
   // Queries
   const { data: orgs = [] } = useAdminOrgs({ limit: 100 });
   const { data, isLoading, refetch } = usePlatformAudit({
@@ -65,6 +68,8 @@ export default function AuditExplorerPage() {
     limit,
     is_sensitive: sensitiveOnly ? true : undefined,
     organization_id: selectedOrg === "ALL" ? undefined : selectedOrg,
+    actor_user_id: debouncedActor || undefined,
+    action_type: selectedActionGroup === "ALL" || ["SECURITY", "BILLING"].includes(selectedActionGroup) ? undefined : selectedActionGroup,
   });
 
   const rawLogs = data?.items || [];
@@ -73,19 +78,12 @@ export default function AuditExplorerPage() {
 
   const logs = useMemo(() => {
     return rawLogs.filter(log => {
-      const matchActor = actorQuery === "" || 
-        (log.actor_user_id && log.actor_user_id.toLowerCase().includes(actorQuery.toLowerCase())) ||
-        (log.actor_ip && log.actor_ip.includes(actorQuery));
-        
-      const matchActionGroup = selectedActionGroup === "ALL" || 
-        (selectedActionGroup === "CREATE" && log.action_type === "CREATE") ||
-        (selectedActionGroup === "UPDATE" && log.action_type === "UPDATE") ||
-        (selectedActionGroup === "DELETE" && log.action_type === "DELETE") ||
-        (selectedActionGroup === "LOGIN" && log.action_type === "LOGIN") ||
-        (selectedActionGroup === "LOGOUT" && log.action_type === "LOGOUT") ||
-        (selectedActionGroup === "IMPERSONATE" && log.action_type === "IMPERSONATE") ||
-        (selectedActionGroup === "SECURITY" && ["PASSWORD_RESET", "2FA_DISABLE"].includes(log.action_type)) ||
-        (selectedActionGroup === "BILLING" && log.action_type === "PLAN_CHANGE");
+      const matchActionGroup = (() => {
+        if (selectedActionGroup === "ALL") return true;
+        if (selectedActionGroup === "SECURITY") return ["PASSWORD_RESET", "2FA_DISABLE"].includes(log.action_type);
+        if (selectedActionGroup === "BILLING") return log.action_type === "PLAN_CHANGE";
+        return log.action_type === selectedActionGroup;
+      })();
 
       const matchDates = (() => {
         if (!log.occurred_at) return true;
@@ -95,9 +93,9 @@ export default function AuditExplorerPage() {
         return true;
       })();
 
-      return matchActor && matchActionGroup && matchDates;
+      return matchActionGroup && matchDates;
     });
-  }, [rawLogs, actorQuery, selectedActionGroup, dateFrom, dateTo]);
+  }, [rawLogs, selectedActionGroup, dateFrom, dateTo]);
 
   const actionGroups = useMemo(() => {
     const countFor = (id: string) => {
@@ -354,6 +352,39 @@ export default function AuditExplorerPage() {
               })
             )}
           </div>
+
+          {/* Pagination Controls */}
+          {logs.length > 0 && (
+            <div className="flex items-center justify-between border-t border-border pt-4 text-xs">
+              <Button
+                variant="outline"
+                disabled={cursorHistory.length === 0}
+                onClick={() => {
+                  const prevHistory = [...cursorHistory];
+                  prevHistory.pop(); // Remove current cursor
+                  const prevCursor = prevHistory[prevHistory.length - 1] || null;
+                  setCursor(prevCursor);
+                  setCursorHistory(prevHistory);
+                }}
+                className="h-8 text-xs font-semibold px-4 border-border"
+              >
+                Previous Page
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!hasNext || !nextCursorVal}
+                onClick={() => {
+                  if (nextCursorVal) {
+                    setCursor(nextCursorVal);
+                    setCursorHistory([...cursorHistory, nextCursorVal]);
+                  }
+                }}
+                className="h-8 text-xs font-semibold px-4 border-border"
+              >
+                Next Page
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Right Column — Log Detail (25% -> lg:col-span-3) */}

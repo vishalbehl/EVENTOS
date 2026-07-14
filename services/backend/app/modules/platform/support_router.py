@@ -36,6 +36,7 @@ async def create_ticket(
         organization_id=current_user.organization_id,
         creator_id=current_user.id,
         subject=payload.subject,
+        description=payload.content,
         priority=payload.priority,
         status="OPEN"
     )
@@ -82,9 +83,12 @@ async def list_tickets(
             "id": t.id,
             "organization_id": t.organization_id,
             "subject": t.subject,
+            "description": t.description,
             "status": t.status,
             "priority": t.priority,
-            "created_at": t.created_at
+            "created_at": t.created_at,
+            "assigned_agent": None,
+            "is_escalated": t.priority in ["HIGH", "CRITICAL"],
         } for t in result.scalars().all()
     ]
 

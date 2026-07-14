@@ -57,3 +57,34 @@ class ServiceRequestOut(BaseModel):
     updated_at: datetime
     items: list[ServiceRequestItemOut] = Field(default_factory=list)
     requirements: list[RequirementOut] = Field(default_factory=list)
+
+
+class ServiceRequestKpiOut(BaseModel):
+    total: int
+    open: int
+    status_counts: dict[str, int]
+
+
+class ServiceRequestKanbanCardOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    request_number: str
+    title: str
+    priority: str
+    request_type: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceRequestKanbanColumnOut(BaseModel):
+    key: str
+    label: str
+    count: int
+    cards: list[ServiceRequestKanbanCardOut]
+
+
+class ServiceRequestKanbanOut(BaseModel):
+    columns: list[ServiceRequestKanbanColumnOut]
+    limit: int
+    offset: int

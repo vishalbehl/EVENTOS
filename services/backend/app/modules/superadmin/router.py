@@ -34,6 +34,9 @@ from app.modules.analytics.routers.dashboard import router as dashboard_router
 from app.modules.developer.routers.developer import router as developer_router
 from app.modules.search.routers.search import router as search_router
 from app.modules.platform_health.router import router as platform_health_router
+from app.modules.crm.routers.crm_router import router as crm_router
+from app.modules.billing.routers.billing_superadmin import router as billing_superadmin_router
+from app.modules.platform.reports_router import router as reports_router
 
 
 # ── Top-level superadmin router ───────────────────────────────
@@ -59,3 +62,6 @@ superadmin_router.include_router(dashboard_router)
 superadmin_router.include_router(developer_router)
 superadmin_router.include_router(search_router)
 superadmin_router.include_router(platform_health_router)
+superadmin_router.include_router(crm_router)
+superadmin_router.include_router(billing_superadmin_router)
+superadmin_router.include_router(reports_router)

@@ -133,7 +133,30 @@ export const useAuthStore = create<AuthState>()(
       name: 'obsidian-auth-storage',
       partialize: (state) => {
         const { hasHydrated, ...rest } = state;
-        return rest;
+        const isImpersonating = Boolean(state.originalAccessToken);
+        const safeState = {
+          ...rest,
+          user: isImpersonating ? state.originalUser : state.user,
+          accessToken: isImpersonating ? state.originalAccessToken : state.accessToken,
+          refreshToken: isImpersonating ? state.originalRefreshToken : state.refreshToken,
+          originalUser: null,
+          originalAccessToken: null,
+          originalRefreshToken: null,
+          impersonatedOrgName: null,
+          impersonatedUserName: null,
+        };
+
+        if (state.rememberMe) return safeState;
+
+        return {
+          ...safeState,
+          user: null,
+          accessToken: null,
+          refreshToken: null,
+          isAuthenticated: false,
+          loginTime: null,
+          lastActivity: null,
+        };
       },
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

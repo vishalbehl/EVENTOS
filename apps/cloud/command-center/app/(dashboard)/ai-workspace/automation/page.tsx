@@ -1,19 +1,24 @@
-"use client"
+"use client";
 
-import React from "react"
-import { PageContainer } from "@/components/super-admin/ui/PageContainer"
-import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
-import { SlidersHorizontal } from "lucide-react"
+import { UnavailableRouteState } from "@/components/super-admin/ui/UnavailableRouteState";
 
-export default function AILimitsPage() {
+export default function AIAutomationPage() {
   return (
-    <PageContainer>
-      <SectionHeader title="Usage Limits" description="Define tenant-level tokens quotas, spending ceilings, and throttling policies." />
-      <div className="flex flex-col items-center justify-center py-20 bg-surface border border-border rounded-xl mt-6">
-        <SlidersHorizontal className="h-12 w-12 text-tertiary mb-3 animate-pulse" />
-        <h3 className="text-sm font-bold text-primary mb-1">AI Usage Limits not configured</h3>
-        <p className="text-xs text-secondary">Set up token quota limits and credit rules for tenant groups.</p>
-      </div>
-    </PageContainer>
-  )
+    <UnavailableRouteState
+      title="AI Automation"
+      description="Create policy-governed AI automations with durable executions and human approval boundaries."
+      breadcrumb={["AI Workspace", "Automation"]}
+      removed={[
+        "A static usage-limits placeholder without persistence or runtime enforcement.",
+        "Copy suggesting tenant token quotas and credit rules could be configured when no contract existed.",
+      ]}
+      required={[
+        "Versioned automation rules, triggers, actions, scopes, owners, approvals, and lifecycle state.",
+        "Durable runs with idempotency, retry, cancellation, failure reason, and reconciliation.",
+        "Tenant/event limits enforced by authoritative usage and entitlement services.",
+        "Explicit policy preventing autonomous privileged mutations without approved human or system authority.",
+      ]}
+      note="AI automation is a durable workflow capability, not a browser settings form. Limits must be enforced server-side and every privileged action must be attributable."
+    />
+  );
 }

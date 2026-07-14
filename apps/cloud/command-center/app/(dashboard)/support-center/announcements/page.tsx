@@ -204,7 +204,7 @@ export default function PlatformAnnouncementsPage() {
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <button
                           type="button"
-                          onClick={() => router.push(`/support/announcements/${announcement.id}`)}
+                          onClick={() => router.push(`/support-center/announcements/${announcement.id}`)}
                           className="min-w-0 text-left"
                         >
                           <div className="flex flex-wrap items-center gap-2">
@@ -464,10 +464,14 @@ export default function PlatformAnnouncementsPage() {
         requireReason
         resourceName={deleteAnnouncement?.title}
         pending={deleteAnnouncementMutation.isPending}
-        onConfirm={async () => {
+        onConfirm={async (reason) => {
           if (!deleteAnnouncement) return;
+          if (!reason) {
+            toast.error("A reason is required to delete an announcement.");
+            return;
+          }
           try {
-            await deleteAnnouncementMutation.mutateAsync(deleteAnnouncement.id);
+            await deleteAnnouncementMutation.mutateAsync({ announcementId: deleteAnnouncement.id, reason });
             toast.success("Announcement deleted.");
             setDeleteAnnouncement(null);
           } catch (error: any) {
@@ -484,10 +488,14 @@ export default function PlatformAnnouncementsPage() {
         confirmLabel="Delete window"
         requireReason
         pending={deleteMaintenance.isPending}
-        onConfirm={async () => {
+        onConfirm={async (reason) => {
           if (!deleteWindowId) return;
+          if (!reason) {
+            toast.error("A reason is required to delete a maintenance window.");
+            return;
+          }
           try {
-            await deleteMaintenance.mutateAsync(deleteWindowId);
+            await deleteMaintenance.mutateAsync({ windowId: deleteWindowId, reason });
             toast.success("Maintenance window deleted.");
             setDeleteWindowId(null);
           } catch (error: any) {

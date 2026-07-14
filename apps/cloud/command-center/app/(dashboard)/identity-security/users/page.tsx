@@ -43,8 +43,15 @@ import { SectionHeader } from "@/components/super-admin/ui/SectionHeader";
 import { StatusBadge } from "@/components/super-admin/ui/StatusBadge";
 import { MetricRow } from "@/components/super-admin/ui/MetricRow";
 import { DataTable } from "@/components/super-admin/ui/DataTable";
+import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction";
 
 const APP_ROLES = ["owner", "admin", "member"];
+
+type PendingUserAction =
+  | { type: "impersonate"; user: GlobalUser }
+  | { type: "status"; user: GlobalUser }
+  | { type: "reset2fa"; user: GlobalUser }
+  | { type: "logout"; user: GlobalUser };
 
 export default function GlobalUsersPage() {
   const [page, setPage] = useState(0);
@@ -57,6 +64,7 @@ export default function GlobalUsersPage() {
   const [selectedOrg, setSelectedOrg] = useState("ALL");
   const [selected2FA, setSelected2FA] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
+  const [pendingAction, setPendingAction] = useState<PendingUserAction | null>(null);
 
   // Queries
   const { data: orgs = [] } = useAdminOrgs({ limit: 100 });
@@ -106,11 +114,11 @@ export default function GlobalUsersPage() {
   }, [users, selectedRole, selectedOrg, selected2FA, selectedStatus]);
 
   // Impersonate handler
-  const handleImpersonate = async (user: GlobalUser) => {
+  const handleImpersonate = async (user: GlobalUser, reason: string) => {
     try {
       const res = await impersonate.mutateAsync({
         userId: user.id,
-        reason: "Administrative support session"
+        reason
       });
       if (res.access_token) {
         const displayName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || user.email;
@@ -131,6 +139,7 @@ export default function GlobalUsersPage() {
           displayName
         );
         toast.success(`Impersonation session started for ${displayName}`);
+        setPendingAction(null);
         window.open("/", "_blank", "noopener,noreferrer");
       }
     } catch {
@@ -139,10 +148,11 @@ export default function GlobalUsersPage() {
   };
 
   // Reset 2FA handler
-  const handleReset2FA = async (userId: string) => {
+  const handleReset2FA = async (user: GlobalUser, reason?: string) => {
     try {
-      await reset2FA.mutateAsync(userId);
+      await reset2FA.mutateAsync({ userId: user.id, reason });
       toast.success("2FA reset successfully");
+      setPendingAction(null);
       refetch();
     } catch {
       toast.error("Failed to reset 2FA settings");
@@ -150,10 +160,11 @@ export default function GlobalUsersPage() {
   };
 
   // Force Logout handler
-  const handleForceLogout = async (userId: string) => {
+  const handleForceLogout = async (user: GlobalUser, reason?: string) => {
     try {
-      await forceLogout.mutateAsync(userId);
+      await forceLogout.mutateAsync({ userId: user.id, reason });
       toast.success("User sessions revoked successfully");
+      setPendingAction(null);
       refetch();
     } catch {
       toast.error("Failed to revoke user sessions");
@@ -161,19 +172,57 @@ export default function GlobalUsersPage() {
   };
 
   // Toggle active status
-  const handleToggleStatus = async (user: GlobalUser) => {
+  const handleToggleStatus = async (user: GlobalUser, reason?: string) => {
     try {
       const nextActive = !user.is_active;
       await updateStatus.mutateAsync({
         userId: user.id,
-        isActive: nextActive
+        isActive: nextActive,
+        reason,
       });
       toast.success(`User is now ${nextActive ? "Active" : "Deactivated"}`);
+      setPendingAction(null);
       refetch();
     } catch {
       toast.error("Failed to update status");
     }
   };
+
+  const pendingUserName = pendingAction
+    ? `${pendingAction.user.first_name || ""} ${pendingAction.user.last_name || ""}`.trim() || pendingAction.user.email
+    : undefined;
+
+  const pendingActionConfig = pendingAction
+    ? pendingAction.type === "impersonate"
+      ? {
+          title: "Start impersonation session?",
+          description: "This creates a time-bound support session as the selected user. Use only for approved support, security, or recovery work.",
+          confirmLabel: "Start impersonation",
+          pending: impersonate.isPending,
+        }
+      : pendingAction.type === "status"
+      ? {
+          title: pendingAction.user.is_active ? "Deactivate user?" : "Activate user?",
+          description: pendingAction.user.is_active
+            ? "This disables the user account and can interrupt access across assigned workspaces."
+            : "This restores account access according to the user's existing memberships and assignments.",
+          confirmLabel: pendingAction.user.is_active ? "Deactivate user" : "Activate user",
+          pending: updateStatus.isPending,
+        }
+      : pendingAction.type === "reset2fa"
+        ? {
+            title: "Reset user's 2FA?",
+            description: "This removes the user's MFA devices and revokes active refresh sessions so they must re-enroll.",
+            confirmLabel: "Reset 2FA",
+            pending: reset2FA.isPending,
+          }
+        : {
+            title: "Force logout user?",
+            description: "This revokes the user's active sessions and requires them to authenticate again.",
+            confirmLabel: "Force logout",
+            pending: forceLogout.isPending,
+          }
+    : null;
 
   // TanStack Table columns
   const columns: ColumnDef<GlobalUser>[] = useMemo(() => [
@@ -293,7 +342,7 @@ export default function GlobalUsersPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-surface border-border text-[var(--text-primary)] w-[180px]">
-                <DropdownMenuItem onClick={() => handleImpersonate(u)} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem onClick={() => setPendingAction({ type: "impersonate", user: u })} className="text-xs cursor-pointer flex gap-2">
                   <Eye className="w-3.5 h-3.5 text-orange-400" />
                   Impersonate
                 </DropdownMenuItem>
@@ -305,16 +354,16 @@ export default function GlobalUsersPage() {
                   View Audit Trail
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => handleToggleStatus(u)} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem onClick={() => setPendingAction({ type: "status", user: u })} className="text-xs cursor-pointer flex gap-2">
                   {u.is_active ? <UserX className="w-3.5 h-3.5 text-[var(--danger)]" /> : <UserCheck className="w-3.5 h-3.5 text-[var(--success)]" />}
                   {u.is_active ? "Deactivate User" : "Activate User"}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleReset2FA(u.id)} className="text-xs cursor-pointer flex gap-2">
+                <DropdownMenuItem onClick={() => setPendingAction({ type: "reset2fa", user: u })} className="text-xs cursor-pointer flex gap-2">
                   <Key className="w-3.5 h-3.5 text-violet-400" />
                   Reset 2FA
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => handleForceLogout(u.id)} className="text-xs cursor-pointer flex gap-2 text-[var(--danger)] focus:text-[var(--danger)]">
+                <DropdownMenuItem onClick={() => setPendingAction({ type: "logout", user: u })} className="text-xs cursor-pointer flex gap-2 text-[var(--danger)] focus:text-[var(--danger)]">
                   <LogOut className="w-3.5 h-3.5 text-[var(--danger)]" />
                   Force Logout
                 </DropdownMenuItem>
@@ -359,9 +408,15 @@ export default function GlobalUsersPage() {
         breadcrumb={["Console", "Security", "Users"]}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              title="User export requires a durable export-job record and authorization-gated download endpoint."
+              className="border-border"
+            >
               <Download className="w-3.5 h-3.5 mr-2 text-[var(--text-tertiary)]" />
-              Export CSV
+              Export unavailable
             </Button>
             <Button variant="outline" onClick={() => refetch()} size="sm" className="border-border">
               <RefreshCw className={cn("w-3.5 h-3.5 mr-2", isLoading && "animate-spin")} />
@@ -419,6 +474,28 @@ export default function GlobalUsersPage() {
 
       {/* Main Data Table */}
       <DataTable table={table} isLoading={isLoading} />
+
+      <ConfirmDestructiveAction
+        open={!!pendingActionConfig}
+        onOpenChange={(open) => !open && setPendingAction(null)}
+        title={pendingActionConfig?.title || "Confirm user action"}
+        description={pendingActionConfig?.description || "Confirm this user administration action."}
+        confirmLabel={pendingActionConfig?.confirmLabel || "Confirm"}
+        resourceName={pendingUserName}
+        requireReason
+        pending={pendingActionConfig?.pending}
+        onConfirm={(reason) => {
+          if (!pendingAction) return;
+          if (!reason) {
+            toast.error("A reason is required for this administrative action");
+            return;
+          }
+          if (pendingAction.type === "impersonate") void handleImpersonate(pendingAction.user, reason);
+          if (pendingAction.type === "status") void handleToggleStatus(pendingAction.user, reason);
+          if (pendingAction.type === "reset2fa") void handleReset2FA(pendingAction.user, reason);
+          if (pendingAction.type === "logout") void handleForceLogout(pendingAction.user, reason);
+        }}
+      />
     </PageContainer>
   );
 }

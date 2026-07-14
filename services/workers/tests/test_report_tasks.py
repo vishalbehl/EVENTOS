@@ -179,6 +179,68 @@ class TestGenerateEventSummaryReport:
         upload.assert_not_called()
 
 
+class TestQuoteProposalPdf:
+    def test_renderer_uses_persisted_snapshot_totals(self):
+        from workers.tasks.report_tasks import _build_quote_proposal_pdf
+
+        pdf = _build_quote_proposal_pdf({
+            "title": "Conference technology services",
+            "quote_number": "QTE-001",
+            "currency": "INR",
+            "subtotal": "6000.00",
+            "discount_amount": "0.00",
+            "tax_rate": "18.00",
+            "tax_amount": "1080.00",
+            "total_amount": "7080.00",
+            "line_items": [{
+                "category": "Hardware", "name": "Projection package",
+                "quantity": "2.00", "duration_days": 3,
+                "unit_rate": "1000.00", "line_subtotal": "6000.00",
+            }],
+        }, "PRP-001", 1)
+
+        assert pdf.startswith(b"%PDF")
+        assert len(pdf) > 1000
+
+
+class TestCommercialReportArtifacts:
+    def test_hardware_catalog_is_real_xlsx(self):
+        from workers.tasks.report_tasks import _build_commercial_report_artifact
+
+        artifact, extension, content_type = _build_commercial_report_artifact(
+            "hardware_catalog",
+            [{"asset_code": "HW-001", "name": "Projector", "quantity": 4}],
+        )
+        assert artifact.startswith(b"PK")
+        assert extension == "xlsx"
+        assert "spreadsheetml" in content_type
+
+    def test_pricing_simulations_csv_is_bom_encoded(self):
+        from workers.tasks.report_tasks import _build_commercial_report_artifact
+
+        artifact, extension, content_type = _build_commercial_report_artifact(
+            "pricing_simulations",
+            [{"simulation_id": "sim-1", "name": "Annual summit", "calculated_total": "125000.00"}],
+        )
+        assert artifact.startswith(b"\xef\xbb\xbf")
+        assert b"Annual summit" in artifact
+        assert b"Item A" not in artifact
+        assert extension == "csv"
+        assert content_type.startswith("text/csv")
+
+    def test_pricing_rules_is_real_pdf(self):
+        from workers.tasks.report_tasks import _build_commercial_report_artifact
+
+        artifact, extension, content_type = _build_commercial_report_artifact(
+            "pricing_rules",
+            [{"code": "RULE-1", "name": "Standard margin", "status": "ACTIVE"}],
+        )
+        assert artifact.startswith(b"%PDF")
+        assert len(artifact) > 1000
+        assert extension == "pdf"
+        assert content_type == "application/pdf"
+
+
 class TestGenerateSessionReadinessCsv:
     def test_generates_csv_and_uploads(self):
         from workers.tasks.report_tasks import generate_session_readiness_csv

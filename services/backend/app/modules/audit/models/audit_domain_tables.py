@@ -36,6 +36,11 @@ class DataExport(Base):
     downloaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     request_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    source_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    source_version: Mapped[Optional[int]] = mapped_column(nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class SystemChange(Base):

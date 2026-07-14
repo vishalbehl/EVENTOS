@@ -14,6 +14,29 @@ ROUTES_ROOT = APP_ROOT / "app"
 OUTPUT = Path(__file__).with_name("COMMAND_CENTER_FEATURE_MATRIX.csv")
 BACKEND_OUTPUT = Path(__file__).with_name("BACKEND_CAPABILITY_INVENTORY.csv")
 
+FRONTEND_REVIEW_FIELDS = (
+    "current_status",
+    "frontend_integrations",
+    "direct_api_references",
+    "backend_owner",
+    "database_source",
+    "permission",
+    "step_up",
+    "background_jobs",
+    "known_findings",
+    "ui_states",
+    "accessibility",
+    "responsive",
+    "tests",
+    "acceptance_owner",
+    "acceptance_evidence",
+)
+BACKEND_REVIEW_FIELDS = (
+    "command_center_mapping",
+    "authorization_evidence",
+    "test_evidence",
+)
+
 MOCK_PATTERN = re.compile(
     r"\b(mock(?:ed)?|placeholder|coming soon|not implemented|fake success|static data)\b",
     re.IGNORECASE,
@@ -169,6 +192,33 @@ def build_backend_rows() -> list[dict[str, str]]:
     return rows
 
 
+def load_existing(path: Path, key_fields: tuple[str, ...]) -> dict[tuple[str, ...], dict[str, str]]:
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8", newline="") as stream:
+        return {
+            tuple(row.get(field, "") for field in key_fields): row
+            for row in csv.DictReader(stream)
+        }
+
+
+def merge_reviewed_fields(
+    rows: list[dict[str, str]],
+    existing: dict[tuple[str, ...], dict[str, str]],
+    key_fields: tuple[str, ...],
+    reviewed_fields: tuple[str, ...],
+) -> list[dict[str, str]]:
+    """Refresh discovered structure without erasing human-reviewed evidence."""
+    for row in rows:
+        reviewed = existing.get(tuple(row[field] for field in key_fields))
+        if not reviewed:
+            continue
+        for field in reviewed_fields:
+            if field in reviewed:
+                row[field] = reviewed[field]
+    return rows
+
+
 def render_csv(rows: list[dict[str, str]]) -> str:
     from io import StringIO
 
@@ -189,8 +239,18 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
 
 def main() -> None:
     check = "--check" in sys.argv
-    rows = build_frontend_rows()
-    backend_rows = build_backend_rows()
+    rows = merge_reviewed_fields(
+        build_frontend_rows(),
+        load_existing(OUTPUT, ("route",)),
+        ("route",),
+        FRONTEND_REVIEW_FIELDS,
+    )
+    backend_rows = merge_reviewed_fields(
+        build_backend_rows(),
+        load_existing(BACKEND_OUTPUT, ("method", "declared_path", "backend_module")),
+        ("method", "declared_path", "backend_module"),
+        BACKEND_REVIEW_FIELDS,
+    )
     outputs = (
         (OUTPUT, render_csv(rows)),
         (BACKEND_OUTPUT, render_csv(backend_rows)),
