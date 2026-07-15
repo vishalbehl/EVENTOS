@@ -40,9 +40,10 @@ export function DataTable<TData>({
 
   return (
     <div className="space-y-4 w-full">
-      <div className="rounded-xl border border-border bg-surface overflow-hidden w-full">
-        <div className="w-full overflow-auto max-h-[calc(100vh-420px)] min-h-[300px]">
-          <table aria-label={ariaLabel} className="w-full text-left border-collapse">
+      <div className="w-full overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="cc-scroll-region min-h-[300px] w-full overflow-auto max-h-[calc(100dvh-420px)]">
+          <table aria-label={ariaLabel} aria-busy={isLoading} className="w-full border-collapse text-left">
+            <caption className="sr-only">{ariaLabel}</caption>
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-border/80">
@@ -67,7 +68,7 @@ export function DataTable<TData>({
               {isLoading ? (
                 // Shimmer Skeleton State
                 Array.from({ length: Math.max(rows.length, 5) }).map((_, rIdx) => (
-                  <tr key={rIdx} className="border-b border-border/40 h-[52px]">
+                <tr key={rIdx} className="h-[var(--table-row-height)] border-b border-border/40">
                     {columns.map((col, cIdx) => (
                       <td key={cIdx} className="px-4 py-3 align-middle">
                         <div className="h-4 bg-surface-2 animate-pulse rounded-md w-3/4" />
@@ -113,7 +114,6 @@ export function DataTable<TData>({
                     <tr
                       key={row.id}
                       tabIndex={onRowClick ? 0 : undefined}
-                      role={onRowClick ? "button" : undefined}
                       aria-selected={isSelected || undefined}
                       data-state={isSelected ? "selected" : undefined}
                       onClick={() => onRowClick?.(row.original)}
@@ -124,7 +124,7 @@ export function DataTable<TData>({
                         }
                       }}
                       className={cn(
-                        "group border-b border-border/40 min-h-[52px] h-[52px] transition-colors duration-100 align-middle",
+                        "group h-[var(--table-row-height)] min-h-[var(--table-row-height)] border-b border-border/40 align-middle transition-colors duration-100",
                         onRowClick && "cursor-pointer hover:bg-surface-hover/50",
                         !onRowClick && "hover:bg-surface-hover/50",
                         isSelected && "bg-[var(--brand-primary-muted)] border-l-2 border-[var(--brand-primary)]"
@@ -146,7 +146,7 @@ export function DataTable<TData>({
 
       {/* Pagination row as a separate card below the table canvas */}
       {pageCount > 1 && (
-        <div className="rounded-xl border border-border bg-surface px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <nav aria-label={`${ariaLabel} pagination`} className="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3.5 sm:flex-row sm:items-center sm:px-6">
           <p className="text-xs text-[var(--text-secondary)] font-medium">
             Showing <span className="font-semibold text-[var(--text-primary)]">{fromRow}</span> to{" "}
             <span className="font-semibold text-[var(--text-primary)]">{toRow}</span> of{" "}
@@ -199,7 +199,7 @@ export function DataTable<TData>({
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
-        </div>
+        </nav>
       )}
     </div>
   );

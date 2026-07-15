@@ -157,6 +157,11 @@ export default function DashboardLayout({
         router.push("/");
         return;
       }
+
+      if (user && !user.onboarding_completed) {
+        router.push("/onboarding");
+        return;
+      }
     } else if (!accessToken) {
       router.push("/");
     }

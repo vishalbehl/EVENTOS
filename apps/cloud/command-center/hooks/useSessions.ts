@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiDelete, apiPost } from "@/lib/api-client";
 import { toast } from "sonner";
+import { queryKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export interface SessionSummary {
   id: string;
@@ -31,8 +33,9 @@ export interface SessionSummary {
 }
 
 export function useSessions(eventId: string, filters?: { room_id?: string; status?: string }) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["sessions", eventId, filters],
+    queryKey: queryKeys.events.sessions(organizationId, eventId, filters),
     queryFn: () => {
       const params = new URLSearchParams();
       if (filters?.room_id) params.append("room_id", filters.room_id);
@@ -47,10 +50,11 @@ export function useSessions(eventId: string, filters?: { room_id?: string; statu
 
 export function useDeleteSession(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (sessionId: string) => apiDelete(`/events/${eventId}/sessions/${sessionId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.sessions(organizationId, eventId) });
       toast.success("Session deleted successfully");
     },
     onError: () => {
@@ -61,10 +65,11 @@ export function useDeleteSession(eventId: string) {
 
 export function useCreateSession(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (data: any) => apiPost(`/events/${eventId}/sessions`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.sessions(organizationId, eventId) });
       toast.success("Session created successfully");
     },
     onError: (error: any) => {

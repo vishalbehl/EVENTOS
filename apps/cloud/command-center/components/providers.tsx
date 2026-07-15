@@ -2,10 +2,21 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Toaster } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
+import { useUIStore } from "@/store/useUIStore";
+
+function ExperiencePreferences() {
+  const density = useUIStore((state) => state.density);
+
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+  }, [density]);
+
+  return null;
+}
 
 function shouldRetry(failureCount: number, error: unknown) {
   if (failureCount >= 2) return false;
@@ -37,6 +48,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <ExperiencePreferences />
       {children}
       <Toaster position="top-right" richColors closeButton />
       {process.env.NODE_ENV === "development" && <ReactQueryDevtools initialIsOpen={false} />}

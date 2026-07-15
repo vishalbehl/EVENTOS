@@ -19,6 +19,7 @@ from app.modules.billing.models.subscription import (
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.platform_domain_tables import TenantLimit
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
+from app.modules.billing.services.activation_service import ActivationService
 from app.modules.billing.services.limit_guard import LimitGuard
 from app.modules.events.models.event import Event
 from scripts.backfill_event_activations import backfill
@@ -185,12 +186,31 @@ async def test_entitlement_resolver_addon_features_scoping(db, organization, eve
     db.add(OrganizationAddon(organization_id=organization.id, addon_id=addon_org.id, status="ACTIVE"))
     # 2. Event-scoped addon (linked to event)
     db.add(OrganizationAddon(organization_id=organization.id, addon_id=addon_evt.id, event_id=event.id, status="ACTIVE"))
-    # 3. Activation-scoped addon
-    activation = EventActivation(organization_id=organization.id, event_id=event.id, subscription_id=sub.id, status="ACTIVE")
-    db.add(activation)
+    await db.flush()
+
+    # Activation creates the immutable v1 snapshot containing current event inputs.
+    activation = await ActivationService.activate_event(
+        db,
+        organization_id=organization.id,
+        event_id=event.id,
+        subscription_id=sub.id,
+        grant_id=None,
+        activation_policy="SNAPSHOT_REFRESHABLE",
+        idempotency_key=f"addon-activation-{uuid.uuid4()}",
+        actor_id=None,
+    )
+
+    # Activation-scoped changes become effective only through an explicit snapshot refresh.
     await db.flush()
     db.add(OrganizationAddon(organization_id=organization.id, addon_id=addon_act.id, activation_id=activation.id, status="ACTIVE"))
     await db.flush()
+    await ActivationService.refresh_snapshot(
+        db,
+        activation_id=activation.id,
+        organization_id=organization.id,
+        idempotency_key=f"addon-refresh-{uuid.uuid4()}",
+        actor_id=None,
+    )
 
     # Verify Org-scoped is active generally
     assert await EntitlementResolver.has_feature(db, organization.id, "FEAT_ORG_WIDE") is True

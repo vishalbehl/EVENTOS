@@ -1,18 +1,17 @@
 "use client";
 
-import { useAuthStore } from "@/store/use-auth-store";
+import { LogOut, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ShieldAlert, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { useAuthStore } from "@/store/use-auth-store";
 
 export function ImpersonationBanner() {
   const { originalAccessToken, impersonatedOrgName, impersonatedUserName, stopImpersonation } = useAuthStore();
   const router = useRouter();
   const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
+  useEffect(() => setHydrated(true), []);
 
   if (!hydrated || !originalAccessToken) return null;
 
@@ -22,28 +21,27 @@ export function ImpersonationBanner() {
   };
 
   return (
-    <div className="w-full bg-red-600 text-white py-2 px-4 flex items-center justify-between shadow-lg z-[9999] relative border-b border-red-700 animate-in slide-in-from-top duration-300">
-      <div className="flex items-center gap-2.5">
-        <ShieldAlert className="w-4 h-4 text-white animate-pulse" />
-        <span className="text-[12px] font-black tracking-wide uppercase">Active Impersonation Session</span>
-        <span className="text-[12px] opacity-90 hidden sm:inline">
-          · You are viewing the workspace as owner{" "}
-          <strong className="font-bold underline">
-            {impersonatedUserName || "Unknown User"}
-          </strong>{" "}
-          of tenant{" "}
-          <strong className="font-bold underline">
-            {impersonatedOrgName || "Unknown Org"}
-          </strong>
+    <section
+      role="status"
+      aria-label="Active impersonation session"
+      className="relative z-[9999] flex w-full flex-col items-start justify-between gap-2 border-b border-[var(--status-danger)] bg-[var(--status-danger-muted)] px-3 py-2 text-[var(--text-primary)] shadow-lg sm:flex-row sm:items-center sm:px-4"
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        <ShieldAlert aria-hidden className="size-4 shrink-0 text-[var(--status-danger)]" />
+        <span className="shrink-0 text-[11px] font-black uppercase tracking-wide">Impersonation active</span>
+        <span className="hidden truncate text-xs text-[var(--text-secondary)] md:inline">
+          Viewing as <strong>{impersonatedUserName || "Unknown user"}</strong> for{" "}
+          <strong>{impersonatedOrgName || "Unknown organization"}</strong>
         </span>
       </div>
       <button
+        type="button"
         onClick={handleStop}
-        className="flex items-center gap-1.5 px-3 py-1 rounded bg-white text-red-700 hover:bg-red-50 text-[11px] font-black uppercase tracking-wider transition-all duration-200 border border-transparent shadow-sm"
+        className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-md border border-[var(--status-danger)] bg-[var(--bg-surface)] px-3 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--status-danger)] shadow-sm hover:bg-[var(--status-danger-muted)]"
       >
-        <LogOut className="w-3 h-3" />
-        Stop Impersonating
+        <LogOut aria-hidden className="size-3" />
+        Stop impersonating
       </button>
-    </div>
+    </section>
   );
 }

@@ -344,6 +344,22 @@ def create_presigned_download(
         raise RuntimeError("Could not generate download URL.") from exc
 
 
+def get_object_metadata(*, bucket: str, storage_path: str) -> dict[str, object]:
+    """Return authoritative object size and content type after a direct upload."""
+    _assert_tenant_storage_path(storage_path)
+    if settings.STORAGE_MODE == "local":
+        path = (LOCAL_STORAGE_ROOT / bucket / storage_path).resolve()
+        root = (LOCAL_STORAGE_ROOT / bucket).resolve()
+        if root not in path.parents or not path.is_file():
+            raise FileNotFoundError("Uploaded object was not found.")
+        return {"size": path.stat().st_size, "content_type": None}
+    try:
+        response = _get_s3_client().head_object(Bucket=bucket, Key=storage_path)
+    except ClientError as exc:
+        raise FileNotFoundError("Uploaded object was not found.") from exc
+    return {"size": int(response.get("ContentLength", -1)), "content_type": response.get("ContentType")}
+
+
 def create_presigned_presentation_upload(
     event_id: uuid.UUID,
     speaker_id: uuid.UUID,

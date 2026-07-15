@@ -370,7 +370,7 @@ async def export_analytics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     format: str = Query("csv", pattern="^(csv|xlsx|pdf)$"),
-) -> StreamingResponse:
+) -> None:
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
         detail={

@@ -12,8 +12,9 @@ from app.modules.platform import support_router
 from app.modules.platform.communications_router import router as platform_communications_router
 from app.modules.platform.departments.router import router as departments_router
 from app.modules.platform.teams.router import router as teams_router
-from app.modules.platform.roles.router import router as roles_router, assignments_router
-from app.modules.platform.permissions.router import router as permissions_router
+from app.modules.platform.roles.router import router as roles_router, assignments_router, admin_router as access_admin_router
+from app.modules.audit.routers.security_governance import router as security_governance_router
+from app.modules.platform.permissions.router import router as permissions_router, admin_router as permissions_admin_router
 from app.modules.rbac.routers import events, settings, rbac, global_settings, organisations
 from app.modules.speakers.routers import sessions, speakers, portal, speaker_profiles
 from app.modules.presentations.routers import bundles, files, queue, posters, storage
@@ -75,6 +76,9 @@ api_router.include_router(support_router.router)
 api_router.include_router(departments_router)
 api_router.include_router(teams_router)
 api_router.include_router(roles_router)
+api_router.include_router(security_governance_router)
+api_router.include_router(access_admin_router)
+api_router.include_router(permissions_admin_router)
 api_router.include_router(assignments_router)
 api_router.include_router(permissions_router)
 api_router.include_router(organisations.router)

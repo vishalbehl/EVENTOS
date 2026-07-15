@@ -258,6 +258,78 @@ def _build_quote_proposal_pdf(snapshot: dict, proposal_number: str, proposal_ver
     return buffer.getvalue()
 
 
+def _build_invoice_pdf(snapshot: dict) -> bytes:
+    """Render a version-bound invoice snapshot without re-reading mutable totals."""
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    invoice_number = str(snapshot.get("invoice_number") or "Invoice")
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title=invoice_number,
+        author="EventX OS",
+    )
+    styles = getSampleStyleSheet()
+    currency = escape(str(snapshot.get("currency") or "INR"))
+    story = [
+        Paragraph("Tax Invoice", styles["Title"]),
+        Paragraph(escape(invoice_number), styles["Heading2"]),
+        Paragraph(escape(str(snapshot.get("organization_name") or "Organization")), styles["Normal"]),
+        Spacer(1, 5 * mm),
+        Paragraph(
+            f"Issued: {escape(str(snapshot.get('issued_at') or 'Not recorded'))}<br/>"
+            f"Due: {escape(str(snapshot.get('due_date') or 'Not recorded'))}<br/>"
+            f"Status: {escape(str(snapshot.get('status') or 'UNKNOWN'))}",
+            styles["Normal"],
+        ),
+        Spacer(1, 8 * mm),
+    ]
+    rows = [["Description", "Quantity", "Amount"]]
+    for item in snapshot.get("items") or []:
+        rows.append([
+            escape(str(item.get("description") or "Invoice item")),
+            str(item.get("quantity") or 1),
+            f"{currency} {escape(str(item.get('amount') or '0.00'))}",
+        ])
+    if len(rows) == 1:
+        rows.append(["Invoice charge", "1", f"{currency} {escape(str(snapshot.get('amount') or '0.00'))}"])
+    table = Table(rows, colWidths=[105 * mm, 25 * mm, 40 * mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#12372A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+    ]))
+    totals = Table([
+        ["Subtotal", f"{currency} {snapshot.get('amount', '0.00')}"],
+        ["GST", f"{currency} {snapshot.get('gst_amount', '0.00')}"],
+        ["Total", f"{currency} {snapshot.get('total_amount', '0.00')}"],
+    ], colWidths=[45 * mm, 45 * mm], hAlign="RIGHT")
+    totals.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#12372A")),
+    ]))
+    story.extend([table, Spacer(1, 8 * mm), totals, Spacer(1, 12 * mm)])
+    story.append(Paragraph("Generated from an immutable, version-bound EventX OS invoice snapshot.", styles["Italic"]))
+    document.build(story)
+    return buffer.getvalue()
+
+
 def _set_export_status(
     organization_uuid: uuid.UUID,
     export_uuid: uuid.UUID | None,
@@ -358,6 +430,160 @@ def generate_commercial_report_export(
             status="FAILED",
             failure_reason=str(exc)[:1000],
         )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        raise
+
+
+@app.task(
+    bind=True,
+    name="workers.tasks.report_tasks.generate_invoice_pdf",
+    max_retries=2,
+    default_retry_delay=60,
+    soft_time_limit=180,
+)
+def generate_invoice_pdf(
+    self,
+    organization_id: str,
+    invoice_id: str,
+    requested_by_user_id: str,
+    export_id: str,
+) -> dict:
+    organization_uuid = uuid.UUID(organization_id)
+    invoice_uuid = uuid.UUID(invoice_id)
+    requester_uuid = uuid.UUID(requested_by_user_id)
+    export_uuid = uuid.UUID(export_id)
+    _set_export_status(organization_uuid, export_uuid, status="RUNNING")
+    try:
+        with get_db_session(organization_uuid) as db:
+            from app.modules.audit.models.audit_domain_tables import DataExport
+
+            export = db.get(DataExport, export_uuid)
+            if (
+                export is None
+                or export.organization_id != organization_uuid
+                or export.requested_by != requester_uuid
+                or export.source_type != "invoice_pdf"
+                or export.source_id != invoice_uuid
+                or export.export_type != "invoice_pdf"
+            ):
+                raise ValueError("Invoice artifact command scope is invalid.")
+            snapshot = dict((export.request_metadata or {}).get("snapshot") or {})
+            if not snapshot or not export.source_version:
+                raise ValueError("Invoice artifact snapshot is missing.")
+
+        artifact = _build_invoice_pdf(snapshot)
+        invoice_number = str(snapshot.get("invoice_number") or invoice_uuid).replace("/", "-")
+        storage_key = (
+            f"{organization_uuid}/control-plane/invoices/{invoice_uuid}/"
+            f"v{export.source_version}/{invoice_number}.pdf"
+        )
+        r2.upload_bytes(
+            bucket=settings.S3_BUCKET_EXPORTS,
+            key=storage_key,
+            data=artifact,
+            content_type="application/pdf",
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        _set_export_status(
+            organization_uuid,
+            export_uuid,
+            status="COMPLETED",
+            storage_key=storage_key,
+            expires_at=expires_at,
+        )
+        return {
+            "generated": True,
+            "invoice_id": invoice_id,
+            "invoice_version": export.source_version,
+            "export_id": export_id,
+            "storage_key": storage_key,
+            "expires_at": expires_at.isoformat(),
+        }
+    except Exception as exc:
+        logger.exception("[report] Invoice PDF generation failed: %s", invoice_id)
+        _set_export_status(
+            organization_uuid,
+            export_uuid,
+            status="FAILED",
+            failure_reason=str(exc)[:1000],
+        )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        raise
+
+
+@app.task(
+    bind=True,
+    name="workers.tasks.report_tasks.generate_audit_log_export",
+    max_retries=2,
+    default_retry_delay=60,
+    soft_time_limit=300,
+)
+def generate_audit_log_export(
+    self,
+    organization_id: str,
+    requested_by_user_id: str,
+    export_id: str,
+) -> dict:
+    organization_uuid = uuid.UUID(organization_id)
+    requester_uuid = uuid.UUID(requested_by_user_id)
+    export_uuid = uuid.UUID(export_id)
+    _set_export_status(organization_uuid, export_uuid, status="RUNNING")
+    try:
+        with get_db_session(organization_uuid) as db:
+            from app.modules.audit.models.audit_domain_tables import DataExport
+            from app.modules.audit.models.audit_log import AuditLog
+
+            export = db.get(DataExport, export_uuid)
+            if (
+                export is None
+                or export.organization_id != organization_uuid
+                or export.requested_by != requester_uuid
+                or export.source_type != "audit_log_export"
+            ):
+                raise ValueError("Audit export contract mismatch.")
+            metadata = export.request_metadata or {}
+            query = db.query(AuditLog).filter(AuditLog.organization_id == organization_uuid)
+            if metadata.get("action_type"):
+                query = query.filter(AuditLog.action_type == metadata["action_type"])
+            if metadata.get("actor_user_id"):
+                query = query.filter(AuditLog.actor_user_id == uuid.UUID(metadata["actor_user_id"]))
+            if metadata.get("occurred_from"):
+                query = query.filter(AuditLog.occurred_at >= datetime.fromisoformat(metadata["occurred_from"]))
+            if metadata.get("occurred_to"):
+                query = query.filter(AuditLog.occurred_at <= datetime.fromisoformat(metadata["occurred_to"]))
+            if metadata.get("sensitive_only"):
+                query = query.filter(AuditLog.is_sensitive.is_(True))
+            logs = query.order_by(AuditLog.occurred_at.desc(), AuditLog.id.desc()).limit(250_000).all()
+
+        columns = [
+            "id", "occurred_at", "action_type", "resource_type", "resource_id",
+            "actor_user_id", "actor_role", "request_id", "correlation_id", "row_hash", "is_sensitive",
+        ]
+        stream = io.StringIO(newline="")
+        writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        for log in logs:
+            writer.writerow({column: _cell_value(getattr(log, column, None)) for column in columns})
+        artifact = stream.getvalue().encode("utf-8-sig")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        storage_key = f"{organization_uuid}/audit-exports/audit_{export_uuid}_{timestamp}.csv"
+        r2.upload_bytes(
+            bucket=settings.S3_BUCKET_EXPORTS,
+            key=storage_key,
+            data=artifact,
+            content_type="text/csv; charset=utf-8",
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        _set_export_status(
+            organization_uuid, export_uuid, status="COMPLETED",
+            storage_key=storage_key, expires_at=expires_at,
+        )
+        return {"generated": True, "export_id": str(export_uuid), "row_count": len(logs)}
+    except Exception as exc:
+        logger.exception("[report] Audit export failed")
+        _set_export_status(organization_uuid, export_uuid, status="FAILED", failure_reason=str(exc)[:1000])
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc)
         raise

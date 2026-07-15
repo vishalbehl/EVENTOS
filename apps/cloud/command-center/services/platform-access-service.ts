@@ -34,40 +34,56 @@ export interface RolePayload {
   description?: string | null;
   access_level: string;
   department_id?: string | null;
+  reason: string;
+}
+
+const ACCESS_REASON = "Administering tenant role and permission configuration";
+
+function scopedConfig(organizationId: string) {
+  return {
+    params: { organization_id: organizationId },
+    headers: { "X-Support-Reason": ACCESS_REASON },
+  };
 }
 
 export const platformAccessKeys = {
-  roles: (params?: Record<string, unknown>) => queryKeys.admin.domain("platform-roles", params),
-  permissions: () => queryKeys.admin.domain("platform-permissions"),
-  rolePermissions: (roleId?: string) => queryKeys.admin.domain("platform-role-permissions", { roleId }),
+  roles: (organizationId?: string, params?: Record<string, unknown>) => queryKeys.admin.domain("platform-roles", { organizationId, ...params }),
+  permissions: (organizationId?: string) => queryKeys.admin.domain("platform-permissions", { organizationId }),
+  rolePermissions: (organizationId?: string, roleId?: string) => queryKeys.admin.domain("platform-role-permissions", { organizationId, roleId }),
 };
 
-export function usePlatformRoles(params?: { search?: string; limit?: number; skip?: number }) {
+export function usePlatformRoles(organizationId?: string, params?: { search?: string; limit?: number; skip?: number }) {
   return useQuery({
-    queryKey: platformAccessKeys.roles(params),
-    queryFn: () => apiClient.get<PlatformRole[]>("/platform/roles", { params }),
+    queryKey: platformAccessKeys.roles(organizationId, params),
+    queryFn: () => apiClient.get<PlatformRole[]>("/superadmin/access/roles", {
+      ...scopedConfig(organizationId!),
+      params: { ...params, organization_id: organizationId },
+    }),
+    enabled: Boolean(organizationId),
   });
 }
 
-export function usePlatformPermissions() {
+export function usePlatformPermissions(organizationId?: string) {
   return useQuery({
-    queryKey: platformAccessKeys.permissions(),
-    queryFn: () => apiClient.get<PlatformPermission[]>("/platform/permissions"),
+    queryKey: platformAccessKeys.permissions(organizationId),
+    queryFn: () => apiClient.get<PlatformPermission[]>("/superadmin/access/permissions", scopedConfig(organizationId!)),
+    enabled: Boolean(organizationId),
   });
 }
 
-export function useRolePermissions(roleId?: string) {
+export function useRolePermissions(organizationId?: string, roleId?: string) {
   return useQuery({
-    queryKey: platformAccessKeys.rolePermissions(roleId),
-    queryFn: () => apiClient.get<string[]>(`/platform/roles/${roleId}/permissions`),
-    enabled: Boolean(roleId),
+    queryKey: platformAccessKeys.rolePermissions(organizationId, roleId),
+    queryFn: () => apiClient.get<string[]>(`/superadmin/access/roles/${roleId}/permissions`, scopedConfig(organizationId!)),
+    enabled: Boolean(organizationId && roleId),
   });
 }
 
 export function useCreatePlatformRole() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: RolePayload) => apiClient.post<PlatformRole>("/platform/roles", payload),
+    mutationFn: ({ organizationId, payload }: { organizationId: string; payload: RolePayload }) =>
+      apiClient.post<PlatformRole>("/superadmin/access/roles", payload, scopedConfig(organizationId)),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.all }),
   });
 }
@@ -75,11 +91,14 @@ export function useCreatePlatformRole() {
 export function useUpdatePlatformRole() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ roleId, payload }: { roleId: string; payload: Partial<RolePayload> }) =>
-      apiClient.patch<PlatformRole>(`/platform/roles/${roleId}`, payload),
+    mutationFn: ({ organizationId, roleId, payload, expectedUpdatedAt }: { organizationId: string; roleId: string; payload: Partial<RolePayload>; expectedUpdatedAt: string }) =>
+      apiClient.patch<PlatformRole>(`/superadmin/access/roles/${roleId}`, {
+        ...payload,
+        expected_updated_at: expectedUpdatedAt,
+      }, scopedConfig(organizationId)),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.admin.all });
-      queryClient.invalidateQueries({ queryKey: platformAccessKeys.rolePermissions(variables.roleId) });
+      queryClient.invalidateQueries({ queryKey: platformAccessKeys.rolePermissions(variables.organizationId, variables.roleId) });
     },
   });
 }
@@ -87,8 +106,8 @@ export function useUpdatePlatformRole() {
 export function useDeletePlatformRole() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ roleId, reason }: { roleId: string; reason: string }) =>
-      apiClient.delete(`/platform/roles/${roleId}`, { data: { reason } }),
+    mutationFn: ({ organizationId, roleId, reason }: { organizationId: string; roleId: string; reason: string }) =>
+      apiClient.delete(`/superadmin/access/roles/${roleId}`, { ...scopedConfig(organizationId), data: { reason } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.all }),
   });
 }
@@ -104,11 +123,11 @@ export function useSeedPlatformPermissions() {
 export function useToggleRolePermission() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ roleId, permissionId, reason }: { roleId: string; permissionId: string; reason: string }) =>
-      apiClient.post(`/platform/roles/${roleId}/permissions/${permissionId}/toggle`, { reason }),
+    mutationFn: ({ organizationId, roleId, permissionId, reason }: { organizationId: string; roleId: string; permissionId: string; reason: string }) =>
+      apiClient.post(`/superadmin/access/roles/${roleId}/permissions/${permissionId}/toggle`, { reason }, scopedConfig(organizationId)),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: platformAccessKeys.roles() });
-      queryClient.invalidateQueries({ queryKey: platformAccessKeys.rolePermissions(variables.roleId) });
+      queryClient.invalidateQueries({ queryKey: platformAccessKeys.roles(variables.organizationId) });
+      queryClient.invalidateQueries({ queryKey: platformAccessKeys.rolePermissions(variables.organizationId, variables.roleId) });
     },
   });
 }

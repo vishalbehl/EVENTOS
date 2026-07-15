@@ -27,6 +27,7 @@ import uuid
 from typing import Any
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 from loguru import logger
 
 from app.config import settings
@@ -154,7 +155,7 @@ async def connect(sid: str, environ: dict, auth: dict | None = None) -> bool:
             principal = await authenticate_realtime(db, auth)
     except RealtimeAuthError as exc:
         logger.warning(f"Rejected realtime connection sid={sid}: {exc}")
-        return False
+        raise ConnectionRefusedError(str(exc))
 
     await sio.save_session(sid, principal.to_session())
     logger.info(f"Authenticated realtime connection sid={sid} kind={principal.kind}")

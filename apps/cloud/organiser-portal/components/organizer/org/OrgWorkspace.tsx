@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BadgeCheck, Building2, CalendarPlus, Check, ChevronRight, ExternalLink, Loader2,
   Mail, Palette, PartyPopper, Plus, Save, Shield, Trash2, UserPlus, CreditCard,
-  Info, Coins, Percent, Receipt, Sliders, Sparkles, CheckCircle2, ArrowLeft,
+  Info, Coins, Percent, Receipt, Sliders, Sparkles, CheckCircle2, ArrowLeft, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlansAddonsManagement } from "@/components/organizer/billing/PlansAddonsManagement";
-import { countries, Organization, OrgMember, orgApi, OrgMe, OrgRole, timezones, usageTone } from "@/components/organizer/org/org-api";
+import { countries, Organization, OrgMember, orgApi, OrgMe, OrgRole, timezones, usageTone, slugify } from "@/components/organizer/org/org-api";
 import { apiClient } from "@/lib/api-client";
 import { useAuthStore } from "@/store/use-auth-store";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,11 @@ export function OnboardingWizard() {
   const [pending, setPending] = useState<string[]>([]);
   const [event, setEvent] = useState({ name: "", start_date: "", end_date: "", timezone: "Asia/Kolkata" });
   const [eventId, setEventId] = useState<string | null>(null);
+
+  // New Organization details state
+  const [orgForm, setOrgForm] = useState({ name: "", slug: "", country: "IN", timezone: "Asia/Kolkata", phone: "" });
+  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
+  const [checkingSlug, setCheckingSlug] = useState(false);
 
   // New billing/checkout states
   const [plans, setPlans] = useState<any[]>([]);
@@ -91,6 +96,13 @@ export function OnboardingWizard() {
           primary_color: result.organization.primary_color,
           secondary_color: result.organization.secondary_color,
         });
+        setOrgForm({
+          name: result.organization.name || "",
+          slug: result.organization.slug || "",
+          country: result.organization.country || "IN",
+          timezone: result.organization.timezone || "Asia/Kolkata",
+          phone: useAuthStore.getState().user?.phone || "",
+        });
         setBillingName(result.organization.name || "");
         setBillingEmail(result.organization.billing_email || "");
       })
@@ -102,16 +114,35 @@ export function OnboardingWizard() {
   }, [router]);
 
   useEffect(() => {
-    if (step === 3) {
+    if (!orgForm.slug || orgForm.slug.length < 3 || (data && orgForm.slug === data.organization.slug)) {
+      setSlugAvailable(true);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      setCheckingSlug(true);
+      try {
+        const result = await orgApi.checkSlug(orgForm.slug);
+        setSlugAvailable(result.available);
+      } catch {
+        setSlugAvailable(false);
+      } finally {
+        setCheckingSlug(false);
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [orgForm.slug, data]);
+
+  useEffect(() => {
+    if (step === 4) {
       setLoading(true);
       Promise.all([orgApi.plans(), orgApi.addons()])
         .then(([plansRes, addonsRes]) => {
           setPlans(plansRes);
           setAddons(addonsRes.filter((a: any) => String(a.addon_type || "PLAN").toUpperCase() === "PLAN"));
-          
+
           const activePlan = plansRes.find(p => p.name.toLowerCase() === data?.organization.plan.toLowerCase()) || plansRes[0];
           setSelectedPlan(activePlan);
-          
+
           if (activePlan) {
             setCustomLimits({
               max_events: activePlan.max_events || 1,
@@ -126,26 +157,26 @@ export function OnboardingWizard() {
         })
         .catch((err) => {
           console.error("Failed to load onboarding billing configurations:", err);
-          toast.error("Failed to load available plans.");
         })
         .finally(() => setLoading(false));
     }
-  }, [step, data?.organization.plan]);
+  }, [step, data]);
 
   useEffect(() => {
     if (!selectedPlan) return;
     setCalculating(true);
-    orgApi.calculatePrice({
+
+    apiClient.post<any>("/organisations/calculate-price", {
       plan_name: selectedPlan.name,
       is_custom: isCustom,
       custom_limits: isCustom ? customLimits : null,
       addon_keys: selectedAddons,
-      promo_code: promoCode || null
+      promo_code: promoCode || null,
     })
-      .then(res => {
+      .then((res) => {
         setPriceDetails(res);
       })
-      .catch(err => {
+      .catch((err) => {
         console.error("Failed to calculate onboarding price:", err);
       })
       .finally(() => setCalculating(false));
@@ -185,14 +216,62 @@ export function OnboardingWizard() {
 
   if (!data) return <LoadingSurface />;
 
-  const steps = ["Customise Your Workspace", "Invite Your Team", "Create Your First Event", "Set Up Billing", "You're Ready!"];
+  const steps = [
+    "Organisation Details",
+    "Customise Branding",
+    "Invite Your Team",
+    "Create Your First Event",
+    "Set Up Billing",
+    "You're Ready!"
+  ];
+
+  const saveOrgDetails = async () => {
+    if (!orgForm.name || !orgForm.slug) {
+      toast.error("Organisation name and slug are required.");
+      return;
+    }
+    if (slugAvailable === false) {
+      toast.error("Slug is already taken.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await orgApi.updateMe({
+        name: orgForm.name,
+        slug: orgForm.slug,
+        country: orgForm.country,
+        timezone: orgForm.timezone,
+      } as Partial<Organization>);
+
+      const phoneRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/users/me`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${useAuthStore.getState().accessToken}`,
+        },
+        body: JSON.stringify({ phone: orgForm.phone }),
+      });
+      if (phoneRes.ok) {
+        const updatedUser = await phoneRes.json();
+        useAuthStore.getState().updateUser(updatedUser);
+      }
+
+      setData({ ...data, organization: result.organization } as OrgMe);
+      setStep(1);
+      toast.success("Organisation details saved.");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save organisation details.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const saveBrand = async () => {
     setSaving(true);
     try {
       const result = await orgApi.updateMe(brand as Partial<Organization>);
-      setData({ ...data, organization: result.organization });
-      setStep(1);
+      setData({ ...data, organization: result.organization } as OrgMe);
+      setStep(2);
       toast.success("Workspace branding saved.");
     } catch (error: any) {
       toast.error(error.message || "Failed to save branding.");
@@ -240,16 +319,13 @@ export function OnboardingWizard() {
       return;
     }
 
-    // Start checkout micro-animations
     setProcessingState(0);
-    
-    // Cycle through messages
+
     const timers: NodeJS.Timeout[] = [];
     for (let i = 1; i <= 4; i++) {
       const t = setTimeout(() => {
         setProcessingState(i);
         if (i === 4) {
-          // Final success trigger
           orgApi.subscribe({
             plan_name: selectedPlan.name,
             is_custom: isCustom,
@@ -288,20 +364,21 @@ export function OnboardingWizard() {
   const finish = async () => {
     try {
       await orgApi.updateMe({ onboarding_completed: true } as Partial<Organization>);
+      // Update auth store user details as well
+      const profile = await apiClient.get<any>('/auth/me');
+      useAuthStore.getState().updateUser(profile);
       router.push("/dashboard");
     } catch (error: any) {
       toast.error(error.message || "Failed to complete onboarding.");
     }
   };
 
-  // Format Card Number (adds spaces every 4 digits)
   const handleCardNoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "");
     const formatted = raw.replace(/(.{4})/g, "$1 ").trim().slice(0, 19);
     setCardNo(formatted);
   };
 
-  // Format Expiry Date (MM/YY)
   const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "");
     let formatted = raw;
@@ -311,7 +388,6 @@ export function OnboardingWizard() {
     setExpiry(formatted.slice(0, 5));
   };
 
-  // Format CVV (max 3 digits)
   const handleCvvChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "");
     setCvv(raw.slice(0, 3));
@@ -331,12 +407,71 @@ export function OnboardingWizard() {
       </div>
       <motion.div key={step} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[1.5rem] border border-default bg-white/[0.035] p-6">
         {step === 0 && (
+          <Stack title="Tell Us About Your Organisation" icon={Building2}>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Organisation Name</label>
+                <Input
+                  value={orgForm.name}
+                  onChange={(e) => setOrgForm({ ...orgForm, name: e.target.value })}
+                  placeholder="e.g. Acme Corporation"
+                  className="h-12 rounded-xl bg-white/5 border-default"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Organisation Slug</label>
+                <div className="relative">
+                  <Input
+                    value={orgForm.slug}
+                    onChange={(e) => setOrgForm({ ...orgForm, slug: slugify(e.target.value) })}
+                    placeholder="e.g. acme"
+                    className="h-12 rounded-xl bg-white/5 border-default pr-11"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    {checkingSlug ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : slugAvailable === true ? <Check className="h-4 w-4 text-emerald-400" /> : slugAvailable === false ? <X className="h-4 w-4 text-[var(--dan)]" /> : null}
+                  </div>
+                </div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-muted">Your portal will be at: eventx.in/{orgForm.slug || "your-slug"}</p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Country</label>
+                  <Select value={orgForm.country} onValueChange={(country) => setOrgForm({ ...orgForm, country })}>
+                    <SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger>
+                    <SelectContent>{countries.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Timezone</label>
+                  <Select value={orgForm.timezone} onValueChange={(timezone) => setOrgForm({ ...orgForm, timezone })}>
+                    <SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger>
+                    <SelectContent>{timezones.map((tz) => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Contact Phone Number</label>
+                <Input
+                  value={orgForm.phone}
+                  onChange={(e) => setOrgForm({ ...orgForm, phone: e.target.value })}
+                  placeholder="+91 9999999999"
+                  className="h-12 rounded-xl bg-white/5 border-default"
+                />
+              </div>
+            </div>
+            <Button onClick={saveOrgDetails} disabled={saving} className="h-12 rounded-xl bg-[var(--pri)] font-black uppercase tracking-widest text-[11px] mt-6">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save & Continue"}</Button>
+          </Stack>
+        )}
+        {step === 1 && (
           <Stack title="Customise Your Workspace" icon={Palette}>
             <BrandFields brand={brand} setBrand={setBrand} />
             <Button onClick={saveBrand} disabled={saving} className="h-12 rounded-xl bg-[var(--pri)] font-black uppercase tracking-widest text-[11px]">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save & Continue"}</Button>
           </Stack>
         )}
-        {step === 1 && (
+        {step === 2 && (
           <Stack title="Invite Your Team" icon={UserPlus}>
             <div className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
               <Input placeholder="teammate@hospital.org" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" />
@@ -344,21 +479,21 @@ export function OnboardingWizard() {
               <Button onClick={sendInvite} className="h-12 rounded-xl bg-[var(--pri)]"><Mail className="mr-2 h-4 w-4" />Send</Button>
             </div>
             {pending.map((email) => <div key={email} className="rounded-xl border border-default bg-white/[0.03] px-4 py-3 text-sm font-bold text-muted">{email} pending</div>)}
-            <Button variant="outline" onClick={() => setStep(2)} className="h-12 rounded-xl border-default bg-white/5">Skip for now</Button>
+            <Button variant="outline" onClick={() => setStep(3)} className="h-12 rounded-xl border-default bg-white/5">Skip for now</Button>
           </Stack>
         )}
-        {step === 2 && (
+        {step === 3 && (
           <Stack title="Create Your First Event" icon={CalendarPlus}>
             <div className="grid gap-4 md:grid-cols-2">
               <Input placeholder="Annual Conference 2026" value={event.name} onChange={(e) => setEvent({ ...event, name: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default md:col-span-2" />
               <Input type="date" value={event.start_date} onChange={(e) => setEvent({ ...event, start_date: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" />
               <Input type="date" value={event.end_date} onChange={(e) => setEvent({ ...event, end_date: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" />
             </div>
-            {eventId ? <a href={`/events/${eventId}/dashboard`} className="flex items-center gap-2 text-[var(--pri)] font-black uppercase tracking-widest text-[11px]">Event created <ExternalLink className="h-4 w-4" /></a> : <Button onClick={createEvent} className="h-12 rounded-xl bg-[var(--pri)]">Create Event</Button>}
-            <Button variant="outline" onClick={() => setStep(3)} className="h-12 rounded-xl border-default bg-white/5">Skip for now</Button>
+            {eventId ? <a href={`/events/${eventId}/dashboard`} className="flex items-center gap-2 text-[var(--pri)] font-black uppercase tracking-widest text-[11px] font-black">Event created <ExternalLink className="h-4 w-4" /></a> : <Button onClick={createEvent} className="h-12 rounded-xl bg-[var(--pri)]">Create Event</Button>}
+            <Button variant="outline" onClick={() => setStep(4)} className="h-12 rounded-xl border-default bg-white/5">Skip for now</Button>
           </Stack>
         )}
-        {step === 3 && (
+        {step === 4 && (
           <Stack title="Set Up Billing" icon={BadgeCheck}>
             {loading ? (
               <div className="flex flex-col items-center justify-center py-20 space-y-3">
@@ -374,7 +509,7 @@ export function OnboardingWizard() {
                     <div className="grid md:grid-cols-3 gap-4">
                       {plans.map((p) => {
                         const isSelected = selectedPlan?.id === p.id;
-                        const isCurrent = data.organization.plan.toLowerCase() === p.name.toLowerCase() || 
+                        const isCurrent = data.organization.plan.toLowerCase() === p.name.toLowerCase() ||
                                           (data.organization.plan.toLowerCase() === "pro" && p.name.toLowerCase() === "professional");
                         return (
                           <div
@@ -402,7 +537,7 @@ export function OnboardingWizard() {
                               </h4>
                               <p className="text-[10px] text-white/45 leading-normal min-h-[30px]">{p.description}</p>
                               <div className="flex items-baseline gap-0.5">
-                                <span className="text-xl font-black text-white">₹{Number(p.price_per_event_min || 0).toLocaleString()}</span>
+                                <span className="text-xl font-black text-white">â‚¹{Number(p.price_per_event_min || 0).toLocaleString()}</span>
                                 <span className="text-[9px] text-white/30 font-bold uppercase">/ event</span>
                               </div>
                               <div className="space-y-1 text-[9px] text-white/60 font-semibold border-t border-white/5 pt-2">
@@ -442,7 +577,7 @@ export function OnboardingWizard() {
                         }}
                         className={cn(
                           "px-4 h-9 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 active:scale-95",
-                          isCustom 
+                          isCustom
                             ? "bg-[var(--pri)] border-[var(--pri)] text-[var(--color-text-inverse)] shadow-md shadow-[var(--pri)]/10"
                             : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
                         )}
@@ -485,7 +620,7 @@ export function OnboardingWizard() {
                             onChange={(e) => setCustomLimits({ ...customLimits, max_users: Number(e.target.value) })}
                             className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
-                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_users} users. +₹1,500/user/event.</p>
+                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_users} users. +â‚¹1,500/user/event.</p>
                         </div>
 
                         {/* Registrations Slider */}
@@ -505,7 +640,7 @@ export function OnboardingWizard() {
                             onChange={(e) => setCustomLimits({ ...customLimits, max_registrations: Number(e.target.value) })}
                             className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
-                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_registrations} attendees. +₹5/attendee/event.</p>
+                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_registrations} attendees. +â‚¹5/attendee/event.</p>
                         </div>
 
                         {/* Storage Slider */}
@@ -523,7 +658,7 @@ export function OnboardingWizard() {
                             onChange={(e) => setCustomLimits({ ...customLimits, max_storage_gb: Number(e.target.value) })}
                             className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
-                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan ? selectedPlan.storage_quota_mb / 1024 : 10} GB. +₹200/GB/event.</p>
+                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan ? selectedPlan.storage_quota_mb / 1024 : 10} GB. +â‚¹200/GB/event.</p>
                         </div>
 
                         {/* Speakers Slider */}
@@ -541,7 +676,7 @@ export function OnboardingWizard() {
                             onChange={(e) => setCustomLimits({ ...customLimits, max_speakers: Number(e.target.value) })}
                             className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
-                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_speakers || 30} speakers. +₹100/speaker/event.</p>
+                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_speakers || 30} speakers. +â‚¹100/speaker/event.</p>
                         </div>
 
                         {/* Rooms Slider */}
@@ -558,7 +693,7 @@ export function OnboardingWizard() {
                             onChange={(e) => setCustomLimits({ ...customLimits, max_rooms: Number(e.target.value) })}
                             className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                           />
-                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_rooms || 5} rooms. +₹1,000/room/event.</p>
+                          <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_rooms || 5} rooms. +â‚¹1,000/room/event.</p>
                         </div>
                       </div>
                     ) : (
@@ -576,7 +711,7 @@ export function OnboardingWizard() {
                       {addons.map((a) => {
                         const isChecked = selectedAddons.includes(a.key);
                         const isIncluded = a.included_in_plan && selectedPlan && a.included_in_plan.toLowerCase() === selectedPlan.name.toLowerCase();
-                        
+
                         return (
                           <div
                             key={a.id}
@@ -602,7 +737,7 @@ export function OnboardingWizard() {
                               <p className="text-[9px] text-white/40 leading-normal leading-relaxed">{a.description}</p>
                               <div className="pt-1 flex items-center gap-1.5">
                                 <span className="text-[10px] font-bold text-[var(--color-primary-mid)]">
-                                  {isIncluded ? "Included in Base" : a.price_inr ? `+₹${Number(a.price_inr).toLocaleString()}` : "Custom Pricing"}
+                                  {isIncluded ? "Included in Base" : a.price_inr ? `+â‚¹${Number(a.price_inr).toLocaleString()}` : "Custom Pricing"}
                                 </span>
                                 {!isIncluded && a.billing_unit && (
                                   <span className="text-[8px] text-white/30 uppercase tracking-widest font-black">({a.billing_unit.replace('_', ' ')})</span>
@@ -622,7 +757,7 @@ export function OnboardingWizard() {
                     <Receipt className="w-4 h-4 text-[var(--color-primary-mid)]" />
                     Pricing Summary
                   </h4>
-                  
+
                   {calculating || !priceDetails ? (
                     <div className="flex flex-col items-center justify-center py-12 space-y-2">
                       <Loader2 className="w-5 h-5 text-[var(--color-primary-mid)] animate-spin" />
@@ -633,59 +768,59 @@ export function OnboardingWizard() {
                       <div className="pb-3 border-b border-white/5 space-y-2">
                         <div className="flex justify-between">
                           <span className="text-white/50">Base Plan ({priceDetails.plan_name})</span>
-                          <span className="text-white">₹{Number(priceDetails.base_price_per_event).toLocaleString()}</span>
+                          <span className="text-white">â‚¹{Number(priceDetails.base_price_per_event).toLocaleString()}</span>
                         </div>
-                        
+
                         {priceDetails.extra_quota_price_per_event > 0 && (
                           <div className="flex justify-between">
                             <span className="text-white/50">Custom Quota Surcharge</span>
-                            <span className="text-white">+₹{Number(priceDetails.extra_quota_price_per_event).toLocaleString()}</span>
+                            <span className="text-white">+â‚¹{Number(priceDetails.extra_quota_price_per_event).toLocaleString()}</span>
                           </div>
                         )}
-                        
+
                         {priceDetails.addons_price_per_event > 0 && (
                           <div className="flex justify-between">
                             <span className="text-white/50">Add-on Modules Cost</span>
-                            <span className="text-white">+₹{Number(priceDetails.addons_price_per_event).toLocaleString()}</span>
+                            <span className="text-white">+â‚¹{Number(priceDetails.addons_price_per_event).toLocaleString()}</span>
                           </div>
                         )}
-                        
+
                         <div className="flex justify-between text-[11px] font-black text-[var(--color-primary-mid)] pt-1">
                           <span>Rate Per Event</span>
-                          <span>₹{Number(priceDetails.price_per_event).toLocaleString()}</span>
+                          <span>â‚¹{Number(priceDetails.price_per_event).toLocaleString()}</span>
                         </div>
                       </div>
-                      
+
                       <div className="pb-3 border-b border-white/5 space-y-2">
                         <div className="flex justify-between">
                           <span className="text-white/50">Total Package Vol.</span>
                           <span className="text-white">{priceDetails.number_of_events} {priceDetails.number_of_events === 1 ? "Event" : "Events"}</span>
                         </div>
-                        
+
                         <div className="flex justify-between font-black text-white text-[11px]">
                           <span>Contract Subtotal</span>
-                          <span>₹{Number(priceDetails.subtotal).toLocaleString()}</span>
+                          <span>â‚¹{Number(priceDetails.subtotal).toLocaleString()}</span>
                         </div>
-                        
+
                         {priceDetails.discount > 0 && (
                           <div className="flex justify-between text-emerald-400 font-black">
                             <span className="flex items-center gap-1">
                               <Percent className="w-3 h-3 text-emerald-400" />
                               Discount Applied ({priceDetails.discount_percent}%)
                             </span>
-                            <span>-₹{Number(priceDetails.discount).toLocaleString()}</span>
+                            <span>-â‚¹{Number(priceDetails.discount).toLocaleString()}</span>
                           </div>
                         )}
                       </div>
-                      
+
                       <div className="space-y-1">
                         <div className="flex justify-between items-baseline">
                           <span className="text-[10px] font-black uppercase tracking-wider text-white/50">Total Amount Due</span>
-                          <span className="text-xl font-black text-white">₹{Number(priceDetails.total).toLocaleString()}</span>
+                          <span className="text-xl font-black text-white">â‚¹{Number(priceDetails.total).toLocaleString()}</span>
                         </div>
                         <p className="text-[8px] text-white/30 text-right">Includes all mock sandbox duties and provisioning fees.</p>
                       </div>
-                      
+
                       {/* Promo Code Input */}
                       <div className="space-y-1.5 pt-2">
                         <label className="text-[9px] font-bold uppercase tracking-wider text-white/40 block">Add Promotional Coupon</label>
@@ -706,7 +841,7 @@ export function OnboardingWizard() {
                           </p>
                         )}
                       </div>
-                      
+
                       <Button
                         onClick={() => {
                           setCheckoutOpen(true);
@@ -720,13 +855,13 @@ export function OnboardingWizard() {
                 </div>
               </div>
             )}
-            
+
             <div className="flex gap-4">
-              <Button variant="outline" onClick={() => setStep(4)} className="h-12 rounded-xl border-default bg-white/5 text-[11px] font-bold uppercase tracking-wider">I'll do this later</Button>
+              <Button variant="outline" onClick={() => setStep(5)} className="h-12 rounded-xl border-default bg-white/5 text-[11px] font-bold uppercase tracking-wider">I'll do this later</Button>
             </div>
           </Stack>
         )}
-        {step === 4 && (
+        {step === 5 && (
           <Stack title="You're Ready!" icon={PartyPopper}>
             <div className="grid gap-4 md:grid-cols-3">
               {["Create a Session", "Add Speakers", "Configure Registration"].map((label) => <div key={label} className="rounded-2xl border border-default bg-white/[0.04] p-4 font-black text-sm">{label}<ChevronRight className="mt-5 h-4 w-4 text-[var(--pri)]" /></div>)}
@@ -740,7 +875,7 @@ export function OnboardingWizard() {
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
         <DialogContent className="max-w-2xl border-white/10 bg-[#0e0e14]/95 backdrop-blur-xl text-white rounded-3xl p-6 relative overflow-hidden select-none max-h-[90vh] overflow-y-auto">
           <div className="absolute top-0 right-0 h-32 w-32 bg-[var(--pri)]/10 blur-3xl rounded-full" />
-          
+
           {processingState === null ? (
             <>
               <DialogHeader>
@@ -752,7 +887,7 @@ export function OnboardingWizard() {
                   Provide billing context to generate your tax invoice and authorize entitlements.
                 </p>
               </DialogHeader>
-              
+
               <form onSubmit={handleSubscribe} className="grid md:grid-cols-2 gap-6 pt-4">
                 {/* Billing Details & Invoice info */}
                 <div className="space-y-3.5">
@@ -760,7 +895,7 @@ export function OnboardingWizard() {
                     <Receipt className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Invoice Contact & Tax Details
                   </h5>
-                  
+
                   <div>
                     <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Company / Billing Name</label>
                     <input
@@ -772,7 +907,7 @@ export function OnboardingWizard() {
                       className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
-                  
+
                   <div>
                     <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Billing Email Address</label>
                     <input
@@ -784,7 +919,7 @@ export function OnboardingWizard() {
                       className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Phone Number</label>
@@ -809,26 +944,26 @@ export function OnboardingWizard() {
                       />
                     </div>
                   </div>
-                  
+
                   {/* Total price indicator on checkout */}
                   <div className="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-1">
                     <div className="flex justify-between items-center text-[10px] text-white/50 font-bold uppercase">
                       <span>Mock Escrow Due</span>
-                      <span>₹{Number(priceDetails?.total || 0).toLocaleString()}</span>
+                      <span>â‚¹{Number(priceDetails?.total || 0).toLocaleString()}</span>
                     </div>
                     <p className="text-[8px] text-white/35 font-medium leading-normal">
                       Includes plan base, custom limits, and {selectedAddons.length} addons. Promo discount applied.
                     </p>
                   </div>
                 </div>
-                
+
                 {/* Credit card form & 3D Flipping animation */}
                 <div className="space-y-4">
                   <h5 className="text-[10px] font-black uppercase tracking-widest text-white/50 border-b border-white/5 pb-1 flex items-center gap-1.5">
                     <CreditCard className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Sandbox Card Details
                   </h5>
-                  
+
                   <div className="flex flex-col justify-center items-center">
                     <div className="relative w-full h-[140px] perspective-1000 select-none">
                       <motion.div
@@ -838,7 +973,7 @@ export function OnboardingWizard() {
                         style={{ transformStyle: "preserve-3d" }}
                       >
                         {/* Front */}
-                        <div 
+                        <div
                           className="absolute inset-0 w-full h-full rounded-2xl p-4 bg-gradient-to-br from-zinc-800 to-neutral-950 border border-[var(--pri)]/20 shadow-xl flex flex-col justify-between"
                           style={{ backfaceVisibility: "hidden" }}
                         >
@@ -851,11 +986,11 @@ export function OnboardingWizard() {
                             </div>
                             <span className="text-[9px] font-bold text-white/80 bg-white/10 px-2 py-0.5 rounded">EOS</span>
                           </div>
-                          
+
                           <p className="text-sm font-mono tracking-widest font-black text-white/90 truncate my-2">
-                            {cardNo || "•••• •••• •••• ••••"}
+                            {cardNo || "â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"}
                           </p>
-                          
+
                           <div className="flex justify-between items-end text-[7px] font-bold uppercase tracking-wider text-white/50">
                             <div className="max-w-[140px] truncate">
                               <p className="text-[5px] text-white/30">Cardholder</p>
@@ -867,9 +1002,9 @@ export function OnboardingWizard() {
                             </div>
                           </div>
                         </div>
-                        
+
                         {/* Back */}
-                        <div 
+                        <div
                           className="absolute inset-0 w-full h-full rounded-2xl bg-[#121118] border border-white/10 shadow-xl flex flex-col justify-between py-3"
                           style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
                         >
@@ -877,7 +1012,7 @@ export function OnboardingWizard() {
                           <div className="px-4 flex justify-between items-center">
                             <span className="text-[6px] text-white/30 font-bold uppercase">Authorized Sandbox Signature</span>
                             <div className="h-6 bg-white text-black font-mono font-black text-xs rounded px-2.5 flex items-center justify-center min-w-[36px]">
-                              {cvv || "•••"}
+                              {cvv || "â€¢â€¢â€¢"}
                             </div>
                           </div>
                           <p className="text-[6px] text-white/20 font-bold text-center leading-tight px-4">
@@ -887,7 +1022,7 @@ export function OnboardingWizard() {
                       </motion.div>
                     </div>
                   </div>
-                  
+
                   {/* Card fields input */}
                   <div className="space-y-3">
                     <div>
@@ -902,7 +1037,7 @@ export function OnboardingWizard() {
                         className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-semibold"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Card Number</label>
                       <input
@@ -915,7 +1050,7 @@ export function OnboardingWizard() {
                         className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all"
                       />
                     </div>
-                    
+
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Expiry Date</label>
@@ -934,7 +1069,7 @@ export function OnboardingWizard() {
                         <input
                           type="password"
                           required
-                          placeholder="•••"
+                          placeholder="â€¢â€¢â€¢"
                           value={cvv}
                           onChange={handleCvvChange}
                           onFocus={() => setIsFlipped(true)}
@@ -944,7 +1079,7 @@ export function OnboardingWizard() {
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
@@ -986,14 +1121,14 @@ export function OnboardingWizard() {
               <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 animate-bounce">
                 <CheckCircle2 className="w-7 h-7" />
               </div>
-              
+
               <div className="space-y-1.5">
                 <h4 className="text-lg font-black tracking-tight text-white font-black">Payment Success & Entitled</h4>
                 <p className="text-[10px] text-emerald-400 font-black uppercase tracking-widest">
-                  Transaction Authorized · Workspace limits synchronized
+                  Transaction Authorized Â· Workspace limits synchronized
                 </p>
               </div>
-              
+
               {/* Receipt Preview */}
               <div className="w-full max-w-sm rounded-2xl border border-white/5 bg-white/[0.02] p-5 space-y-3.5 text-left text-xs font-bold relative">
                 <div className="absolute top-0 right-0 h-24 w-24 bg-emerald-500/5 blur-2xl rounded-full" />
@@ -1001,7 +1136,7 @@ export function OnboardingWizard() {
                   <span className="text-white/40 font-bold uppercase tracking-wider text-[9px]">Receipt Details</span>
                   <span className="text-white/40 font-bold uppercase tracking-wider text-[9px] font-mono">{successDetails.invoice_no}</span>
                 </div>
-                
+
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-white/55 font-semibold">Plan Entitled:</span>
@@ -1023,17 +1158,17 @@ export function OnboardingWizard() {
                   </div>
                   <div className="flex justify-between border-t border-white/5 pt-2.5 items-baseline">
                     <span className="text-white/55 font-semibold">Total Settled (INR):</span>
-                    <span className="text-base font-black text-white">₹{Number(successDetails.amount_paid).toLocaleString()}</span>
+                    <span className="text-base font-black text-white">â‚¹{Number(successDetails.amount_paid).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
-              
+
               <Button
                 onClick={() => {
                   setCheckoutOpen(false);
                   setProcessingState(null);
                   setSuccessDetails(null);
-                  setStep(4);
+                  setStep(5);
                 }}
                 className="w-full max-w-xs h-11 rounded-xl bg-[var(--pri)] hover:opacity-90 font-black uppercase tracking-widest text-[10px] text-[var(--color-text-inverse)] shadow-lg transition-all active:scale-95"
               >
@@ -1092,7 +1227,7 @@ export function OrgSettingsPage() {
     <>
       <Tabs value={activeTab} onValueChange={setActiveTab} className="min-h-full">
         <div className="flex items-center justify-between gap-4">
-          <PageTitle icon={Building2} title="Organisation Settings" subtitle={`${org.name} · ${org.slug}`} />
+          <PageTitle icon={Building2} title="Organisation Settings" subtitle={`${org.name} Â· ${org.slug}`} />
           <TabsList>
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="branding">Branding</TabsTrigger>
@@ -1212,8 +1347,8 @@ export function PlatformAdminPage() {
         <DialogContent className="max-w-3xl border-default bg-[var(--surf)] text-[var(--text)]">
           <DialogHeader><DialogTitle>{selected?.organization?.name}</DialogTitle></DialogHeader>
           <div className="grid gap-4 md:grid-cols-2">
-            <InfoBlock title="Members" items={(selected?.members || []).map((m: OrgMember) => `${m.name} · ${m.org_role}`)} />
-            <InfoBlock title="Events" items={(selected?.events || []).map((e: any) => `${e.name} · ${e.start_date}`)} />
+            <InfoBlock title="Members" items={(selected?.members || []).map((m: OrgMember) => `${m.name} Â· ${m.org_role}`)} />
+            <InfoBlock title="Events" items={(selected?.events || []).map((e: any) => `${e.name} Â· ${e.start_date}`)} />
           </div>
         </DialogContent>
       </Dialog>
@@ -1250,7 +1385,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
   const [plans, setPlans] = useState<any[]>([]);
   const [addons, setAddons] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Custom plan config states
   const [selectedPlan, setSelectedPlan] = useState<any | null>(null);
   const [isCustom, setIsCustom] = useState(false);
@@ -1268,14 +1403,14 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
   const [promoInput, setPromoInput] = useState("");
   const [priceDetails, setPriceDetails] = useState<any | null>(null);
   const [calculating, setCalculating] = useState(false);
-  
+
   // Checkout flow states
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [billingName, setBillingName] = useState("");
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
   const [gstNumber, setGstNumber] = useState("");
-  
+
   const [cardholder, setCardholder] = useState("");
   const [cardNo, setCardNo] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -1283,7 +1418,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
   const [isFlipped, setIsFlipped] = useState(false);
   const [processingState, setProcessingState] = useState<number | null>(null);
   const [successDetails, setSuccessDetails] = useState<any | null>(null);
-  
+
   const processingMessages = [
     "Connecting secure billing sandbox...",
     "Verifying GSTIN records & promo code details...",
@@ -1294,7 +1429,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
   const processingIndex = processingState ?? -1;
   const processingMessage =
     processingIndex >= 0 ? (processingMessages[processingIndex] || "Syncing records...") : "Syncing records...";
-  
+
   useEffect(() => {
     if (activeView === "browse") {
       setLoading(true);
@@ -1302,11 +1437,11 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
         .then(([plansRes, addonsRes]) => {
           setPlans(plansRes);
           setAddons(addonsRes.filter((a: any) => String(a.addon_type || "PLAN").toUpperCase() === "PLAN"));
-          
+
           // Set initial base plan to Pro or Basic if not set
           const activePlan = plansRes.find(p => p.name.toLowerCase() === data.organization.plan.toLowerCase()) || plansRes[0];
           setSelectedPlan(activePlan);
-          
+
           // Initialize limits to active plan's limits
           if (activePlan) {
             setCustomLimits({
@@ -1327,7 +1462,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
         .finally(() => setLoading(false));
     }
   }, [activeView, data.organization.plan]);
-  
+
   // Recalculate price in real-time
   useEffect(() => {
     if (!selectedPlan) return;
@@ -1347,7 +1482,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       })
       .finally(() => setCalculating(false));
   }, [selectedPlan, isCustom, customLimits, selectedAddons, promoCode]);
-  
+
   // Set slider boundaries when base plan changes
   const handleBasePlanChange = (plan: any) => {
     setSelectedPlan(plan);
@@ -1361,7 +1496,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       max_storage_gb: Math.max(customLimits.max_storage_gb, plan.storage_quota_mb ? plan.storage_quota_mb / 1024 : 10)
     });
   };
-  
+
   const toggleAddon = (key: string) => {
     if (selectedAddons.includes(key)) {
       setSelectedAddons(selectedAddons.filter(k => k !== key));
@@ -1369,7 +1504,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       setSelectedAddons([...selectedAddons, key]);
     }
   };
-  
+
   const applyPromo = () => {
     if (!promoInput.trim()) return;
     const code = promoInput.trim().toUpperCase();
@@ -1380,7 +1515,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       toast.error("Invalid promo code.");
     }
   };
-  
+
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
     if (!billingName || !billingEmail || !billingPhone) {
@@ -1391,7 +1526,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       toast.error("Please fill in all card verification fields.");
       return;
     }
-    
+
     // Start checkout processing flow
     setProcessingState(0);
     const timers: NodeJS.Timeout[] = [];
@@ -1434,13 +1569,13 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
       timers.push(t);
     }
   };
-  
+
   const handleCardNoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "");
     const formatted = raw.replace(/(.{4})/g, "$1 ").trim().slice(0, 19);
     setCardNo(formatted);
   };
-  
+
   const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "");
     let formatted = raw;
@@ -1449,14 +1584,14 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
     }
     setExpiry(formatted.slice(0, 5));
   };
-  
+
   const handleCvvChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "");
     setCvv(raw.slice(0, 3));
   };
-  
+
   const high = data.event_count / data.plan_limits.events > .9 || data.member_count / data.plan_limits.users > .9 || data.storage_used_gb / data.plan_limits.storage_gb > .9;
-  
+
   if (activeView === "usage") {
     return (
       <div className="space-y-6">
@@ -1466,7 +1601,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
             You are approaching resource quotas on your active plan tier. Modify limits to avoid disruption.
           </div>
         )}
-        
+
         <div className="rounded-3xl border border-white/10 bg-white/[0.035] backdrop-blur-xl p-6 relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="absolute top-0 right-0 h-40 w-40 bg-[var(--pri)]/10 blur-3xl rounded-full" />
           <div className="space-y-2 relative z-10">
@@ -1476,31 +1611,31 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
             </div>
             <h3 className="text-xl font-black text-white capitalize">{data.organization.plan} Plan</h3>
             <p className="text-xs text-white/40 font-medium">
-              Status: <span className="text-emerald-400 font-bold">Active</span> · Renews/expires: {planExpiry ? formatDistanceToNow(new Date(planExpiry!), { addSuffix: true }) : "Unlimited"}
+              Status: <span className="text-emerald-400 font-bold">Active</span> Â· Renews/expires: {planExpiry ? formatDistanceToNow(new Date(planExpiry!), { addSuffix: true }) : "Unlimited"}
             </p>
           </div>
           <Button onClick={() => setActiveView("browse")} className="rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[11px] font-black uppercase tracking-widest relative z-10 px-6 h-12 shadow-lg shadow-[var(--pri)]/20 transition-all active:scale-95">
             Upgrade / Modify Plan
           </Button>
         </div>
-        
+
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-2xl border border-default bg-white/[0.02] p-5 space-y-4">
-            <UsageBar label={`Events: ${data.event_count} / ${data.plan_limits.events || "∞"}`} value={data.event_count} max={data.plan_limits.events} />
+            <UsageBar label={`Events: ${data.event_count} / ${data.plan_limits.events || "âˆž"}`} value={data.event_count} max={data.plan_limits.events} />
           </div>
-          
+
           <div className="rounded-2xl border border-default bg-white/[0.02] p-5 space-y-4">
-            <UsageBar label={`Organizer Users: ${data.member_count} / ${data.plan_limits.users || "∞"}`} value={data.member_count} max={data.plan_limits.users} />
+            <UsageBar label={`Organizer Users: ${data.member_count} / ${data.plan_limits.users || "âˆž"}`} value={data.member_count} max={data.plan_limits.users} />
           </div>
-          
+
           <div className="rounded-2xl border border-default bg-white/[0.02] p-5 space-y-4">
-            <UsageBar label={`Storage: ${data.storage_used_gb.toFixed(1)} GB / ${data.plan_limits.storage_gb || "∞"} GB`} value={data.storage_used_gb} max={data.plan_limits.storage_gb} />
+            <UsageBar label={`Storage: ${data.storage_used_gb.toFixed(1)} GB / ${data.plan_limits.storage_gb || "âˆž"} GB`} value={data.storage_used_gb} max={data.plan_limits.storage_gb} />
           </div>
         </div>
       </div>
     );
   }
-  
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -1510,7 +1645,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
         </button>
         <h3 className="text-sm font-black text-white/40 uppercase tracking-widest">Plan Customizer</h3>
       </div>
-      
+
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 space-y-3">
           <Loader2 className="w-8 h-8 text-[var(--pri)] animate-spin" />
@@ -1525,7 +1660,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
               <div className="grid md:grid-cols-3 gap-4">
                 {plans.map((p) => {
                   const isSelected = selectedPlan?.id === p.id;
-                  const isCurrent = data.organization.plan.toLowerCase() === p.name.toLowerCase() || 
+                  const isCurrent = data.organization.plan.toLowerCase() === p.name.toLowerCase() ||
                                     (data.organization.plan.toLowerCase() === "pro" && p.name.toLowerCase() === "professional");
                   return (
                     <div
@@ -1553,7 +1688,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         </h4>
                         <p className="text-[10px] text-white/45 leading-normal min-h-[30px]">{p.description}</p>
                         <div className="flex items-baseline gap-0.5">
-                          <span className="text-xl font-black text-white">₹{Number(p.price_per_event_min || 0).toLocaleString()}</span>
+                          <span className="text-xl font-black text-white">â‚¹{Number(p.price_per_event_min || 0).toLocaleString()}</span>
                           <span className="text-[9px] text-white/30 font-bold uppercase">/ event</span>
                         </div>
                         <div className="space-y-1 text-[9px] text-white/60 font-semibold border-t border-white/5 pt-2">
@@ -1576,7 +1711,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                 })}
               </div>
             </div>
-            
+
             {/* Custom Quota Builder */}
             <div className="space-y-3 rounded-2xl border border-white/5 bg-white/[0.015] p-5">
               <div className="flex justify-between items-center">
@@ -1593,7 +1728,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   }}
                   className={cn(
                     "px-4 h-9 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all flex items-center gap-1.5 active:scale-95",
-                    isCustom 
+                    isCustom
                       ? "bg-[var(--pri)] border-[var(--pri)] text-[var(--color-text-inverse)] shadow-md shadow-[var(--pri)]/10"
                       : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
                   )}
@@ -1602,7 +1737,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   {isCustom ? "Customizer Active" : "Customize Quotas"}
                 </button>
               </div>
-              
+
               {isCustom ? (
                 <div className="grid md:grid-cols-2 gap-5 pt-3 border-t border-white/5">
                   {/* Events Slider */}
@@ -1621,7 +1756,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                     />
                     <p className="text-[8px] text-white/35 font-bold">Select event package volume.</p>
                   </div>
-                  
+
                   {/* Users Slider */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
@@ -1636,9 +1771,9 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       onChange={(e) => setCustomLimits({ ...customLimits, max_users: Number(e.target.value) })}
                       className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
-                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_users} users. +₹1,500/user/event.</p>
+                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_users} users. +â‚¹1,500/user/event.</p>
                   </div>
-                  
+
                   {/* Registrations Slider */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
@@ -1656,9 +1791,9 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       onChange={(e) => setCustomLimits({ ...customLimits, max_registrations: Number(e.target.value) })}
                       className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
-                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_registrations} attendees. +₹5/attendee/event.</p>
+                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_registrations} attendees. +â‚¹5/attendee/event.</p>
                   </div>
-                  
+
                   {/* Storage Slider */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
@@ -1674,9 +1809,9 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       onChange={(e) => setCustomLimits({ ...customLimits, max_storage_gb: Number(e.target.value) })}
                       className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
-                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan ? selectedPlan.storage_quota_mb / 1024 : 10} GB. +₹200/GB/event.</p>
+                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan ? selectedPlan.storage_quota_mb / 1024 : 10} GB. +â‚¹200/GB/event.</p>
                   </div>
-                  
+
                   {/* Speakers Slider */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
@@ -1692,9 +1827,9 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       onChange={(e) => setCustomLimits({ ...customLimits, max_speakers: Number(e.target.value) })}
                       className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
-                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_speakers || 30} speakers. +₹100/speaker/event.</p>
+                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_speakers || 30} speakers. +â‚¹100/speaker/event.</p>
                   </div>
-                  
+
                   {/* Rooms Slider */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] font-bold">
@@ -1709,7 +1844,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       onChange={(e) => setCustomLimits({ ...customLimits, max_rooms: Number(e.target.value) })}
                       className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[var(--pri)]"
                     />
-                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_rooms || 5} rooms. +₹1,000/room/event.</p>
+                    <p className="text-[8px] text-white/35 font-bold">Includes {selectedPlan?.max_rooms || 5} rooms. +â‚¹1,000/room/event.</p>
                   </div>
                 </div>
               ) : (
@@ -1719,7 +1854,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                 </div>
               )}
             </div>
-            
+
             {/* Optional Add-ons selection */}
             <div className="space-y-3">
               <h4 className="text-xs font-black uppercase tracking-wider text-white/40">3. Select Optional Workspace Add-ons</h4>
@@ -1727,7 +1862,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                 {addons.map((a) => {
                   const isChecked = selectedAddons.includes(a.key);
                   const isIncluded = a.included_in_plan && selectedPlan && a.included_in_plan.toLowerCase() === selectedPlan.name.toLowerCase();
-                  
+
                   return (
                     <div
                       key={a.id}
@@ -1753,7 +1888,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         <p className="text-[9px] text-white/40 leading-normal leading-relaxed">{a.description}</p>
                         <div className="pt-1 flex items-center gap-1.5">
                           <span className="text-[10px] font-bold text-[var(--color-primary-mid)]">
-                            {isIncluded ? "Included in Base" : a.price_inr ? `+₹${Number(a.price_inr).toLocaleString()}` : "Custom Pricing"}
+                            {isIncluded ? "Included in Base" : a.price_inr ? `+â‚¹${Number(a.price_inr).toLocaleString()}` : "Custom Pricing"}
                           </span>
                           {!isIncluded && a.billing_unit && (
                             <span className="text-[8px] text-white/30 uppercase tracking-widest font-black">({a.billing_unit.replace('_', ' ')})</span>
@@ -1766,14 +1901,14 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
               </div>
             </div>
           </div>
-          
+
           {/* Live Pricing Calculator Panel */}
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] backdrop-blur-xl p-5 space-y-5 sticky top-5">
             <h4 className="text-xs font-black uppercase tracking-wider text-white/50 flex items-center gap-2">
               <Receipt className="w-4 h-4 text-[var(--color-primary-mid)]" />
               Pricing Summary
             </h4>
-            
+
             {calculating || !priceDetails ? (
               <div className="flex flex-col items-center justify-center py-12 space-y-2">
                 <Loader2 className="w-5 h-5 text-[var(--color-primary-mid)] animate-spin" />
@@ -1784,59 +1919,59 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                 <div className="pb-3 border-b border-white/5 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-white/50">Base Plan ({priceDetails.plan_name})</span>
-                    <span className="text-white">₹{Number(priceDetails.base_price_per_event).toLocaleString()}</span>
+                    <span className="text-white">â‚¹{Number(priceDetails.base_price_per_event).toLocaleString()}</span>
                   </div>
-                  
+
                   {priceDetails.extra_quota_price_per_event > 0 && (
                     <div className="flex justify-between">
                       <span className="text-white/50">Custom Quota Surcharge</span>
-                      <span className="text-white">+₹{Number(priceDetails.extra_quota_price_per_event).toLocaleString()}</span>
+                      <span className="text-white">+â‚¹{Number(priceDetails.extra_quota_price_per_event).toLocaleString()}</span>
                     </div>
                   )}
-                  
+
                   {priceDetails.addons_price_per_event > 0 && (
                     <div className="flex justify-between">
                       <span className="text-white/50">Add-on Modules Cost</span>
-                      <span className="text-white">+₹{Number(priceDetails.addons_price_per_event).toLocaleString()}</span>
+                      <span className="text-white">+â‚¹{Number(priceDetails.addons_price_per_event).toLocaleString()}</span>
                     </div>
                   )}
-                  
+
                   <div className="flex justify-between text-[11px] font-black text-[var(--color-primary-mid)] pt-1">
                     <span>Rate Per Event</span>
-                    <span>₹{Number(priceDetails.price_per_event).toLocaleString()}</span>
+                    <span>â‚¹{Number(priceDetails.price_per_event).toLocaleString()}</span>
                   </div>
                 </div>
-                
+
                 <div className="pb-3 border-b border-white/5 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-white/50">Total Package Vol.</span>
                     <span className="text-white">{priceDetails.number_of_events} {priceDetails.number_of_events === 1 ? "Event" : "Events"}</span>
                   </div>
-                  
+
                   <div className="flex justify-between font-black text-white text-[11px]">
                     <span>Contract Subtotal</span>
-                    <span>₹{Number(priceDetails.subtotal).toLocaleString()}</span>
+                    <span>â‚¹{Number(priceDetails.subtotal).toLocaleString()}</span>
                   </div>
-                  
+
                   {priceDetails.discount > 0 && (
                     <div className="flex justify-between text-emerald-400 font-black">
                       <span className="flex items-center gap-1">
                         <Percent className="w-3 h-3 text-emerald-400" />
                         Discount Applied ({priceDetails.discount_percent}%)
                       </span>
-                      <span>-₹{Number(priceDetails.discount).toLocaleString()}</span>
+                      <span>-â‚¹{Number(priceDetails.discount).toLocaleString()}</span>
                     </div>
                   )}
                 </div>
-                
+
                 <div className="space-y-1">
                   <div className="flex justify-between items-baseline">
                     <span className="text-[10px] font-black uppercase tracking-wider text-white/50">Total Amount Due</span>
-                    <span className="text-xl font-black text-white">₹{Number(priceDetails.total).toLocaleString()}</span>
+                    <span className="text-xl font-black text-white">â‚¹{Number(priceDetails.total).toLocaleString()}</span>
                   </div>
                   <p className="text-[8px] text-white/30 text-right">Includes all mock sandbox duties and provisioning fees.</p>
                 </div>
-                
+
                 {/* Promo Code Input */}
                 <div className="space-y-1.5 pt-2">
                   <label className="text-[9px] font-bold uppercase tracking-wider text-white/40 block">Add Promotional Coupon</label>
@@ -1857,7 +1992,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                     </p>
                   )}
                 </div>
-                
+
                 <Button
                   onClick={() => {
                     setBillingName(data.organization.name || "");
@@ -1873,12 +2008,12 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
           </div>
         </div>
       )}
-      
+
       {/* Integrated Checkout Wizard */}
       <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
         <DialogContent className="max-w-2xl border-white/10 bg-[#0e0e14]/95 backdrop-blur-xl text-white rounded-3xl p-6 relative overflow-hidden select-none max-h-[90vh] overflow-y-auto">
           <div className="absolute top-0 right-0 h-32 w-32 bg-[var(--pri)]/10 blur-3xl rounded-full" />
-          
+
           {processingState === null ? (
             <>
               <DialogHeader>
@@ -1890,7 +2025,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   Provide billing context to generate your tax invoice and authorize entitlements.
                 </p>
               </DialogHeader>
-              
+
               <form onSubmit={handleCheckout} className="grid md:grid-cols-2 gap-6 pt-4">
                 {/* Billing Details & Invoice info */}
                 <div className="space-y-3.5">
@@ -1898,7 +2033,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                     <Receipt className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Invoice Contact & Tax Details
                   </h5>
-                  
+
                   <div>
                     <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Company / Billing Name</label>
                     <input
@@ -1910,7 +2045,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
-                  
+
                   <div>
                     <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Billing Email Address</label>
                     <input
@@ -1922,7 +2057,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       className="w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-bold"
                     />
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Phone Number</label>
@@ -1947,26 +2082,26 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       />
                     </div>
                   </div>
-                  
+
                   {/* Total price indicator on checkout */}
                   <div className="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-1">
                     <div className="flex justify-between items-center text-[10px] text-white/50 font-bold uppercase">
                       <span>Mock Escrow Due</span>
-                      <span>₹{Number(priceDetails?.total || 0).toLocaleString()}</span>
+                      <span>â‚¹{Number(priceDetails?.total || 0).toLocaleString()}</span>
                     </div>
                     <p className="text-[8px] text-white/35 font-medium leading-normal">
                       Includes plan base, custom limits, and {selectedAddons.length} addons. Promo discount applied.
                     </p>
                   </div>
                 </div>
-                
+
                 {/* Credit card form & 3D Flipping animation */}
                 <div className="space-y-4">
                   <h5 className="text-[10px] font-black uppercase tracking-widest text-white/50 border-b border-white/5 pb-1 flex items-center gap-1.5">
                     <CreditCard className="w-3.5 h-3.5 text-[var(--color-primary-mid)]" />
                     Sandbox Card Details
                   </h5>
-                  
+
                   <div className="flex flex-col justify-center items-center">
                     <div className="relative w-full h-[140px] perspective-1000 select-none">
                       <motion.div
@@ -1976,7 +2111,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         style={{ transformStyle: "preserve-3d" }}
                       >
                         {/* Front */}
-                        <div 
+                        <div
                           className="absolute inset-0 w-full h-full rounded-2xl p-4 bg-gradient-to-br from-zinc-800 to-neutral-950 border border-[var(--pri)]/20 shadow-xl flex flex-col justify-between"
                           style={{ backfaceVisibility: "hidden" }}
                         >
@@ -1989,11 +2124,11 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                             </div>
                             <span className="text-[9px] font-bold text-white/80 bg-white/10 px-2 py-0.5 rounded">EOS</span>
                           </div>
-                          
+
                           <p className="text-sm font-mono tracking-widest font-black text-white/90 truncate my-2">
-                            {cardNo || "•••• •••• •••• ••••"}
+                            {cardNo || "â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"}
                           </p>
-                          
+
                           <div className="flex justify-between items-end text-[7px] font-bold uppercase tracking-wider text-white/50">
                             <div className="max-w-[140px] truncate">
                               <p className="text-[5px] text-white/30">Cardholder</p>
@@ -2005,9 +2140,9 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                             </div>
                           </div>
                         </div>
-                        
+
                         {/* Back */}
-                        <div 
+                        <div
                           className="absolute inset-0 w-full h-full rounded-2xl bg-[#121118] border border-white/10 shadow-xl flex flex-col justify-between py-3"
                           style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
                         >
@@ -2015,7 +2150,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                           <div className="px-4 flex justify-between items-center">
                             <span className="text-[6px] text-white/30 font-bold uppercase">Authorized Sandbox Signature</span>
                             <div className="h-6 bg-white text-black font-mono font-black text-xs rounded px-2.5 flex items-center justify-center min-w-[36px]">
-                              {cvv || "•••"}
+                              {cvv || "â€¢â€¢â€¢"}
                             </div>
                           </div>
                           <p className="text-[6px] text-white/20 font-bold text-center leading-tight px-4">
@@ -2025,7 +2160,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       </motion.div>
                     </div>
                   </div>
-                  
+
                   {/* Card fields input */}
                   <div className="space-y-3">
                     <div>
@@ -2040,7 +2175,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white focus:outline-none focus:border-[var(--pri)]/40 transition-all font-semibold"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Card Number</label>
                       <input
@@ -2053,7 +2188,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         className="w-full h-9 rounded-xl bg-white/5 border border-white/10 px-3.5 text-xs text-white font-mono focus:outline-none focus:border-[var(--pri)]/40 transition-all"
                       />
                     </div>
-                    
+
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[9px] font-bold uppercase tracking-widest text-white/40 block mb-1">Expiry Date</label>
@@ -2072,7 +2207,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                         <input
                           type="password"
                           required
-                          placeholder="•••"
+                          placeholder="â€¢â€¢â€¢"
                           value={cvv}
                           onChange={handleCvvChange}
                           onFocus={() => setIsFlipped(true)}
@@ -2082,7 +2217,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
@@ -2124,14 +2259,14 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
               <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 animate-bounce">
                 <CheckCircle2 className="w-7 h-7" />
               </div>
-              
+
               <div className="space-y-1.5">
                 <h4 className="text-lg font-black tracking-tight text-white font-black">Payment Success & Entitled</h4>
                 <p className="text-[10px] text-emerald-400 font-black uppercase tracking-widest">
-                  Transaction Authorized · Workspace limits synchronized
+                  Transaction Authorized Â· Workspace limits synchronized
                 </p>
               </div>
-              
+
               {/* Receipt Preview */}
               <div className="w-full max-w-sm rounded-2xl border border-white/5 bg-white/[0.02] p-5 space-y-3.5 text-left text-xs font-bold relative">
                 <div className="absolute top-0 right-0 h-24 w-24 bg-emerald-500/5 blur-2xl rounded-full" />
@@ -2139,7 +2274,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   <span className="text-white/40 font-bold uppercase tracking-wider text-[9px]">Receipt Details</span>
                   <span className="text-white/40 font-bold uppercase tracking-wider text-[9px] font-mono">{successDetails.invoice_no}</span>
                 </div>
-                
+
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-white/55 font-semibold">Plan Entitled:</span>
@@ -2161,11 +2296,11 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
                   </div>
                   <div className="flex justify-between border-t border-white/5 pt-2.5 items-baseline">
                     <span className="text-white/55 font-semibold">Total Settled (INR):</span>
-                    <span className="text-base font-black text-white">₹{Number(successDetails.amount_paid).toLocaleString()}</span>
+                    <span className="text-base font-black text-white">â‚¹{Number(successDetails.amount_paid).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
-              
+
               <Button
                 onClick={() => {
                   setCheckoutOpen(false);

@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,7 +133,7 @@ async def return_hardware(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ── SUPER ADMIN CATALOG ENDPOINTS ──────────────────────────────────────
+# â”€â”€ SUPER ADMIN CATALOG ENDPOINTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 from pydantic import BaseModel
 from sqlalchemy import func, select, text, and_
@@ -154,13 +154,13 @@ async def seed_hardware_if_empty(db: AsyncSession):
         "Storage",
         "Accessories"
     ]
-    
+
     # Fetch existing categories
     existing_cats = (await db.execute(select(HardwareCategory))).scalars().all()
     existing_names = {c.name for c in existing_cats}
-    
+
     cat_map = {c.name: c.id for c in existing_cats}
-    
+
     # Insert missing categories
     modified = False
     for name in default_categories:
@@ -170,10 +170,10 @@ async def seed_hardware_if_empty(db: AsyncSession):
             db.add(c)
             cat_map[name] = c_id
             modified = True
-            
+
     if modified:
         await db.flush()
-        
+
     if modified:
         await db.commit()
 
@@ -186,7 +186,7 @@ async def get_next_available_hardware_code(db: AsyncSession, extra_in_use: set =
     in_use = {r for r in res.scalars().all() if r}
     if extra_in_use:
         in_use.update(extra_in_use)
-        
+
     num = 1001
     while True:
         candidate = f"HW-{num}"
@@ -233,7 +233,7 @@ async def superadmin_get_hardware(
     db: AsyncSession = Depends(get_db)
 ):
     await seed_hardware_if_empty(db)
-    
+
     q_str = """
       SELECT hi.id, hi.category_id, hi.asset_code, hi.name, hi.brand, hi.model,
              hi.purchase_cost, hi.renting_price, hi.status,
@@ -262,10 +262,10 @@ async def superadmin_get_hardware(
         "skip": skip,
         "limit": limit
     }
-    
+
     rows_res = await db.execute(text(q_str), params)
     rows = rows_res.all()
-    
+
     items = []
     total = 0
     for r in rows:
@@ -291,7 +291,7 @@ async def superadmin_get_hardware(
             "reserved_count": r.reserved_count,
             "is_active": r.status == "AVAILABLE"
         })
-        
+
     sum_q = """
       SELECT
         COUNT(*) as total_items,
@@ -305,7 +305,7 @@ async def superadmin_get_hardware(
     """
     sum_res = await db.execute(text(sum_q))
     s = sum_res.fetchone()
-    
+
     summary = {
         "total_items": s.total_items or 0,
         "active_items": s.active_items or 0,
@@ -330,7 +330,7 @@ async def superadmin_get_hardware(
         .where(HardwareItem.pricing_unit.isnot(None))
     )
     active_pricing_units = [r[0] for r in active_units_res.all() if r[0]]
-    
+
     # Calculate next hardware code sequentially
     next_item_code = "HW-1001"
     code_res = await db.execute(text("SELECT asset_code FROM inventory.hardware_items WHERE asset_code LIKE 'HW-%';"))
@@ -345,7 +345,7 @@ async def superadmin_get_hardware(
             except (ValueError, IndexError):
                 pass
     next_item_code = f"HW-{max_num + 1}"
-    
+
     return {
         "items": items,
         "total": total,
@@ -396,7 +396,7 @@ async def superadmin_create_hardware(
     )
     db.add(item)
     await db.flush()
-    
+
     stock = HardwareStock(
         id=uuid.uuid4(),
         hardware_id=item.id,
@@ -406,7 +406,7 @@ async def superadmin_create_hardware(
     )
     db.add(stock)
     await db.commit()
-    
+
     return {"status": "success", "id": str(item.id)}
 
 @router.patch("/superadmin/catalog/hardware/{item_id}")
@@ -420,7 +420,7 @@ async def superadmin_update_hardware(
     item = (await db.execute(item_stmt)).scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Hardware item not found")
-        
+
     if body.name is not None:
         item.name = body.name
     if body.item_code is not None:
@@ -443,11 +443,11 @@ async def superadmin_update_hardware(
         item.tax_category = body.tax_category
     if body.status is not None:
         item.status = body.status
-        
+
     if body.inventory_count is not None:
         stock_stmt = select(HardwareStock).where(HardwareStock.hardware_id == item_id)
         stock = (await db.execute(stock_stmt)).scalar_one_or_none()
-        
+
         qty = body.inventory_count
         if stock:
             stock.quantity = qty
@@ -461,7 +461,7 @@ async def superadmin_update_hardware(
                 available_quantity=qty
             )
             db.add(stock)
-            
+
     await db.commit()
     return {"status": "success", "id": str(item_id)}
 
@@ -474,17 +474,17 @@ async def superadmin_import_hardware(
     import io
     import re
     import openpyxl
-    
+
     contents = await file.read()
     try:
         wb = openpyxl.load_workbook(filename=io.BytesIO(contents), data_only=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
-        
+
     sheet = wb.active
     if sheet.max_row < 2:
         return {"status": "success", "count": 0}
-        
+
     # Read headers
     header_cells = [cell.value for cell in sheet[1]]
     header_map = {}
@@ -493,7 +493,7 @@ async def superadmin_import_hardware(
             continue
         val = str(cell).strip().lower().replace("_", " ").replace("-", " ")
         header_map[val] = idx
-        
+
     def get_val(row_vals, aliases, default=None):
         for alias in aliases:
             a_clean = alias.lower().replace("_", " ").replace("-", " ")
@@ -507,7 +507,7 @@ async def superadmin_import_hardware(
     cats_res = await db.execute(select(HardwareCategory))
     cats_list = cats_res.scalars().all()
     cat_map = {c.name.strip().lower(): c.id for c in cats_list}
-    
+
     allocated_codes = set()
     imported_count = 0
     # Process rows
@@ -515,27 +515,22 @@ async def superadmin_import_hardware(
         row_vals = [cell.value for cell in sheet[r_idx]]
         if not any(row_vals):
             continue # skip empty rows
-            
+
         name = get_val(row_vals, ["hardware name", "name", "item name"])
         if not name or not str(name).strip():
             continue
-            
+
         name_str = str(name).strip()
+        item = None
         item_code = get_val(row_vals, ["hardware code", "sku", "item code", "asset code"])
-        if not item_code or not str(item_code).strip():
-            code_str = await get_next_available_hardware_code(db, allocated_codes)
+        if item_code and str(item_code).strip():
+            code_str = str(item_code).strip()
+            existing_stmt = select(HardwareItem).where(HardwareItem.asset_code == code_str)
+            item = (await db.execute(existing_stmt)).scalar_one_or_none()
         else:
-            item_code_str = str(item_code).strip()
-            existing_stmt = select(HardwareItem).where(HardwareItem.asset_code == item_code_str)
-            existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-            if existing or item_code_str in allocated_codes:
-                code_str = await get_next_available_hardware_code(db, allocated_codes)
-            else:
-                code_str = item_code_str
-                
-        allocated_codes.add(code_str)
-            
-        # Resolve category
+            code_str = await get_next_available_hardware_code(db, allocated_codes)
+
+        # Resolve category first since we need it for duplicate check by name
         cat_name = get_val(row_vals, ["category"], "Accessories")
         cat_name_clean = str(cat_name).strip().lower()
         if cat_name_clean in cat_map:
@@ -547,67 +542,132 @@ async def superadmin_import_hardware(
             db.add(new_cat)
             await db.flush()
             cat_map[cat_name_clean] = cat_id
-            
+
+        # If not matched by code, match by name under this category
+        if not item:
+            name_stmt = select(HardwareItem).where(
+                and_(
+                    func.lower(HardwareItem.name) == name_str.lower(),
+                    HardwareItem.category_id == cat_id
+                )
+            )
+            item = (await db.execute(name_stmt)).scalar_one_or_none()
+            if item:
+                code_str = item.asset_code
+
+        allocated_codes.add(code_str)
+
         pricing_unit = str(get_val(row_vals, ["pricing unit", "unit"], "PER_EVENT")).strip()
         if pricing_unit not in ["PER_DAY", "PER_EVENT", "PER_DEVICE", "PER_ROOM", "PER_COUNTER"]:
             pricing_unit = "PER_EVENT"
-            
+
         cost_price = 0.0
         try:
             cost_price = float(get_val(row_vals, ["cost price", "cost"], 0.0))
         except ValueError:
             pass
-            
+
         renting_price = 0.0
         try:
             renting_price = float(get_val(row_vals, ["renting price", "rent price", "selling price"], 0.0))
         except ValueError:
             pass
-            
+
         brand = str(get_val(row_vals, ["brand"], "Standard")).strip()
         model = str(get_val(row_vals, ["model"], "Generic v1")).strip()
-        
+
         inventory_count = 0
         try:
             inventory_count = int(get_val(row_vals, ["inventory count", "available quantity", "quantity", "inventory"], 0))
         except ValueError:
             pass
-            
+
         description = get_val(row_vals, ["description"])
         desc_str = str(description).strip() if description else None
-        
+
         tax_category = str(get_val(row_vals, ["tax category", "gst", "tax"], "GST_18")).strip()
         if tax_category not in ["GST_18", "GST_28", "GST_12", "GST_5", "GST_0"]:
             tax_category = "GST_18"
-            
-        # Create item
-        item = HardwareItem(
-            id=uuid.uuid4(),
-            category_id=cat_id,
-            asset_code=code_str,
-            name=name_str,
-            brand=brand,
-            model=model,
-            purchase_cost=cost_price,
-            renting_price=renting_price,
-            status="AVAILABLE",
-            pricing_unit=pricing_unit,
-            description=desc_str,
-            tax_category=tax_category
-        )
-        db.add(item)
-        await db.flush()
-        
-        # Create stock
-        stock = HardwareStock(
-            id=uuid.uuid4(),
-            hardware_id=item.id,
-            quantity=inventory_count,
-            reserved_quantity=0,
-            available_quantity=inventory_count
-        )
-        db.add(stock)
+
+        # Create or update item
+        if item:
+            if item.asset_code != code_str:
+                code_exists_stmt = select(HardwareItem).where(HardwareItem.asset_code == code_str)
+                code_exists = (await db.execute(code_exists_stmt)).scalar_one_or_none()
+                if not code_exists:
+                    item.asset_code = code_str
+            item.name = name_str
+            item.category_id = cat_id
+            item.brand = brand
+            item.model = model
+            item.purchase_cost = cost_price
+            item.renting_price = renting_price
+            item.pricing_unit = pricing_unit
+            item.description = desc_str
+            item.tax_category = tax_category
+
+            # Update stock
+            stock_stmt = select(HardwareStock).where(HardwareStock.hardware_id == item.id)
+            stock = (await db.execute(stock_stmt)).scalar_one_or_none()
+            if stock:
+                stock.quantity = inventory_count
+                stock.available_quantity = max(0, inventory_count - stock.reserved_quantity)
+            else:
+                stock = HardwareStock(
+                    id=uuid.uuid4(),
+                    hardware_id=item.id,
+                    quantity=inventory_count,
+                    reserved_quantity=0,
+                    available_quantity=inventory_count
+                )
+                db.add(stock)
+        else:
+            item = HardwareItem(
+                id=uuid.uuid4(),
+                category_id=cat_id,
+                asset_code=code_str,
+                name=name_str,
+                brand=brand,
+                model=model,
+                purchase_cost=cost_price,
+                renting_price=renting_price,
+                status="AVAILABLE",
+                pricing_unit=pricing_unit,
+                description=desc_str,
+                tax_category=tax_category
+            )
+            db.add(item)
+            await db.flush()
+
+            stock = HardwareStock(
+                id=uuid.uuid4(),
+                hardware_id=item.id,
+                quantity=inventory_count,
+                reserved_quantity=0,
+                available_quantity=inventory_count
+            )
+            db.add(stock)
         imported_count += 1
-        
+
     await db.commit()
     return {"status": "success", "count": imported_count}
+
+@router.delete("/superadmin/catalog/hardware/{item_id}")
+async def superadmin_delete_hardware(
+    item_id: uuid.UUID,
+    current_user: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    item_stmt = select(HardwareItem).where(HardwareItem.id == item_id)
+    item = (await db.execute(item_stmt)).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Hardware item not found")
+
+    try:
+        await db.delete(item)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Failed to delete hardware item: {str(e)}")
+
+    return {"status": "success", "message": "Hardware item deleted successfully"}

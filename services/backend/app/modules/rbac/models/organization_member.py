@@ -34,6 +34,8 @@ class OrganizationMember(Base):
     invited_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id"), nullable=True)
     invite_token: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
     invite_email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    invite_first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    invite_last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

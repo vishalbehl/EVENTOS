@@ -21,7 +21,7 @@ export function ChartCard({
   className,
 }: ChartCardProps) {
   return (
-    <div className={cn("bg-surface border border-border rounded-xl p-5 flex flex-col justify-between shadow-sm", className)}>
+    <section aria-label={title} className={cn("flex flex-col justify-between rounded-xl border border-border bg-surface p-5 shadow-sm", className)}>
       <div className="flex items-start justify-between gap-4 mb-4">
         <div className="space-y-0.5 min-w-0">
           <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate">{title}</h3>
@@ -32,6 +32,6 @@ export function ChartCard({
       <div style={{ height }} className="w-full relative min-h-0 flex-1">
         {children}
       </div>
-    </div>
+    </section>
   );
 }

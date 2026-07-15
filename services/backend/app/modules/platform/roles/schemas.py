@@ -20,6 +20,15 @@ class RoleUpdate(BaseModel):
     access_level: Optional[str] = Field(None, max_length=50)
 
 
+class AdminRoleCreate(RoleCreate):
+    reason: str = Field(..., min_length=12, max_length=1000)
+
+
+class AdminRoleUpdate(RoleUpdate):
+    expected_updated_at: datetime
+    reason: str = Field(..., min_length=12, max_length=1000)
+
+
 class DestructiveActionRequest(BaseModel):
     reason: str = Field(..., min_length=8, max_length=1000)
 

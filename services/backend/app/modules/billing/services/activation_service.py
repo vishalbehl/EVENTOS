@@ -510,6 +510,10 @@ class ActivationService:
             idempotency_key=idempotency_key,
             payload={"activation_id": str(activation_id), "resolution_reason": resolution_reason},
         )
+        if op.status == "SUCCEEDED" and op.result_ref_id:
+            existing = await EntitlementResolver.get_activation(db, op.result_ref_id)
+            if existing and existing.organization_id == organization_id:
+                return existing
         activation = await EntitlementResolver.get_activation(db, activation_id)
         if not activation or activation.organization_id != organization_id:
             raise HTTPException(status_code=404, detail="Activation not found.")

@@ -19,6 +19,9 @@ import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/super-admin/ui/PageContainer";
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader";
 import { StatusBadge } from "@/components/super-admin/ui/StatusBadge";
+import { SupportAccessScope, type SupportAccessSelection } from "@/components/super-admin/ui/SupportAccessScope";
+import { Input } from "@/components/ui/input";
+import { useAuditExports, useCreateAuditExport, useDownloadAuditExport } from "@/services/audit-export-service";
 
 export interface AuditLog {
   id: string;
@@ -36,6 +39,8 @@ export interface AuditLog {
   request_id?: string;
   correlation_id?: string;
 }
+
+const EMPTY_AUDIT_LOGS: AuditLog[] = [];
 
 export default function AuditExplorerPage() {
   const [cursor, setCursor] = useState<string | null>(null);
@@ -58,6 +63,8 @@ export default function AuditExplorerPage() {
   const [missingIntegrityIds, setMissingIntegrityIds] = useState<string[]>([]);
   const [showJsonPanel, setShowJsonPanel] = useState(false);
   const [copiedHash, setCopiedHash] = useState(false);
+  const [exportScope, setExportScope] = useState<SupportAccessSelection | null>(null);
+  const [exportReason, setExportReason] = useState("");
 
   const debouncedActor = useDebounce(actorQuery, 400);
 
@@ -72,9 +79,30 @@ export default function AuditExplorerPage() {
     action_type: selectedActionGroup === "ALL" || ["SECURITY", "BILLING"].includes(selectedActionGroup) ? undefined : selectedActionGroup,
   });
 
-  const rawLogs = data?.items || [];
+  const rawLogs: AuditLog[] = data?.items || EMPTY_AUDIT_LOGS;
   const hasNext = data?.has_next || false;
   const nextCursorVal = data?.next_cursor || null;
+  const exportsQuery = useAuditExports(exportScope);
+  const createExport = useCreateAuditExport(exportScope);
+  const downloadExport = useDownloadAuditExport(exportScope);
+
+  const requestExport = async () => {
+    if (!exportScope || exportReason.trim().length < 12) return;
+    try {
+      await createExport.mutateAsync({
+        reason: exportReason.trim(),
+        actor_user_id: debouncedActor || null,
+        action_type: selectedActionGroup === "ALL" || ["SECURITY", "BILLING"].includes(selectedActionGroup) ? null : selectedActionGroup,
+        occurred_from: dateFrom ? new Date(dateFrom).toISOString() : null,
+        occurred_to: dateTo ? new Date(dateTo).toISOString() : null,
+        sensitive_only: sensitiveOnly,
+      });
+      setExportReason("");
+      toast.success("Audit export queued.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Audit export could not be queued.");
+    }
+  };
 
   const logs = useMemo(() => {
     return rawLogs.filter(log => {
@@ -172,19 +200,20 @@ export default function AuditExplorerPage() {
               )}
               {isVerifying ? "Checking..." : "Check Integrity Metadata"}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              title="Audit exports require durable export-job records and authorization-gated downloads before exposure."
-              className="border-border"
-            >
+            <Button variant="outline" size="sm" disabled={!exportScope || exportReason.trim().length < 12 || createExport.isPending} onClick={() => void requestExport()} className="border-border">
               <Download className="w-3.5 h-3.5 mr-2" />
-              Export unavailable
+              {createExport.isPending ? "Queueing..." : "Queue export"}
             </Button>
           </div>
         }
       />
+
+      <section className="space-y-3 rounded-xl border border-border bg-surface p-4" aria-labelledby="audit-export-heading">
+        <div><h2 id="audit-export-heading" className="text-sm font-semibold">Audit evidence export</h2><p className="mt-1 text-xs text-[var(--text-tertiary)]">Exports require an explicit tenant support scope, recent step-up authentication, and an operator reason.</p></div>
+        <SupportAccessScope value={exportScope} onApply={(scope) => { setExportScope(scope); setSelectedOrg(scope.organizationId); }} />
+        <Input value={exportReason} onChange={(event) => setExportReason(event.target.value)} placeholder="Export purpose and evidence reference (minimum 12 characters)" minLength={12} disabled={!exportScope} />
+        {exportsQuery.data?.length ? <div className="flex flex-wrap gap-2">{exportsQuery.data.slice(0, 5).map((item) => <div key={item.export_id} className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs"><StatusBadge status={item.status} /><span className="font-mono text-[10px]">{item.export_id.slice(0, 8)}</span>{item.status === "COMPLETED" ? <Button size="sm" variant="ghost" disabled={downloadExport.isPending} onClick={() => void downloadExport.mutateAsync(item.export_id)}>Download</Button> : null}{item.failure_reason ? <span className="text-[var(--status-danger)]">{item.failure_reason}</span> : null}</div>)}</div> : null}
+      </section>
 
       {/* 3-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start min-h-[600px]">

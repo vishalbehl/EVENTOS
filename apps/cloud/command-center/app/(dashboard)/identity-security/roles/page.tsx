@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useAdminOrgs } from "@/services/super-admin-service";
 import {
   PlatformRole,
   RolePayload,
@@ -30,6 +31,7 @@ const defaultPayload: RolePayload = {
   description: "",
   access_level: "DEPARTMENT",
   department_id: null,
+  reason: "",
 };
 
 function normalizeCode(value: string) {
@@ -41,9 +43,11 @@ export default function PlatformRolesPage() {
   const [draft, setDraft] = useState<RolePayload>(defaultPayload);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PlatformRole | null>(null);
+  const [organizationId, setOrganizationId] = useState("");
 
   const params = useMemo(() => ({ search: search || undefined, limit: 100 }), [search]);
-  const rolesQuery = usePlatformRoles(params);
+  const { data: organizations = [] } = useAdminOrgs({ limit: 100 });
+  const rolesQuery = usePlatformRoles(organizationId || undefined, params);
   const createRole = useCreatePlatformRole();
   const updateRole = useUpdatePlatformRole();
   const deleteRole = useDeletePlatformRole();
@@ -71,6 +75,7 @@ export default function PlatformRolesPage() {
       description: role.description || "",
       access_level: role.access_level || "DEPARTMENT",
       department_id: role.department_id || null,
+      reason: "",
     });
   };
 
@@ -84,17 +89,22 @@ export default function PlatformRolesPage() {
       department_id: draft.department_id || null,
     };
 
-    if (!payload.name || !payload.code) {
-      toast.error("Role name and code are required.");
+    if (!organizationId || !payload.name || !payload.code || payload.reason.length < 12) {
+      toast.error("Select an organization and provide role details with an audit reason of at least 12 characters.");
       return;
     }
 
     try {
       if (editingRoleId) {
-        await updateRole.mutateAsync({ roleId: editingRoleId, payload });
+        await updateRole.mutateAsync({
+          organizationId,
+          roleId: editingRoleId,
+          payload,
+          expectedUpdatedAt: selectedRole!.updated_at,
+        });
         toast.success("Role updated.");
       } else {
-        await createRole.mutateAsync(payload);
+        await createRole.mutateAsync({ organizationId, payload });
         toast.success("Role created.");
       }
       resetDraft();
@@ -188,6 +198,27 @@ export default function PlatformRolesPage() {
 
       <MetricRow metrics={metrics} />
 
+      <div className="rounded-xl border border-border bg-surface p-4">
+        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]" htmlFor="role-organization">
+          Tenant scope
+        </label>
+        <select
+          id="role-organization"
+          value={organizationId}
+          onChange={(event) => {
+            setOrganizationId(event.target.value);
+            resetDraft();
+          }}
+          className="h-10 w-full max-w-md rounded-md border border-border bg-surface-2 px-3 text-sm text-[var(--text-primary)]"
+        >
+          <option value="">Select an organization</option>
+          {organizations.map((organization) => (
+            <option key={organization.id} value={organization.id}>{organization.name}</option>
+          ))}
+        </select>
+        <p className="mt-2 text-xs text-[var(--text-tertiary)]">Roles and assignments never pool across organizations.</p>
+      </div>
+
       {rolesQuery.isError ? (
         <RecoverableError
           title="Roles could not be loaded"
@@ -276,7 +307,19 @@ export default function PlatformRolesPage() {
                   className="border-border bg-surface-2"
                 />
               </div>
-              <Button type="submit" disabled={isSaving} className="w-full">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-[var(--text-secondary)]" htmlFor="role-reason">Audit reason</label>
+                <Textarea
+                  id="role-reason"
+                  value={draft.reason}
+                  onChange={(event) => setDraft((value) => ({ ...value, reason: event.target.value }))}
+                  placeholder="Explain the approved access change."
+                  required
+                  minLength={12}
+                  className="border-border bg-surface-2"
+                />
+              </div>
+              <Button type="submit" disabled={isSaving || !organizationId} className="w-full">
                 <Plus className="mr-2 size-4" />
                 {isSaving ? "Saving..." : selectedRole ? "Update Role" : "Create Role"}
               </Button>
@@ -301,8 +344,8 @@ export default function PlatformRolesPage() {
             return;
           }
           try {
-            await deleteRole.mutateAsync({ roleId: deleteTarget.id, reason });
-            toast.success("Role deleted.");
+            await deleteRole.mutateAsync({ organizationId, roleId: deleteTarget.id, reason });
+            toast.success("Role archived.");
             setDeleteTarget(null);
           } catch (error: any) {
             toast.error(error?.message || "Could not delete role.");

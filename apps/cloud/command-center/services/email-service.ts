@@ -1,6 +1,6 @@
 // services/email-service.ts
 
-import { apiClient } from "@/lib/api-client"
+import { apiClient, saveDownloadedFile } from "@/lib/api-client"
 
 // ================= TYPES =================
 
@@ -182,18 +182,8 @@ export const getEmailLogs = async (
 // ================= DOWNLOAD =================
 
 export const downloadLogs = async (eventId: string) => {
-  const response = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/events/${eventId}/notifications/logs/download?event_id=${eventId}`,
-    {
-      method: "GET",
-    }
-  )
-
-  const blob = await response.blob()
-  const url = window.URL.createObjectURL(blob)
-
-  const a = document.createElement("a")
-  a.href = url
-  a.download = "email_logs.csv"
-  a.click()
+  const file = await apiClient.download(`/events/${eventId}/notifications/logs/download`, {
+    params: { event_id: eventId },
+  })
+  saveDownloadedFile(file, "email_logs.csv")
 }

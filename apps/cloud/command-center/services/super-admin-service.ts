@@ -7,6 +7,8 @@
 import { useQuery, useMutation, useQueryClient, QueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
+import { platformKey, adminKeys, queryKeys } from "@/lib/query-keys";
+export { platformKey, adminKeys };
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -80,7 +82,7 @@ export interface AdminOrg {
   slug: string;
   plan: string;
   status: string;
-  health_score: number;
+  health_score: number | null;
   health_status: string;
   created_at: string;
   is_active?: boolean;
@@ -89,7 +91,7 @@ export interface AdminOrg {
   suspension_reason?: string;
   suspended_at?: string;
   events_count?: number;
-  mrr?: number;
+  mrr?: number | null;
 }
 
 export interface OrgDetail {
@@ -111,7 +113,7 @@ export interface OrgDetail {
     stripe_customer_id?: string;
   };
   health: {
-    score: number;
+    score: number | null;
     status: string;
     warnings: string[];
   };
@@ -576,45 +578,41 @@ export interface OrgEvent {
   registration_count: number;
 }
 
-// ── React Query Keys ──────────────────────────────────────────
+export interface OrganizationMember {
+  id: string;
+  user_id: string | null;
+  name: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  user_role: string | null;
+  org_role: "owner" | "admin" | "member" | "billing_only";
+  accepted_at: string | null;
+  invited_at: string | null;
+  is_active: boolean;
+  is_2fa_enabled: boolean;
+  last_login_at: string | null;
+  event_ids: string[];
+}
 
-export const adminKeys = {
-  dashboard: ["admin", "dashboard"] as const,
-  orgs: (params?: any) => ["admin", "orgs", params] as const,
-  orgDetail: (id: string) => ["admin", "org", id] as const,
-  orgUsage: (id: string) => ["admin", "org-usage", id] as const,
-  orgTimeline: (id: string) => ["admin", "org-timeline", id] as const,
-  orgFeatures: (id: string) => ["admin", "org-features", id] as const,
-  subscriptionPlans: ["admin", "subscription-plans"] as const,
-  featuresCatalog: ["admin", "features-catalog"] as const,
-  featureMatrix: ["admin", "feature-matrix"] as const,
-  addons: ["admin", "addons"] as const,
-  planFeatures: (planId: string) => ["admin", "plan-features", planId] as const,
-  subscriptions: (params?: any) => ["admin", "subscriptions", params] as const,
-  invoices: (params?: any) => ["admin", "invoices", params] as const,
-  revenue: ["admin", "revenue"] as const,
-  globalUsers: (params?: any) => ["admin", "global-users", params] as const,
-  applications: ["admin", "applications"] as const,
-  impersonationLogs: (params?: any) => ["admin", "impersonation-logs", params] as const,
-  jobStats: ["admin", "job-stats"] as const,
-  jobExecutions: (params?: any) => ["admin", "job-executions", params] as const,
-  securityLogs: (params?: any) => ["admin", "security-logs", params] as const,
-  systemChanges: (params?: any) => ["admin", "system-changes", params] as const,
-  auditLogs: (params?: any) => ["admin", "audit-logs", params] as const,
-  searchJobs: (params?: any) => ["admin", "search-jobs", params] as const,
-  supportTickets: ["admin", "support-tickets"] as const,
-  supportComments: (ticketId: string) => ["admin", "support-comments", ticketId] as const,
-  globalSettings: ["admin", "global-settings"] as const,
-  platformHealth: ["admin", "platform-health"] as const,
-  subscriptionsHealthSummary: ["admin", "subscriptions-health-summary"] as const,
-  orgLimits: (orgId: string) => ["admin", "org-limits", orgId] as const,
-  orgDomains: (orgId: string) => ["admin", "org-domains", orgId] as const,
-  orgEvents: (orgId: string) => ["admin", "org-events", orgId] as const,
-  paymentEvents: (params?: any) => ["admin", "payment-events", params] as const,
-  revenueAnalytics: ["admin", "revenue-analytics"] as const,
-  invoiceItems: (invId: string) => ["admin", "invoice-items", invId] as const,
-  commercialExports: (organizationId?: string) => ["admin", "commercial-exports", organizationId] as const,
-};
+export interface OrganizationProvisionPayload {
+  name: string;
+  slug: string;
+  owner_email: string;
+  owner_first_name: string;
+  owner_last_name: string;
+  country: string;
+  timezone: string;
+  reason: string;
+}
+
+export interface OrganizationProvisionResult {
+  organization: AdminOrg;
+  owner_invitation: { membership_id: string; email: string; token: string };
+  replayed: boolean;
+}
+
+// ── React Query Keys ──────────────────────────────────────────
 
 // ── API Functions ─────────────────────────────────────────────
 
@@ -783,9 +781,9 @@ export const adminApi = {
   applyCredit: (orgId: string, amount: number, currency: string, reason: string) =>
     apiClient.post<any>(`/platform/organizations/${orgId}/apply-credit`, { amount, currency, reason }),
 
-  reset2FA: (userId: string, reason?: string) =>
+  reset2FA: (userId: string, reason: string) =>
     apiClient.delete(`/platform/users/${userId}/2fa`, {
-      data: reason ? { reason } : undefined,
+      data: { reason },
     }),
 
   getOrgLimits: (orgId: string) =>
@@ -811,6 +809,29 @@ export const adminApi = {
   getOrgEvents: (orgId: string) =>
     apiClient.get<OrgEvent[]>(`/platform/organizations/${orgId}/events`),
 
+  provisionOrganization: (payload: OrganizationProvisionPayload, idempotencyKey: string) =>
+    apiClient.post<OrganizationProvisionResult>("/platform/organisations", payload, {
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
+
+  getOrganizationMembers: (orgId: string) =>
+    apiClient.get<OrganizationMember[]>(`/platform/organisations/${orgId}/members`),
+
+  inviteOrganizationMember: (orgId: string, payload: { email: string; org_role: string; reason: string }) =>
+    apiClient.post<{ membership_id: string; email: string; invite_token: string }>(`/platform/organisations/${orgId}/members`, payload),
+
+  updateOrganizationMember: (orgId: string, memberId: string, orgRole: string, reason: string) =>
+    apiClient.patch(`/platform/organisations/${orgId}/members/${memberId}`, { org_role: orgRole, reason }),
+
+  removeOrganizationMember: (orgId: string, memberId: string, reason: string) =>
+    apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}`, { data: { reason } }),
+
+  assignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, permissions: Record<string, boolean>, reason: string) =>
+    apiClient.put(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { permissions, reason }),
+
+  unassignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, reason: string) =>
+    apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { data: { reason } }),
+
   getOrgAddons: (orgId: string) =>
     apiClient.get<any[]>(`/platform/organizations/${orgId}/addons`),
 
@@ -826,8 +847,14 @@ export const adminApi = {
   deleteOrg: (orgId: string, reason: string) =>
     apiClient.delete(`/platform/organizations/${orgId}`, { data: { reason } }),
 
-  updateUserStatus: (userId: string, isActive: boolean, reason?: string) =>
+  updateUserStatus: (userId: string, isActive: boolean, reason: string) =>
     apiClient.patch<any>(`/platform/users/${userId}/status`, { is_active: isActive, reason }),
+
+  updateUserPlatformRole: (userId: string, platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE", reason: string) =>
+    apiClient.patch<{ message: string; platform_role: string | null }>(`/platform/users/${userId}/platform-role`, {
+      platform_role: platformRole,
+      reason,
+    }),
 
   deleteOrgFeatureOverride: (orgId: string, featureId: string, reason: string) =>
     apiClient.delete(`/platform/organizations/${orgId}/features/overrides/${featureId}`, { data: { reason } }),
@@ -876,9 +903,9 @@ export const adminApi = {
   getRevenueAnalytics: () =>
     apiClient.get<any>("/platform/revenue/analytics"),
 
-  forceLogoutUser: (userId: string, reason?: string) =>
+  forceLogoutUser: (userId: string, reason: string) =>
     apiClient.delete(`/platform/users/${userId}/sessions`, {
-      data: reason ? { reason } : undefined,
+      data: { reason },
     }),
 
   exportAuditLogs: (payload: any) =>
@@ -1073,10 +1100,14 @@ export const useRevenueMetrics = (months = 12) =>
     queryFn: () => adminApi.getRevenueMetrics(months),
   });
 
-export const useGlobalUsers = (params?: { skip?: number; limit?: number; search?: string; org_id?: string; is_active?: boolean }) =>
+export const useGlobalUsers = (
+  params?: { skip?: number; limit?: number; search?: string; org_id?: string; is_active?: boolean },
+  options?: { enabled?: boolean },
+) =>
   useQuery({
     queryKey: adminKeys.globalUsers(params),
     queryFn: () => adminApi.getGlobalUsers(params),
+    enabled: options?.enabled ?? true,
   });
 
 export const usePlatformApplications = () =>
@@ -1198,7 +1229,8 @@ export const useUpdateOrgStatus = () => {
     mutationFn: ({ id, isActive, reason }: { id: string; isActive: boolean; reason: string }) =>
       adminApi.updateOrgStatus(id, isActive, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
     },
   });
 };
@@ -1254,7 +1286,8 @@ export const useTriggerReindex = () => {
     mutationFn: ({ orgId, entityTypes }: { orgId: string; entityTypes?: string[] }) =>
       adminApi.triggerReindex(orgId, entityTypes),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "search-jobs"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "search-jobs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "search-jobs") });
     },
   });
 };
@@ -1288,10 +1321,14 @@ export const useChangePlan = () => {
       adminApi.changeOrgPlan(orgId, planId, reason),
     onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDetail(variables.orgId) });
-      qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
-      qc.invalidateQueries({ queryKey: ["admin-orgs"] });
-      qc.invalidateQueries({ queryKey: ["admin-subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
     },
   });
 };
@@ -1305,11 +1342,15 @@ export const useExtendTrial = () => {
       adminApi.extendTrial(orgId, days, reason),
     onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDetail(variables.orgId) });
-      qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
-      qc.invalidateQueries({ queryKey: ["admin-subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["admin-dashboard"] });
-      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-dashboard") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "dashboard") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-dashboard") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "dashboard") });
     },
   });
 };
@@ -1321,7 +1362,8 @@ export const useApplyCredit = () => {
       adminApi.applyCredit(orgId, amount, currency, reason),
     onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: adminKeys.orgTimeline(variables.orgId) });
-      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
     },
   });
 };
@@ -1329,9 +1371,11 @@ export const useApplyCredit = () => {
 export const useReset2FA = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, reason }: { userId: string; reason?: string }) =>
+    mutationFn: ({ userId, reason }: { userId: string; reason: string }) =>
       adminApi.reset2FA(userId, reason),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: adminKeys.globalUsers() });
+    },
   });
 };
 
@@ -1352,7 +1396,8 @@ export const useUpdateOrgDetail = (orgId: string) => {
     mutationFn: (data: any) => adminApi.updateOrgDetail(orgId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.orgDetail(orgId) });
-      qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
     },
   });
 };
@@ -1402,11 +1447,78 @@ export const useImpersonateUser = () => {
 export const useUpdateUserStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, isActive, reason }: { userId: string; isActive: boolean; reason?: string }) =>
+    mutationFn: ({ userId, isActive, reason }: { userId: string; isActive: boolean; reason: string }) =>
       adminApi.updateUserStatus(userId, isActive, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "global-users"] });
+      qc.invalidateQueries({ queryKey: adminKeys.globalUsers() });
     },
+  });
+};
+
+export const useUpdateUserPlatformRole = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, platformRole, reason }: {
+      userId: string;
+      platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE";
+      reason: string;
+    }) => adminApi.updateUserPlatformRole(userId, platformRole, reason),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: adminKeys.globalUsers() });
+    },
+  });
+};
+
+export const useOrganizationMembers = (orgId: string) =>
+  useQuery({
+    queryKey: adminKeys.orgMembers(orgId),
+    queryFn: () => adminApi.getOrganizationMembers(orgId),
+    enabled: !!orgId,
+  });
+
+export const useProvisionOrganization = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payload, idempotencyKey }: { payload: OrganizationProvisionPayload; idempotencyKey: string }) =>
+      adminApi.provisionOrganization(payload, idempotencyKey),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all }),
+  });
+};
+
+export const useInviteOrganizationMember = (orgId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { email: string; org_role: string; reason: string }) => adminApi.inviteOrganizationMember(orgId, payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
+  });
+};
+
+export const useUpdateOrganizationMember = (orgId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ memberId, orgRole, reason }: { memberId: string; orgRole: string; reason: string }) =>
+      adminApi.updateOrganizationMember(orgId, memberId, orgRole, reason),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
+  });
+};
+
+export const useRemoveOrganizationMember = (orgId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ memberId, reason }: { memberId: string; reason: string }) =>
+      adminApi.removeOrganizationMember(orgId, memberId, reason),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
+  });
+};
+
+export const useSetOrganizationMemberEvent = (orgId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ memberId, eventId, assigned, reason }: { memberId: string; eventId: string; assigned: boolean; reason: string }) =>
+      assigned
+        ? adminApi.assignOrganizationMemberEvent(orgId, memberId, eventId, {}, reason)
+        : adminApi.unassignOrganizationMemberEvent(orgId, memberId, eventId, reason),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.orgMembers(orgId) }),
   });
 };
 
@@ -1437,7 +1549,7 @@ export const usePlatformAudit = (params?: {
 
 export const useOrgAddons = (orgId: string) =>
   useQuery({
-    queryKey: ["admin", "org-addons", orgId],
+    queryKey: platformKey("admin", "org-addons", orgId),
     queryFn: () => adminApi.getOrgAddons(orgId),
     enabled: !!orgId,
   });
@@ -1447,7 +1559,8 @@ export const useDeleteOrg = () => {
   return useMutation({
     mutationFn: ({ orgId, reason }: { orgId: string; reason: string }) => adminApi.deleteOrg(orgId, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
     },
   });
 };
@@ -1460,7 +1573,8 @@ export const useUpdatePlanFeaturesBulk = () => {
       adminApi.updatePlanFeaturesBulk(planId, featureKeys),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: adminKeys.planFeatures(vars.planId) });
-      qc.invalidateQueries({ queryKey: ["admin", "org-features"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "org-features") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "org-features") });
       qc.invalidateQueries({ queryKey: adminKeys.featureMatrix });
     },
   });
@@ -1472,7 +1586,8 @@ export const useBulkExtendTrial = () => {
     mutationFn: (data: { org_ids: string[]; days: number; reason: string }) =>
       adminApi.bulkExtendTrial(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
     },
   });
@@ -1484,8 +1599,10 @@ export const useBulkChangePlan = () => {
     mutationFn: (data: { org_ids: string[]; plan_id: string; reason: string }) =>
       adminApi.bulkChangePlan(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["admin", "orgs"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "orgs") });
     },
   });
 };
@@ -1496,7 +1613,8 @@ export const useCancelSubscription = () => {
     mutationFn: ({ subId, reason }: { subId: string; reason: string }) =>
       adminApi.cancelSubscription(subId, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
     },
   });
@@ -1508,7 +1626,8 @@ export const useReactivateSubscription = () => {
     mutationFn: ({ subId, reason }: { subId: string; reason: string }) =>
       adminApi.reactivateSubscription(subId, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "subscriptions") });
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionsHealthSummary });
     },
   });
@@ -1527,7 +1646,8 @@ export const useMarkInvoicePaid = () => {
     mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
       adminApi.markInvoicePaid(invoiceId, reason),
     onSuccess: (_, { invoiceId }) => {
-      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
       qc.invalidateQueries({ queryKey: adminKeys.invoiceItems(invoiceId) });
     },
   });
@@ -1545,8 +1665,10 @@ export const useVoidInvoice = () => {
     mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
       adminApi.voidInvoice(invoiceId, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
-      qc.invalidateQueries({ queryKey: ["admin-invoices"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-invoices") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "invoices") });
+      qc.invalidateQueries({ queryKey: platformKey("admin-invoices") });
     },
   });
 };
@@ -1555,7 +1677,7 @@ export const useVoidInvoice = () => {
 
 export const useForceLogoutUser = () =>
   useMutation({
-    mutationFn: ({ userId, reason }: { userId: string; reason?: string }) =>
+    mutationFn: ({ userId, reason }: { userId: string; reason: string }) =>
       adminApi.forceLogoutUser(userId, reason),
   });
 
@@ -1569,8 +1691,10 @@ export const useRetryJobExecution = () => {
   return useMutation({
     mutationFn: (executionId: string) => adminApi.retryJobExecution(executionId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "job-executions"] });
-      qc.invalidateQueries({ queryKey: ["admin", "job-stats"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
     },
   });
 };
@@ -1580,8 +1704,10 @@ export const useCancelJobExecution = () => {
   return useMutation({
     mutationFn: (executionId: string) => adminApi.cancelJobExecution(executionId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "job-executions"] });
-      qc.invalidateQueries({ queryKey: ["admin", "job-stats"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-executions") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "job-stats") });
     },
   });
 };
@@ -1591,7 +1717,8 @@ export const useEndImpersonationSession = () => {
   return useMutation({
     mutationFn: (sessionId: string) => adminApi.endImpersonationSession(sessionId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "impersonation-logs"] });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "impersonation-logs") });
+      qc.invalidateQueries({ queryKey: platformKey("admin", "impersonation-logs") });
     },
   });
 };
@@ -1649,7 +1776,7 @@ export const useReorderFeatures = () => {
 
 export const useJobFailures = (executionId: string) =>
   useQuery({
-    queryKey: ["admin", "job-failures", executionId],
+    queryKey: platformKey("admin", "job-failures", executionId),
     queryFn: () => adminApi.getJobFailures(executionId),
     enabled: !!executionId,
   });
@@ -1662,7 +1789,7 @@ export const useSubscriptions = (params?: {
   limit?: number;
 }) =>
   useQuery({
-    queryKey: ["admin-subscriptions", params],
+    queryKey: platformKey("admin-subscriptions", params),
     queryFn: () =>
       apiClient.get<{
         items: Subscription[];
@@ -1676,7 +1803,7 @@ export const useSubscriptions = (params?: {
 
 export const useRevenueAnalytics = (period = "12m") =>
   useQuery({
-    queryKey: ["admin-revenue-analytics", period],
+    queryKey: platformKey("admin-revenue-analytics", period),
     queryFn: () =>
       apiClient.get<RevenueAnalytics>("/platform/revenue/analytics", {
         params: { period },
@@ -1692,7 +1819,7 @@ export const useInvoices = (params?: {
   org_id?: string;
 }) =>
   useQuery({
-    queryKey: ["admin-invoices", params],
+    queryKey: platformKey("admin-invoices", params),
     queryFn: () =>
       apiClient.get<{ items: Invoice[]; summary: any; total: number }>("/platform/invoices", {
         params,
@@ -1702,7 +1829,7 @@ export const useInvoices = (params?: {
 
 export const useSecurityEvents = (params?: { severity?: string; event_type?: string; skip?: number; limit?: number }) =>
   useQuery({
-    queryKey: ['security-events', params],
+    queryKey: platformKey('security-events', params),
     queryFn: () => apiClient.get<SecurityEventsResponse>('/platform/security/events', { params }),
     refetchInterval: 30_000,  // auto-refresh every 30s
     staleTime: 15_000,
@@ -1721,7 +1848,7 @@ export const useAuditLogs = (params: {
   limit?: number
 }) =>
   useQuery({
-    queryKey: ['audit-logs', params],
+    queryKey: platformKey('audit-logs', params),
     queryFn: () => apiClient.get<any>('/platform/audit', { params }),
     staleTime: 10_000,
   });
@@ -1730,7 +1857,7 @@ export const useForceLogout = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) => apiClient.delete<any>(`/platform/users/${userId}/sessions`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: platformKey('admin-users') }),
   });
 };
 
@@ -1975,7 +2102,7 @@ export interface QueueStat {
 
 export const useDatabaseStats = () =>
   useQuery({
-    queryKey: ['db-stats'],
+    queryKey: platformKey('db-stats'),
     queryFn: () => apiClient.get<DatabaseStats>('/platform/operations/database'),
     refetchInterval: 30_000,
     staleTime: 15_000,
@@ -1983,7 +2110,7 @@ export const useDatabaseStats = () =>
 
 export const useBackgroundJobs = (params?: { status?: string; queue?: string; skip?: number; limit?: number }) =>
   useQuery({
-    queryKey: ['bg-jobs', params],
+    queryKey: platformKey('bg-jobs', params),
     queryFn: () => apiClient.get<any>('/platform/operations/jobs', { params }),
     refetchInterval: params?.status === undefined ? 10_000 : 30_000,
     staleTime: 5_000,
@@ -1991,7 +2118,7 @@ export const useBackgroundJobs = (params?: { status?: string; queue?: string; sk
 
 export const useOrgFeatureOverrides = (orgId: string) =>
   useQuery({
-    queryKey: ['org-feature-overrides', orgId],
+    queryKey: platformKey('org-feature-overrides', orgId),
     queryFn: () => apiClient.get<any[]>(`/platform/organizations/${orgId}/feature-overrides`),
     enabled: !!orgId,
     staleTime: 30_000,
@@ -2005,8 +2132,10 @@ export const useSaveFeatureOverrides = () =>
         reason: data.reason,
       }),
     onSuccess: (_, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['org-feature-overrides', vars.orgId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: platformKey('org-feature-overrides', vars.orgId) });
+      queryClient.invalidateQueries({ queryKey: platformKey('admin-users') });
+      queryClient.invalidateQueries({ queryKey: platformKey('org-feature-overrides', vars.orgId) });
+      queryClient.invalidateQueries({ queryKey: platformKey('admin-users') });
     },
   });
 
@@ -2127,7 +2256,7 @@ export interface AIModel {
 
 export const usePaymentGateways = () =>
   useQuery({
-    queryKey: ['payment-gateways'],
+    queryKey: platformKey('payment-gateways'),
     queryFn: () => apiClient.get<{ items: PaymentGateway[]; trend: any[] }>('/platform/financial/gateways'),
     refetchInterval: 60_000,
     staleTime: 30_000,
@@ -2135,28 +2264,28 @@ export const usePaymentGateways = () =>
 
 export const useTaxConfig = () =>
   useQuery({
-    queryKey: ['tax-config'],
+    queryKey: platformKey('tax-config'),
     queryFn: () => apiClient.get<TaxConfigResponse>('/platform/financial/tax-config'),
     staleTime: 60_000,
   })
 
 export const useFinancialTransactions = (params?: { skip?: number; limit?: number; status?: string }) =>
   useQuery({
-    queryKey: ['financial-transactions', params],
+    queryKey: platformKey('financial-transactions', params),
     queryFn: () => apiClient.get<{ items: FinancialTransaction[]; total: number; summary: any }>('/platform/financial/transactions', { params }),
     staleTime: 30_000,
   })
 
 export const useFinancialAuditTrail = (params?: { date_from?: string; date_to?: string; activity_type?: string; org_id?: string; skip?: number; limit?: number }) =>
   useQuery({
-    queryKey: ['financial-audit-trail', params],
+    queryKey: platformKey('financial-audit-trail', params),
     queryFn: () => apiClient.get<{ items: FinancialAuditTrailEntry[]; total: number }>('/platform/financial/audit-trail', { params }),
     staleTime: 30_000,
   })
 
 export const useQueueStats = () =>
   useQuery({
-    queryKey: ['queue-stats'],
+    queryKey: platformKey('queue-stats'),
     queryFn: () => apiClient.get<QueueStat[]>('/platform/operations/queues'),
     refetchInterval: 10_000,
     staleTime: 5_000,
@@ -2164,21 +2293,21 @@ export const useQueueStats = () =>
 
 export const useAIDashboard = () =>
   useQuery({
-    queryKey: ['ai-dashboard'],
+    queryKey: platformKey('ai-dashboard'),
     queryFn: () => apiClient.get<AIDashboardResponse>('/platform/ai/dashboard'),
     staleTime: 30_000,
   })
 
 export const usePromptLibrary = () =>
   useQuery({
-    queryKey: ['prompt-library'],
+    queryKey: platformKey('prompt-library'),
     queryFn: () => apiClient.get<AIPrompt[]>('/platform/ai/prompts'),
     staleTime: 30_000,
   })
 
 export const useModelManagement = () =>
   useQuery({
-    queryKey: ['model-management'],
+    queryKey: platformKey('model-management'),
     queryFn: () => apiClient.get<{ models: AIModel[]; auto_routing: boolean; routing_strategy: string; fallback_model: string }>('/platform/ai/models'),
     staleTime: 30_000,
   })
@@ -2252,7 +2381,7 @@ export const useHardwareCatalog = (params?: {
   skip?: number; limit?: number
 }) =>
   useQuery({
-    queryKey: ['hardware-catalog', params],
+    queryKey: platformKey('hardware-catalog', params),
     queryFn: () =>
       apiClient.get<{
         items: HardwareItem[]
@@ -2269,7 +2398,7 @@ export const useHardwareCatalog = (params?: {
 
 export const useHardwareCategories = () =>
   useQuery({
-    queryKey: ['hardware-categories'],
+    queryKey: platformKey('hardware-categories'),
     queryFn: () =>
       apiClient.get<any[]>('/inventory/superadmin/catalog/hardware/categories'),
     staleTime: 5_000,
@@ -2279,7 +2408,7 @@ export const useStaffCatalog = (params?: {
   search?: string; skip?: number; limit?: number
 }) =>
   useQuery({
-    queryKey: ['staff-catalog', params],
+    queryKey: platformKey('staff-catalog', params),
     queryFn: () =>
       apiClient.get<{ items: StaffRole[]; total: number; summary: any }>(
         '/commercial/superadmin/catalog/staff', { params }
@@ -2289,7 +2418,7 @@ export const useStaffCatalog = (params?: {
 
 export const usePricingRules = () =>
   useQuery({
-    queryKey: ['pricing-rules'],
+    queryKey: platformKey('pricing-rules'),
     queryFn: () =>
       apiClient.get<PricingRule[]>('/pricing/superadmin/catalog/pricing-rules'),
     staleTime: 120_000,
@@ -2317,7 +2446,7 @@ export const useRunPricingSimulation = () =>
 
 export const useCatalogTemplates = () =>
   useQuery({
-    queryKey: ['catalog-templates'],
+    queryKey: platformKey('catalog-templates'),
     queryFn: () =>
       apiClient.get<{
         room_templates: any[]
@@ -2333,7 +2462,7 @@ export const useCreateTemplate = () => {
     mutationFn: (body: any) =>
       apiClient.post<any>('/pricing/superadmin/catalog/templates', body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      qc.invalidateQueries({ queryKey: platformKey('catalog-templates') })
       toast.success('Template created successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2346,7 +2475,7 @@ export const useUpdateTemplate = () => {
     mutationFn: ({ slug, ...body }: { slug: string; [key: string]: any }) =>
       apiClient.put(`/pricing/superadmin/catalog/templates/${slug}`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      qc.invalidateQueries({ queryKey: platformKey('catalog-templates') })
       toast.success('Template updated successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2359,7 +2488,7 @@ export const useDuplicateTemplate = () => {
     mutationFn: (slug: string) =>
       apiClient.post<any>(`/pricing/superadmin/catalog/templates/${slug}/duplicate`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      qc.invalidateQueries({ queryKey: platformKey('catalog-templates') })
       toast.success('Template duplicated successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2372,7 +2501,7 @@ export const useSetDefaultTemplate = () => {
     mutationFn: (slug: string) =>
       apiClient.post<any>(`/pricing/superadmin/catalog/templates/${slug}/default`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      qc.invalidateQueries({ queryKey: platformKey('catalog-templates') })
       toast.success('Default template set successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2385,7 +2514,7 @@ export const useDeleteTemplate = () => {
     mutationFn: (slug: string) =>
       apiClient.delete(`/pricing/superadmin/catalog/templates/${slug}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['catalog-templates'] })
+      qc.invalidateQueries({ queryKey: platformKey('catalog-templates') })
       toast.success('Template deleted successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2398,7 +2527,7 @@ export const useCreateHardwareItem = () => {
     mutationFn: (body: Partial<HardwareItem>) =>
       apiClient.post<any>('/inventory/superadmin/catalog/hardware', body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
+      qc.invalidateQueries({ queryKey: platformKey('hardware-catalog') })
       toast.success('Hardware item created')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2411,8 +2540,21 @@ export const useUpdateHardwareItem = () => {
     mutationFn: ({ id, ...body }: Partial<HardwareItem> & { id: string }) =>
       apiClient.patch<any>(`/inventory/superadmin/catalog/hardware/${id}`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
+      qc.invalidateQueries({ queryKey: platformKey('hardware-catalog') })
       toast.success('Hardware item updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useDeleteHardwareItem = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/inventory/superadmin/catalog/hardware/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: platformKey('hardware-catalog') })
+      toast.success('Hardware item deleted')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
   })
@@ -2428,7 +2570,7 @@ export const useImportHardwareExcel = () => {
         },
       }),
     onSuccess: (res: any) => {
-      qc.invalidateQueries({ queryKey: ['hardware-catalog'] })
+      qc.invalidateQueries({ queryKey: platformKey('hardware-catalog') })
       toast.success(`Imported ${res?.data?.count || 0} hardware items successfully`)
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2441,7 +2583,7 @@ export const useCreateStaffRole = () => {
     mutationFn: (body: any) =>
       apiClient.post<any>('/commercial/superadmin/catalog/staff', body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['staff-catalog'] })
+      qc.invalidateQueries({ queryKey: platformKey('staff-catalog') })
       toast.success('Staff role created')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2454,8 +2596,21 @@ export const useUpdateStaffRole = () => {
     mutationFn: ({ id, ...body }: any) =>
       apiClient.patch<any>(`/commercial/superadmin/catalog/staff/${id}`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['staff-catalog'] })
+      qc.invalidateQueries({ queryKey: platformKey('staff-catalog') })
       toast.success('Staff role updated')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
+  })
+}
+
+export const useDeleteStaffRole = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/commercial/superadmin/catalog/staff/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: platformKey('staff-catalog') })
+      toast.success('Staff role deleted')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
   })
@@ -2467,7 +2622,7 @@ export const useCreatePricingRule = () => {
     mutationFn: (body: any) =>
       apiClient.post<any>('/pricing/superadmin/catalog/pricing-rules', body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pricing-rules'] })
+      qc.invalidateQueries({ queryKey: platformKey('pricing-rules') })
       toast.success('Pricing rule created')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2480,7 +2635,7 @@ export const useUpdatePricingRule = () => {
     mutationFn: ({ id, ...body }: any) =>
       apiClient.patch<any>(`/pricing/superadmin/catalog/pricing-rules/${id}`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pricing-rules'] })
+      qc.invalidateQueries({ queryKey: platformKey('pricing-rules') })
       toast.success('Pricing rule updated')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2497,7 +2652,7 @@ export const useImportStaffExcel = () => {
         },
       }),
     onSuccess: (res: any) => {
-      qc.invalidateQueries({ queryKey: ['staff-catalog'] })
+      qc.invalidateQueries({ queryKey: platformKey('staff-catalog') })
       toast.success(`Imported ${res?.data?.count || 0} staff roles successfully`)
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2506,7 +2661,7 @@ export const useImportStaffExcel = () => {
 
 export const usePricingSimulations = () =>
   useQuery({
-    queryKey: ['pricing-simulations'],
+    queryKey: platformKey('pricing-simulations'),
     queryFn: () =>
       apiClient.get<any[]>('/pricing/simulations'),
     staleTime: 30_000,
@@ -2518,7 +2673,7 @@ export const useDeletePricingSimulation = () => {
     mutationFn: (id: string) =>
       apiClient.delete(`/pricing/simulations/${id}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pricing-simulations'] })
+      qc.invalidateQueries({ queryKey: platformKey('pricing-simulations') })
       toast.success('Simulation run deleted successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2559,7 +2714,7 @@ export interface ServiceRequestKanbanResponse {
 
 export const useServiceRequestsKpi = (organizationId: string, eventId: string) =>
   useQuery({
-    queryKey: ['service-requests-kpi', organizationId, eventId],
+    queryKey: platformKey('service-requests-kpi', organizationId, eventId),
     queryFn: () => apiClient.get<ServiceRequestKpiResponse>('/service-requests/kpi-strip', {
       params: { organization_id: organizationId, event_id: eventId },
     }),
@@ -2568,7 +2723,7 @@ export const useServiceRequestsKpi = (organizationId: string, eventId: string) =
 
 export const useServiceRequestsKanban = (organizationId: string, eventId: string, limit = 10, offset = 0) =>
   useQuery({
-    queryKey: ['service-requests-kanban', organizationId, eventId, limit, offset],
+    queryKey: platformKey('service-requests-kanban', organizationId, eventId, limit, offset),
     queryFn: () => apiClient.get<ServiceRequestKanbanResponse>('/service-requests/kanban-columns', {
       params: { organization_id: organizationId, event_id: eventId, limit, offset },
     }),
@@ -2583,8 +2738,8 @@ export const useCreateServiceRequest = () => {
         params: { event_id: eventId, organization_id: organizationId },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
-      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kpi') })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kanban') })
       toast.success('Service Request created successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2597,11 +2752,11 @@ export const useUpdateServiceRequest = () => {
     mutationFn: ({ id, ...body }: { id: string; title?: string; description?: string; priority?: string; status?: string }) =>
       apiClient.patch<any>(`/service-requests/${id}`, body),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
-      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
-      qc.invalidateQueries({ queryKey: ['service-request-overview', vars.id] })
-      qc.invalidateQueries({ queryKey: ['service-request-history', vars.id] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', vars.id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kpi') })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kanban') })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-overview', vars.id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-history', vars.id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', vars.id) })
       toast.success('Service Request updated successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2613,11 +2768,11 @@ export const useSubmitServiceRequest = () => {
   return useMutation({
     mutationFn: (id: string) => apiClient.post<any>(`/service-requests/${id}/submit`),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
-      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
-      qc.invalidateQueries({ queryKey: ['service-request-overview', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-history', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kpi') })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kanban') })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-overview', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-history', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', id) })
       toast.success('Service Request submitted successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2629,11 +2784,11 @@ export const useApproveServiceRequest = () => {
   return useMutation({
     mutationFn: (id: string) => apiClient.post<any>(`/service-requests/${id}/approve`),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['service-requests-kpi'] })
-      qc.invalidateQueries({ queryKey: ['service-requests-kanban'] })
-      qc.invalidateQueries({ queryKey: ['service-request-overview', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-history', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kpi') })
+      qc.invalidateQueries({ queryKey: platformKey('service-requests-kanban') })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-overview', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-history', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', id) })
       toast.success('Service Request approved successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2642,21 +2797,21 @@ export const useApproveServiceRequest = () => {
 
 export const useServiceRequestHistory = (id: string) =>
   useQuery({
-    queryKey: ['service-request-history', id],
+    queryKey: platformKey('service-request-history', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/history`),
     enabled: !!id,
   })
 
 export const useServiceRequestOverview = (id: string) =>
   useQuery({
-    queryKey: ['service-request-overview', id],
+    queryKey: platformKey('service-request-overview', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/overview`),
     enabled: !!id,
   })
 
 export const useServiceRequestRequirements = (id: string) =>
   useQuery({
-    queryKey: ['service-request-requirements', id],
+    queryKey: platformKey('service-request-requirements', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/requirements`),
     enabled: !!id,
   })
@@ -2667,8 +2822,8 @@ export const useUpdateServiceRequestRequirements = (id: string) => {
     mutationFn: (payload: { requirement_type: string; requirement_data: any }) =>
       apiClient.patch<any>(`/service-requests/${id}/requirements`, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['service-request-requirements', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-requirements', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', id) })
       toast.success('Requirements updated')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2677,7 +2832,7 @@ export const useUpdateServiceRequestRequirements = (id: string) => {
 
 export const useServiceRequestRemarks = (id: string) =>
   useQuery({
-    queryKey: ['service-request-remarks', id],
+    queryKey: platformKey('service-request-remarks', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/remarks`),
     enabled: !!id,
   })
@@ -2688,8 +2843,8 @@ export const useAddServiceRequestRemark = (id: string) => {
     mutationFn: (payload: { remark_text: string }) =>
       apiClient.post<any>(`/service-requests/${id}/remarks`, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['service-request-remarks', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-remarks', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', id) })
       toast.success('Remark added')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2698,7 +2853,7 @@ export const useAddServiceRequestRemark = (id: string) => {
 
 export const useServiceRequestAttachments = (id: string, reqType: string) =>
   useQuery({
-    queryKey: ['service-request-attachments', id, reqType],
+    queryKey: platformKey('service-request-attachments', id, reqType),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/attachments?requirement_type=${reqType}`),
     enabled: !!id && !!reqType,
   })
@@ -2709,8 +2864,8 @@ export const useAddServiceRequestAttachment = (id: string) => {
     mutationFn: (payload: { requirement_type: string; filename: string; file_size: number }) =>
       apiClient.post<any>(`/service-requests/${id}/attachments`, payload),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['service-request-attachments', id, vars.requirement_type] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-attachments', id, vars.requirement_type) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', id) })
       toast.success('Attachment uploaded')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2719,7 +2874,7 @@ export const useAddServiceRequestAttachment = (id: string) => {
 
 export const useServiceRequestPlanning = (id: string) =>
   useQuery({
-    queryKey: ['service-request-planning', id],
+    queryKey: platformKey('service-request-planning', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/resource-planning`),
     enabled: !!id,
   })
@@ -2729,8 +2884,8 @@ export const useRecalculateServiceRequestPlanning = (id: string) => {
   return useMutation({
     mutationFn: () => apiClient.post<any>(`/service-requests/${id}/resource-planning/recalculate`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
-      qc.invalidateQueries({ queryKey: ['service-request-activity', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-planning', id) })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-activity', id) })
       toast.success('Resource plan recalculated successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2743,7 +2898,7 @@ export const useUpdateHardwareQuantity = (id: string) => {
     mutationFn: (payload: { id: string; quantity: number }) =>
       apiClient.patch<any>(`/service-requests/${id}/resource-planning/hardware`, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-planning', id) })
       toast.success('Hardware quantity updated')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2756,7 +2911,7 @@ export const useUpdateStaffQuantity = (id: string) => {
     mutationFn: (payload: { id: string; quantity: number; days: number }) =>
       apiClient.patch<any>(`/service-requests/${id}/resource-planning/staff`, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['service-request-planning', id] })
+      qc.invalidateQueries({ queryKey: platformKey('service-request-planning', id) })
       toast.success('Staff role configuration updated')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message),
@@ -2765,21 +2920,21 @@ export const useUpdateStaffQuantity = (id: string) => {
 
 export const useServiceRequestQuotes = (id: string) =>
   useQuery({
-    queryKey: ['service-request-quotes', id],
+    queryKey: platformKey('service-request-quotes', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/quotes`),
     enabled: !!id,
   })
 
 export const useServiceRequestDocuments = (id: string) =>
   useQuery({
-    queryKey: ['service-request-documents', id],
+    queryKey: platformKey('service-request-documents', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/documents`),
     enabled: !!id,
   })
 
 export const useServiceRequestActivityLogs = (id: string) =>
   useQuery({
-    queryKey: ['service-request-activity', id],
+    queryKey: platformKey('service-request-activity', id),
     queryFn: () => apiClient.get<any>(`/service-requests/${id}/activity-logs`),
     enabled: !!id,
   })
@@ -2788,7 +2943,7 @@ export const useServiceRequestActivityLogs = (id: string) =>
 
 export const useAllQuotes = (requestId?: string, status?: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['all-quotes', organizationId, requestId, status],
+    queryKey: platformKey('all-quotes', organizationId, requestId, status),
     queryFn: () => apiClient.get<CommercialQuote[]>(`/service-requests/all-quotes`, {
       params: { organization_id: organizationId, request_id: requestId, status }
     }),
@@ -2797,7 +2952,7 @@ export const useAllQuotes = (requestId?: string, status?: string, organizationId
 
 export const useQuoteDetail = (quoteId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['quote-detail', organizationId, quoteId],
+    queryKey: platformKey('quote-detail', organizationId, quoteId),
     queryFn: () => apiClient.get<CommercialQuote>(`/service-requests/quotes/${quoteId}`, {
       params: { organization_id: organizationId },
     }),
@@ -2812,7 +2967,7 @@ export const useCreateQuote = () => {
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      qc.invalidateQueries({ queryKey: platformKey('all-quotes') })
       toast.success('Draft quote created')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
@@ -2833,9 +2988,9 @@ export const useUpdateQuote = (quoteId: string, organizationId?: string) => {
         params: { organization_id: organizationId },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['all-quotes'] })
-      qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
-      qc.invalidateQueries({ queryKey: ['quote-cost-breakdown', quoteId] })
+      qc.invalidateQueries({ queryKey: platformKey('all-quotes') })
+      qc.invalidateQueries({ queryKey: platformKey('quote-detail', quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('quote-cost-breakdown', quoteId) })
       toast.success('Quote updated')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
@@ -2844,14 +2999,14 @@ export const useUpdateQuote = (quoteId: string, organizationId?: string) => {
 
 export const useQuoteCostBreakdown = (quoteId: string) =>
   useQuery({
-    queryKey: ['quote-cost-breakdown', quoteId],
+    queryKey: platformKey('quote-cost-breakdown', quoteId),
     queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}/cost-breakdown`),
     enabled: !!quoteId,
   })
 
 export const useQuoteRevisions = (quoteId: string) =>
   useQuery({
-    queryKey: ['quote-revisions', quoteId],
+    queryKey: platformKey('quote-revisions', quoteId),
     queryFn: () => apiClient.get<any>(`/service-requests/quotes/${quoteId}/revisions`),
     enabled: !!quoteId,
   })
@@ -2861,8 +3016,8 @@ export const useCreateQuoteRevision = (quoteId: string) => {
   return useMutation({
     mutationFn: (payload: { notes: string[] }) => apiClient.post<any>(`/service-requests/quotes/${quoteId}/revisions`, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quote-revisions', quoteId] })
-      qc.invalidateQueries({ queryKey: ['quote-detail', quoteId] })
+      qc.invalidateQueries({ queryKey: platformKey('quote-revisions', quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('quote-detail', quoteId) })
       toast.success('Quote revision created successfully')
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || e.message)
@@ -2871,7 +3026,7 @@ export const useCreateQuoteRevision = (quoteId: string) => {
 
 export const useQuoteApproval = (quoteId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['quote-approval', organizationId, quoteId],
+    queryKey: platformKey('quote-approval', organizationId, quoteId),
     queryFn: () => apiClient.get<QuoteApprovalWorkflow | null>(`/service-requests/quotes/${quoteId}/approval`, {
       params: { organization_id: organizationId },
     }),
@@ -2890,9 +3045,9 @@ export const useSubmitQuoteApproval = (quoteId: string, organizationId?: string)
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quote-approval', organizationId, quoteId] })
-      qc.invalidateQueries({ queryKey: ['quote-detail', organizationId, quoteId] })
-      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      qc.invalidateQueries({ queryKey: platformKey('quote-approval', organizationId, quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('quote-detail', organizationId, quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('all-quotes') })
       toast.success('Quote submitted for approval')
     },
     onError: (e: any) => toast.error(e.message || 'Quote submission failed'),
@@ -2912,9 +3067,9 @@ export const useActionApprovalStep = (quoteId: string, organizationId?: string) 
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quote-approval', organizationId, quoteId] })
-      qc.invalidateQueries({ queryKey: ['quote-detail', organizationId, quoteId] })
-      qc.invalidateQueries({ queryKey: ['all-quotes'] })
+      qc.invalidateQueries({ queryKey: platformKey('quote-approval', organizationId, quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('quote-detail', organizationId, quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('all-quotes') })
       toast.success('Approval decision recorded')
     },
     onError: (e: any) => toast.error(e.message || 'Approval decision failed')
@@ -2933,8 +3088,8 @@ export const useConvertQuoteToProposal = (quoteId: string, organizationId?: stri
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quote-detail', organizationId, quoteId] })
-      qc.invalidateQueries({ queryKey: ['all-proposals'] })
+      qc.invalidateQueries({ queryKey: platformKey('quote-detail', organizationId, quoteId) })
+      qc.invalidateQueries({ queryKey: platformKey('all-proposals') })
       toast.success('Approved quote converted to an immutable proposal')
     },
     onError: (e: any) => toast.error(e.message || 'Proposal conversion failed'),
@@ -2943,7 +3098,7 @@ export const useConvertQuoteToProposal = (quoteId: string, organizationId?: stri
 
 export const useProposalDetail = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['proposal-detail', organizationId, propId],
+    queryKey: platformKey('proposal-detail', organizationId, propId),
     queryFn: () => apiClient.get<CommercialProposal>(`/service-requests/proposals/${propId}`, {
       params: { organization_id: organizationId },
     }),
@@ -2952,7 +3107,7 @@ export const useProposalDetail = (propId: string, organizationId?: string) =>
 
 export const useProposalDocuments = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['proposal-documents', organizationId, propId],
+    queryKey: platformKey('proposal-documents', organizationId, propId),
     queryFn: () => apiClient.get<ProposalDocument[]>(`/service-requests/proposals/${propId}/documents`, {
       params: { organization_id: organizationId },
     }),
@@ -2972,7 +3127,7 @@ export const useGenerateProposalDocument = (propId: string, organizationId?: str
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['proposal-documents', organizationId, propId] })
+      qc.invalidateQueries({ queryKey: platformKey('proposal-documents', organizationId, propId) })
       toast.success('Proposal PDF queued for generation')
     },
     onError: (e: any) => toast.error(e.message || 'Proposal PDF generation could not be queued')
@@ -2986,7 +3141,7 @@ export const downloadProposalDocument = (propId: string, exportId: string, organ
 
 export const useProposalVersionHistory = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['proposal-version-history', organizationId, propId],
+    queryKey: platformKey('proposal-version-history', organizationId, propId),
     queryFn: () => apiClient.get<ProposalVersion[]>(`/service-requests/proposals/${propId}/version-history`, {
       params: { organization_id: organizationId },
     }),
@@ -2995,7 +3150,7 @@ export const useProposalVersionHistory = (propId: string, organizationId?: strin
 
 export const useProposalShares = (propId: string, organizationId?: string) =>
   useQuery({
-    queryKey: ['proposal-shares', organizationId, propId],
+    queryKey: platformKey('proposal-shares', organizationId, propId),
     queryFn: () => apiClient.get<ProposalShare[]>(`/service-requests/proposals/${propId}/shares`, {
       params: { organization_id: organizationId },
     }),
@@ -3017,7 +3172,7 @@ export const useCreateProposalShare = (propId: string, organizationId?: string) 
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['proposal-shares', organizationId, propId] })
+      qc.invalidateQueries({ queryKey: platformKey('proposal-shares', organizationId, propId) })
       toast.success('Secure proposal link created')
     },
     onError: (e: any) => toast.error(e.message || 'Proposal link could not be created'),
@@ -3033,7 +3188,7 @@ export const useRevokeProposalShare = (propId: string, organizationId?: string) 
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['proposal-shares', organizationId, propId] })
+      qc.invalidateQueries({ queryKey: platformKey('proposal-shares', organizationId, propId) })
       toast.success('Proposal link revoked')
     },
     onError: (e: any) => toast.error(e.message || 'Proposal link could not be revoked'),
@@ -3042,7 +3197,7 @@ export const useRevokeProposalShare = (propId: string, organizationId?: string) 
 
 export const usePublicProposal = (token: string) =>
   useQuery({
-    queryKey: ['public-proposal', token.length, token.slice(-12)],
+    queryKey: platformKey('public-proposal', token.length, token.slice(-12)),
     queryFn: () => apiClient.get<PublicProposal>('/public/proposals/share', {
       headers: { Authorization: `ProposalShare ${token}` },
     }),
@@ -3067,7 +3222,7 @@ export const useDecidePublicProposal = (token: string) =>
 
 export const usePricingRulesCatalog = () =>
   useQuery({
-    queryKey: ['pricing-rules-catalog'],
+    queryKey: platformKey('pricing-rules-catalog'),
     queryFn: () => apiClient.get<any>(`/service-requests/pricing-rules-catalog`),
   })
 

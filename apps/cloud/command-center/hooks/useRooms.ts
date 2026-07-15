@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export interface RoomSummary {
   id: string;
@@ -37,24 +39,27 @@ export interface RoomDevice {
 }
 
 export function useRooms(eventId: string) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["rooms", eventId],
+    queryKey: queryKeys.events.rooms(organizationId, eventId),
     queryFn: () => apiGet<RoomSummary[]>(`/events/${eventId}/rooms`),
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]",
   });
 }
 
 export function useRoomAnalytics(eventId: string) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["room-analytics", eventId],
+    queryKey: queryKeys.events.roomAnalytics(organizationId, eventId),
     queryFn: () => apiGet<RoomAnalytics[]>(`/events/${eventId}/analytics/rooms`),
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]",
   });
 }
 
 export function useRoomDevices(eventId: string, roomId: string) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["room-devices", eventId, roomId],
+    queryKey: queryKeys.events.roomDevices(organizationId, eventId, roomId),
     queryFn: () => apiGet<RoomDevice[]>(`/events/${eventId}/rooms/${roomId}/devices`),
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]" && !!roomId,
   });
@@ -62,33 +67,36 @@ export function useRoomDevices(eventId: string, roomId: string) {
 
 export function useCreateRoom() {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({ eventId, data }: { eventId: string, data: any }) => 
       apiPost(`/events/${eventId}/rooms`, data),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.rooms(organizationId, variables.eventId) });
     },
   });
 }
 
 export function useUpdateRoom() {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({ eventId, roomId, data }: { eventId: string, roomId: string, data: any }) => 
       apiPatch(`/events/${eventId}/rooms/${roomId}`, data),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.rooms(organizationId, variables.eventId) });
     },
   });
 }
 
 export function useDeleteRoom() {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({ eventId, roomId }: { eventId: string, roomId: string }) => 
       apiDelete(`/events/${eventId}/rooms/${roomId}`),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.rooms(organizationId, variables.eventId) });
     },
   });
 }

@@ -203,6 +203,27 @@ class TestQuoteProposalPdf:
         assert len(pdf) > 1000
 
 
+class TestInvoicePdf:
+    def test_renderer_uses_version_bound_invoice_snapshot(self):
+        from workers.tasks.report_tasks import _build_invoice_pdf
+
+        pdf = _build_invoice_pdf({
+            "organization_name": "Acme Events",
+            "invoice_number": "INV-1001",
+            "currency": "INR",
+            "status": "UNPAID",
+            "issued_at": "2026-07-15T10:00:00+00:00",
+            "due_date": "2026-07-30T10:00:00+00:00",
+            "amount": "1000.00",
+            "gst_amount": "180.00",
+            "total_amount": "1180.00",
+            "items": [{"description": "Event license", "quantity": 1, "amount": "1000.00"}],
+        })
+
+        assert pdf.startswith(b"%PDF")
+        assert len(pdf) > 1000
+
+
 class TestCommercialReportArtifacts:
     def test_hardware_catalog_is_real_xlsx(self):
         from workers.tasks.report_tasks import _build_commercial_report_artifact

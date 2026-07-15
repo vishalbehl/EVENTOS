@@ -7,6 +7,7 @@ import {
   useReset2FA, 
   useForceLogoutUser, 
   useImpersonateUser, 
+  useUpdateUserPlatformRole,
   useAdminOrgs,
   GlobalUser 
 } from "@/services/super-admin-service";
@@ -21,7 +22,7 @@ import {
 import { 
   Users, RefreshCw, Search, ShieldAlert, Key, UserCheck, UserX, Eye, Shield, 
   LogOut, Filter, Calendar, ChevronDown, CheckCircle2, XCircle, ArrowUpDown, ChevronRight,
-  ShieldCheck, HelpCircle, Lock, MoreHorizontal, Download
+  ShieldCheck, ShieldOff, HelpCircle, Lock, MoreHorizontal, Download
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -51,7 +52,8 @@ type PendingUserAction =
   | { type: "impersonate"; user: GlobalUser }
   | { type: "status"; user: GlobalUser }
   | { type: "reset2fa"; user: GlobalUser }
-  | { type: "logout"; user: GlobalUser };
+  | { type: "logout"; user: GlobalUser }
+  | { type: "platform-role"; user: GlobalUser; platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE" };
 
 export default function GlobalUsersPage() {
   const [page, setPage] = useState(0);
@@ -81,6 +83,7 @@ export default function GlobalUsersPage() {
   const reset2FA = useReset2FA();
   const forceLogout = useForceLogoutUser();
   const impersonate = useImpersonateUser();
+  const updatePlatformRole = useUpdateUserPlatformRole();
 
   // Search Debouncer
   const handleSearchChange = (v: string) => {
@@ -149,6 +152,10 @@ export default function GlobalUsersPage() {
 
   // Reset 2FA handler
   const handleReset2FA = async (user: GlobalUser, reason?: string) => {
+    if (!reason || reason.trim().length < 12) {
+      toast.error("An audit reason of at least 12 characters is required.");
+      return;
+    }
     try {
       await reset2FA.mutateAsync({ userId: user.id, reason });
       toast.success("2FA reset successfully");
@@ -161,6 +168,10 @@ export default function GlobalUsersPage() {
 
   // Force Logout handler
   const handleForceLogout = async (user: GlobalUser, reason?: string) => {
+    if (!reason || reason.trim().length < 12) {
+      toast.error("An audit reason of at least 12 characters is required.");
+      return;
+    }
     try {
       await forceLogout.mutateAsync({ userId: user.id, reason });
       toast.success("User sessions revoked successfully");
@@ -173,6 +184,10 @@ export default function GlobalUsersPage() {
 
   // Toggle active status
   const handleToggleStatus = async (user: GlobalUser, reason?: string) => {
+    if (!reason || reason.trim().length < 12) {
+      toast.error("An audit reason of at least 12 characters is required.");
+      return;
+    }
     try {
       const nextActive = !user.is_active;
       await updateStatus.mutateAsync({
@@ -185,6 +200,25 @@ export default function GlobalUsersPage() {
       refetch();
     } catch {
       toast.error("Failed to update status");
+    }
+  };
+
+  const handlePlatformRole = async (
+    user: GlobalUser,
+    platformRole: "SUPER_ADMIN" | "SUPPORT_ADMIN" | "FINANCE_ADMIN" | "NONE",
+    reason?: string,
+  ) => {
+    if (!reason || reason.trim().length < 12) {
+      toast.error("An audit reason of at least 12 characters is required.");
+      return;
+    }
+    try {
+      await updatePlatformRole.mutateAsync({ userId: user.id, platformRole, reason: reason.trim() });
+      toast.success("Platform role updated and existing sessions revoked.");
+      setPendingAction(null);
+      refetch();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to update platform role");
     }
   };
 
@@ -216,7 +250,14 @@ export default function GlobalUsersPage() {
             confirmLabel: "Reset 2FA",
             pending: reset2FA.isPending,
           }
-        : {
+        : pendingAction.type === "platform-role"
+          ? {
+              title: "Change platform administrator role?",
+              description: `This assigns ${pendingAction.platformRole.replaceAll("_", " ")} and revokes the user's existing sessions.`,
+              confirmLabel: "Change role",
+              pending: updatePlatformRole.isPending,
+            }
+          : {
             title: "Force logout user?",
             description: "This revokes the user's active sessions and requires them to authenticate again.",
             confirmLabel: "Force logout",
@@ -353,6 +394,21 @@ export default function GlobalUsersPage() {
                   <Calendar className="w-3.5 h-3.5 text-violet-400" />
                   View Audit Trail
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "SUPPORT_ADMIN" })} className="text-xs cursor-pointer flex gap-2">
+                  <Shield className="w-3.5 h-3.5 text-blue-400" />
+                  Assign Support Admin
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "FINANCE_ADMIN" })} className="text-xs cursor-pointer flex gap-2">
+                  <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                  Assign Finance Admin
+                </DropdownMenuItem>
+                {u.platform_role && (
+                  <DropdownMenuItem onClick={() => setPendingAction({ type: "platform-role", user: u, platformRole: "NONE" })} className="text-xs cursor-pointer flex gap-2">
+                    <ShieldOff className="w-3.5 h-3.5 text-orange-400" />
+                    Remove Platform Role
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setPendingAction({ type: "status", user: u })} className="text-xs cursor-pointer flex gap-2">
                   {u.is_active ? <UserX className="w-3.5 h-3.5 text-[var(--danger)]" /> : <UserCheck className="w-3.5 h-3.5 text-[var(--success)]" />}
@@ -494,6 +550,7 @@ export default function GlobalUsersPage() {
           if (pendingAction.type === "status") void handleToggleStatus(pendingAction.user, reason);
           if (pendingAction.type === "reset2fa") void handleReset2FA(pendingAction.user, reason);
           if (pendingAction.type === "logout") void handleForceLogout(pendingAction.user, reason);
+          if (pendingAction.type === "platform-role") void handlePlatformRole(pendingAction.user, pendingAction.platformRole, reason);
         }}
       />
     </PageContainer>

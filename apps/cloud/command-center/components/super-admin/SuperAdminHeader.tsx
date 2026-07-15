@@ -12,21 +12,6 @@ import {
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
-interface Notification {
-  id: string;
-  type: "success" | "warning" | "danger" | "info";
-  message: string;
-  time: string;
-}
-
-const MOCK_NOTIFICATIONS: Notification[] = [
-  { id: "1", type: "success", message: "Backup successfully generated and uploaded to bucket", time: "5 min ago" },
-  { id: "2", type: "danger", message: "CPU utilization spike on DB cluster (94%)", time: "12 min ago" },
-  { id: "3", type: "warning", message: "Trial expiring in 3 days: TechConf Inc.", time: "1 hour ago" },
-  { id: "4", type: "info", message: "Impersonation session started by Vishal Behl", time: "2 hours ago" },
-  { id: "5", type: "success", message: "Plan upgraded to Enterprise for EventX Org", time: "5 hours ago" },
-];
-
 export function SuperAdminHeader() {
   const { theme, setTheme } = useTheme();
   const queryClient = useQueryClient();
@@ -142,7 +127,6 @@ export function SuperAdminHeader() {
             className="p-2 rounded-lg border border-border bg-surface text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-surface-2 transition-all flex items-center justify-center relative cursor-pointer"
           >
             <Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-[var(--danger)] border-2 border-surface"></span>
           </button>
 
           <AnimatePresence>
@@ -158,40 +142,12 @@ export function SuperAdminHeader() {
                   <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
                     Ecosystem Alerts
                   </h4>
-                  <span className="text-[10px] text-[var(--brand-primary)] font-semibold hover:underline cursor-pointer">
-                    Mark all read
-                  </span>
                 </div>
-                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-0.5 custom-scrollbar">
-                  {MOCK_NOTIFICATIONS.map((notif) => (
-                    <div
-                      key={notif.id}
-                      className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-surface-2/60 transition-colors cursor-pointer"
-                    >
-                      <span
-                        className={cn(
-                          "w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
-                          notif.type === "success" && "bg-[var(--success)]",
-                          notif.type === "warning" && "bg-[var(--warning)]",
-                          notif.type === "danger" && "bg-[var(--danger)]",
-                          notif.type === "info" && "bg-[var(--info)]"
-                        )}
-                      ></span>
-                      <div className="space-y-0.5 min-w-0">
-                        <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed truncate">
-                          {notif.message}
-                        </p>
-                        <span className="text-[9px] text-[var(--text-tertiary)] font-medium">
-                          {notif.time}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-border/60 pt-2.5 mt-3 text-center">
-                  <span className="text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--brand-primary)] cursor-pointer transition-colors">
-                    View all notifications
-                  </span>
+                <div className="rounded-lg border border-border/60 bg-surface-2/40 p-4 text-center">
+                  <p className="text-xs font-semibold text-[var(--text-primary)]">No verified alerts</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-[var(--text-tertiary)]">
+                    This legacy header does not fabricate operational notifications. Use the authenticated notification center in the current application shell.
+                  </p>
                 </div>
               </motion.div>
             )}

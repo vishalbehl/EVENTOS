@@ -10,6 +10,7 @@ export interface User {
   full_name?: string;
   role: UserRole;
   organization_id: string;
+  onboarding_completed?: boolean;
   phone?: string;
   avatar_url?: string;
   is_2fa_enabled?: boolean;

@@ -70,6 +70,56 @@ class CrmLifecycleRequest(VersionedMutation):
     pass
 
 
+class LeadConvertRequest(VersionedMutation):
+    stage_id: uuid.UUID
+    opportunity_name: str = Field(min_length=3, max_length=255)
+    amount: float = Field(ge=0)
+    close_date: Optional[datetime] = None
+
+
+CrmEntityType = Literal["organization", "account", "contact", "lead", "opportunity"]
+
+
+class ActivityCreate(CrmMutationBase):
+    entity_type: CrmEntityType
+    entity_id: uuid.UUID
+    activity_type: Literal["CALL", "EMAIL", "MEETING", "DEMO", "FOLLOW_UP", "OTHER"]
+    description: Optional[str] = Field(None, max_length=10_000)
+    occurred_at: datetime
+
+
+class ActivityUpdate(VersionedMutation):
+    activity_type: Optional[Literal["CALL", "EMAIL", "MEETING", "DEMO", "FOLLOW_UP", "OTHER"]] = None
+    description: Optional[str] = Field(None, max_length=10_000)
+    occurred_at: Optional[datetime] = None
+
+
+class TaskCreate(CrmMutationBase):
+    entity_type: CrmEntityType
+    entity_id: uuid.UUID
+    subject: str = Field(min_length=3, max_length=255)
+    due_date: Optional[datetime] = None
+    status: Literal["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"] = "NOT_STARTED"
+    assigned_to: Optional[uuid.UUID] = None
+
+
+class TaskUpdate(VersionedMutation):
+    subject: Optional[str] = Field(None, min_length=3, max_length=255)
+    due_date: Optional[datetime] = None
+    status: Optional[Literal["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"]] = None
+    assigned_to: Optional[uuid.UUID] = None
+
+
+class NoteCreate(CrmMutationBase):
+    entity_type: CrmEntityType
+    entity_id: uuid.UUID
+    content: str = Field(min_length=1, max_length=20_000)
+
+
+class NoteUpdate(VersionedMutation):
+    content: str = Field(min_length=1, max_length=20_000)
+
+
 class LifecycleResponseMixin(BaseModel):
     updated_at: datetime
     version: int
@@ -119,6 +169,56 @@ class OpportunityResponse(LifecycleResponseMixin):
     amount: float
     close_date: Optional[datetime] = None
     created_at: datetime
+
+
+class EngagementResponseMixin(LifecycleResponseMixin):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    entity_type: str
+    entity_id: uuid.UUID
+    created_by: Optional[uuid.UUID] = None
+    created_at: datetime
+
+
+class ActivityResponse(EngagementResponseMixin):
+    model_config = ConfigDict(from_attributes=True)
+
+    activity_type: str
+    description: Optional[str] = None
+    occurred_at: datetime
+
+
+class TaskResponse(EngagementResponseMixin):
+    model_config = ConfigDict(from_attributes=True)
+
+    subject: str
+    due_date: Optional[datetime] = None
+    status: str
+    assigned_to: Optional[uuid.UUID] = None
+    completed_at: Optional[datetime] = None
+
+
+class NoteResponse(EngagementResponseMixin):
+    model_config = ConfigDict(from_attributes=True)
+
+    content: str
+
+
+class AccountWorkspaceMetrics(BaseModel):
+    contact_count: int = Field(ge=0)
+    active_opportunity_count: int = Field(ge=0)
+    pipeline_value: float = Field(ge=0)
+    open_task_count: int = Field(ge=0)
+
+
+class AccountWorkspaceResponse(BaseModel):
+    account: AccountResponse
+    contacts: list[ContactResponse]
+    opportunities: list[OpportunityResponse]
+    activities: list[ActivityResponse]
+    tasks: list[TaskResponse]
+    notes: list[NoteResponse]
+    metrics: AccountWorkspaceMetrics
 
 
 class PipelineStageResponse(BaseModel):

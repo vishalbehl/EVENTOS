@@ -57,6 +57,20 @@ interface RefreshResponse {
   token_type: string;
 }
 
+export interface DownloadedFile {
+  blob: Blob;
+  filename?: string;
+  requestId?: string;
+  correlationId?: string;
+}
+
+export function parseDownloadFilename(disposition?: string) {
+  if (!disposition) return undefined;
+  const encodedFilename = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plainFilename = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  return encodedFilename ? decodeURIComponent(encodedFilename) : plainFilename;
+}
+
 const API_BASE_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1`;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -192,6 +206,25 @@ class ApiClient {
   public async delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
     return (await this.client.delete<T>(url, config)).data;
   }
+
+  public async download(url: string, config?: AxiosRequestConfig): Promise<DownloadedFile> {
+    const response = await this.client.get<Blob>(url, { ...config, responseType: "blob" });
+    return {
+      blob: response.data,
+      filename: parseDownloadFilename(headerValue(response.headers, "content-disposition")),
+      requestId: headerValue(response.headers, "x-request-id"),
+      correlationId: headerValue(response.headers, "x-correlation-id"),
+    };
+  }
+
+  public async uploadPresigned(url: string, body: Blob, headers: Record<string, string> = {}): Promise<void> {
+    try {
+      await axios.put(url, body, { headers, timeout: 120_000 });
+    } catch (error) {
+      if (axios.isAxiosError<ProblemDetails>(error)) throw toApiError(error);
+      throw error;
+    }
+  }
 }
 
 export const apiClient = new ApiClient();
@@ -201,3 +234,15 @@ export function apiPost<T>(url: string, data?: unknown, config?: AxiosRequestCon
 export function apiPatch<T>(url: string, data?: unknown, config?: AxiosRequestConfig) { return apiClient.patch<T>(url, data, config); }
 export function apiPut<T>(url: string, data?: unknown, config?: AxiosRequestConfig) { return apiClient.put<T>(url, data, config); }
 export function apiDelete<T>(url: string, config?: AxiosRequestConfig) { return apiClient.delete<T>(url, config); }
+export function apiDownload(url: string, config?: AxiosRequestConfig) { return apiClient.download(url, config); }
+
+export function saveDownloadedFile(file: DownloadedFile, fallbackFilename: string) {
+  const blobUrl = URL.createObjectURL(file.blob);
+  const anchor = document.createElement("a");
+  anchor.href = blobUrl;
+  anchor.download = file.filename || fallbackFilename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(blobUrl);
+}

@@ -32,7 +32,9 @@ class SocketService {
       console.error('[Socket.IO] Connection error details:', {
         message: error.message,
         name: error.name,
-        stack: error.stack
+        stack: error.stack,
+        description: (error as any).description,
+        context: (error as any).context,
       });
       
       if (error.message === 'xhr poll error' || error.message === 'websocket error') {

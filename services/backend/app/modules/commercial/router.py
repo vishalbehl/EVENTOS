@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -153,7 +153,7 @@ async def get_packages(
     return packages
 
 
-# ── SUPER ADMIN STAFF CATALOG ENDPOINTS ───────────────────────────────────
+# â”€â”€ SUPER ADMIN STAFF CATALOG ENDPOINTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import json
 from pydantic import BaseModel
@@ -175,7 +175,7 @@ def generate_role_code_py(category: str, name: str) -> str:
         prefix = "NET"
     else:
         prefix = "OPS"
-        
+
     # Map suffix
     name_lower = name.lower()
     if "supervisor" in name_lower:
@@ -196,7 +196,7 @@ def generate_role_code_py(category: str, name: str) -> str:
         # fallback to first 3 letters uppercase
         clean_name = "".join(c for c in name if c.isalnum())
         suffix = clean_name[:3].upper() if clean_name else "ROLE"
-        
+
     return f"{prefix}-{suffix}"
 
 async def seed_staff_if_empty(db: AsyncSession):
@@ -245,14 +245,14 @@ async def superadmin_get_staff(
         ))
     if status:
         stmt = stmt.where(StaffRole.status == status)
-        
+
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar() or 0
-    
+
     stmt = stmt.order_by(StaffRole.role_name).offset(skip).limit(limit)
     res = await db.execute(stmt)
     roles = res.scalars().all()
-    
+
     items = []
     for r in roles:
         margin_pct = ((r.selling_per_day - r.cost_per_day) / r.selling_per_day) * 100 if r.selling_per_day > 0 else 0.0
@@ -272,7 +272,7 @@ async def superadmin_get_staff(
             "available_count": r.available_count,
             "status": r.status
         })
-        
+
     # Summary metrics
     sum_stmt = select(
         func.count(StaffRole.id).label("total_roles"),
@@ -282,7 +282,7 @@ async def superadmin_get_staff(
     )
     s_res = await db.execute(sum_stmt)
     s = s_res.fetchone()
-    
+
     summary = {
         "total_roles": s.total_roles or 0,
         "active_roles": s.active_roles or 0,
@@ -290,7 +290,7 @@ async def superadmin_get_staff(
         "avg_selling_per_day": float(s.avg_selling_day or 0),
         "total_staff_deployed": 0
     }
-    
+
     return {"items": items, "total": total, "summary": summary}
 
 @router.post("/superadmin/catalog/staff")
@@ -302,7 +302,7 @@ async def superadmin_create_staff(
     team_cat = body.team_category or body.department or "General Operations"
     role_code = body.role_code or generate_role_code_py(team_cat, body.name)
     grade_val = body.grade or "L1"
-    
+
     role = StaffRole(
         id=uuid.uuid4(),
         role_code=role_code,
@@ -330,7 +330,7 @@ async def superadmin_update_staff(
     role = (await db.execute(role_stmt)).scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=404, detail="Staff role not found")
-        
+
     if body.name is not None:
         role.role_name = body.name
     if body.role_code is not None:
@@ -339,12 +339,12 @@ async def superadmin_update_staff(
         current_cat = body.team_category or body.department or role.team_category
         current_name = body.name or role.role_name
         role.role_code = generate_role_code_py(current_cat, current_name)
-        
+
     if body.team_category is not None:
         role.team_category = body.team_category
     elif body.department is not None:
         role.team_category = body.department
-        
+
     if body.grade is not None:
         role.grade = body.grade
     if body.cost_per_day is not None:
@@ -357,7 +357,7 @@ async def superadmin_update_staff(
         role.status = body.status
     if body.description is not None:
         role.description = body.description
-        
+
     await db.commit()
     return {"status": "success", "id": str(role_id)}
 
@@ -371,17 +371,17 @@ async def superadmin_import_staff(
 ):
     import io
     import openpyxl
-    
+
     contents = await file.read()
     try:
         wb = openpyxl.load_workbook(filename=io.BytesIO(contents), data_only=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
-        
+
     sheet = wb.active
     if sheet.max_row < 2:
         return {"status": "success", "count": 0}
-        
+
     header_cells = [cell.value for cell in sheet[1]]
     header_map = {}
     for idx, cell in enumerate(header_cells):
@@ -389,7 +389,7 @@ async def superadmin_import_staff(
             continue
         val = str(cell).strip().lower().replace("_", " ").replace("-", " ")
         header_map[val] = idx
-        
+
     def get_val(row_vals, aliases, default=None):
         for alias in aliases:
             a_clean = alias.lower().replace("_", " ").replace("-", " ")
@@ -404,49 +404,62 @@ async def superadmin_import_staff(
         row_vals = [cell.value for cell in sheet[r_idx]]
         if not any(row_vals):
             continue
-            
+
         name = get_val(row_vals, ["role name", "name", "title", "job title"])
         if not name or not str(name).strip():
             continue
-            
+
         name_str = str(name).strip()
         team_cat = str(get_val(row_vals, ["team category", "category", "department"], "General Operations")).strip()
         grade = str(get_val(row_vals, ["grade", "level"], "L1")).strip()
-        
+
         cost_per_day = 0.0
         try:
             cost_per_day = float(get_val(row_vals, ["cost per day", "cost", "day rate", "cost day", "daily cost"], 0.0))
         except ValueError:
             pass
-            
+
         selling_per_day = 0.0
         try:
             selling_per_day = float(get_val(row_vals, ["selling per day", "selling", "price", "selling day", "daily selling"], 0.0))
         except ValueError:
             pass
-            
+
         available_count = 10
         try:
             available_count = int(get_val(row_vals, ["availability", "available count", "count", "quantity"], 10))
         except ValueError:
             pass
-            
+
         status = str(get_val(row_vals, ["status", "active"], "ACTIVE")).strip().upper()
         if status not in ["ACTIVE", "INACTIVE"]:
             status = "ACTIVE"
-            
+
         role_code = get_val(row_vals, ["role code", "code", "id"])
-        if not role_code or not str(role_code).strip():
-            role_code_str = generate_role_code_py(team_cat, name_str)
-        else:
+        role = None
+
+        # First match by role code if provided
+        if role_code and str(role_code).strip():
             role_code_str = str(role_code).strip()
-            
+            role_stmt = select(StaffRole).where(StaffRole.role_code == role_code_str)
+            role = (await db.execute(role_stmt)).scalar_one_or_none()
+        else:
+            role_code_str = generate_role_code_py(team_cat, name_str)
+
+        # If not matched by code, match by name case-insensitively
+        if not role:
+            role_stmt = select(StaffRole).where(func.lower(StaffRole.role_name) == name_str.lower())
+            role = (await db.execute(role_stmt)).scalar_one_or_none()
+
         desc = get_val(row_vals, ["description", "info", "notes"], "")
-            
-        role_stmt = select(StaffRole).where(func.lower(StaffRole.role_name) == name_str.lower())
-        role = (await db.execute(role_stmt)).scalar_one_or_none()
-        
+
         if role:
+            # Safely update role_name if it has changed, ensuring it doesn't collide with another record
+            if role.role_name != name_str:
+                name_stmt = select(StaffRole).where(func.lower(StaffRole.role_name) == name_str.lower())
+                name_exists = (await db.execute(name_stmt)).scalar_one_or_none()
+                if not name_exists:
+                    role.role_name = name_str
             role.role_code = role_code_str
             role.team_category = team_cat
             role.grade = grade
@@ -469,8 +482,28 @@ async def superadmin_import_staff(
                 description=str(desc) if desc else ""
             )
             db.add(role)
-            
+
         imported_count += 1
-        
+
     await db.commit()
     return {"status": "success", "count": imported_count}
+
+@router.delete("/superadmin/catalog/staff/{role_id}")
+async def superadmin_delete_staff(
+    role_id: uuid.UUID,
+    current_user: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    role_stmt = select(StaffRole).where(StaffRole.id == role_id)
+    role = (await db.execute(role_stmt)).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=404, detail="Staff role not found")
+
+    try:
+        await db.delete(role)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Failed to delete staff role: {str(e)}")
+
+    return {"status": "success", "message": "Staff role deleted successfully"}

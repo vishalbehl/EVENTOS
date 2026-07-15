@@ -3,7 +3,7 @@ from uuid import UUID
 import hashlib
 import re
 from datetime import datetime, timezone, timedelta, date
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Literal
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func, and_, or_, desc, update, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -502,14 +502,9 @@ async def list_organizations(db: AsyncSession = Depends(get_db), current_user: U
     for org, health, usage in result.all():
         sub = await _get_current_subscription(db, org.id, with_plan=True)
         plan_name = sub.plan.name if sub and sub.plan else "NONE"
-        mrr = 0.0
-        pname = plan_name.upper()
-        if "ENTERPRISE" in pname:
-            mrr = 999.0
-        elif "PRO" in pname or "PROFESSIONAL" in pname:
-            mrr = 199.0
-        elif "BASIC" in pname:
-            mrr = 49.0
+        # Revenue is reported only from the financial ledger. Plan-name price
+        # guesses are not authoritative MRR evidence.
+        mrr = None
             
         # Query users count in organization
         users_count = await db.scalar(
@@ -533,8 +528,8 @@ async def list_organizations(db: AsyncSession = Depends(get_db), current_user: U
             "slug": org.slug,
             "plan": plan_name,
             "status": sub.status if sub else "TRIAL",
-            "health_score": health.health_score if health else 100,
-            "health_status": health.status if health else "HEALTHY",
+            "health_score": health.health_score if health else None,
+            "health_status": health.status if health else "NOT_MEASURED",
             "created_at": org.created_at,
             "events_count": usage.active_events_count if usage else 0,
             "users_count": users_count,
@@ -573,8 +568,8 @@ async def get_organization_detail(org_id: uuid.UUID, db: AsyncSession = Depends(
             "stripe_customer_id": sub.stripe_customer_id if sub else None
         },
         "health": {
-            "score": health.health_score if health else 100,
-            "status": health.status if health else "HEALTHY",
+            "score": health.health_score if health else None,
+            "status": health.status if health else "NOT_MEASURED",
             "warnings": health.warnings if health else []
         }
     }
@@ -1872,34 +1867,36 @@ async def get_platform_users(
 
 # C2: Force logout (revoke all sessions)
 class UserAdminActionRequest(BaseModel):
-    reason: Optional[str] = Field(default=None, min_length=8)
+    reason: str = Field(..., min_length=12, max_length=1000)
 
 @router.delete("/users/{user_id}/sessions")
 async def force_logout_user(
     user_id: uuid.UUID,
-    payload: Optional[UserAdminActionRequest] = Body(default=None),
+    payload: UserAdminActionRequest,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
+    del step_up
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
     result = await db.execute(
         update(RefreshToken)
         .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == False)
         .values(is_revoked=True, revoked_reason="FORCE_LOGOUT_BY_ADMIN")
     )
-    await db.execute(
-        text("""
-        INSERT INTO audit.logs (id, actor_user_id, action_type, resource_type, 
-        resource_id, new_state, occurred_at)
-        VALUES (:id, :actor, 'FORCE_LOGOUT', 'user', :target, 
-        jsonb_build_object('reason', :reason), NOW())
-        """),
-        {
-            "id": str(uuid.uuid4()),
-            "actor": str(current_user.id),
-            "target": str(user_id),
-            "reason": payload.reason if payload else "admin_force_logout",
-        }
-    )
+    db.add(AuditLog(
+        organization_id=target.organization_id,
+        actor_user_id=current_user.id,
+        action_type="USER_SESSIONS_REVOKED",
+        resource_type="user",
+        resource_id=user_id,
+        old_state={"active_sessions_revoked": result.rowcount},
+        new_state={"active_sessions": 0},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+    ))
     await db.commit()
     return {"revoked": result.rowcount}
 
@@ -1909,12 +1906,17 @@ async def force_logout_user(
 async def reset_user_2fa(
     user_id: uuid.UUID,
     step_up: StepUpAuth,
-    payload: Optional[UserAdminActionRequest] = Body(default=None),
+    payload: UserAdminActionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
+    del step_up
     from app.modules.identity.models.identity_domain_tables import MfaDevice
     from app.modules.identity.services.auth_service import revoke_user_refresh_tokens
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    was_2fa_enabled = target.is_2fa_enabled
     await db.execute(
         update(User)
         .where(User.id == user_id)
@@ -1922,19 +1924,17 @@ async def reset_user_2fa(
     )
     await db.execute(delete(MfaDevice).where(MfaDevice.user_id == user_id))
     await revoke_user_refresh_tokens(db, user_id, reason="admin_mfa_reset")
-    await db.execute(
-        text("""
-        INSERT INTO audit.logs (id, actor_user_id, action_type, resource_type, 
-        resource_id, new_state, occurred_at)
-        VALUES (:id, :actor, '2FA_RESET', 'user', :target, jsonb_build_object('reason', :reason), NOW())
-        """),
-        {
-            "id": str(uuid.uuid4()),
-            "actor": str(current_user.id),
-            "target": str(user_id),
-            "reason": payload.reason if payload else "admin_mfa_reset",
-        }
-    )
+    db.add(AuditLog(
+        organization_id=target.organization_id,
+        actor_user_id=current_user.id,
+        action_type="USER_MFA_RESET",
+        resource_type="user",
+        resource_id=user_id,
+        old_state={"is_2fa_enabled": was_2fa_enabled},
+        new_state={"is_2fa_enabled": False, "sessions_revoked": True},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+    ))
     await db.commit()
     return {"success": True}
 
@@ -2199,10 +2199,12 @@ async def get_impersonation_logs(
 async def update_organization_status(
     org_id: uuid.UUID,
     payload: OrgStatusUpdate,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Suspend or activate an organization (SUPER_ADMIN only)."""
+    del step_up
     is_auth = (current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN"]) or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_auth:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN or SUPPORT_ADMIN required")
@@ -2264,7 +2266,7 @@ async def delete_organization(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
-    """Hard delete an organization and all its cascaded resources (SUPER_ADMIN only)."""
+    """Refuse destructive tenant deletion until the retention workflow exists."""
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
@@ -2272,30 +2274,13 @@ async def delete_organization(
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="ORGANIZATION_HARD_DELETED",
-        resource_type="organization",
-        resource_id=org_id,
-        old_state={
-            "name": org.name,
-            "slug": org.slug,
-            "plan": org.plan,
-            "is_active": org.is_active,
-            "custom_domain": org.custom_domain,
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "RETENTION_WORKFLOW_REQUIRED",
+            "message": "Organizations cannot be hard deleted. Suspend the tenant until an approved retention and deletion workflow is available.",
         },
-        new_state=None,
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.flush()
-
-    await db.delete(org)
-    await db.commit()
-    return {"message": "Organization and all associated data successfully deleted"}
+    )
 
 
 
@@ -3684,20 +3669,89 @@ async def list_payment_events(
 
 class UserStatusUpdateRequest(BaseModel):
     is_active: bool
-    reason: Optional[str] = Field(default=None, min_length=8)
+    reason: str = Field(..., min_length=12, max_length=1000)
+
+
+class UserPlatformRoleUpdateRequest(BaseModel):
+    platform_role: Literal["SUPER_ADMIN", "SUPPORT_ADMIN", "FINANCE_ADMIN", "NONE"]
+    reason: str = Field(..., min_length=12, max_length=1000)
+
+
+@router.patch("/users/{user_id}/platform-role")
+async def update_user_platform_role(
+    user_id: uuid.UUID,
+    payload: UserPlatformRoleUpdateRequest,
+    step_up: StepUpAuth,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin),
+):
+    del step_up
+    if current_user.role != "super_admin" and current_user.platform_role != "SUPER_ADMIN":
+        raise HTTPException(status_code=403, detail="Super Admin required")
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    next_role = None if payload.platform_role == "NONE" else payload.platform_role
+    if target.id == current_user.id and next_role != "SUPER_ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SELF_DEMOTION_FORBIDDEN",
+                "message": "Use a separate Super Admin account to change this administrator role.",
+            },
+        )
+    old_role = target.platform_role
+    target.platform_role = next_role
+    result = await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == False)
+        .values(is_revoked=True, revoked_reason="PLATFORM_ROLE_CHANGED")
+    )
+    db.add(AuditLog(
+        organization_id=target.organization_id,
+        actor_user_id=current_user.id,
+        action_type="USER_PLATFORM_ROLE_CHANGED",
+        resource_type="user",
+        resource_id=user_id,
+        old_state={"platform_role": old_role},
+        new_state={"platform_role": next_role, "sessions_revoked": result.rowcount},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+    ))
+    await db.commit()
+    return {"message": "Platform role updated", "platform_role": next_role}
 
 @router.patch("/users/{user_id}/status")
 async def update_user_status(
     user_id: uuid.UUID,
     payload: UserStatusUpdateRequest,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
     """Enable or disable a user account globally."""
+    del step_up
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id and not payload.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SELF_DEACTIVATION_FORBIDDEN",
+                "message": "Use a separate privileged account to deactivate this administrator.",
+            },
+        )
+    old_active = user.is_active
     user.is_active = payload.is_active
+    revoked_sessions = 0
+    if not payload.is_active:
+        result = await db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == False)
+            .values(is_revoked=True, revoked_reason="USER_DEACTIVATED_BY_ADMIN")
+        )
+        revoked_sessions = result.rowcount
     db.add(ActivityTimeline(
         organization_id=user.organization_id,
         actor_id=current_user.id,
@@ -3708,6 +3762,17 @@ async def update_user_status(
             "reason": payload.reason,
             "by": str(current_user.id),
         }
+    ))
+    db.add(AuditLog(
+        organization_id=user.organization_id,
+        actor_user_id=current_user.id,
+        action_type="USER_ACTIVATED" if payload.is_active else "USER_DEACTIVATED",
+        resource_type="user",
+        resource_id=user_id,
+        old_state={"is_active": old_active},
+        new_state={"is_active": payload.is_active, "sessions_revoked": revoked_sessions},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
     ))
     await db.commit()
     return {"message": f"User account {'activated' if payload.is_active else 'deactivated'} successfully"}

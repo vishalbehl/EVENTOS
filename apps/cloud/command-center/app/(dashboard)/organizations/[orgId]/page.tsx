@@ -18,6 +18,11 @@ import {
   useDeleteOrgDomain,
   useVerifyOrgDomain,
   useUpdateOrgDetail,
+  useOrganizationMembers,
+  useInviteOrganizationMember,
+  useUpdateOrganizationMember,
+  useRemoveOrganizationMember,
+  useSetOrganizationMemberEvent,
   adminApi,
   useSubscriptionPlans,
   adminKeys,
@@ -38,6 +43,8 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction";
 import { cn } from "@/lib/utils";
+import { platformKey } from "@/lib/query-keys";
+import { PageWrapper } from "@/components/layout/PageWrapper";
 
 // ── Helper functions ──────────────────────────────────────────
 
@@ -326,7 +333,7 @@ function BillingTab({ orgId }: { orgId: string }) {
 
   // Fetch invoices using apiClient directly
   const { data: invoicesData, isLoading: invoicesLoading } = useQuery({
-    queryKey: ["admin", "invoices", orgId],
+    queryKey: platformKey("admin", "invoices", orgId),
     queryFn: () => adminApi.getInvoices({ org_id: orgId }),
     enabled: !!orgId,
   });
@@ -439,159 +446,80 @@ function BillingTab({ orgId }: { orgId: string }) {
 // ── Users Tab Component ────────────────────────────────────────
 
 function UsersTab({ orgId }: { orgId: string }) {
-  const queryClient = useQueryClient();
+  const { data: members = [], isLoading } = useOrganizationMembers(orgId);
+  const { data: events = [] } = useOrgEvents(orgId);
+  const inviteMember = useInviteOrganizationMember(orgId);
+  const updateMember = useUpdateOrganizationMember(orgId);
+  const removeMember = useRemoveOrganizationMember(orgId);
+  const setMemberEvent = useSetOrganizationMemberEvent(orgId);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("member");
+  const [reason, setReason] = useState("");
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<any | null>(null);
 
-  // Query global users from platform catalog
-  const { data: usersData, isLoading: usersLoading, refetch } = useQuery({
-    queryKey: ["admin", "global-users", orgId],
-    queryFn: () => adminApi.getGlobalUsers({ org_id: orgId }),
-    enabled: !!orgId,
-  });
-
-  const users = usersData?.items || [];
-
-  // Reset 2FA mutation
-  const reset2FAMutation = useMutation({
-    mutationFn: (userId: string) => adminApi.reset2FA(userId),
-    onSuccess: () => {
-      toast.success("2FA credentials successfully reset");
-      refetch();
-    },
-    onError: () => {
-      toast.error("Failed to reset 2FA settings");
+  const requireReason = () => {
+    if (reason.trim().length < 12) {
+      toast.error("Enter an audit reason of at least 12 characters.");
+      return false;
     }
-  });
-
-  const handleImpersonateUser = async (user: any) => {
-    try {
-      const impRes = await adminApi.impersonateUser(user.id, {
-        reason: `Super admin impersonation support session. Target User: ${user.first_name} ${user.last_name}`,
-      });
-
-      useAuthStore.getState().startImpersonation(
-        {
-          id: user.id,
-          email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          role: normalizeUserRole(user.role),
-          organization_id: user.organization_id,
-          is_platform_admin: user.is_platform_admin,
-          platform_role: user.platform_role,
-        },
-        impRes.access_token,
-        user.organization_name || "Enterprise User",
-        `${user.first_name} ${user.last_name}`
-      );
-
-      toast.success(`Active support impersonation started for ${user.first_name}`);
-      window.open("/", "_blank", "noopener,noreferrer");
-    } catch {
-      toast.error("Failed to establish impersonation session");
-    }
+    return true;
   };
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm space-y-4">
-      <div className="flex items-center justify-between border-b border-border/40 pb-2">
-        <div className="flex items-center gap-2">
-          <Users2 className="w-4 h-4 text-indigo-400" />
-          <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">Team Members</h4>
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-border/40 pb-4 lg:flex-row lg:items-end">
+          <div className="flex-1">
+            <label className="text-[10px] font-black uppercase tracking-wider text-[var(--text-tertiary)]">Invite member</label>
+            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="member@company.com" className="mt-1 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs" />
+          </div>
+          <select value={role} onChange={(event) => setRole(event.target.value)} className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs">
+            <option value="admin">Admin</option><option value="member">Member</option><option value="billing_only">Billing only</option>
+          </select>
+          <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Required audit reason" className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs" />
+          <Button disabled={inviteMember.isPending} onClick={async () => {
+            if (!email || !requireReason()) return;
+            const result = await inviteMember.mutateAsync({ email, org_role: role, reason: reason.trim() });
+            setInviteToken(result.invite_token); setEmail(""); toast.success("Member invitation created");
+          }}><Plus className="mr-1 h-3.5 w-3.5" /> Invite</Button>
         </div>
-        <span className="text-[10px] font-extrabold text-[var(--text-tertiary)] font-mono uppercase">
-          {users.length} members
-        </span>
+        {inviteToken && <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-[10px] text-emerald-300"><span className="font-bold">One-time invitation token:</span> <span className="break-all font-mono">{inviteToken}</span></div>}
       </div>
 
-      {usersLoading ? (
-        <div className="py-8 text-center text-xs text-[var(--text-tertiary)] flex items-center justify-center gap-2 animate-pulse">
-          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Fetching membership list...
-        </div>
-      ) : users.length === 0 ? (
-        <div className="border border-dashed border-border rounded-xl p-8 text-center text-xs text-[var(--text-tertiary)] bg-surface-2/10">
-          No team members registered for this organization.
-        </div>
-      ) : (
-        <div className="border border-border/60 rounded-xl overflow-hidden bg-surface-2/10">
-          <table className="w-full border-collapse text-left text-xs">
-            <thead className="bg-surface border-b border-border font-extrabold text-[var(--text-tertiary)] uppercase tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Member Info</th>
-                <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Last Login</th>
-                <th className="px-4 py-3">2FA Status</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/40 font-medium text-[var(--text-secondary)]">
-              {users.map((user: any) => (
-                <tr key={user.id} className="hover:bg-surface-hover/20 transition-colors">
-                  <td className="px-4 py-3 flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-indigo-500/30 to-purple-500/20 border border-indigo-500/20 flex items-center justify-center text-[10px] font-black text-indigo-300 uppercase shrink-0">
-                      {user.first_name?.[0] || "?"}
-                    </div>
-                    <div>
-                      <p className="font-bold text-[var(--text-primary)]">{user.first_name} {user.last_name}</p>
-                      <p className="text-[10px] text-[var(--text-tertiary)] font-mono">{user.email}</p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 uppercase tracking-wider font-extrabold text-[9px] text-[var(--text-secondary)]">
-                    {user.role}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[10px] text-[var(--text-tertiary)]">
-                    {user.last_login_at
-                      ? new Date(user.last_login_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
-                      : "Never"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant="outline" className={cn(
-                      "font-extrabold text-[9px] uppercase",
-                      user.is_2fa_enabled
-                        ? "border-emerald-500/20 text-emerald-400 bg-emerald-500/5"
-                        : "border-border text-[var(--text-tertiary)]"
-                    )}>
-                      {user.is_2fa_enabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant="outline" className={cn(
-                      "font-extrabold text-[9px] uppercase",
-                      user.is_active
-                        ? "border-emerald-500/20 text-emerald-400 bg-emerald-500/5"
-                        : "border-red-500/20 text-red-400 bg-red-500/5"
-                    )}>
-                      {user.is_active ? "Active" : "Suspended"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-right space-x-1.5">
-                    {user.is_2fa_enabled && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={reset2FAMutation.isPending}
-                        onClick={() => reset2FAMutation.mutate(user.id)}
-                        className="h-7 text-[10px] rounded-lg border-border hover:bg-red-500/10 hover:text-red-400 transition-colors"
-                        title="Reset Two-Factor Authentication"
-                      >
-                        <Lock className="w-3 h-3 mr-1" /> Reset 2FA
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleImpersonateUser(user)}
-                      className="h-7 text-[10px] rounded-lg border-border hover:bg-orange-500/10 hover:text-orange-400 transition-colors"
-                    >
-                      <User className="w-3 h-3 mr-1" /> Impersonate
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between"><h4 className="text-xs font-black uppercase tracking-wider">Team members</h4><span className="text-[10px] font-mono text-[var(--text-tertiary)]">{members.length} records</span></div>
+        {isLoading ? <div className="py-8 text-center text-xs text-[var(--text-tertiary)]"><RefreshCw className="mr-2 inline h-3.5 w-3.5 animate-spin" />Loading memberships</div> : members.length === 0 ? <div className="rounded-xl border border-dashed border-border p-8 text-center text-xs text-[var(--text-tertiary)]">No memberships found.</div> : (
+          <div className="space-y-3">
+            {members.map((member) => <div key={member.id} className="rounded-xl border border-border bg-surface-2/30 p-4">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-[var(--text-primary)]">{member.name}</p><p className="truncate font-mono text-[10px] text-[var(--text-tertiary)]">{member.email}</p></div>
+                <Badge variant="outline">{member.accepted_at ? "Active identity" : "Pending invite"}</Badge>
+                <select value={member.org_role} disabled={!member.is_active || updateMember.isPending} onChange={async (event) => {
+                  if (!requireReason()) return;
+                  await updateMember.mutateAsync({ memberId: member.id, orgRole: event.target.value, reason: reason.trim() });
+                  toast.success("Membership role updated");
+                }} className="rounded-lg border border-border bg-surface px-2 py-1.5 text-[10px] uppercase">
+                  <option value="owner">Owner</option><option value="admin">Admin</option><option value="member">Member</option><option value="billing_only">Billing only</option>
+                </select>
+                {member.org_role !== "owner" && member.is_active && <Button variant="outline" size="sm" onClick={() => setRemoveTarget(member)}><Trash2 className="mr-1 h-3 w-3" />Remove</Button>}
+              </div>
+              {member.user_id && events.length > 0 && <div className="mt-3 border-t border-border/50 pt-3"><p className="mb-2 text-[9px] font-black uppercase tracking-wider text-[var(--text-tertiary)]">Event workspace access</p><div className="flex flex-wrap gap-2">{events.map((event) => {
+                const assigned = member.event_ids.includes(event.id);
+                return <button key={event.id} disabled={setMemberEvent.isPending} onClick={async () => {
+                  if (!requireReason()) return;
+                  await setMemberEvent.mutateAsync({ memberId: member.id, eventId: event.id, assigned: !assigned, reason: reason.trim() });
+                  toast.success(assigned ? "Event access removed" : "Event access assigned");
+                }} className={cn("rounded-lg border px-2.5 py-1.5 text-[10px] font-bold", assigned ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-border text-[var(--text-tertiary)]")}>{event.name}</button>;
+              })}</div></div>}
+            </div>)}
+          </div>
+        )}
+      </div>
+      <ConfirmDestructiveAction open={Boolean(removeTarget)} onOpenChange={(open) => !open && setRemoveTarget(null)} title="Remove organization member?" description="This revokes active sessions and every event workspace assignment for this member." confirmLabel="Remove member" requireReason resourceName={removeTarget?.email} pending={removeMember.isPending} onConfirm={async (auditReason) => {
+        if (!removeTarget || !auditReason || auditReason.trim().length < 12) return;
+        await removeMember.mutateAsync({ memberId: removeTarget.id, reason: auditReason.trim() }); setRemoveTarget(null); toast.success("Member access removed");
+      }} />
     </div>
   );
 }
@@ -718,6 +646,7 @@ function SettingsTab({ orgId }: { orgId: string }) {
   const [slug, setSlug] = useState(detail?.slug || "");
   const [timezone, setTimezone] = useState(detail?.timezone || "Asia/Kolkata");
   const [country, setCountry] = useState(detail?.country || "IN");
+  const [generalReason, setGeneralReason] = useState("");
 
   useEffect(() => {
     if (detail) {
@@ -730,13 +659,14 @@ function SettingsTab({ orgId }: { orgId: string }) {
 
   const handleSaveGeneral = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !slug) {
-      toast.error("Name and slug are required fields");
+    if (!name || !slug || generalReason.trim().length < 12) {
+      toast.error("Name, slug, and an audit reason of at least 12 characters are required");
       return;
     }
     try {
-      await updateOrgDetailMutation.mutateAsync({ name, slug, timezone, country });
+      await updateOrgDetailMutation.mutateAsync({ name, slug, timezone, country, reason: generalReason.trim() });
       toast.success("Organization details updated successfully");
+      setGeneralReason("");
     } catch {
       toast.error("Failed to update organization details");
     }
@@ -947,6 +877,19 @@ function SettingsTab({ orgId }: { orgId: string }) {
                   onChange={e => setCountry(e.target.value.toUpperCase())}
                   maxLength={2}
                   className="w-full rounded-xl bg-surface-2 border border-border px-3.5 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-indigo-500 text-center font-bold"
+                />
+              </div>
+              <div className="col-span-2">
+                <label htmlFor="organization-update-reason" className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">Audit reason *</label>
+                <textarea
+                  id="organization-update-reason"
+                  value={generalReason}
+                  onChange={(event) => setGeneralReason(event.target.value)}
+                  minLength={12}
+                  required
+                  rows={3}
+                  placeholder="Explain the approved tenant configuration change."
+                  className="w-full resize-y rounded-xl border border-border bg-surface-2 px-3.5 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
@@ -1339,12 +1282,14 @@ export default function OrgDetailPage() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <PageWrapper labelledBy="organization-detail-title" className="space-y-6 animate-in fade-in duration-500">
       {/* Header Info */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-surface border border-border rounded-2xl p-5 shadow-sm">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={() => router.push("/organizations")}
+            aria-label="Back to organizations"
             className="p-2.5 rounded-xl hover:bg-surface-hover/30 border border-border text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -1356,7 +1301,7 @@ export default function OrgDetailPage() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-black text-[var(--text-primary)] tracking-tight">{detail?.name || "Loading..."}</h1>
+                <h1 id="organization-detail-title" className="text-base font-black text-[var(--text-primary)] tracking-tight">{detail?.name || "Loading..."}</h1>
                 <Badge variant="outline" className={cn(
                   "font-bold text-[9px] uppercase",
                   detail?.subscription?.status === "ACTIVE" 
@@ -1405,12 +1350,16 @@ export default function OrgDetailPage() {
       </div>
 
       {/* Top Navigation Tab Bar */}
-      <div className="flex gap-1 border-b border-border/40 pb-0">
+      <div role="tablist" aria-label="Organization details" className="cc-scroll-region flex gap-1 overflow-x-auto border-b border-border/40 pb-0">
         {MAIN_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
             <button
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-controls={`organization-panel-${tab.id}`}
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
@@ -1428,7 +1377,7 @@ export default function OrgDetailPage() {
       </div>
 
       {/* Active Tab Panel Content */}
-      <div className="py-2">
+      <div id={`organization-panel-${activeTab}`} role="tabpanel" className="py-2">
         {activeTab === "overview" && <OverviewTab orgId={orgId} />}
         {activeTab === "billing" && <BillingTab orgId={orgId} />}
         {activeTab === "users" && <UsersTab orgId={orgId} />}
@@ -1452,7 +1401,7 @@ export default function OrgDetailPage() {
         pending={statusUpdating}
         onConfirm={(reason) => void handleStatusToggle(reason)}
       />
-    </div>
+    </PageWrapper>
   );
 }
 

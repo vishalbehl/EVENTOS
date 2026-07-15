@@ -34,12 +34,7 @@ class PermissionService:
         return count
 
     async def list_permissions(self) -> List[PlatformPermission]:
-        # Proactively seed if table is empty
-        all_perms = await self.repository.get_all_permissions()
-        if not all_perms:
-            await self.seed_permissions()
-            all_perms = await self.repository.get_all_permissions()
-        return all_perms
+        return await self.repository.get_all_permissions()
 
     async def get_role_permissions(self, role_id: uuid.UUID) -> List[str]:
         perms = await self.repository.get_permissions_for_role(role_id)

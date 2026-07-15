@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export interface PosterSummary {
   id: string;
@@ -35,8 +37,9 @@ export interface PosterFilters {
 }
 
 export function usePosters(eventId: string, filters?: PosterFilters) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["posters", eventId, filters],
+    queryKey: queryKeys.events.posters(organizationId, eventId, filters),
     queryFn: () => {
       const params = new URLSearchParams();
       if (filters?.status) params.append("status", filters.status);
@@ -52,8 +55,9 @@ export function usePosters(eventId: string, filters?: PosterFilters) {
 }
 
 export function usePoster(eventId: string, posterId: string | null) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["poster", eventId, posterId],
+    queryKey: queryKeys.events.poster(organizationId, eventId, posterId),
     queryFn: () => apiGet<PosterSummary>(`/events/${eventId}/posters/${posterId}`),
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]" && !!posterId,
   });
@@ -61,6 +65,7 @@ export function usePoster(eventId: string, posterId: string | null) {
 
 export function useSchedulePoster(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({
       posterId,
@@ -74,24 +79,26 @@ export function useSchedulePoster(eventId: string) {
       };
     }) => apiPost(`/events/${eventId}/posters/${posterId}/schedule`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function useUnschedulePoster(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (posterId: string) =>
       apiDelete(`/events/${eventId}/posters/${posterId}/schedule`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function useUpdatePoster(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({
       posterId,
@@ -101,23 +108,25 @@ export function useUpdatePoster(eventId: string) {
       data: Partial<PosterSummary>;
     }) => apiPatch(`/events/${eventId}/posters/${posterId}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function useDeletePoster(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (posterId: string) => apiDelete(`/events/${eventId}/posters/${posterId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function useBatchUpdatePostersStatus(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({
       poster_ids,
@@ -127,35 +136,38 @@ export function useBatchUpdatePostersStatus(eventId: string) {
       status: string;
     }) => apiPost(`/events/${eventId}/posters/batch-status`, { poster_ids, status }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function useBatchDeletePosters(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (posterIds: string[]) => apiPost(`/events/${eventId}/posters/batch-delete`, { poster_ids: posterIds }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function useBatchSchedulePosters(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (assignments: Record<string, string[]>) =>
       apiPost(`/events/${eventId}/posters/batch-schedule`, { assignments }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
     },
   });
 }
 
 export function usePosterCategories(eventId: string) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["poster-categories", eventId],
+    queryKey: queryKeys.events.posterCategories(organizationId, eventId),
     queryFn: () => apiGet<string[]>(`/events/${eventId}/posters/categories`),
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]",
   });
@@ -163,6 +175,7 @@ export function usePosterCategories(eventId: string) {
 
 export function useReviewPoster(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({ 
       posterId, 
@@ -174,8 +187,8 @@ export function useReviewPoster(eventId: string) {
       rejection_reason?: string 
     }) => apiPost(`/events/${eventId}/posters/${posterId}/review`, { decision, rejection_reason }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posters", eventId] });
-      queryClient.invalidateQueries({ queryKey: ["files", eventId] }); // Monitoring page uses both
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.posters(organizationId, eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.files(organizationId, eventId) });
     },
   });
 }

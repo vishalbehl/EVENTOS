@@ -7,6 +7,7 @@ class SocketService {
   private currentToken: string | null = null;
 
   connect(token: string) {
+    if (process.env.NEXT_PUBLIC_DISABLE_REALTIME === '1') return;
     if (this.socket && this.currentToken === token) return;
     
     // If token changed or socket exists, clean up first
@@ -32,7 +33,9 @@ class SocketService {
       console.error('[Socket.IO] Connection error details:', {
         message: error.message,
         name: error.name,
-        stack: error.stack
+        stack: error.stack,
+        description: (error as any).description,
+        context: (error as any).context,
       });
       
       if (error.message === 'xhr poll error' || error.message === 'websocket error') {

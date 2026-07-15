@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
-from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY, Index
+from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -82,6 +82,12 @@ class OrganizationSubscription(Base):
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_changed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True
+    )
     
     organization: Mapped["Organization"] = relationship("Organization", back_populates="subscription")
     plan: Mapped["SubscriptionPlan"] = relationship("SubscriptionPlan")
@@ -199,10 +205,25 @@ class ActivityTimeline(Base):
 
 class SubscriptionTransaction(Base):
     __tablename__ = "subscription_transactions"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = (
+        Index(
+            "uq_subscription_transactions_provider_reference",
+            "provider",
+            "provider_transaction_id",
+            unique=True,
+            postgresql_where=text("provider_transaction_id IS NOT NULL"),
+        ),
+        {"schema": "billing"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
+    invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("billing.invoices.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("billing.organization_subscriptions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     plan_name: Mapped[str] = mapped_column(String(100), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     promo_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -211,10 +232,31 @@ class SubscriptionTransaction(Base):
     billing_email: Mapped[str] = mapped_column(String(255), nullable=False)
     billing_phone: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="SUCCESS")
+    currency: Mapped[str] = mapped_column(String(10), default="INR", nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), default="OFFLINE", nullable=False)
+    provider_transaction_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    provider_event_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    parent_transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("billing.subscription_transactions.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    refunded_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0, server_default="0")
+    reconciliation_status: Mapped[str] = mapped_column(String(30), default="PENDING", nullable=False, index=True)
+    reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reconciled_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True
+    )
+    reconciliation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     is_custom_plan: Mapped[bool] = mapped_column(Boolean, default=False)
     custom_limits: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     addon_keys: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
 class RevenueMetric(Base):
     __tablename__ = "revenue_metrics"

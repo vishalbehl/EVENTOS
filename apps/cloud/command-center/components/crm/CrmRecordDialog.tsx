@@ -20,7 +20,7 @@ import {
   type CRMLead,
   type CRMOpportunity,
   type CRMPipelineStage,
-  type CRMResourceType,
+  type CRMCoreResourceType,
   type CRMSupportScope,
   useCrmMutation,
 } from "@/hooks/useCRM";
@@ -30,7 +30,7 @@ type CRMRecord = CRMAccount | CRMContact | CRMLead | CRMOpportunity;
 interface CrmRecordDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  resourceType: CRMResourceType;
+  resourceType: CRMCoreResourceType;
   scope: CRMSupportScope;
   record?: CRMRecord | null;
   accounts: CRMAccount[];
@@ -38,7 +38,7 @@ interface CrmRecordDialogProps {
   stages: CRMPipelineStage[];
 }
 
-const labels: Record<CRMResourceType, string> = {
+const labels: Record<CRMCoreResourceType, string> = {
   account: "Account",
   contact: "Contact",
   lead: "Lead",

@@ -15,11 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.crm.models.core import Account, Contact, Lead
-from app.modules.crm.models.crm_domain_tables import CrmOperationRequest, Opportunity, PipelineStage
+from app.modules.crm.models.crm_domain_tables import Activity, CrmOperationRequest, Note, Opportunity, PipelineStage, Task
 from app.modules.platform.support_access import PlatformSupportScope
+from app.modules.rbac.models.organization_member import OrganizationMember
 
 
-RecordT = TypeVar("RecordT", Account, Contact, Lead, Opportunity)
+RecordT = TypeVar("RecordT", Account, Contact, Lead, Opportunity, Activity, Task, Note)
 
 
 MODEL_TYPES: dict[str, type[Any]] = {
@@ -27,6 +28,9 @@ MODEL_TYPES: dict[str, type[Any]] = {
     "contact": Contact,
     "lead": Lead,
     "opportunity": Opportunity,
+    "activity": Activity,
+    "task": Task,
+    "note": Note,
 }
 
 
@@ -36,7 +40,11 @@ def _fingerprint(payload: dict[str, Any]) -> str:
 
 
 def _snapshot(record: Any) -> dict[str, Any]:
-    fields = ("id", "organization_id", "name", "status", "email", "account_id", "contact_id", "stage_id", "amount", "version", "archived_at")
+    fields = (
+        "id", "organization_id", "name", "status", "email", "account_id", "contact_id", "stage_id", "amount",
+        "entity_type", "entity_id", "activity_type", "description", "occurred_at", "subject", "due_date",
+        "assigned_to", "completed_at", "content", "version", "archived_at",
+    )
     result: dict[str, Any] = {}
     for field in fields:
         value = getattr(record, field, None)
@@ -58,6 +66,9 @@ class CrmLifecycleService:
         "contact": {"account_id", "first_name", "last_name", "email"},
         "lead": {"status"},
         "opportunity": {"account_id", "stage_id", "name", "amount"},
+        "activity": {"entity_type", "entity_id", "activity_type", "occurred_at"},
+        "task": {"entity_type", "entity_id", "subject", "status"},
+        "note": {"entity_type", "entity_id", "content"},
     }
 
     @staticmethod
@@ -121,6 +132,29 @@ class CrmLifecycleService:
             raise HTTPException(status_code=409, detail={"code": "CRM_CONTACT_EMAIL_EXISTS", "message": "A contact with this email already exists in the organization."})
 
     @staticmethod
+    async def _validate_entity_reference(db: AsyncSession, organization_id: uuid.UUID, entity_type: str, entity_id: uuid.UUID) -> None:
+        if entity_type == "organization":
+            if entity_id != organization_id:
+                raise HTTPException(status_code=422, detail={"code": "INVALID_CRM_REFERENCE", "message": "Organization-scoped engagement must reference the selected organization."})
+            return
+        model = MODEL_TYPES.get(entity_type)
+        if model not in {Account, Contact, Lead, Opportunity}:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_CRM_ENTITY_TYPE"})
+        await CrmLifecycleService._validate_reference(db, model, organization_id, entity_id, entity_type.title())
+
+    @staticmethod
+    async def _validate_assignee(db: AsyncSession, organization_id: uuid.UUID, user_id: uuid.UUID | None) -> None:
+        if user_id is None:
+            return
+        member = await db.scalar(select(OrganizationMember.id).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id,
+            OrganizationMember.is_active.is_(True),
+        ))
+        if member is None:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_CRM_ASSIGNEE", "message": "Task assignee must be an active member of the selected organization."})
+
+    @staticmethod
     async def _validate_required_update_values(resource_type: str, values: dict[str, Any]) -> None:
         invalid = CrmLifecycleService.REQUIRED_FIELDS[resource_type].intersection(
             key for key, value in values.items() if value is None
@@ -167,6 +201,15 @@ class CrmLifecycleService:
                 stage_exists = await db.scalar(select(PipelineStage.id).where(PipelineStage.id == values["stage_id"]))
                 if stage_exists is None:
                     raise HTTPException(status_code=422, detail={"code": "INVALID_CRM_REFERENCE", "message": "Pipeline stage does not exist."})
+            if resource_type in {"activity", "task", "note"}:
+                await CrmLifecycleService._validate_entity_reference(
+                    db, scope.organization_id, values["entity_type"], values["entity_id"]
+                )
+                values["created_by"] = scope.actor.id
+            if resource_type == "task":
+                await CrmLifecycleService._validate_assignee(db, scope.organization_id, values.get("assigned_to"))
+                if values.get("status") == "COMPLETED":
+                    values["completed_at"] = datetime.now(timezone.utc)
             record = model(organization_id=scope.organization_id, **values)
             db.add(record)
             await db.flush()
@@ -205,6 +248,10 @@ class CrmLifecycleService:
                 stage_exists = await db.scalar(select(PipelineStage.id).where(PipelineStage.id == values["stage_id"]))
                 if stage_exists is None:
                     raise HTTPException(status_code=422, detail={"code": "INVALID_CRM_REFERENCE", "message": "Pipeline stage does not exist."})
+            if resource_type == "task" and "assigned_to" in values:
+                await CrmLifecycleService._validate_assignee(db, scope.organization_id, values.get("assigned_to"))
+            if resource_type == "task" and "status" in values:
+                values["completed_at"] = datetime.now(timezone.utc) if values["status"] == "COMPLETED" else None
             old_state = _snapshot(record)
             for key, value in values.items():
                 setattr(record, key, value)
@@ -259,3 +306,63 @@ class CrmLifecycleService:
             await db.commit()
             await db.refresh(record)
             return record
+
+    @staticmethod
+    async def convert_lead(
+        db: AsyncSession,
+        scope: PlatformSupportScope,
+        lead_id: uuid.UUID,
+        payload: BaseModel,
+        idempotency_key: str,
+    ) -> Opportunity:
+        operation_payload = {"lead_id": lead_id, **payload.model_dump(mode="json")}
+        async with TenantContextGuard.scoped(db, scope.organization_id):
+            operation, replay = await CrmLifecycleService._begin_operation(
+                db, scope.organization_id, "CONVERT_LEAD", idempotency_key, operation_payload
+            )
+            if replay:
+                return await CrmLifecycleService._load_record(
+                    db, Opportunity, scope.organization_id, operation.result_ref_id
+                )
+            lead = await CrmLifecycleService._load_record(db, Lead, scope.organization_id, lead_id, lock=True)
+            if lead.archived_at or lead.status == "CONVERTED":
+                raise HTTPException(status_code=409, detail={"code": "LEAD_ALREADY_CONVERTED"})
+            if lead.version != payload.version:
+                raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": lead.version})
+            if lead.status != "QUALIFIED" or not lead.contact_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "LEAD_NOT_CONVERTIBLE", "message": "Only qualified leads linked to an active contact can be converted."},
+                )
+            contact = await CrmLifecycleService._load_record(db, Contact, scope.organization_id, lead.contact_id)
+            if contact.archived_at:
+                raise HTTPException(status_code=409, detail={"code": "LEAD_CONTACT_ARCHIVED"})
+            stage_exists = await db.scalar(select(PipelineStage.id).where(PipelineStage.id == payload.stage_id))
+            if stage_exists is None:
+                raise HTTPException(status_code=422, detail={"code": "INVALID_CRM_REFERENCE", "message": "Pipeline stage does not exist."})
+
+            opportunity = Opportunity(
+                organization_id=scope.organization_id,
+                account_id=contact.account_id,
+                stage_id=payload.stage_id,
+                name=payload.opportunity_name,
+                amount=payload.amount,
+                close_date=payload.close_date,
+            )
+            db.add(opportunity)
+            await db.flush()
+            old_state = _snapshot(lead)
+            lead.status = "CONVERTED"
+            lead.archived_at = datetime.now(timezone.utc)
+            lead.archived_by = scope.actor.id
+            lead.archive_reason = payload.reason
+            lead.version += 1
+            lead.updated_at = datetime.now(timezone.utc)
+            operation.status = "SUCCEEDED"
+            operation.result_ref_type = "opportunity"
+            operation.result_ref_id = opportunity.id
+            await CrmLifecycleService._audit(db, scope, opportunity, "CRM_OPPORTUNITY_CREATED_FROM_LEAD", payload.reason)
+            await CrmLifecycleService._audit(db, scope, lead, "CRM_LEAD_CONVERTED", payload.reason, old_state)
+            await db.commit()
+            await db.refresh(opportunity)
+            return opportunity

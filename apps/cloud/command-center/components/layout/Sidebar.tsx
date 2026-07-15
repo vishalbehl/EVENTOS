@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -12,7 +12,7 @@ import {
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
   Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
   Code, ShieldCheck, Building2, CreditCard, Shield, Activity, Database, Search, Terminal, Share2,
-  Brain, Landmark, DollarSign, Percent, Sparkles, History, Calculator, Network, Grid, Library
+  Brain, Landmark, DollarSign, Percent, Sparkles, History, Calculator, Network, Grid, Library, KeyRound
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
@@ -20,6 +20,7 @@ import { useAuthStore } from "@/store/use-auth-store";
 
 export function Sidebar() {
   const pathname = usePathname();
+  const previousPathname = useRef(pathname);
   const {
     isSidebarCollapsed,
     isMobileSidebarOpen,
@@ -114,6 +115,7 @@ export function Sidebar() {
         { label: "Audit Logs", icon: FileText, href: "/identity-security/audit-logs" },
         { label: "Security Events", icon: Bell, href: "/identity-security/security-events" },
         { label: "Impersonation", icon: User, href: "/identity-security/impersonation" },
+        { label: "Access Reviews", icon: KeyRound, href: "/identity-security/access-reviews" },
       ]
     },
     {
@@ -163,7 +165,7 @@ export function Sidebar() {
   const currentRoutes = platformRoutes;
 
   const bottomRoutes = [
-    { label: "Documentation", icon: FileText, href: "/docs" },
+    { label: "UI Catalogue", icon: Palette, href: "/design-system" },
   ];
 
   useEffect(() => {
@@ -185,7 +187,10 @@ export function Sidebar() {
   }, [pathname]);
 
   useEffect(() => {
-    setMobileSidebarOpen(false);
+    if (previousPathname.current !== pathname) {
+      setMobileSidebarOpen(false);
+      previousPathname.current = pathname;
+    }
   }, [pathname, setMobileSidebarOpen]);
 
 
@@ -261,8 +266,12 @@ export function Sidebar() {
                   {/* Parent Toggle Button */}
                   <div className="group relative">
                     <motion.button
+                      type="button"
                       whileHover={{ x: isCollapsed ? 0 : 2 }}
                       onClick={() => !isCollapsed && toggleMenu(route.label)}
+                      aria-expanded={isCollapsed ? undefined : isOpen}
+                      aria-controls={isCollapsed ? undefined : `nav-${route.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                      aria-label={isCollapsed ? route.label : undefined}
                       className={cn(
                         "relative flex items-center h-10 w-full rounded-xl px-3 transition-all duration-300 preserve-3d text-left",
                         isCollapsed
@@ -293,7 +302,7 @@ export function Sidebar() {
 
                       {/* Tooltip + Dropdown for collapsed mode */}
                       {isCollapsed && (
-                        <div className="absolute left-20 z-[70] invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-all duration-300 p-2 rounded-xl text-[11px] font-bold shadow-2xl border border-[var(--border)] bg-[var(--surf)] min-w-[165px] space-y-1 text-left flex flex-col pointer-events-auto">
+                        <div className="absolute left-20 z-[70] invisible min-w-[165px] space-y-1 rounded-xl border border-[var(--border)] bg-[var(--surf)] p-2 text-left text-[11px] font-bold opacity-0 shadow-2xl transition-all duration-300 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
                           <span className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--pri)] px-2 py-1 border-b border-[var(--border)] mb-1 block">
                             {route.label}
                           </span>
@@ -314,6 +323,7 @@ export function Sidebar() {
                   <AnimatePresence initial={false}>
                     {!isCollapsed && isOpen && (
                       <motion.div
+                        id={`nav-${route.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}

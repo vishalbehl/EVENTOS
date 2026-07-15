@@ -22,6 +22,8 @@ class UserEventAssignment(Base):
     __tablename__ = "user_event_assignments"
     __table_args__ = (
         Index("ix_rls_rbac_user_event_assignments_event", "event_id"),
+        UniqueConstraint("user_id", "event_id", name="uq_user_event_assignment"),
+        {"schema": "rbac"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -51,10 +53,6 @@ class UserEventAssignment(Base):
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="assignments")
     event: Mapped["Event"] = relationship("Event")
-
-    # __table_args__ = (
-    #     UniqueConstraint("user_id", "event_id", name="uq_user_event_assignment"),
-    # )
 
     def __repr__(self) -> str:
         return f"<UserEventAssignment user={self.user_id} event={self.event_id}>"

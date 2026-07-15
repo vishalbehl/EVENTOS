@@ -95,6 +95,7 @@ class EntitlementResolver:
             )
             .order_by(EventActivation.created_at.desc())
             .limit(1)
+            .execution_options(populate_existing=True)
         )
         return await db.scalar(stmt)
 
@@ -114,6 +115,7 @@ class EntitlementResolver:
                 selectinload(EventActivation.grant_consumption),
             )
             .where(EventActivation.id == activation_id)
+            .execution_options(populate_existing=True)
         )
         return await db.scalar(stmt)
 
@@ -296,48 +298,12 @@ class EntitlementResolver:
         if not activation:
             return {"features": {}, "limits": {}}
         if not activation.current_snapshot_set:
-            package = await EntitlementResolver.build_live_entitlement_package(
-                db,
-                organization_id=org_id,
-                event_id=event_id,
-                subscription_id=activation.subscription_id,
-                grant_id=activation.grant_id,
-                activation_id=activation.id,
-                policy_type=activation.activation_policy,
-                resolution_reason="RECOVERY_REBUILD",
-            )
-            features = {
-                key: {
-                    "enabled": item["enabled"],
-                    "scope_type": item["scope_type"],
-                    "source_type": item["source_type"],
-                    "source_ref": item["source_ref"],
-                    "activation_id": str(activation.id),
-                    "grant_id": str(activation.grant_id) if activation.grant_id else None,
-                    "subscription_id": str(activation.subscription_id),
-                    "plan_id": package.get("plan_id"),
-                    "override_source": item.get("override_source"),
-                    "denial_reason": item.get("denial_reason"),
-                }
-                for key, item in package["features"].items()
-                if explain or item["enabled"]
+            return {
+                "features": {},
+                "limits": {},
+                "activation": activation,
+                "denial_reason": "SNAPSHOT_REQUIRED",
             }
-            limits = {
-                key: {
-                    "limit_value": item["limit_value"],
-                    "scope_type": item["scope_type"],
-                    "source_type": item["source_type"],
-                    "source_ref": item["source_ref"],
-                    "activation_id": str(activation.id),
-                    "grant_id": str(activation.grant_id) if activation.grant_id else None,
-                    "subscription_id": str(activation.subscription_id),
-                    "plan_id": package.get("plan_id"),
-                    "override_source": item.get("override_source"),
-                    "denial_reason": None,
-                }
-                for key, item in package["limits"].items()
-            }
-            return {"features": features, "limits": limits, "activation": activation}
         return await EntitlementResolver.resolve_activation_entitlements(db, activation.id, explain=explain)
 
     @staticmethod

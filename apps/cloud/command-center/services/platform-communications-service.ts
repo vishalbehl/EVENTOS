@@ -17,6 +17,7 @@ export interface GlobalAnnouncementPayload {
   title: string;
   content: string;
   is_active: boolean;
+  reason: string;
 }
 
 export interface MaintenanceWindow {
@@ -40,6 +41,7 @@ export interface MaintenanceWindowPayload {
   ends_at: string;
   affected_services?: string[] | null;
   status: MaintenanceWindow["status"];
+  reason: string;
 }
 
 export const platformCommunicationKeys = {
@@ -75,7 +77,7 @@ export function useCreateGlobalAnnouncement() {
 export function useUpdateGlobalAnnouncement() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ announcementId, payload }: { announcementId: string; payload: Partial<GlobalAnnouncementPayload> }) =>
+    mutationFn: ({ announcementId, payload }: { announcementId: string; payload: Partial<Omit<GlobalAnnouncementPayload, "reason">> & { reason: string } }) =>
       apiClient.patch<GlobalAnnouncement>(`/platform/communications/announcements/${announcementId}`, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: platformCommunicationKeys.announcements() });
@@ -115,7 +117,7 @@ export function useCreateMaintenanceWindow() {
 export function useUpdateMaintenanceWindow() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ windowId, payload }: { windowId: string; payload: Partial<MaintenanceWindowPayload> & { notification_sent?: boolean } }) =>
+    mutationFn: ({ windowId, payload }: { windowId: string; payload: Partial<Omit<MaintenanceWindowPayload, "reason">> & { reason: string; notification_sent?: boolean } }) =>
       apiClient.patch<MaintenanceWindow>(`/platform/communications/maintenance-windows/${windowId}`, payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: platformCommunicationKeys.maintenanceWindows() }),
   });

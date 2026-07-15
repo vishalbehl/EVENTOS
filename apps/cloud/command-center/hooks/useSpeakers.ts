@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPatch, apiDelete } from "@/lib/api-client";
 import { toast } from "sonner";
+import { queryKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export interface SpeakerSummary {
   id: string;
@@ -56,8 +58,9 @@ export interface SpeakerFilters {
 }
 
 export function useSpeakers(eventId: string, filters?: SpeakerFilters) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["speakers", eventId, filters],
+    queryKey: queryKeys.events.speakers(organizationId, eventId, filters),
     queryFn: () => {
       const params = new URLSearchParams();
       if (filters?.upload_status) params.append("upload_status", filters.upload_status);
@@ -75,8 +78,9 @@ export function useSpeakers(eventId: string, filters?: SpeakerFilters) {
 }
 
 export function useSpeakerTalks(eventId: string, speakerId: string | null) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["speaker-talks", eventId, speakerId],
+    queryKey: queryKeys.events.speakerTalks(organizationId, eventId, speakerId),
     queryFn: () =>
       apiGet<SpeakerTalk[]>(`/events/${eventId}/speakers/${speakerId}/sessions`),
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]" && !!speakerId,
@@ -85,6 +89,7 @@ export function useSpeakerTalks(eventId: string, speakerId: string | null) {
 
 export function useUpdateSpeaker(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({
       speakerId,
@@ -102,18 +107,19 @@ export function useUpdateSpeaker(eventId: string) {
       };
     }) => apiPatch(`/events/${eventId}/speakers/${speakerId}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
-      queryClient.invalidateQueries({ queryKey: ["speaker-talks", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(organizationId, eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakerTalks(organizationId, eventId) });
     },
   });
 }
 
 export function useDeleteSpeaker(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (speakerId: string) => apiDelete(`/events/${eventId}/speakers/${speakerId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["speakers", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(organizationId, eventId) });
       toast.success("Speaker deleted successfully");
     },
     onError: () => {

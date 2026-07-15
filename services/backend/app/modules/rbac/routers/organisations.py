@@ -6,15 +6,22 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func, select, and_
+from sqlalchemy import delete, func, select, update, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db, require_active_user
+from app.dependencies import StepUpAuth, get_current_user, get_db, require_active_user
+from app.core.tenant_context import TenantContextGuard
+from app.modules.audit.models.audit_log import AuditLog
+from app.modules.billing.services.admin_lifecycle_service import BillingAdminLifecycleService
+from app.modules.billing.services.limit_guard import LimitGuard
+from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
 from app.modules.rbac.models.organization_member import OrganizationMember
+from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.platform.models.organization import Organization
 from app.modules.rbac.schemas.organization import OrganizationResponse, OrganizationUpdate
 from app.services import auth_service
@@ -71,6 +78,38 @@ class PlatformOrgUpdate(BaseModel):
     max_storage_gb: Optional[int] = Field(None, ge=1)
     is_active: Optional[bool] = None
     suspension_reason: Optional[str] = None
+    reason: str = Field(..., min_length=12, max_length=1000)
+
+
+class PlatformOrganizationProvision(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
+    slug: str = Field(min_length=3, max_length=50)
+    owner_email: EmailStr
+    owner_first_name: str = Field(min_length=1, max_length=100)
+    owner_last_name: str = Field(min_length=1, max_length=100)
+    country: str = Field(default="IN", min_length=2, max_length=2)
+    timezone: str = Field(default="Asia/Kolkata", max_length=50)
+    reason: str = Field(min_length=12, max_length=1000)
+
+
+class PlatformMemberInvite(BaseModel):
+    email: EmailStr
+    org_role: str = Field(pattern="^(admin|member|billing_only)$")
+    reason: str = Field(min_length=12, max_length=1000)
+
+
+class PlatformMemberUpdate(BaseModel):
+    org_role: str = Field(pattern="^(owner|admin|member|billing_only)$")
+    reason: str = Field(min_length=12, max_length=1000)
+
+
+class PlatformReason(BaseModel):
+    reason: str = Field(min_length=12, max_length=1000)
+
+
+class PlatformAssignmentUpdate(BaseModel):
+    permissions: dict = Field(default_factory=dict)
+    reason: str = Field(min_length=12, max_length=1000)
 
 
 
@@ -135,16 +174,36 @@ async def _member_rows(db: AsyncSession, org_id: uuid.UUID) -> list[dict]:
             OrganizationMember.organization_id == org_id
         ).order_by(OrganizationMember.invited_at.asc())
     )
+    rows = result.all()
+    user_ids = [user.id for _, user in rows if user]
+    assignments_by_user: dict[uuid.UUID, list[str]] = {}
+    if user_ids:
+        assignment_rows = await db.execute(
+            select(UserEventAssignment.user_id, UserEventAssignment.event_id)
+            .join(Event, Event.id == UserEventAssignment.event_id)
+            .where(
+                UserEventAssignment.user_id.in_(user_ids),
+                Event.organization_id == org_id,
+            )
+        )
+        for user_id, event_id in assignment_rows.all():
+            assignments_by_user.setdefault(user_id, []).append(str(event_id))
     return [{
         "id": str(member.id),
         "user_id": str(user.id) if user else None,
         "name": user.full_name if user else (member.invite_email or "Pending invite"),
+        "first_name": user.first_name if user else None,
+        "last_name": user.last_name if user else None,
         "email": user.email if user else member.invite_email,
+        "user_role": user.role if user else None,
         "org_role": member.org_role,
         "accepted_at": member.accepted_at.isoformat() if member.accepted_at else None,
         "invited_at": member.invited_at.isoformat() if member.invited_at else None,
         "is_active": member.is_active,
-    } for member, user in result.all()]
+        "is_2fa_enabled": user.is_2fa_enabled if user else False,
+        "last_login_at": user.last_login_at.isoformat() if user and user.last_login_at else None,
+        "event_ids": assignments_by_user.get(user.id, []) if user else [],
+    } for member, user in rows]
 
 
 @router.get("/auth/check-slug")
@@ -253,9 +312,25 @@ async def get_my_org(current_user: User = Depends(require_active_user), db: Asyn
 async def update_my_org(payload: OrganizationUpdate, current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
     await _require_org_admin(db, current_user)
     org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found.")
+
+    if payload.slug is not None:
+        slug = _clean_slug(payload.slug)
+        if not re.match(r"^[a-z0-9-]+$", slug):
+            raise HTTPException(status_code=422, detail="Slug must be 2-100 lowercase letters, numbers, or hyphens.")
+        if slug != org.slug:
+            exists = await db.scalar(select(func.count(Organization.id)).where(Organization.slug == slug))
+            if exists:
+                raise HTTPException(status_code=409, detail="Organisation slug is already taken.")
+            org.slug = slug
+
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "slug":
+            continue
         if value is not None:
             setattr(org, field, value)
+
     await db.commit()
     await db.refresh(org)
     return {"organization": OrganizationResponse.model_validate(org).model_dump(mode="json")}
@@ -313,6 +388,24 @@ async def remove_member(member_id: uuid.UUID, current_user: User = Depends(requi
     if member.org_role == "owner":
         raise HTTPException(status_code=400, detail="Cannot remove an owner.")
     member.is_active = False
+    if member.user_id:
+        user = await db.get(User, member.user_id)
+        if user:
+            user.is_active = False
+        organization_event_ids = select(Event.id).where(
+            Event.organization_id == current_user.organization_id
+        )
+        await db.execute(
+            delete(UserEventAssignment).where(
+                UserEventAssignment.user_id == member.user_id,
+                UserEventAssignment.event_id.in_(organization_event_ids),
+            )
+        )
+        await db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == member.user_id, RefreshToken.is_revoked.is_(False))
+            .values(is_revoked=True, revoked_at=datetime.now(timezone.utc))
+        )
     await db.commit()
     return {"message": "Member removed"}
 
@@ -355,6 +448,362 @@ async def platform_orgs(
     return {"items": items, "page": page, "per_page": per_page}
 
 
+@router.post("/platform/organisations", status_code=status.HTTP_201_CREATED)
+async def platform_provision_org(
+    payload: PlatformOrganizationProvision,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    slug = _clean_slug(payload.slug)
+    if not SLUG_RE.match(slug):
+        raise HTTPException(status_code=422, detail="Slug must be 3-50 lowercase letters, numbers, or hyphens.")
+    operation_payload = {**payload.model_dump(mode="json"), "slug": slug}
+
+    try:
+        async with TenantContextGuard.scoped(db, actor.organization_id):
+            await db.scalar(
+                select(Organization.id)
+                .where(Organization.id == actor.organization_id)
+                .with_for_update()
+            )
+            operation, replay = await BillingAdminLifecycleService._begin_operation(
+                db,
+                actor.organization_id,
+                "PROVISION_ORGANIZATION",
+                idempotency_key,
+                operation_payload,
+            )
+        if replay:
+            async with TenantContextGuard.scoped(db, operation.result_ref_id):
+                org = await db.get(Organization, operation.result_ref_id)
+                member = await db.scalar(
+                    select(OrganizationMember).where(
+                        OrganizationMember.organization_id == operation.result_ref_id,
+                        OrganizationMember.org_role == "owner",
+                    )
+                )
+            if org is None or member is None:
+                raise HTTPException(status_code=409, detail={
+                    "code": "IDEMPOTENCY_RESULT_MISSING",
+                    "message": "The provisioning result requires administrative recovery.",
+                })
+            return {
+                "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
+                "owner_invitation": {
+                    "membership_id": str(member.id),
+                    "email": member.invite_email,
+                    "token": member.invite_token,
+                },
+                "replayed": True,
+            }
+
+        organization_id = uuid.uuid4()
+        invitation_token = secrets.token_urlsafe(32)[:64]
+        async with TenantContextGuard.scoped(db, organization_id):
+            org = Organization(
+                id=organization_id,
+                name=payload.name.strip(),
+                slug=slug,
+                plan="trial",
+                plan_expires_at=datetime.now(timezone.utc) + timedelta(days=14),
+                country=payload.country.upper(),
+                timezone=payload.timezone,
+            )
+            member = OrganizationMember(
+                organization_id=organization_id,
+                org_role="owner",
+                invited_by=actor.id,
+                invite_token=invitation_token,
+                invite_email=payload.owner_email.lower(),
+                invite_first_name=payload.owner_first_name.strip(),
+                invite_last_name=payload.owner_last_name.strip(),
+            )
+            db.add_all([org, member])
+            await db.flush()
+            db.add(AuditLog(
+                organization_id=organization_id,
+                actor_user_id=actor.id,
+                action_type="ORGANIZATION_PROVISIONED",
+                resource_type="organization",
+                resource_id=organization_id,
+                new_state={
+                    "name": org.name,
+                    "slug": org.slug,
+                    "owner_email": member.invite_email,
+                    "membership_id": str(member.id),
+                },
+                change_diff={"reason": payload.reason, "idempotency_key": idempotency_key},
+                is_sensitive=True,
+            ))
+        async with TenantContextGuard.scoped(db, actor.organization_id):
+            operation.status = "SUCCEEDED"
+            operation.result_ref_type = "organization"
+            operation.result_ref_id = organization_id
+        await db.commit()
+        return {
+            "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
+            "owner_invitation": {
+                "membership_id": str(member.id),
+                "email": member.invite_email,
+                "token": invitation_token,
+            },
+            "replayed": False,
+        }
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail={
+            "code": "PROVISIONING_CONFLICT",
+            "message": "The organization slug or owner invitation conflicts with an existing record.",
+        }) from exc
+
+
+@router.get("/platform/organisations/{org_id}/members")
+async def platform_org_members(
+    org_id: uuid.UUID,
+    _: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    async with TenantContextGuard.scoped(db, org_id):
+        if await db.get(Organization, org_id) is None:
+            raise HTTPException(status_code=404, detail="Organisation not found.")
+        return await _member_rows(db, org_id)
+
+
+@router.post("/platform/organisations/{org_id}/members", status_code=status.HTTP_201_CREATED)
+async def platform_invite_org_member(
+    org_id: uuid.UUID,
+    payload: PlatformMemberInvite,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    async with TenantContextGuard.scoped(db, org_id):
+        if await db.get(Organization, org_id) is None:
+            raise HTTPException(status_code=404, detail="Organisation not found.")
+        existing = await db.scalar(select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_id,
+            func.lower(OrganizationMember.invite_email) == payload.email.lower(),
+            OrganizationMember.is_active.is_(True),
+        ))
+        if existing:
+            raise HTTPException(status_code=409, detail={"code": "MEMBERSHIP_EXISTS", "message": "An active membership or invitation already exists."})
+        member = OrganizationMember(
+            organization_id=org_id,
+            org_role=payload.org_role,
+            invited_by=actor.id,
+            invite_token=secrets.token_urlsafe(32)[:64],
+            invite_email=payload.email.lower(),
+        )
+        db.add(member)
+        await db.flush()
+        db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=actor.id,
+            action_type="ORGANIZATION_MEMBER_INVITED",
+            resource_type="organization_member",
+            resource_id=member.id,
+            new_state={"email": member.invite_email, "org_role": member.org_role},
+            change_diff={"reason": payload.reason},
+            is_sensitive=True,
+        ))
+        await db.commit()
+        return {"membership_id": str(member.id), "email": member.invite_email, "invite_token": member.invite_token}
+
+
+@router.patch("/platform/organisations/{org_id}/members/{member_id}")
+async def platform_update_org_member(
+    org_id: uuid.UUID,
+    member_id: uuid.UUID,
+    payload: PlatformMemberUpdate,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    async with TenantContextGuard.scoped(db, org_id):
+        member = await db.scalar(select(OrganizationMember).where(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.is_active.is_(True),
+        ).with_for_update())
+        if member is None:
+            raise HTTPException(status_code=404, detail="Member not found.")
+        if member.org_role == "owner" and payload.org_role != "owner":
+            owners = await db.scalar(select(func.count(OrganizationMember.id)).where(
+                OrganizationMember.organization_id == org_id,
+                OrganizationMember.org_role == "owner",
+                OrganizationMember.is_active.is_(True),
+            ))
+            if int(owners or 0) <= 1:
+                raise HTTPException(status_code=409, detail={"code": "LAST_OWNER", "message": "The last active owner cannot be demoted."})
+        old_role = member.org_role
+        member.org_role = payload.org_role
+        db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=actor.id,
+            action_type="ORGANIZATION_MEMBER_ROLE_CHANGED",
+            resource_type="organization_member",
+            resource_id=member.id,
+            old_state={"org_role": old_role},
+            new_state={"org_role": member.org_role},
+            change_diff={"reason": payload.reason},
+            is_sensitive=True,
+        ))
+        await db.commit()
+        return {"message": "Member role updated", "org_role": member.org_role}
+
+
+@router.delete("/platform/organisations/{org_id}/members/{member_id}")
+async def platform_remove_org_member(
+    org_id: uuid.UUID,
+    member_id: uuid.UUID,
+    payload: PlatformReason,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    async with TenantContextGuard.scoped(db, org_id):
+        member = await db.scalar(select(OrganizationMember).where(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.is_active.is_(True),
+        ).with_for_update())
+        if member is None:
+            raise HTTPException(status_code=404, detail="Member not found.")
+        if member.org_role == "owner":
+            raise HTTPException(status_code=409, detail={"code": "OWNER_REMOVAL_FORBIDDEN", "message": "Transfer or demote ownership before removal."})
+        member.is_active = False
+        revoked_sessions = 0
+        removed_assignments = 0
+        if member.user_id:
+            user = await db.get(User, member.user_id)
+            if user:
+                user.is_active = False
+            organization_event_ids = select(Event.id).where(Event.organization_id == org_id)
+            assignment_result = await db.execute(
+                delete(UserEventAssignment).where(
+                    UserEventAssignment.user_id == member.user_id,
+                    UserEventAssignment.event_id.in_(organization_event_ids),
+                )
+            )
+            removed_assignments = assignment_result.rowcount or 0
+            session_result = await db.execute(
+                update(RefreshToken)
+                .where(RefreshToken.user_id == member.user_id, RefreshToken.is_revoked.is_(False))
+                .values(is_revoked=True, revoked_at=datetime.now(timezone.utc))
+            )
+            revoked_sessions = session_result.rowcount or 0
+        db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=actor.id,
+            action_type="ORGANIZATION_MEMBER_REMOVED",
+            resource_type="organization_member",
+            resource_id=member.id,
+            old_state={"is_active": True, "org_role": member.org_role},
+            new_state={"is_active": False},
+            change_diff={
+                "reason": payload.reason,
+                "sessions_revoked": revoked_sessions,
+                "event_assignments_removed": removed_assignments,
+            },
+            is_sensitive=True,
+        ))
+        await db.commit()
+        return {"message": "Member removed", "sessions_revoked": revoked_sessions, "event_assignments_removed": removed_assignments}
+
+
+@router.put("/platform/organisations/{org_id}/members/{member_id}/events/{event_id}")
+async def platform_assign_member_event(
+    org_id: uuid.UUID,
+    member_id: uuid.UUID,
+    event_id: uuid.UUID,
+    payload: PlatformAssignmentUpdate,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    async with TenantContextGuard.scoped(db, org_id):
+        member = await db.scalar(select(OrganizationMember).where(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.is_active.is_(True),
+        ))
+        event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == org_id))
+        if member is None or member.user_id is None or event is None:
+            raise HTTPException(status_code=404, detail="Member or event not found.")
+        existing = await db.scalar(select(UserEventAssignment).where(
+            UserEventAssignment.user_id == member.user_id,
+            UserEventAssignment.event_id == event_id,
+        ).with_for_update())
+        if existing is None:
+            await LimitGuard.check_event_team_members(db, org_id, event_id)
+            existing = UserEventAssignment(user_id=member.user_id, event_id=event_id, permissions=payload.permissions)
+            db.add(existing)
+            action = "EVENT_WORKSPACE_MEMBER_ASSIGNED"
+        else:
+            existing.permissions = payload.permissions
+            action = "EVENT_WORKSPACE_ASSIGNMENT_UPDATED"
+        await db.flush()
+        db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=actor.id,
+            action_type=action,
+            resource_type="user_event_assignment",
+            resource_id=existing.id,
+            new_state={"user_id": str(member.user_id), "event_id": str(event_id), "permissions": payload.permissions},
+            change_diff={"reason": payload.reason},
+            is_sensitive=True,
+        ))
+        await db.commit()
+        return {"assignment_id": str(existing.id), "event_id": str(event_id), "permissions": existing.permissions}
+
+
+@router.delete("/platform/organisations/{org_id}/members/{member_id}/events/{event_id}")
+async def platform_unassign_member_event(
+    org_id: uuid.UUID,
+    member_id: uuid.UUID,
+    event_id: uuid.UUID,
+    payload: PlatformReason,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
+    async with TenantContextGuard.scoped(db, org_id):
+        member = await db.scalar(select(OrganizationMember).where(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == org_id,
+        ))
+        if member is None or member.user_id is None:
+            raise HTTPException(status_code=404, detail="Member not found.")
+        assignment = await db.scalar(select(UserEventAssignment).where(
+            UserEventAssignment.user_id == member.user_id,
+            UserEventAssignment.event_id == event_id,
+        ))
+        if assignment is None:
+            raise HTTPException(status_code=404, detail="Event assignment not found.")
+        assignment_id = assignment.id
+        await db.delete(assignment)
+        db.add(AuditLog(
+            organization_id=org_id,
+            actor_user_id=actor.id,
+            action_type="EVENT_WORKSPACE_MEMBER_UNASSIGNED",
+            resource_type="user_event_assignment",
+            resource_id=assignment_id,
+            old_state={"user_id": str(member.user_id), "event_id": str(event_id)},
+            change_diff={"reason": payload.reason},
+            is_sensitive=True,
+        ))
+        await db.commit()
+        return {"message": "Event workspace assignment removed"}
+
+
 @router.get("/platform/organisations/{org_id}")
 async def platform_org_detail(org_id: uuid.UUID, _: User = Depends(_require_platform_admin), db: AsyncSession = Depends(get_db)) -> dict:
     org = await db.get(Organization, org_id)
@@ -371,17 +820,47 @@ async def platform_org_detail(org_id: uuid.UUID, _: User = Depends(_require_plat
 
 
 @router.put("/platform/organisations/{org_id}")
-async def platform_update_org(org_id: uuid.UUID, payload: PlatformOrgUpdate, _: User = Depends(_require_platform_admin), db: AsyncSession = Depends(get_db)) -> dict:
+async def platform_update_org(
+    org_id: uuid.UUID,
+    payload: PlatformOrgUpdate,
+    step_up: StepUpAuth,
+    actor: User = Depends(_require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del step_up
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True, exclude={"reason"})
+    if "slug" in changes:
+        changes["slug"] = _clean_slug(changes["slug"])
+        if not SLUG_RE.match(changes["slug"]):
+            raise HTTPException(status_code=422, detail="Slug must be 3-50 lowercase letters, numbers, or hyphens.")
+        duplicate = await db.scalar(select(Organization.id).where(
+            Organization.slug == changes["slug"],
+            Organization.id != org_id,
+        ))
+        if duplicate:
+            raise HTTPException(status_code=409, detail={"code": "SLUG_CONFLICT", "message": "Organisation slug is already in use."})
+    old_state = {field: getattr(org, field) for field in changes}
+    for field, value in changes.items():
         setattr(org, field, value)
     if payload.is_active is False:
         org.suspended_at = datetime.now(timezone.utc)
     elif payload.is_active is True:
         org.suspended_at = None
         org.suspension_reason = None
+    db.add(AuditLog(
+        organization_id=org_id,
+        actor_user_id=actor.id,
+        action_type="ORGANIZATION_DETAILS_UPDATED",
+        resource_type="organization",
+        resource_id=org_id,
+        old_state=old_state,
+        new_state={field: getattr(org, field) for field in changes},
+        change_diff={"reason": payload.reason, "fields": sorted(changes)},
+        is_sensitive=True,
+    ))
     await db.commit()
     return {"organization": OrganizationResponse.model_validate(org).model_dump(mode="json")}
 

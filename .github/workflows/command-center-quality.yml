@@ -1,0 +1,79 @@
+name: Command Center quality
+
+on:
+  pull_request:
+    paths:
+      - "apps/cloud/command-center/**"
+      - "services/backend/app/**"
+      - "services/backend/scripts/export_openapi.py"
+      - "package-lock.json"
+      - ".github/workflows/command-center-quality.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/cloud/command-center/**"
+      - "services/backend/app/**"
+      - "services/backend/scripts/export_openapi.py"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: command-center-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/cloud/command-center
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/backend/requirements.txt
+      - name: Install backend contract dependencies
+        working-directory: services/backend
+        run: pip install -r requirements.txt
+      - name: Install workspace dependencies
+        working-directory: ${{ github.workspace }}
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify generated API contracts
+        run: npm run contracts:check
+      - name: Verify frontend boundaries
+        run: npm run quality:contracts
+      - name: Block Critical and High production dependencies
+        run: npm run audit:production
+      - name: Type-check
+        run: npm run type-check
+      - name: Lint
+        run: npm run lint -- --max-warnings=100
+      - name: Unit and component tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
+      - name: Browser and accessibility journeys
+        env:
+          COMMAND_CENTER_E2E_START_SERVER: "1"
+        run: npm run test:e2e
+      - name: Upload browser evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: command-center-playwright-evidence
+          path: |
+            apps/cloud/command-center/playwright-report
+            apps/cloud/command-center/test-results
+          retention-days: 14

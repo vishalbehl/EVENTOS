@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo } from "react"
 import { useHardwareCatalog, useHardwareCategories,
-         useCreateHardwareItem, useUpdateHardwareItem,
+         useCreateHardwareItem, useUpdateHardwareItem, useDeleteHardwareItem,
          useImportHardwareExcel,
          formatINR } from "@/services/super-admin-service"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
@@ -44,6 +44,7 @@ export default function HardwareCatalogPage() {
   const { data: categories } = useHardwareCategories()
   const createItem = useCreateHardwareItem()
   const updateItem = useUpdateHardwareItem()
+  const deleteItem = useDeleteHardwareItem()
   const importExcel = useImportHardwareExcel()
 
   const summary = data?.summary
@@ -187,13 +188,26 @@ export default function HardwareCatalogPage() {
     {
       id: "actions",
       cell: ({ row }: any) => (
-        <Button
-          size="sm" variant="ghost"
-          onClick={() => setEditingItem(row.original)}
-          className="text-xs text-secondary hover:text-primary h-8 px-2"
-        >
-          Edit
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => setEditingItem(row.original)}
+            className="text-xs text-secondary hover:text-primary h-8 px-2"
+          >
+            Edit
+          </Button>
+          <Button
+            size="sm" variant="ghost"
+            onClick={async () => {
+              if (window.confirm(`Are you sure you want to delete "${row.original.name}"?`)) {
+                await deleteItem.mutateAsync(row.original.id)
+              }
+            }}
+            className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-2"
+          >
+            Delete
+          </Button>
+        </div>
       )
     }
   ], [categories])
@@ -352,11 +366,14 @@ export default function HardwareCatalogPage() {
         </div>
 
         {/* Reset button */}
-        {activeFiltersCount > 0 && (
+        {(activeFiltersCount > 0 || search) && (
           <div className="ml-auto">
             <Button
               variant="ghost"
-              onClick={resetFilters}
+              onClick={() => {
+                setSearch("")
+                resetFilters()
+              }}
               className="text-xs h-9 text-tertiary hover:text-primary gap-1"
             >
               <RotateCcw className="h-3.5 w-3.5" />

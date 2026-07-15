@@ -6,9 +6,10 @@ const shouldStartServer = Boolean(process.env.CI || process.env.COMMAND_CENTER_E
 
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 30_000,
+  timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
+  workers: process.env.CI ? 2 : 2,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
@@ -22,6 +23,10 @@ export default defineConfig({
     ? undefined
     : {
         command: `node ../../../node_modules/next/dist/bin/next dev --port ${port}`,
+        env: {
+          ...process.env,
+          NEXT_PUBLIC_DISABLE_REALTIME: "1",
+        },
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

@@ -94,6 +94,12 @@ class User(Base):
             return self.organization.slug
         return None
 
+    @property
+    def onboarding_completed(self) -> bool:
+        if "organization" in self.__dict__ and self.organization:
+            return self.organization.onboarding_completed
+        return False
+
     # Events this user created
     created_events: Mapped[List["Event"]] = relationship(
         "Event",

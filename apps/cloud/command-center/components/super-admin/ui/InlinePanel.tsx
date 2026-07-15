@@ -31,6 +31,7 @@ export function InlinePanel({ isOpen, children, className, title, onClose }: Inl
                   <button
                     type="button"
                     onClick={onClose}
+                    aria-label="Close panel"
                     className="p-1 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-surface-2 transition-colors"
                   >
                     <svg

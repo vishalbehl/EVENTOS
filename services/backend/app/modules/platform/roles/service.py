@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.platform.roles.models import DepartmentRole, UserAssignment
@@ -57,7 +58,8 @@ class RoleService:
         self,
         org_id: uuid.UUID,
         payload: RoleCreate,
-        creator_id: uuid.UUID
+        creator_id: uuid.UUID,
+        reason: Optional[str] = None,
     ) -> DepartmentRole:
         # Verify department if provided
         if payload.department_id:
@@ -85,6 +87,22 @@ class RoleService:
             access_level=payload.access_level.upper(),
             creator_id=creator_id
         )
+        if reason:
+            self.db.add(AuditLog(
+                organization_id=org_id,
+                actor_user_id=creator_id,
+                resource_type="platform_role",
+                resource_id=role.id,
+                action_type="PLATFORM_ROLE_CREATED",
+                new_state={
+                    "name": role.name,
+                    "code": role.code,
+                    "department_id": str(role.department_id) if role.department_id else None,
+                    "access_level": role.access_level,
+                },
+                change_diff={"reason": reason},
+                is_sensitive=True,
+            ))
         await self.db.commit()
         return role
 
@@ -93,9 +111,27 @@ class RoleService:
         org_id: uuid.UUID,
         id: uuid.UUID,
         payload: RoleUpdate,
-        updater_id: uuid.UUID
+        updater_id: uuid.UUID,
+        reason: Optional[str] = None,
+        expected_updated_at: Optional[datetime] = None,
     ) -> DepartmentRole:
         role = await self.get_role(org_id, id)
+
+        if expected_updated_at and role.updated_at != expected_updated_at:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "VERSION_CONFLICT",
+                    "message": "The role changed after it was loaded. Refresh and retry.",
+                },
+            )
+
+        old_state = {
+            "name": role.name,
+            "code": role.code,
+            "description": role.description,
+            "access_level": role.access_level,
+        }
 
         if payload.code:
             payload_code = payload.code.upper()
@@ -120,11 +156,45 @@ class RoleService:
         role.updated_at = datetime.now(timezone.utc)
 
         await self.repository.save_role(role)
+        if reason:
+            self.db.add(AuditLog(
+                organization_id=org_id,
+                actor_user_id=updater_id,
+                resource_type="platform_role",
+                resource_id=role.id,
+                action_type="PLATFORM_ROLE_UPDATED",
+                old_state=old_state,
+                new_state={
+                    "name": role.name,
+                    "code": role.code,
+                    "description": role.description,
+                    "access_level": role.access_level,
+                },
+                change_diff={"reason": reason},
+                is_sensitive=True,
+            ))
         await self.db.commit()
         return role
 
     async def delete_role(self, org_id: uuid.UUID, id: uuid.UUID, deleter_id: uuid.UUID, reason: str) -> None:
         role = await self.get_role(org_id, id)
+        assignment_count = await self.db.scalar(
+            select(func.count(UserAssignment.id)).where(
+                UserAssignment.organization_id == org_id,
+                UserAssignment.role_id == role.id,
+                UserAssignment.deleted_at.is_(None),
+            )
+        ) or 0
+        if assignment_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "ROLE_IN_USE",
+                    "message": "Reassign active users before archiving this role.",
+                    "assignment_count": assignment_count,
+                },
+            )
+
         self.db.add(AuditLog(
             organization_id=org_id,
             actor_user_id=deleter_id,

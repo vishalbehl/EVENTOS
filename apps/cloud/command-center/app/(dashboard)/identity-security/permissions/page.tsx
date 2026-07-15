@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { KeyRound, RefreshCw, Search, ShieldCheck, Sparkles, ToggleLeft } from "lucide-react";
+import { KeyRound, RefreshCw, Search, ShieldCheck, ToggleLeft } from "lucide-react";
 import { toast } from "sonner";
 
 import { RecoverableError } from "@/components/super-admin/ui/AsyncState";
@@ -18,9 +18,9 @@ import {
   usePlatformPermissions,
   usePlatformRoles,
   useRolePermissions,
-  useSeedPlatformPermissions,
   useToggleRolePermission,
 } from "@/services/platform-access-service";
+import { useAdminOrgs } from "@/services/super-admin-service";
 
 function groupPermissions(permissions: PlatformPermission[]) {
   return permissions.reduce<Record<string, PlatformPermission[]>>((groups, permission) => {
@@ -34,15 +34,16 @@ function groupPermissions(permissions: PlatformPermission[]) {
 export default function PlatformPermissionsPage() {
   const [search, setSearch] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>();
+  const [organizationId, setOrganizationId] = useState("");
   const [pendingToggle, setPendingToggle] = useState<{
     permission: PlatformPermission;
     enabled: boolean;
   } | null>(null);
 
-  const rolesQuery = usePlatformRoles({ limit: 100 });
-  const permissionsQuery = usePlatformPermissions();
-  const rolePermissionsQuery = useRolePermissions(selectedRoleId);
-  const seedPermissions = useSeedPlatformPermissions();
+  const { data: organizations = [] } = useAdminOrgs({ limit: 100 });
+  const rolesQuery = usePlatformRoles(organizationId || undefined, { limit: 100 });
+  const permissionsQuery = usePlatformPermissions(organizationId || undefined);
+  const rolePermissionsQuery = useRolePermissions(organizationId || undefined, selectedRoleId);
   const togglePermission = useToggleRolePermission();
 
   const roles = rolesQuery.data || [];
@@ -98,27 +99,32 @@ export default function PlatformPermissionsPage() {
               />
               Refresh
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={seedPermissions.isPending}
-              onClick={async () => {
-                try {
-                  await seedPermissions.mutateAsync();
-                  toast.success("Permission catalogue seeded.");
-                } catch (seedError: any) {
-                  toast.error(seedError?.message || "Could not seed permissions.");
-                }
-              }}
-            >
-              <Sparkles className="mr-2 size-4" />
-              Seed Catalogue
-            </Button>
           </div>
         }
       />
 
       <MetricRow metrics={metrics} />
+
+      <div className="rounded-xl border border-border bg-surface p-4">
+        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]" htmlFor="permission-organization">
+          Tenant scope
+        </label>
+        <select
+          id="permission-organization"
+          value={organizationId}
+          onChange={(event) => {
+            setOrganizationId(event.target.value);
+            setSelectedRoleId(undefined);
+          }}
+          className="h-10 w-full max-w-md rounded-md border border-border bg-surface-2 px-3 text-sm text-[var(--text-primary)]"
+        >
+          <option value="">Select an organization</option>
+          {organizations.map((organization) => (
+            <option key={organization.id} value={organization.id}>{organization.name}</option>
+          ))}
+        </select>
+        <p className="mt-2 text-xs text-[var(--text-tertiary)]">Permission mappings are evaluated only inside the selected tenant.</p>
+      </div>
 
       {hasError ? (
         <RecoverableError
@@ -281,6 +287,7 @@ export default function PlatformPermissionsPage() {
           }
           try {
             await togglePermission.mutateAsync({
+              organizationId,
               roleId: selectedRoleId,
               permissionId: pendingToggle.permission.id,
               reason,

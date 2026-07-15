@@ -6,7 +6,8 @@ import { SkipNavigation } from "@/components/layout/SkipNavigation";
 import { useUIStore } from "@/store/useUIStore";
 import { cn } from "@/lib/utils";
 import { SuperAdminGuard } from "@/components/super-admin/SuperAdminGuard";
-import { X } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { RouteAnnouncer } from "@/components/layout/RouteAnnouncer";
 
 export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
   const isSidebarCollapsed = useUIStore((state) => state.isSidebarCollapsed);
@@ -28,27 +29,12 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
           <Sidebar />
         </aside>
 
-        {isMobileSidebarOpen && (
-          <div className="fixed inset-0 z-[90] md:hidden">
-            <button
-              type="button"
-              aria-label="Close navigation"
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-              onClick={() => setMobileSidebarOpen(false)}
-            />
-            <aside aria-label="Mobile navigation" className="relative h-full w-[min(88vw,20rem)] shadow-2xl">
-              <Sidebar />
-              <button
-                type="button"
-                aria-label="Close navigation"
-                onClick={() => setMobileSidebarOpen(false)}
-                className="absolute right-3 top-3 grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              >
-                <X aria-hidden className="size-4" />
-              </button>
-            </aside>
-          </div>
-        )}
+        <Sheet open={isMobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+          <SheetContent side="left" aria-describedby={undefined} className="w-[min(88vw,20rem)] p-0 md:hidden">
+            <SheetTitle className="sr-only">Command Center navigation</SheetTitle>
+            <Sidebar />
+          </SheetContent>
+        </Sheet>
 
         <main
           className={cn(
@@ -57,9 +43,10 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
           )}
         >
           <Header />
+          <RouteAnnouncer />
           
           <div className="flex min-h-0 flex-1 flex-col p-2 sm:p-4 md:px-6">
-            <div id="command-center-main" tabIndex={-1} className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_78%,transparent)] backdrop-blur-md">
+            <div id="command-center-main" tabIndex={-1} className="cc-scroll-region custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--base)_78%,transparent)] backdrop-blur-md">
               {children}
             </div>
           </div>

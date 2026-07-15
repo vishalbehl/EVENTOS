@@ -3,14 +3,14 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 
-interface PageContainerProps extends React.HTMLAttributes<HTMLDivElement> {
+interface PageContainerProps extends React.HTMLAttributes<HTMLElement> {
   children: React.ReactNode;
 }
 
 export function PageContainer({ children, className, ...props }: PageContainerProps) {
   return (
-    <div className={cn("max-w-[1600px] mx-auto px-6 py-6 space-y-6 w-full flex flex-col min-h-0", className)} {...props}>
+    <section className={cn("mx-auto flex min-h-0 w-full max-w-[1600px] flex-col space-y-6 px-[var(--space-page-x)] py-[var(--space-page-y)]", className)} {...props}>
       {children}
-    </div>
+    </section>
   );
 }

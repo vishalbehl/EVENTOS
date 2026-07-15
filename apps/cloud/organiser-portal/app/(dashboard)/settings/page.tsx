@@ -8,7 +8,8 @@ import {
    Settings, Save, Globe, Smartphone, Mail, Lock,
    Fingerprint, Zap, Code, ExternalLink, ChevronRight,
    Monitor, Palette, Trash2, CheckCircle2, Box, Info, Plus, Layers,
-   Users, Building2, Receipt, FileText, BarChart3, Phone, Camera
+   Users, Building2, Receipt, FileText, BarChart3, Phone, Camera,
+   Loader2
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,8 @@ import { cn } from "@/lib/utils";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
 import { useAuthStore } from "@/store/use-auth-store";
 import { toast } from "sonner";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { countries, timezones, slugify } from "@/components/organizer/org/org-api";
 
 const DEFAULT_AVATARS = [
    "https://api.dicebear.com/7.x/lorelei/svg?seed=Felix",
@@ -144,6 +147,108 @@ function SettingsPageContent() {
       }
    };
 
+   // New Organisation Details states & handlers
+   const [orgData, setOrgData] = useState({
+      name: "",
+      slug: "",
+      country: "IN",
+      timezone: "Asia/Kolkata",
+   });
+   const [currentOrgSlug, setCurrentOrgSlug] = useState("");
+   const [isSavingOrg, setIsSavingOrg] = useState(false);
+   const [orgSlugAvailable, setOrgSlugAvailable] = useState<boolean | null>(null);
+   const [checkingOrgSlug, setCheckingOrgSlug] = useState(false);
+
+   useEffect(() => {
+      const fetchOrg = async () => {
+         try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/organisations/me`, {
+               headers: {
+                  'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+               }
+            });
+            if (response.ok) {
+               const data = await response.json();
+               if (data && data.organization) {
+                  setOrgData({
+                     name: data.organization.name || "",
+                     slug: data.organization.slug || "",
+                     country: data.organization.country || "IN",
+                     timezone: data.organization.timezone || "Asia/Kolkata",
+                  });
+                  setCurrentOrgSlug(data.organization.slug || "");
+               }
+            }
+         } catch (err) {
+            console.error("Failed to load organization profile:", err);
+         }
+      };
+      if (useAuthStore.getState().isAuthenticated) {
+         fetchOrg();
+      }
+   }, [activeTab]);
+
+   useEffect(() => {
+      if (!orgData.slug || orgData.slug.length < 3 || orgData.slug === currentOrgSlug) {
+         setOrgSlugAvailable(true);
+         return;
+      }
+      const timer = setTimeout(async () => {
+         setCheckingOrgSlug(true);
+         try {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/organisations/check-slug?slug=${orgData.slug}`, {
+               headers: { 'Authorization': `Bearer ${useAuthStore.getState().accessToken}` }
+            });
+            if (res.ok) {
+               const check = await res.json();
+               setOrgSlugAvailable(check.available);
+            } else {
+               setOrgSlugAvailable(false);
+            }
+         } catch {
+            setOrgSlugAvailable(false);
+         } finally {
+            setCheckingOrgSlug(false);
+         }
+      }, 500);
+      return () => clearTimeout(timer);
+   }, [orgData.slug, currentOrgSlug]);
+
+   const handleSaveOrg = async () => {
+      if (!orgData.name || !orgData.slug) {
+         toast.error("Organisation name and slug are required");
+         return;
+      }
+      if (orgSlugAvailable === false) {
+         toast.error("Organisation slug is already taken");
+         return;
+      }
+      setIsSavingOrg(true);
+      try {
+         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/organisations/me`, {
+            method: 'PUT',
+            headers: {
+               'Content-Type': 'application/json',
+               'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+            },
+            body: JSON.stringify(orgData)
+         });
+
+         if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || "Failed to update organisation");
+         }
+
+         const data = await response.json();
+         setCurrentOrgSlug(data.organization.slug || "");
+         toast.success("Organisation settings updated successfully");
+      } catch (error: any) {
+         toast.error(error.message);
+      } finally {
+         setIsSavingOrg(false);
+      }
+   };
+
    const [passwordData, setPasswordData] = useState({ current: "", new: "" });
    const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
@@ -182,13 +287,22 @@ function SettingsPageContent() {
    };
 
    useEffect(() => {
-      setToolbarActions([
-         { label: "Save Profile", icon: Save, onClick: handleSaveProfile, color: "bg-[var(--pri)]/10" },
-      ]);
-   }, [setToolbarActions, formData]);
+      if (activeTab === "profile") {
+         setToolbarActions([
+            { label: "Save Profile", icon: Save, onClick: handleSaveProfile, color: "bg-[var(--pri)]/10" },
+         ]);
+      } else if (activeTab === "organisation") {
+         setToolbarActions([
+            { label: "Save Organisation", icon: Save, onClick: handleSaveOrg, color: "bg-[var(--pri)]/10" },
+         ]);
+      } else {
+         setToolbarActions([]);
+      }
+   }, [setToolbarActions, activeTab, formData, orgData, orgSlugAvailable]);
 
    const baseTabs = [
       { id: "profile", label: "My Profile", icon: User },
+      { id: "organisation", label: "Organisation", icon: Building2 },
       { id: "security", label: "Security & Access", icon: Shield },
       { id: "notifications", label: "Notifications", icon: Bell },
    ];
@@ -224,11 +338,15 @@ function SettingsPageContent() {
                </p>
             </div>
             <Button
-               onClick={handleSaveProfile}
-               disabled={isSaving}
+               onClick={activeTab === "organisation" ? handleSaveOrg : handleSaveProfile}
+               disabled={activeTab === "organisation" ? isSavingOrg : isSaving}
                className="h-12 px-10 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-lg border-0 transition-all"
             >
-               {isSaving ? <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" /> : <Save className="mr-2 h-4 w-4" />}
+               {(activeTab === "organisation" ? isSavingOrg : isSaving) ? (
+                  <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+               ) : (
+                  <Save className="mr-2 h-4 w-4" />
+               )}
                Save Changes
             </Button>
          </header>
@@ -352,12 +470,9 @@ function SettingsPageContent() {
                               <label className="text-[10px] font-black text-muted uppercase tracking-widest px-1">Email Address</label>
                               <Input
                                  value={formData.email}
-                                 disabled={user?.role !== 'super_admin'}
+                                 disabled={true}
                                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                 className={cn(
-                                    "h-14 bg-[var(--base)]/50 border-default rounded-2xl px-5 font-bold",
-                                    user?.role !== 'super_admin' && "opacity-60 cursor-not-allowed"
-                                 )}
+                                 className="h-14 bg-[var(--base)]/50 border-default rounded-2xl px-5 font-bold opacity-60 cursor-not-allowed"
                               />
                            </div>
                            <div className="space-y-3">
@@ -402,6 +517,84 @@ function SettingsPageContent() {
                               className="mt-8 h-12 px-10 bg-[var(--pri)]/10 text-[var(--pri)] hover:bg-[var(--pri)] hover:text-white font-black uppercase tracking-widest text-[10px] rounded-xl transition-all"
                            >
                               {isUpdatingPassword ? "Processing..." : "Update Security Key"}
+                           </Button>
+                        </div>
+                     </motion.div>
+                  )}
+
+                  {activeTab === "organisation" && (
+                     <motion.div
+                        key="organisation"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="space-y-12 relative z-10"
+                     >
+                        <div>
+                           <h3 className="text-xl font-black text-[var(--text)] mb-2">Organisation Settings</h3>
+                           <p className="text-[13px] text-muted font-medium tracking-tight">Configure details and regional preferences for your organisation workspace.</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-8 pt-8 border-t border-default">
+                           <div className="grid grid-cols-2 gap-8">
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-muted uppercase tracking-widest px-1">Organisation Name</label>
+                                 <Input
+                                    value={orgData.name}
+                                    onChange={(e) => setOrgData({ ...orgData, name: e.target.value })}
+                                    className="h-14 bg-[var(--base)]/50 border-default rounded-2xl px-5 font-bold"
+                                 />
+                              </div>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-muted uppercase tracking-widest px-1">Organisation Slug</label>
+                                 <div className="relative">
+                                    <Input
+                                       value={orgData.slug}
+                                       onChange={(e) => setOrgData({ ...orgData, slug: slugify(e.target.value) })}
+                                       className="h-14 bg-[var(--base)]/50 border-default pl-5 pr-12 font-bold"
+                                    />
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                       {checkingOrgSlug ? (
+                                          <Loader2 className="h-4 w-4 animate-spin text-muted" />
+                                       ) : orgSlugAvailable === true ? (
+                                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                                       ) : orgSlugAvailable === false ? (
+                                          <span className="text-[10px] font-black text-[var(--dan)] uppercase">Taken</span>
+                                       ) : null}
+                                    </div>
+                                 </div>
+                                 <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-1 px-1">
+                                    Workspace URL: eventx.in/{orgData.slug || "your-slug"}
+                                 </p>
+                              </div>
+                           </div>
+
+                           <div className="grid grid-cols-2 gap-8">
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-muted uppercase tracking-widest px-1">Country</label>
+                                 <Select value={orgData.country} onValueChange={(country) => setOrgData({ ...orgData, country })}>
+                                    <SelectTrigger className="h-14 bg-[var(--base)]/50 border-default rounded-2xl px-5 font-bold text-white"><SelectValue /></SelectTrigger>
+                                    <SelectContent>{countries.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+                                 </Select>
+                              </div>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-muted uppercase tracking-widest px-1">Timezone</label>
+                                 <Select value={orgData.timezone} onValueChange={(timezone) => setOrgData({ ...orgData, timezone })}>
+                                    <SelectTrigger className="h-14 bg-[var(--base)]/50 border-default rounded-2xl px-5 font-bold text-white"><SelectValue /></SelectTrigger>
+                                    <SelectContent>{timezones.map((tz) => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}</SelectContent>
+                                 </Select>
+                              </div>
+                           </div>
+                        </div>
+
+                        <div className="pt-8 border-t border-default flex justify-end">
+                           <Button
+                              onClick={handleSaveOrg}
+                              disabled={isSavingOrg}
+                              className="h-12 px-10 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-xl shadow-lg transition-all"
+                           >
+                              {isSavingOrg ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="mr-2 h-4 w-4" />}
+                              Save Organisation Details
                            </Button>
                         </div>
                      </motion.div>

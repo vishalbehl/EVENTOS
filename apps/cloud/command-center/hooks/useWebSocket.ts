@@ -9,6 +9,7 @@ export function useWebSocket(eventId?: string) {
   useEffect(() => {
     if (!isAuthenticated || !accessToken) {
       setIsConnected(false);
+      socketService.disconnect();
       return;
     }
 

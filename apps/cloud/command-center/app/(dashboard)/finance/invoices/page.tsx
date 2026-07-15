@@ -1,351 +1,96 @@
-"use client"
-import React, { useState, useEffect } from "react"
-import { useInvoices, useVoidInvoice, formatINR } from "@/services/super-admin-service"
-import { PageContainer } from "@/components/super-admin/ui/PageContainer"
-import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
-import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDestructiveAction"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Search,
-  AlertTriangle,
-  MoreVertical,
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  Mail,
-  Trash2,
-  Download,
-} from "lucide-react"
-import { toast } from "sonner"
+"use client";
 
-type SelectedInvoice = {
-  id: string
-  number: string
+import { useState } from "react";
+import { format } from "date-fns";
+import { CircleDollarSign, Download, FileCheck2, FileText, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
+import { BillingStatusDialog } from "@/components/billing/BillingLifecycleDialogs";
+import { InvoiceDetailSheet, InvoicePaymentDialog } from "@/components/billing/FinancialReconciliation";
+import { EmptyState } from "@/components/super-admin/ui/EmptyState";
+import { TableSkeleton } from "@/components/super-admin/ui/LoadingSkeleton";
+import { MetricRow } from "@/components/super-admin/ui/MetricRow";
+import { PageContainer } from "@/components/super-admin/ui/PageContainer";
+import { SectionHeader } from "@/components/super-admin/ui/SectionHeader";
+import { SupportAccessScope, type SupportAccessSelection } from "@/components/super-admin/ui/SupportAccessScope";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  type BillingInvoice,
+  downloadInvoiceArtifact,
+  useBillingInvoices,
+  useCreateInvoiceArtifact,
+  useInvoiceArtifact,
+  useInvoiceStatusMutation,
+  useRecordInvoicePayment,
+} from "@/hooks/useBilling";
+
+const FILTERS = ["ALL", "UNPAID", "PENDING", "OVERDUE", "PAID", "VOID", "REFUNDED"];
+const STATUS_COLORS: Record<string, string> = {
+  PAID: "border-green-500/20 bg-green-500/10 text-green-400",
+  UNPAID: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+  PENDING: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+  OVERDUE: "border-red-500/20 bg-red-500/10 text-red-300",
+  VOID: "border-zinc-500/20 bg-zinc-500/10 text-zinc-400",
+  REFUNDED: "border-blue-500/20 bg-blue-500/10 text-blue-300",
+};
+
+function money(value: number, currency = "INR") {
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(Number(value));
+}
+
+function date(value?: string) {
+  return value ? format(new Date(value), "dd MMM yyyy") : "-";
+}
+
+function label(invoice: BillingInvoice) {
+  return invoice.invoice_number ?? `INV-${invoice.id.slice(0, 8).toUpperCase()}`;
 }
 
 export default function InvoicesPage() {
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL")
-  const [searchVal, setSearchVal] = useState("")
-  const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [page, setPage] = useState(1)
-  const [invoiceToVoid, setInvoiceToVoid] = useState<SelectedInvoice | null>(null)
-  const limit = 8
-  const voidInvoice = useVoidInvoice()
-
-  // Debounce search
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(searchVal)
-      setPage(1)
-    }, 300)
-    return () => clearTimeout(handler)
-  }, [searchVal])
-
-  const { data, isLoading, error, refetch } = useInvoices({
-    status: selectedStatus === "ALL" ? undefined : selectedStatus,
-    search: debouncedSearch || undefined,
-    skip: (page - 1) * limit,
-  })
-
-  const items = data?.items || []
-  const total = data?.total || 0
-  const totalPages = Math.ceil(total / limit) || 1
-
-  // Aggregate Metrics from Backend Summary or compute fallback
-  const summary = data?.summary || {
-    total_amount: 0,
-    paid_amount: 0,
-    pending_amount: 0,
-    overdue_amount: 0,
-    this_month_amount: 0,
-    avg_collection_days: 0,
-  }
-
+  const [supportScope, setSupportScope] = useState<SupportAccessSelection | null>(null);
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [inspectionId, setInspectionId] = useState<string | null>(null);
+  const [paymentTarget, setPaymentTarget] = useState<BillingInvoice | null>(null);
+  const [voidTarget, setVoidTarget] = useState<BillingInvoice | null>(null);
+  const [artifactTarget, setArtifactTarget] = useState<BillingInvoice | null>(null);
+  const [artifactReason, setArtifactReason] = useState("");
+  const [activeArtifact, setActiveArtifact] = useState<{ invoiceId: string; exportId: string } | null>(null);
+  const [downloadingArtifact, setDownloadingArtifact] = useState(false);
+  const scope = { organizationId: supportScope?.organizationId, supportReason: supportScope?.reason, accessRequestId: supportScope?.accessRequestId };
+  const query = useBillingInvoices({ ...scope, status: statusFilter === "ALL" ? undefined : statusFilter });
+  const paymentMutation = useRecordInvoicePayment(scope);
+  const statusMutation = useInvoiceStatusMutation(scope);
+  const artifactMutation = useCreateInvoiceArtifact(scope);
+  const artifactQuery = useInvoiceArtifact(activeArtifact?.invoiceId ?? null, activeArtifact?.exportId ?? null, scope);
+  const invoices = query.data?.pages.flatMap((page) => page.items) ?? [];
+  const total = invoices.reduce((sum, invoice) => sum + Number(invoice.total_amount_inr || invoice.amount), 0);
+  const paid = invoices.filter((invoice) => invoice.status === "PAID").reduce((sum, invoice) => sum + Number(invoice.total_amount_inr || invoice.amount), 0);
+  const outstanding = invoices.filter((invoice) => ["UNPAID", "PENDING", "OVERDUE"].includes(invoice.status)).reduce((sum, invoice) => sum + Number(invoice.total_amount_inr || invoice.amount), 0);
   const metrics = [
-    { label: "Total Invoices", value: formatINR(summary.total_amount) },
-    { label: "Paid Invoices", value: formatINR(summary.paid_amount) },
-    { label: "Pending Invoices", value: formatINR(summary.pending_amount) },
-    { label: "Overdue Invoices", value: formatINR(summary.overdue_amount) },
-    { label: "This Month Revenue", value: formatINR(summary.this_month_amount) },
-    { label: "Avg Collection", value: `${Math.round(summary.avg_collection_days)} Days` },
-  ]
+    { label: "Invoices", value: invoices.length, icon: FileText },
+    { label: "Ledger value", value: money(total), icon: CircleDollarSign },
+    { label: "Paid", value: money(paid), icon: FileCheck2 },
+    { label: "Outstanding", value: money(outstanding), icon: TriangleAlert },
+  ];
 
-  const STATUS_TABS = [
-    { label: "All Invoices", value: "ALL" },
-    { label: "Paid", value: "PAID" },
-    { label: "Pending", value: "PENDING" },
-    { label: "Overdue", value: "OVERDUE" },
-    { label: "Draft", value: "DRAFT" },
-    { label: "Void", value: "VOID" },
-  ]
+  const execute = async (operation: () => Promise<unknown>, success: string, close: () => void) => {
+    try { await operation(); toast.success(success); close(); } catch (error) { toast.error(error instanceof Error ? error.message : "Invoice operation failed"); }
+  };
 
-  const handleVoid = async (reason?: string) => {
-    if (!invoiceToVoid || !reason) return
-
-    try {
-      await voidInvoice.mutateAsync({ invoiceId: invoiceToVoid.id, reason })
-      toast.success(`Invoice ${invoiceToVoid.number} has been voided.`)
-      setInvoiceToVoid(null)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to void invoice")
-    }
-  }
-
-  return (
-    <PageContainer>
-      <SectionHeader
-        title="Invoices Ledger"
-        description="View payments, invoice logs, GST aggregates, collection speeds, and send reminders."
-      />
-
-      {/* Row 1 — 6 metric cards */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
-        {metrics.map((m, i) => (
-          <div key={i} className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-4 shadow-sm">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-secondary">
-              {m.label}
-            </span>
-            <p className="text-lg font-black font-mono text-primary tracking-tight mt-1">
-              {m.value}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <div className="space-y-4">
-        {/* Status Tabs and Search */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-wrap gap-1 p-1 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-xl w-fit">
-            {STATUS_TABS.map(tab => (
-              <button
-                key={tab.value}
-                onClick={() => {
-                  setSelectedStatus(tab.value)
-                  setPage(1)
-                }}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors
-                  ${selectedStatus === tab.value
-                    ? "bg-brand-primary text-white"
-                    : "text-secondary hover:text-primary hover:bg-surface-hover"}`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="relative w-72">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" />
-            <input
-              type="text"
-              placeholder="Search by invoice # or organization..."
-              value={searchVal}
-              onChange={e => setSearchVal(e.target.value)}
-              className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl pl-9 pr-4 py-2 text-sm text-primary focus:outline-none focus:border-brand-primary"
-            />
-          </div>
-        </div>
-
-        {/* Data Table */}
-        <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl overflow-hidden shadow-sm">
-          {isLoading ? (
-            <div className="divide-y divide-[var(--border-subtle)]">
-              {Array.from({ length: limit }).map((_, i) => (
-                <div key={i} className="h-16 bg-surface-2 animate-pulse" />
-              ))}
-            </div>
-          ) : error ? (
-            <div className="flex flex-col items-center gap-2 py-16">
-              <AlertTriangle className="h-8 w-8 text-danger" />
-              <p className="text-sm text-secondary">Failed to load invoices</p>
-              <button onClick={() => refetch()} className="text-xs bg-brand-primary text-white px-3 py-1.5 rounded-lg">
-                Retry
-              </button>
-            </div>
-          ) : total === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-20 text-center">
-              <FileText className="h-12 w-12 text-tertiary animate-pulse" />
-              <p className="text-sm font-semibold text-secondary">No invoices yet</p>
-              <p className="text-xs text-tertiary">Invoices will show up automatically once transactions occur.</p>
-            </div>
-          ) : (
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[11px] font-semibold text-secondary uppercase tracking-wider">
-                  <th className="py-3.5 px-4">Invoice #</th>
-                  <th className="py-3.5 px-4">Organization</th>
-                  <th className="py-3.5 px-4">Plan</th>
-                  <th className="py-3.5 px-4 text-right">Amount</th>
-                  <th className="py-3.5 px-4 text-right">Tax (GST)</th>
-                  <th className="py-3.5 px-4 text-right">Total Amount</th>
-                  <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4">Due Date</th>
-                  <th className="py-3.5 px-4">Paid Date</th>
-                  <th className="py-3.5 px-4"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-subtle)] text-sm">
-                {items.map(item => (
-                  <tr key={item.id} className="hover:bg-[var(--bg-surface-hover)] transition-colors">
-                    {/* Invoice ID/Num */}
-                    <td className="py-3.5 px-4 font-mono font-bold text-primary">
-                      {item.invoice_number || item.id.slice(0, 8).toUpperCase()}
-                    </td>
-
-                    {/* Org */}
-                    <td className="py-3.5 px-4 font-semibold text-primary">
-                      {item.org_name}
-                    </td>
-
-                    {/* Plan */}
-                    <td className="py-3.5 px-4">
-                      <span className="text-xs bg-surface-2 border border-[var(--border-subtle)] px-2 py-0.5 rounded text-secondary font-medium">
-                        {item.plan_name}
-                      </span>
-                    </td>
-
-                    {/* Base Amount */}
-                    <td className="py-3.5 px-4 text-right font-mono font-semibold text-primary">
-                      {formatINR(item.amount_inr)}
-                    </td>
-
-                    {/* GST */}
-                    <td className="py-3.5 px-4 text-right font-mono text-secondary">
-                      {formatINR(item.gst_amount)}
-                    </td>
-
-                    {/* Total Amount */}
-                    <td className="py-3.5 px-4 text-right font-mono font-bold text-primary">
-                      {formatINR(item.total_amount_inr)}
-                    </td>
-
-                    {/* Status badge */}
-                    <td className="py-3.5 px-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase
-                        ${item.status === 'PAID' ? 'bg-success-muted text-success border-success/20'
-                          : item.status === 'PENDING' ? 'bg-warning-muted text-warning border-warning/20'
-                          : item.status === 'OVERDUE' ? 'bg-danger-muted text-danger border-danger/20'
-                          : 'bg-surface-2 text-secondary border-border'}`}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                        {item.status}
-                      </span>
-                    </td>
-
-                    {/* Due Date */}
-                    <td className="py-3.5 px-4 font-mono text-secondary text-xs">
-                      {item.due_date ? new Date(item.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : "—"}
-                    </td>
-
-                    {/* Paid Date */}
-                    <td className="py-3.5 px-4 font-mono text-secondary text-xs">
-                      {item.paid_at ? new Date(item.paid_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : "—"}
-                    </td>
-
-                    {/* Actions Menu */}
-                    <td className="py-3.5 px-4 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-secondary"
-                            aria-label={`Actions for invoice ${item.invoice_number || item.id}`}
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-52 border-border bg-surface text-primary">
-                          <DropdownMenuItem
-                            disabled
-                            title="Invoice PDF generation and authorization-gated download are not implemented."
-                            className="text-xs text-tertiary"
-                          >
-                            <Download className="w-3.5 h-3.5 text-secondary" />
-                            PDF unavailable
-                          </DropdownMenuItem>
-                          {item.status === "PENDING" && (
-                            <DropdownMenuItem
-                              disabled
-                              title="Reminder dispatch is unavailable until a durable communication job and delivery audit exist."
-                              className="text-xs text-tertiary"
-                            >
-                              <Mail className="w-3.5 h-3.5 text-secondary" />
-                              Reminder unavailable
-                            </DropdownMenuItem>
-                          )}
-                          {item.status !== "VOID" && item.status !== "PAID" && (
-                            <DropdownMenuItem
-                              onSelect={() => setInvoiceToVoid({
-                                id: item.id,
-                                number: item.invoice_number || item.id.slice(0, 8).toUpperCase(),
-                              })}
-                              className="text-xs text-danger focus:bg-red-950/20 focus:text-danger"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              Void Invoice
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between py-2">
-            <span className="text-xs text-secondary">
-              Showing <span className="font-semibold text-primary">{(page - 1) * limit + 1}</span> to{" "}
-              <span className="font-semibold text-primary">{Math.min(page * limit, total)}</span> of{" "}
-              <span className="font-semibold text-primary">{total}</span> invoices
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === 1}
-                onClick={() => setPage(p => p - 1)}
-                className="h-8 rounded-lg"
-              >
-                <ChevronLeft className="w-4 h-4 mr-1" />
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === totalPages}
-                onClick={() => setPage(p => p + 1)}
-                className="h-8 rounded-lg"
-              >
-                Next
-                <ChevronRight className="w-4 h-4 ml-1" />
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <ConfirmDestructiveAction
-        open={invoiceToVoid !== null}
-        onOpenChange={(open) => !open && setInvoiceToVoid(null)}
-        title="Void invoice?"
-        description="This financial mutation changes the invoice lifecycle and will be recorded in the immutable audit history."
-        confirmLabel="Void invoice"
-        resourceName={invoiceToVoid?.number}
-        requireReason
-        pending={voidInvoice.isPending}
-        onConfirm={handleVoid}
-      />
-    </PageContainer>
-  )
+  return <PageContainer>
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-3"><SectionHeader title="Invoice Reconciliation" description="Tenant-scoped commercial invoices, settlement evidence, and versioned finance controls" /><Button variant="outline" size="sm" disabled={!supportScope || query.isLoading} onClick={() => void query.refetch()} className="gap-2"><RefreshCw className={`size-3.5 ${query.isLoading ? "animate-spin" : ""}`} />Refresh</Button></div>
+    <SupportAccessScope value={supportScope} onApply={setSupportScope} />
+    {activeArtifact && artifactQuery.data ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wider text-[var(--text-tertiary)]">Invoice PDF</p><p className="mt-1 text-sm text-[var(--text-primary)]">Artifact {artifactQuery.data.status.toLowerCase()}{artifactQuery.data.failure_reason ? `: ${artifactQuery.data.failure_reason}` : ""}</p></div>{artifactQuery.data.status === "COMPLETED" ? <Button variant="outline" size="sm" disabled={downloadingArtifact} className="gap-2" onClick={async () => { setDownloadingArtifact(true); try { const result = await downloadInvoiceArtifact(activeArtifact.invoiceId, activeArtifact.exportId, scope); window.open(result.download_url, "_blank", "noopener,noreferrer"); } catch (error) { toast.error(error instanceof Error ? error.message : "Invoice download failed"); } finally { setDownloadingArtifact(false); } }}>{downloadingArtifact ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}Download PDF</Button> : <Loader2 className="size-4 animate-spin text-[var(--brand-primary)]" aria-label="Invoice PDF processing" />}</div> : null}
+    {supportScope ? <MetricRow metrics={metrics} /> : null}
+    <div className="my-5 flex flex-wrap gap-2">{FILTERS.map((status) => <button key={status} onClick={() => setStatusFilter(status)} className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${statusFilter === status ? "border-[var(--brand-primary)] bg-[var(--brand-primary)] text-white" : "border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)]"}`}>{status}</button>)}</div>
+    {!supportScope ? <EmptyState title="Select a support scope" description="Choose one organization and record the support reason before viewing its financial ledger." className="py-16" /> : query.isLoading ? <TableSkeleton rows={8} cols={9} /> : !invoices.length ? <EmptyState title="No invoices" description="No invoices match this tenant and lifecycle filter." className="py-16" /> : <div className="overflow-hidden rounded-2xl border border-[var(--border-default)]"><div className="overflow-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b border-[var(--border-default)] bg-[var(--bg-surface-2)]">{["Invoice", "Base", "GST", "Total", "Status", "Issued", "Due", "Version", "Actions"].map((header) => <th key={header} className="h-10 whitespace-nowrap px-4 text-[10px] font-bold uppercase tracking-widest text-[var(--text-tertiary)]">{header}</th>)}</tr></thead><tbody>{invoices.map((invoice) => <tr key={invoice.id} className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-surface-2)]"><td className="px-4 py-3"><button className="font-mono font-bold text-[var(--brand-primary)] hover:underline" onClick={() => setInspectionId(invoice.id)}>{label(invoice)}</button><p className="mt-0.5 font-mono text-[9px] text-[var(--text-tertiary)]">{invoice.id}</p></td><td className="px-4 py-3 font-mono text-[var(--text-secondary)]">{money(invoice.amount, invoice.currency)}</td><td className="px-4 py-3 font-mono text-[var(--text-secondary)]">{money(invoice.gst_amount, invoice.currency)}</td><td className="px-4 py-3 font-mono font-bold text-[var(--text-primary)]">{money(invoice.total_amount_inr || Number(invoice.amount) + Number(invoice.gst_amount), invoice.currency)}</td><td className="px-4 py-3"><Badge className={`border ${STATUS_COLORS[invoice.status] ?? STATUS_COLORS.UNPAID}`}>{invoice.status}</Badge></td><td className="px-4 py-3 text-[var(--text-secondary)]">{date(invoice.issued_at)}</td><td className="px-4 py-3 text-[var(--text-secondary)]">{date(invoice.due_date)}</td><td className="px-4 py-3 font-mono text-[var(--text-tertiary)]">v{invoice.version}</td><td className="px-4 py-3"><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setInspectionId(invoice.id)}>Inspect</Button><Button variant="outline" size="sm" onClick={() => { setArtifactTarget(invoice); setArtifactReason(""); }}>PDF</Button>{!["VOID", "REFUNDED"].includes(invoice.status) ? <Button variant="outline" size="sm" className="gap-1" onClick={() => setPaymentTarget(invoice)}><Plus className="size-3" />Payment</Button> : null}{["UNPAID", "PENDING", "OVERDUE", "DRAFT"].includes(invoice.status) ? <Button variant="outline" size="sm" onClick={() => setVoidTarget(invoice)}>Void</Button> : null}</div></td></tr>)}</tbody></table></div></div>}
+    {query.hasNextPage ? <div className="mt-4 flex justify-center"><Button variant="outline" size="sm" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading..." : "Load more"}</Button></div> : null}
+    <InvoiceDetailSheet invoiceId={inspectionId} scope={scope} onOpenChange={(open) => !open && setInspectionId(null)} />
+    <InvoicePaymentDialog invoice={paymentTarget} open={!!paymentTarget} pending={paymentMutation.isPending} onOpenChange={(open) => !open && setPaymentTarget(null)} onSubmit={(payload, idempotencyKey) => execute(() => paymentMutation.mutateAsync({ invoiceId: paymentTarget!.id, payload, idempotencyKey }), "Payment evidence recorded", () => setPaymentTarget(null))} />
+    {voidTarget ? <BillingStatusDialog open onOpenChange={(open) => !open && setVoidTarget(null)} pending={statusMutation.isPending} title="Void invoice" description="Voiding is blocked when the invoice is settled or has reconciled payments. The decision is version checked and audited." currentVersion={voidTarget.version} statusOptions={["VOID"]} onSubmit={(payload, idempotencyKey) => execute(() => statusMutation.mutateAsync({ invoiceId: voidTarget.id, payload, idempotencyKey }), "Invoice voided", () => setVoidTarget(null))} /> : null}
+    <Dialog open={Boolean(artifactTarget)} onOpenChange={(open) => !open && setArtifactTarget(null)}><DialogContent><DialogHeader><DialogTitle>Generate invoice PDF</DialogTitle><DialogDescription>The worker will render a version-bound invoice snapshot and store it in the private exports bucket. Downloads are short-lived and audited.</DialogDescription></DialogHeader><div className="py-2"><Label htmlFor="invoice-pdf-reason">Generation reason</Label><Textarea id="invoice-pdf-reason" className="mt-1" minLength={12} value={artifactReason} onChange={(event) => setArtifactReason(event.target.value)} /></div><DialogFooter><Button variant="outline" onClick={() => setArtifactTarget(null)}>Cancel</Button><Button disabled={!artifactTarget || artifactReason.trim().length < 12 || artifactMutation.isPending} onClick={async () => { if (!artifactTarget) return; try { const result = await artifactMutation.mutateAsync({ invoiceId: artifactTarget.id, version: artifactTarget.version, reason: artifactReason.trim(), idempotencyKey: crypto.randomUUID() }); setActiveArtifact({ invoiceId: artifactTarget.id, exportId: result.export_id }); setArtifactTarget(null); toast.success("Invoice PDF queued"); } catch (error) { toast.error(error instanceof Error ? error.message : "Invoice PDF request failed"); } }}>{artifactMutation.isPending ? "Queueing..." : "Generate PDF"}</Button></DialogFooter></DialogContent></Dialog>
+  </PageContainer>;
 }

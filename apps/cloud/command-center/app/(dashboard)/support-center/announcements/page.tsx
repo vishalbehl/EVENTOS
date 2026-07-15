@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   GlobalAnnouncement,
+  MaintenanceWindow,
   MaintenanceWindowPayload,
   useCreateGlobalAnnouncement,
   useCreateMaintenanceWindow,
@@ -28,6 +29,9 @@ import {
   useUpdateMaintenanceWindow,
 } from "@/services/platform-communications-service";
 
+const EMPTY_ANNOUNCEMENTS: GlobalAnnouncement[] = [];
+const EMPTY_MAINTENANCE_WINDOWS: MaintenanceWindow[] = [];
+
 const defaultMaintenance: MaintenanceWindowPayload = {
   title: "",
   description: "",
@@ -35,6 +39,7 @@ const defaultMaintenance: MaintenanceWindowPayload = {
   ends_at: "",
   affected_services: [],
   status: "SCHEDULED",
+  reason: "",
 };
 
 function toLocalInputValue(value: string) {
@@ -57,6 +62,7 @@ export default function PlatformAnnouncementsPage() {
   const [maintenanceDraft, setMaintenanceDraft] = useState<MaintenanceWindowPayload>(defaultMaintenance);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState<GlobalAnnouncement | null>(null);
   const [deleteWindowId, setDeleteWindowId] = useState<string | null>(null);
+  const [changeReason, setChangeReason] = useState("");
 
   const announcementsQuery = useGlobalAnnouncements();
   const maintenanceQuery = useMaintenanceWindows();
@@ -67,8 +73,8 @@ export default function PlatformAnnouncementsPage() {
   const updateMaintenance = useUpdateMaintenanceWindow();
   const deleteMaintenance = useDeleteMaintenanceWindow();
 
-  const announcements = announcementsQuery.data || [];
-  const maintenanceWindows = maintenanceQuery.data || [];
+  const announcements = announcementsQuery.data || EMPTY_ANNOUNCEMENTS;
+  const maintenanceWindows = maintenanceQuery.data || EMPTY_MAINTENANCE_WINDOWS;
   const activeAnnouncements = announcements.filter((item) => item.is_active).length;
   const activeWindows = maintenanceWindows.filter((item) => item.status === "IN_PROGRESS" || item.status === "SCHEDULED").length;
 
@@ -96,10 +102,12 @@ export default function PlatformAnnouncementsPage() {
         title: announcementTitle.trim(),
         content: announcementContent.trim(),
         is_active: announcementActive,
+        reason: changeReason.trim(),
       });
       setAnnouncementTitle("");
       setAnnouncementContent("");
       setAnnouncementActive(true);
+      setChangeReason("");
       toast.success("Global announcement published.");
     } catch (error: any) {
       toast.error(error?.message || "Could not publish announcement.");
@@ -120,8 +128,10 @@ export default function PlatformAnnouncementsPage() {
         starts_at: toIsoFromLocal(maintenanceDraft.starts_at),
         ends_at: toIsoFromLocal(maintenanceDraft.ends_at),
         affected_services: maintenanceDraft.affected_services?.filter(Boolean) || [],
+        reason: changeReason.trim(),
       });
       setMaintenanceDraft(defaultMaintenance);
+      setChangeReason("");
       toast.success("Maintenance window scheduled.");
     } catch (error: any) {
       toast.error(error?.message || "Could not schedule maintenance.");
@@ -153,6 +163,7 @@ export default function PlatformAnnouncementsPage() {
       />
 
       <MetricRow metrics={metrics} />
+      <div className="mb-5 rounded-xl border border-border bg-surface p-4"><label htmlFor="communications-change-reason" className="text-xs font-medium text-[var(--text-secondary)]">Change reason</label><Input id="communications-change-reason" value={changeReason} onChange={(event) => setChangeReason(event.target.value)} minLength={12} placeholder="Operational purpose and approval reference (minimum 12 characters)" className="mt-2" /><p className="mt-2 text-[11px] text-[var(--text-tertiary)]">All create and update operations require recent step-up authentication and immutable audit evidence.</p></div>
 
       {hasError ? (
         <RecoverableError
@@ -220,11 +231,12 @@ export default function PlatformAnnouncementsPage() {
                           <Button
                             size="sm"
                             variant="outline"
+                            disabled={changeReason.trim().length < 12 || updateAnnouncement.isPending}
                             onClick={async () => {
                               try {
                                 await updateAnnouncement.mutateAsync({
                                   announcementId: announcement.id,
-                                  payload: { is_active: !announcement.is_active },
+                                  payload: { is_active: !announcement.is_active, reason: changeReason.trim() },
                                 });
                                 toast.success(announcement.is_active ? "Announcement disabled." : "Announcement enabled.");
                               } catch (error: any) {
@@ -303,11 +315,12 @@ export default function PlatformAnnouncementsPage() {
                           <select
                             aria-label={`Status for ${window.title}`}
                             value={window.status}
+                            disabled={changeReason.trim().length < 12 || updateMaintenance.isPending}
                             onChange={async (event) => {
                               try {
                                 await updateMaintenance.mutateAsync({
                                   windowId: window.id,
-                                  payload: { status: event.target.value as MaintenanceWindowPayload["status"] },
+                                  payload: { status: event.target.value as MaintenanceWindowPayload["status"], reason: changeReason.trim() },
                                 });
                                 toast.success("Maintenance status updated.");
                               } catch (error: any) {
@@ -374,7 +387,7 @@ export default function PlatformAnnouncementsPage() {
                     onChange={(event) => setAnnouncementActive(event.target.checked)}
                   />
                 </label>
-                <Button type="submit" disabled={createAnnouncement.isPending} className="w-full">
+                <Button type="submit" disabled={createAnnouncement.isPending || changeReason.trim().length < 12} className="w-full">
                   <Plus className="mr-2 size-4" />
                   {createAnnouncement.isPending ? "Publishing..." : "Publish Announcement"}
                 </Button>
@@ -445,7 +458,7 @@ export default function PlatformAnnouncementsPage() {
                     className="border-border bg-surface-2"
                   />
                 </div>
-                <Button type="submit" disabled={createMaintenance.isPending} className="w-full">
+                <Button type="submit" disabled={createMaintenance.isPending || changeReason.trim().length < 12} className="w-full">
                   <Plus className="mr-2 size-4" />
                   {createMaintenance.isPending ? "Scheduling..." : "Schedule Maintenance"}
                 </Button>

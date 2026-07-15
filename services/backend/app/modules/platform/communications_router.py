@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import SuperAdminOnly, get_db
+from app.dependencies import StepUpAuth, SuperAdminOnly, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.platform.models.maintenance_window import MaintenanceWindow
 from app.modules.platform.models.platform_domain_tables import GlobalAnnouncement
@@ -20,12 +20,14 @@ class GlobalAnnouncementCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=255)
     content: str = Field(..., min_length=3)
     is_active: bool = True
+    reason: str = Field(..., min_length=12, max_length=1000)
 
 
 class GlobalAnnouncementUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=3, max_length=255)
     content: Optional[str] = Field(None, min_length=3)
     is_active: Optional[bool] = None
+    reason: str = Field(..., min_length=12, max_length=1000)
 
 
 class GlobalAnnouncementResponse(BaseModel):
@@ -45,6 +47,7 @@ class MaintenanceWindowCreate(BaseModel):
     ends_at: datetime
     affected_services: Optional[List[str]] = None
     status: str = "SCHEDULED"
+    reason: str = Field(..., min_length=12, max_length=1000)
 
     @field_validator("ends_at")
     @classmethod
@@ -63,6 +66,7 @@ class MaintenanceWindowUpdate(BaseModel):
     affected_services: Optional[List[str]] = None
     status: Optional[str] = None
     notification_sent: Optional[bool] = None
+    reason: str = Field(..., min_length=12, max_length=1000)
 
 
 class MaintenanceWindowResponse(BaseModel):
@@ -112,14 +116,24 @@ async def list_global_announcements(
 async def create_global_announcement(
     payload: GlobalAnnouncementCreate,
     current_user: SuperAdminOnly,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
 ):
+    del step_up
     announcement = GlobalAnnouncement(
         title=payload.title,
         content=payload.content,
         is_active=payload.is_active,
     )
     db.add(announcement)
+    await db.flush()
+    db.add(AuditLog(
+        organization_id=current_user.organization_id, actor_user_id=current_user.id,
+        resource_type="global_announcement", resource_id=announcement.id,
+        action_type="GLOBAL_ANNOUNCEMENT_CREATED", actor_role=current_user.platform_role or current_user.role,
+        new_state={"title": announcement.title, "is_active": announcement.is_active},
+        change_diff={"reason": payload.reason}, is_sensitive=True,
+    ))
     await db.commit()
     await db.refresh(announcement)
     return announcement
@@ -142,15 +156,27 @@ async def update_global_announcement(
     announcement_id: uuid.UUID,
     payload: GlobalAnnouncementUpdate,
     current_user: SuperAdminOnly,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
 ):
+    del step_up
     announcement = await db.get(GlobalAnnouncement, announcement_id)
     if not announcement:
         raise HTTPException(status_code=404, detail="Announcement not found")
 
-    updates = payload.model_dump(exclude_unset=True)
+    old_state = {"title": announcement.title, "content": announcement.content, "is_active": announcement.is_active}
+    updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
     for key, value in updates.items():
         setattr(announcement, key, value)
+
+    db.add(AuditLog(
+        organization_id=current_user.organization_id, actor_user_id=current_user.id,
+        resource_type="global_announcement", resource_id=announcement.id,
+        action_type="GLOBAL_ANNOUNCEMENT_UPDATED", actor_role=current_user.platform_role or current_user.role,
+        old_state=old_state,
+        new_state={"title": announcement.title, "content": announcement.content, "is_active": announcement.is_active},
+        change_diff={"reason": payload.reason}, is_sensitive=True,
+    ))
 
     await db.commit()
     await db.refresh(announcement)
@@ -161,9 +187,11 @@ async def update_global_announcement(
 async def delete_global_announcement(
     announcement_id: uuid.UUID,
     current_user: SuperAdminOnly,
+    step_up: StepUpAuth,
     payload: DestructiveActionRequest = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
+    del step_up
     announcement = await db.get(GlobalAnnouncement, announcement_id)
     if not announcement:
         raise HTTPException(status_code=404, detail="Announcement not found")
@@ -205,8 +233,10 @@ async def list_maintenance_windows(
 async def create_maintenance_window(
     payload: MaintenanceWindowCreate,
     current_user: SuperAdminOnly,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
 ):
+    del step_up
     maintenance = MaintenanceWindow(
         title=payload.title,
         description=payload.description,
@@ -217,6 +247,14 @@ async def create_maintenance_window(
         created_by=current_user.id,
     )
     db.add(maintenance)
+    await db.flush()
+    db.add(AuditLog(
+        organization_id=current_user.organization_id, actor_user_id=current_user.id,
+        resource_type="maintenance_window", resource_id=maintenance.id,
+        action_type="MAINTENANCE_WINDOW_CREATED", actor_role=current_user.platform_role or current_user.role,
+        new_state={"title": maintenance.title, "status": maintenance.status, "starts_at": maintenance.starts_at.isoformat(), "ends_at": maintenance.ends_at.isoformat()},
+        change_diff={"reason": payload.reason}, is_sensitive=True,
+    ))
     await db.commit()
     await db.refresh(maintenance)
     return maintenance
@@ -227,13 +265,16 @@ async def update_maintenance_window(
     window_id: uuid.UUID,
     payload: MaintenanceWindowUpdate,
     current_user: SuperAdminOnly,
+    step_up: StepUpAuth,
     db: AsyncSession = Depends(get_db),
 ):
+    del step_up
     maintenance = await db.get(MaintenanceWindow, window_id)
     if not maintenance:
         raise HTTPException(status_code=404, detail="Maintenance window not found")
 
-    updates = payload.model_dump(exclude_unset=True)
+    old_state = {"title": maintenance.title, "status": maintenance.status, "starts_at": maintenance.starts_at.isoformat(), "ends_at": maintenance.ends_at.isoformat()}
+    updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
     if "status" in updates:
         updates["status"] = _validate_status(updates["status"])
     starts_at = updates.get("starts_at", maintenance.starts_at)
@@ -245,6 +286,15 @@ async def update_maintenance_window(
         setattr(maintenance, key, value)
     maintenance.updated_at = datetime.now(timezone.utc)
 
+    db.add(AuditLog(
+        organization_id=current_user.organization_id, actor_user_id=current_user.id,
+        resource_type="maintenance_window", resource_id=maintenance.id,
+        action_type="MAINTENANCE_WINDOW_UPDATED", actor_role=current_user.platform_role or current_user.role,
+        old_state=old_state,
+        new_state={"title": maintenance.title, "status": maintenance.status, "starts_at": maintenance.starts_at.isoformat(), "ends_at": maintenance.ends_at.isoformat()},
+        change_diff={"reason": payload.reason}, is_sensitive=True,
+    ))
+
     await db.commit()
     await db.refresh(maintenance)
     return maintenance
@@ -254,9 +304,11 @@ async def update_maintenance_window(
 async def delete_maintenance_window(
     window_id: uuid.UUID,
     current_user: SuperAdminOnly,
+    step_up: StepUpAuth,
     payload: DestructiveActionRequest = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
+    del step_up
     maintenance = await db.get(MaintenanceWindow, window_id)
     if not maintenance:
         raise HTTPException(status_code=404, detail="Maintenance window not found")

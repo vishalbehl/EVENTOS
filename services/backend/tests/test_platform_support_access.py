@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -7,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.crm.models.core import Account
-from app.modules.crm.models.crm_domain_tables import CrmOperationRequest
+from app.modules.crm.models.core import Account, Contact, Lead
+from app.modules.crm.models.crm_domain_tables import Activity, CrmOperationRequest, Note, Opportunity, PipelineStage, Task
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from tests.conftest import auth_headers
@@ -339,3 +340,258 @@ async def test_crm_mutations_reject_cross_tenant_references_and_active_dependenc
     )
     assert blocked_archive.status_code == 409
     assert blocked_archive.json()["detail"]["code"] == "CRM_DEPENDENCIES_EXIST"
+
+
+@pytest.mark.asyncio
+async def test_qualified_lead_conversion_is_idempotent_versioned_and_audited(
+    client: AsyncClient,
+    db: AsyncSession,
+    super_admin: User,
+    organization: Organization,
+):
+    account = Account(organization_id=organization.id, name="Conversion account")
+    db.add(account)
+    await db.flush()
+    contact = Contact(
+        organization_id=organization.id,
+        account_id=account.id,
+        first_name="Qualified",
+        last_name="Buyer",
+        email=f"buyer-{uuid.uuid4().hex[:8]}@example.test",
+    )
+    stage = PipelineStage(name=f"Qualification {uuid.uuid4().hex[:6]}", order=10)
+    db.add_all([contact, stage])
+    await db.flush()
+    lead = Lead(organization_id=organization.id, contact_id=contact.id, status="QUALIFIED", source="Referral")
+    db.add(lead)
+    await db.commit()
+
+    key = f"convert-lead-{uuid.uuid4()}"
+    headers = {**auth_headers(super_admin), "X-Support-Reason": SUPPORT_REASON, "Idempotency-Key": key}
+    payload = {
+        "version": 1,
+        "stage_id": str(stage.id),
+        "opportunity_name": "Annual conference opportunity",
+        "amount": 125000,
+        "reason": "Converting verified qualified lead into sales pipeline",
+    }
+    url = f"/superadmin/crm/leads/{lead.id}/convert?organization_id={organization.id}"
+    converted = await client.post(url, json=payload, headers=headers)
+    assert converted.status_code == 201, converted.text
+    opportunity_id = uuid.UUID(converted.json()["id"])
+    assert converted.json()["account_id"] == str(account.id)
+
+    replay = await client.post(url, json=payload, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == str(opportunity_id)
+
+    refreshed_lead = await db.get(Lead, lead.id)
+    assert refreshed_lead.status == "CONVERTED"
+    assert refreshed_lead.archived_at is not None
+    opportunity = await db.get(Opportunity, opportunity_id)
+    assert opportunity is not None
+    actions = set((await db.scalars(select(AuditLog.action_type).where(
+        AuditLog.resource_id.in_([lead.id, opportunity_id])
+    ))).all())
+    assert {"CRM_LEAD_CONVERTED", "CRM_OPPORTUNITY_CREATED_FROM_LEAD"}.issubset(actions)
+
+
+@pytest.mark.asyncio
+async def test_crm_engagement_records_are_scoped_idempotent_versioned_and_audited(
+    client: AsyncClient,
+    db: AsyncSession,
+    super_admin: User,
+    organization: Organization,
+):
+    headers = {**auth_headers(super_admin), "X-Support-Reason": SUPPORT_REASON}
+    activity_key = f"activity-{uuid.uuid4()}"
+    activity_payload = {
+        "entity_type": "organization",
+        "entity_id": str(organization.id),
+        "activity_type": "MEETING",
+        "description": "Quarterly account review",
+        "occurred_at": "2026-07-15T10:00:00Z",
+        "reason": "Recording verified quarterly customer meeting",
+    }
+    activity_response = await client.post(
+        f"/superadmin/crm/activities?organization_id={organization.id}",
+        json=activity_payload,
+        headers={**headers, "Idempotency-Key": activity_key},
+    )
+    assert activity_response.status_code == 201, activity_response.text
+    activity = activity_response.json()
+    replay = await client.post(
+        f"/superadmin/crm/activities?organization_id={organization.id}",
+        json=activity_payload,
+        headers={**headers, "Idempotency-Key": activity_key},
+    )
+    assert replay.status_code == 201
+    assert replay.json()["id"] == activity["id"]
+
+    task_response = await client.post(
+        f"/superadmin/crm/tasks?organization_id={organization.id}",
+        json={
+            "entity_type": "organization",
+            "entity_id": str(organization.id),
+            "subject": "Send reviewed commercial summary",
+            "status": "NOT_STARTED",
+            "reason": "Creating follow-up from verified customer meeting",
+        },
+        headers={**headers, "Idempotency-Key": f"task-{uuid.uuid4()}"},
+    )
+    assert task_response.status_code == 201, task_response.text
+    task = task_response.json()
+    completed = await client.patch(
+        f"/superadmin/crm/tasks/{task['id']}?organization_id={organization.id}",
+        json={
+            "version": task["version"],
+            "status": "COMPLETED",
+            "reason": "Marking the verified customer follow-up complete",
+        },
+        headers={**headers, "Idempotency-Key": f"complete-task-{uuid.uuid4()}"},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["completed_at"] is not None
+
+    note_response = await client.post(
+        f"/superadmin/crm/notes?organization_id={organization.id}",
+        json={
+            "entity_type": "account",
+            "entity_id": str(uuid.uuid4()),
+            "content": "Must never persist against an unrelated entity.",
+            "reason": "Testing CRM entity reference isolation safely",
+        },
+        headers={**headers, "Idempotency-Key": f"bad-note-{uuid.uuid4()}"},
+    )
+    assert note_response.status_code == 422
+    assert note_response.json()["detail"]["code"] == "INVALID_CRM_REFERENCE"
+
+    listed = await client.get(
+        f"/superadmin/crm/activities?organization_id={organization.id}&entity_type=organization&entity_id={organization.id}",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()["items"]] == [activity["id"]]
+
+    archived = await client.post(
+        f"/superadmin/crm/activities/{activity['id']}/archive?organization_id={organization.id}",
+        json={"version": activity["version"], "reason": "Archiving duplicate customer activity after review"},
+        headers={**headers, "Idempotency-Key": f"archive-activity-{uuid.uuid4()}"},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["archived_at"] is not None
+
+    async with TenantContextGuard.scoped(db, organization.id):
+        assert await db.get(Activity, uuid.UUID(activity["id"])) is not None
+        assert await db.get(Task, uuid.UUID(task["id"])) is not None
+        assert await db.scalar(select(Note.id).where(Note.organization_id == organization.id)) is None
+        actions = set((await db.scalars(select(AuditLog.action_type).where(
+            AuditLog.organization_id == organization.id,
+            AuditLog.resource_id.in_([uuid.UUID(activity["id"]), uuid.UUID(task["id"])]),
+        ))).all())
+        assert {"CRM_ACTIVITY_CREATED", "CRM_ACTIVITY_ARCHIVED", "CRM_TASK_CREATED", "CRM_TASK_UPDATED"}.issubset(actions)
+
+
+@pytest.mark.asyncio
+async def test_crm_opportunity_list_and_account_workspace_are_complete_scoped_and_audited(
+    client: AsyncClient,
+    db: AsyncSession,
+    super_admin: User,
+    organization: Organization,
+):
+    account = Account(organization_id=organization.id, name="Workspace account")
+    db.add(account)
+    await db.flush()
+    contact = Contact(
+        organization_id=organization.id,
+        account_id=account.id,
+        first_name="Workspace",
+        last_name="Contact",
+        email=f"workspace-{uuid.uuid4().hex[:8]}@example.test",
+    )
+    stage = PipelineStage(name=f"Workspace {uuid.uuid4().hex[:6]}", order=20)
+    db.add_all([contact, stage])
+    await db.flush()
+    opportunity = Opportunity(
+        organization_id=organization.id,
+        account_id=account.id,
+        stage_id=stage.id,
+        name="Workspace opportunity",
+        amount=250000,
+    )
+    db.add(opportunity)
+    await db.flush()
+    db.add_all([
+        Activity(
+            organization_id=organization.id,
+            entity_type="account",
+            entity_id=account.id,
+            activity_type="MEETING",
+            description="Account planning meeting",
+            occurred_at=datetime.now(timezone.utc),
+        ),
+        Task(
+            organization_id=organization.id,
+            entity_type="opportunity",
+            entity_id=opportunity.id,
+            subject="Prepare proposal",
+            status="IN_PROGRESS",
+        ),
+        Note(
+            organization_id=organization.id,
+            entity_type="contact",
+            entity_id=contact.id,
+            content="Primary commercial contact.",
+        ),
+    ])
+    other_org = Organization(
+        name="Hidden CRM Workspace Tenant",
+        slug=f"hidden-workspace-{uuid.uuid4().hex[:8]}",
+        plan="pro",
+    )
+    db.add(other_org)
+    await db.flush()
+    hidden_account = Account(organization_id=other_org.id, name="Hidden account")
+    db.add(hidden_account)
+    await db.commit()
+
+    headers = {**auth_headers(super_admin), "X-Support-Reason": SUPPORT_REASON}
+    listed = await client.get(
+        f"/superadmin/crm/opportunities?organization_id={organization.id}",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()["items"]] == [str(opportunity.id)]
+
+    workspace = await client.get(
+        f"/superadmin/crm/accounts/{account.id}/workspace?organization_id={organization.id}",
+        headers=headers,
+    )
+    assert workspace.status_code == 200, workspace.text
+    payload = workspace.json()
+    assert payload["account"]["id"] == str(account.id)
+    assert [item["id"] for item in payload["contacts"]] == [str(contact.id)]
+    assert [item["id"] for item in payload["opportunities"]] == [str(opportunity.id)]
+    assert payload["metrics"] == {
+        "contact_count": 1,
+        "active_opportunity_count": 1,
+        "pipeline_value": 250000.0,
+        "open_task_count": 1,
+    }
+    assert len(payload["activities"]) == 1
+    assert len(payload["tasks"]) == 1
+    assert len(payload["notes"]) == 1
+
+    concealed = await client.get(
+        f"/superadmin/crm/accounts/{hidden_account.id}/workspace?organization_id={organization.id}",
+        headers=headers,
+    )
+    assert concealed.status_code == 404
+
+    audit = await db.scalar(select(AuditLog).where(
+        AuditLog.resource_type == "crm_account_workspace",
+        AuditLog.resource_id == account.id,
+        AuditLog.organization_id == organization.id,
+    ))
+    assert audit is not None
+    assert audit.is_sensitive is True

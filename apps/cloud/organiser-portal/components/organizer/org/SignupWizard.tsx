@@ -2,176 +2,211 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Box, Check, ChevronRight, Eye, EyeOff, Loader2, Lock, X } from "lucide-react";
+import {
+  Box, ChevronRight, Eye, EyeOff, Loader2, Lock, Mail, Check,
+  ClipboardList, FileImage, Building2, BarChart3, UserStar
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { countries, orgApi, slugify, timezones } from "@/components/organizer/org/org-api";
+import { orgApi } from "@/components/organizer/org/org-api";
 import { useAuthStore } from "@/store/use-auth-store";
 import { cn } from "@/lib/utils";
+import bgImage from "../../../../../../public/login/bg.png";
+import logoImage from "../../../../../../public/logo/1.png";
 
 type SignupForm = {
-  org_name: string;
-  slug: string;
-  country: string;
-  timezone: string;
   first_name: string;
   last_name: string;
   email: string;
   password: string;
-  confirm_password: string;
 };
 
 const initialForm: SignupForm = {
-  org_name: "",
-  slug: "",
-  country: "IN",
-  timezone: "Asia/Kolkata",
   first_name: "",
   last_name: "",
   email: "",
   password: "",
-  confirm_password: "",
 };
 
 export function SignupWizard() {
   const router = useRouter();
-  const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialForm);
-  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
-  const [checkingSlug, setCheckingSlug] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const setAuth = useAuthStore((state) => state.setAuth);
 
-  useEffect(() => {
-    if (!form.slug || form.slug.length < 3) {
-      setSlugAvailable(null);
-      return;
-    }
-    const timer = window.setTimeout(async () => {
-      setCheckingSlug(true);
-      try {
-        const result = await orgApi.checkSlug(form.slug);
-        setSlugAvailable(result.available);
-      } catch {
-        setSlugAvailable(false);
-      } finally {
-        setCheckingSlug(false);
-      }
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [form.slug]);
-
-  const update = (key: keyof SignupForm, value: string) => {
-    setForm((prev) => {
-      const next = { ...prev, [key]: value };
-      if (key === "org_name" && (!prev.slug || prev.slug === slugify(prev.org_name))) {
-        next.slug = slugify(value);
-      }
-      if (key === "slug") next.slug = slugify(value);
-      return next;
-    });
-  };
-
-  const canContinue = useMemo(() => {
-    if (step === 1) return form.org_name.length >= 2 && form.slug.length >= 3 && slugAvailable === true;
-    if (step === 2) return form.first_name && form.last_name && form.email.includes("@") && form.password.length >= 8 && form.password === form.confirm_password;
-    return true;
-  }, [form, slugAvailable, step]);
-
   const submit = async () => {
     setLoading(true);
     try {
+      const cleanFirstName = form.first_name.trim();
+      const orgName = `${cleanFirstName}'s Organisation`;
+      const tempSlug = `org-${cleanFirstName.toLowerCase().replace(/[^a-z0-9]/g, "") || "workspace"}-${Math.random().toString(36).substring(2, 7)}`;
+
       const result = await orgApi.signup({
-        org_name: form.org_name,
-        slug: form.slug,
-        first_name: form.first_name,
-        last_name: form.last_name,
-        email: form.email,
+        org_name: orgName,
+        slug: tempSlug,
+        first_name: cleanFirstName,
+        last_name: form.last_name.trim(),
+        email: form.email.trim(),
         password: form.password,
-        country: form.country,
-        timezone: form.timezone,
+        country: "IN",
+        timezone: "Asia/Kolkata",
       });
+
       setAuth(result.user, result.access_token);
-      toast.success("Workspace created. Let us set up the essentials.");
-      router.push("/dashboard");
+      toast.success("Profile initialized. Starting workspace setup...");
+      router.push("/onboarding");
     } catch (error: any) {
-      toast.error(error.message || "Could not create workspace.");
+      toast.error(error.message || "Failed to establish profile.");
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <PublicShell eyebrow="New Organisation" title="Launch your EventOS workspace" subtitle="Create a branded command center for your conference operations.">
-      <div className="mb-8 flex items-center gap-2">
-        {[1, 2, 3].map((item) => (
-          <div key={item} className={cn("h-1.5 flex-1 rounded-full bg-white/10", item <= step && "bg-[var(--pri)] shadow-[0_0_12px_color-mix(in_srgb,var(--pri)_45%,transparent)]")} />
-        ))}
-      </div>
+  const isFormValid = form.first_name.trim() && form.last_name.trim() && form.email.includes("@") && form.password.length >= 8;
 
-      {step === 1 && (
-        <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
-          <Header title="About Your Organisation" />
-          <Field label="Organisation Name"><Input value={form.org_name} maxLength={100} onChange={(e) => update("org_name", e.target.value)} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
-          <Field label="Organisation Slug">
-            <div className="relative">
-              <Input value={form.slug} onChange={(e) => update("slug", e.target.value)} className="h-12 rounded-xl bg-white/5 border-default pr-11" />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                {checkingSlug ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : slugAvailable === true ? <Check className="h-4 w-4 text-emerald-400" /> : slugAvailable === false ? <X className="h-4 w-4 text-[var(--dan)]" /> : null}
+  return (
+    <PublicShell
+      eyebrow="Account Setup"
+      title="Create your EventOS profile"
+      subtitle="Register your access credentials to deploy a high-telemetry conference console."
+      sideImage={bgImage}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-col space-y-1">
+          <h2 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--pri)]">
+            Create account
+          </h2>
+          <p className="text-xl font-bold tracking-tight text-white">
+            Set up your organizer profile
+          </p>
+        </div>
+
+        {/* Inputs */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">First Name</label>
+              <div className="relative rounded-xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+                <input
+                  type="text"
+                  value={form.first_name}
+                  onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                  placeholder="John"
+                  className="w-full h-11 bg-transparent pl-4 pr-4 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+                  required
+                />
               </div>
             </div>
-            <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-muted">Your portal will be at: eventx.in/{form.slug || "your-slug"}</p>
-          </Field>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Country"><Select value={form.country} onValueChange={(value) => update("country", value)}><SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger><SelectContent>{countries.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent></Select></Field>
-            <Field label="Timezone"><Select value={form.timezone} onValueChange={(value) => update("timezone", value)}><SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger><SelectContent>{timezones.map((tz) => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}</SelectContent></Select></Field>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Last Name</label>
+              <div className="relative rounded-xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+                <input
+                  type="text"
+                  value={form.last_name}
+                  onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+                  placeholder="Doe"
+                  className="w-full h-11 bg-transparent pl-4 pr-4 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+                  required
+                />
+              </div>
+            </div>
           </div>
-          <Continue disabled={!canContinue} onClick={() => setStep(2)} />
-        </motion.div>
-      )}
 
-      {step === 2 && (
-        <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
-          <Header title="Your Account" />
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="First Name"><Input value={form.first_name} onChange={(e) => update("first_name", e.target.value)} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
-            <Field label="Last Name"><Input value={form.last_name} onChange={(e) => update("last_name", e.target.value)} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Work Email</label>
+            <div className="relative rounded-xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="name@company.com"
+                className="w-full h-11 bg-transparent pl-10 pr-4 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+                required
+              />
+            </div>
           </div>
-          <Field label="Work Email"><Input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Password"><PasswordInput value={form.password} show={showPassword} setShow={setShowPassword} onChange={(value) => update("password", value)} /></Field>
-            <Field label="Confirm Password"><PasswordInput value={form.confirm_password} show={showPassword} setShow={setShowPassword} onChange={(value) => update("confirm_password", value)} /></Field>
-          </div>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => setStep(1)} className="h-12 rounded-xl border-default bg-white/5">Back</Button>
-            <Continue disabled={!canContinue} onClick={() => setStep(3)} />
-          </div>
-        </motion.div>
-      )}
 
-      {step === 3 && (
-        <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-          <Header title="Review & Launch" />
-          <div className="rounded-2xl border border-default bg-white/[0.04] p-5 space-y-4">
-            <Summary label="Organisation" value={`${form.org_name} (${form.slug})`} />
-            <Summary label="Your role" value="Owner" />
-            <Summary label="Plan" value="Free Trial (14 days)" />
-            <Summary label="Account" value={form.email} />
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Password</label>
+            <div className="relative rounded-xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type={showPassword ? "text" : "password"}
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                placeholder="At least 8 characters"
+                className="w-full h-11 bg-transparent pl-10 pr-10 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
-          <Button onClick={submit} disabled={loading} className="w-full h-14 rounded-full bg-[var(--pri)] hover:bg-[var(--sec)] font-black uppercase tracking-[0.18em] text-[11px]">
-            {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Create Your Platform"}
-          </Button>
-          <button onClick={() => setStep(2)} className="w-full text-[10px] font-black uppercase tracking-widest text-muted hover:text-[var(--text)]">Back to account details</button>
-        </motion.div>
-      )}
+        </div>
 
-      <div className="mt-8 text-center text-[11px] font-bold text-muted">
-        Already have access? <Link href="/" className="text-[var(--pri)] hover:text-[var(--sec)]">Sign in</Link>
+        <Button
+          onClick={submit}
+          disabled={loading || !isFormValid}
+          className="w-full h-12 bg-[var(--pri)] hover:bg-[#e0ff00] text-black font-black uppercase tracking-wider text-[11px] rounded-2xl shadow-[0_15px_30px_rgba(224,255,0,0.12)] border-0 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+        >
+          {loading ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : (
+            <>
+              Create Account <ChevronRight className="h-4 w-4" />
+            </>
+          )}
+        </Button>
+
+        {/* Separator */}
+        <div className="relative flex items-center">
+          <div className="flex-grow border-t border-white/[0.06]"></div>
+          <span className="flex-shrink mx-4 text-[9px] font-black uppercase tracking-widest text-[#8b8b95]">
+            Or Sign Up With
+          </span>
+          <div className="flex-grow border-t border-white/[0.06]"></div>
+        </div>
+
+        {/* Social Options */}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            className="h-10 rounded-xl border border-white/[0.06] bg-[#0c0c0e] hover:bg-white/[0.02] flex items-center justify-center gap-2 text-xs font-bold text-white transition-all active:scale-95"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+              <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+              <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+              <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+            </svg>
+            Google
+          </button>
+          <button
+            type="button"
+            className="h-10 rounded-xl border border-white/[0.06] bg-[#0c0c0e] hover:bg-white/[0.02] flex items-center justify-center gap-2 text-xs font-bold text-white transition-all active:scale-95"
+          >
+            <svg className="h-4 w-4 text-[#00a4ef]" viewBox="0 0 23 23">
+              <path fill="currentColor" d="M0 0h11v11H0zM12 0h11v11H12zM0 12h11v11H0zM12 12h11v11H12z" />
+            </svg>
+            Microsoft
+          </button>
+        </div>
+
+        <div className="text-center text-xs font-bold text-[#8b8b95]">
+          Already have an account?{" "}
+          <Link href="/login" className="text-[var(--pri)] hover:underline">
+            Sign in
+          </Link>
+        </div>
       </div>
     </PublicShell>
   );
@@ -204,14 +239,72 @@ export function AcceptInviteForm() {
 
   return (
     <PublicShell eyebrow="Team Invite" title="Join your EventOS workspace" subtitle="Finish your account to start collaborating with your conference team.">
-      <div className="space-y-5">
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="First Name"><Input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
-          <Field label="Last Name"><Input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
+      <div className="space-y-6">
+        <div className="flex flex-col space-y-2">
+          <h2 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--pri)]">
+            Setup account
+          </h2>
+          <p className="text-2xl font-bold tracking-tight text-white">
+            Complete your profile invitation
+          </p>
         </div>
-        <Field label="Password"><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
-        <Field label="Confirm Password"><Input type="password" value={form.confirm_password} onChange={(e) => setForm({ ...form, confirm_password: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" /></Field>
-        <Button onClick={submit} disabled={loading} className="w-full h-14 rounded-full bg-[var(--pri)] hover:bg-[var(--sec)] font-black uppercase tracking-[0.18em] text-[11px]">
+
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">First Name</label>
+              <div className="relative rounded-2xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+                <input
+                  type="text"
+                  value={form.first_name}
+                  onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                  placeholder="John"
+                  className="w-full h-14 bg-transparent pl-5 pr-5 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Last Name</label>
+              <div className="relative rounded-2xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+                <input
+                  type="text"
+                  value={form.last_name}
+                  onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+                  placeholder="Doe"
+                  className="w-full h-14 bg-transparent pl-5 pr-5 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Password</label>
+            <div className="relative rounded-2xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+              <input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                placeholder="At least 8 characters"
+                className="w-full h-14 bg-transparent pl-5 pr-5 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95] px-1">Confirm Password</label>
+            <div className="relative rounded-2xl border border-white/[0.08] bg-[#0c0c0e] focus-within:border-[var(--pri)]/50 focus-within:ring-2 focus-within:ring-[var(--pri)]/10 transition-all overflow-hidden">
+              <input
+                type="password"
+                value={form.confirm_password}
+                onChange={(e) => setForm({ ...form, confirm_password: e.target.value })}
+                placeholder="Repeat password"
+                className="w-full h-14 bg-transparent pl-5 pr-5 text-sm font-semibold text-white focus:outline-none focus:ring-0 placeholder:text-[#5f6068]"
+              />
+            </div>
+          </div>
+        </div>
+
+        <Button onClick={submit} disabled={loading} className="w-full h-14 bg-[var(--pri)] hover:bg-[#e0ff00] text-black font-black uppercase tracking-wider text-[11px] rounded-2xl shadow-[0_15px_30px_rgba(224,255,0,0.12)] border-0 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
           {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Accept Invite"}
         </Button>
       </div>
@@ -219,60 +312,96 @@ export function AcceptInviteForm() {
   );
 }
 
-function PublicShell({ eyebrow, title, subtitle, children }: { eyebrow: string; title: string; subtitle: string; children: React.ReactNode }) {
+export function PublicShell({
+  eyebrow,
+  title,
+  subtitle,
+  sideImage,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  sideImage?: any;
+  children: React.ReactNode;
+}) {
+  const features = [
+    { name: "Registration Management ", icon: ClipboardList },
+    { name: "Speaker Management", icon: UserStar },
+    { name: "Eposter & Files", icon: FileImage },
+    { name: "Venue Operations", icon: Building2 },
+    { name: "Analytics & Reporting", icon: BarChart3 },
+  ];
+
+  const bgUrl = sideImage ? (typeof sideImage === "string" ? sideImage : sideImage.src) : bgImage.src;
+  const logoUrl = logoImage.src;
+
   return (
-    <div className="min-h-screen bg-[var(--base)] text-[var(--text)] grid lg:grid-cols-[1fr_560px] overflow-hidden">
-      <div className="relative hidden lg:flex flex-col justify-between p-12 border-r border-default bg-[radial-gradient(circle_at_20%_20%,color-mix(in_srgb,var(--pri)_22%,transparent),transparent_30%),radial-gradient(circle_at_80%_70%,color-mix(in_srgb,var(--sec)_18%,transparent),transparent_26%)]">
-        <div className="absolute inset-0 bg-[url('/header/1.jpg')] bg-cover bg-center opacity-20 mix-blend-luminosity" />
-        <div className="relative z-10">
-          <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-2xl glass-3d border-default flex items-center justify-center"><Box className="h-6 w-6 text-[var(--pri)]" /></div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tighter">Event<span className="text-[var(--sec)]">OS</span></h1>
-              <p className="text-[9px] font-black uppercase tracking-[0.3em] text-muted">Conference Platform</p>
-            </div>
+    <div className="h-screen max-h-screen bg-[#050505] text-[#f5f5f5] grid lg:grid-cols-[1fr_560px] overflow-hidden font-sans">
+      {/* Left Pane - Premium Showcase */}
+      <div className="hidden lg:flex flex-col justify-between p-12 border-r border-white/[0.04] relative h-full overflow-hidden bg-[#09090b]">
+        {/* Background Image behind text - Fully opaque and crisp */}
+        <div
+          className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat transition-all duration-700 hover:scale-105"
+          style={{ backgroundImage: `url(${bgUrl})` }}
+        />
+
+        {/* Soft edge-vignette to blend background */}
+        <div className="absolute inset-0 pointer-events-none z-0 bg-gradient-to-r from-transparent to-[#050505]/20" />
+
+
+
+        {/* Center Mockup / Showcase - frosted glass card over image */}
+        <div className="my-auto relative z-10 max-w-xl">
+          <div className="bg-black/40 backdrop-blur-md rounded-2xl border border-white/10 px-8 py-7 space-y-4 shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
+            <span className="text-xs font-black uppercase tracking-[0.25em] text-[var(--pri)]">
+              {eyebrow}
+            </span>
+            <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-white">
+              {title}
+            </h1>
+            <p className="text-sm font-medium text-white/80 leading-relaxed">
+              {subtitle}
+            </p>
           </div>
         </div>
-        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 max-w-xl">
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-[var(--pri)]">{eyebrow}</p>
-          <h2 className="mt-5 text-6xl font-black tracking-tighter leading-[0.92]">{title}</h2>
-          <p className="mt-6 text-lg text-muted max-w-md">{subtitle}</p>
-        </motion.div>
-        <div className="relative z-10 grid grid-cols-3 gap-4 text-[10px] font-black uppercase tracking-widest text-muted">
-          <span>Branding</span><span>Team</span><span>Events</span>
+
+        {/* Bottom Feature List - Single horizontal row of glass badges with large icons above text */}
+        <div className="grid grid-cols-5 gap-3 w-full border-t border-white/10 pt-6 relative z-10">
+          {features.map((feat) => {
+            const Icon = feat.icon;
+            return (
+              <div
+                key={feat.name}
+                className="flex flex-col items-center justify-center gap-2 bg-black/50 backdrop-blur-md p-3.5 rounded-2xl border border-white/10 shadow-[0_15px_30px_rgba(0,0,0,0.4)] text-center"
+              >
+                <Icon className="h-7 w-7 text-[var(--pri)] filter drop-shadow-[0_0_8px_rgba(224,255,0,0.3)]" />
+                <span className="text-[9px] font-black uppercase tracking-wider text-white/95 leading-tight">
+                  {feat.name}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
-      <div className="flex items-center justify-center p-5 md:p-10">
-        <div className="w-full max-w-[500px] rounded-[2rem] border border-default bg-[color-mix(in_srgb,var(--surf)_82%,transparent)] p-6 md:p-9 shadow-2xl backdrop-blur-md">
+
+      {/* Right Pane - Form Card — strictly h-screen, no scroll */}
+      <div className="h-full flex flex-col items-center justify-center p-6 bg-[#050505] relative z-10 overflow-hidden">
+        <div className="w-full max-w-[440px] flex flex-col gap-5">
+          {/* Logo — centered, large */}
+          <div className="flex justify-center">
+            <img
+              src={logoUrl}
+              alt="EventOS Logo"
+              className="h-28 w-auto object-contain filter drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
           {children}
         </div>
       </div>
     </div>
   );
-}
-
-function Header({ title }: { title: string }) {
-  return <h2 className="text-2xl font-black tracking-tighter">{title}</h2>;
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block space-y-2"><span className="text-[10px] font-black uppercase tracking-[0.2em] text-muted px-1">{label}</span>{children}</label>;
-}
-
-function Continue({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
-  return <Button onClick={onClick} disabled={disabled} className="h-12 flex-1 rounded-full bg-[var(--pri)] hover:bg-[var(--sec)] font-black uppercase tracking-[0.18em] text-[11px]">Continue <ChevronRight className="ml-2 h-4 w-4" /></Button>;
-}
-
-function PasswordInput({ value, show, setShow, onChange }: { value: string; show: boolean; setShow: (value: boolean) => void; onChange: (value: string) => void }) {
-  return (
-    <div className="relative">
-      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-      <Input type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} className="h-12 rounded-xl bg-white/5 border-default pl-10 pr-10" />
-      <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-[var(--text)]">{show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
-    </div>
-  );
-}
-
-function Summary({ label, value }: { label: string; value: string }) {
-  return <div className="flex items-center justify-between gap-4 border-b border-default pb-3 last:border-0 last:pb-0"><span className="text-[10px] font-black uppercase tracking-widest text-muted">{label}</span><span className="text-sm font-bold text-right">{value}</span></div>;
 }

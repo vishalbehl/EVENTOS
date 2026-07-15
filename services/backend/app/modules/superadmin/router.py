@@ -37,6 +37,7 @@ from app.modules.platform_health.router import router as platform_health_router
 from app.modules.crm.routers.crm_router import router as crm_router
 from app.modules.billing.routers.billing_superadmin import router as billing_superadmin_router
 from app.modules.platform.reports_router import router as reports_router
+from app.modules.audit.routers.audit_exports import router as audit_exports_router
 
 
 # ── Top-level superadmin router ───────────────────────────────
@@ -65,3 +66,4 @@ superadmin_router.include_router(platform_health_router)
 superadmin_router.include_router(crm_router)
 superadmin_router.include_router(billing_superadmin_router)
 superadmin_router.include_router(reports_router)
+superadmin_router.include_router(audit_exports_router)

@@ -8,6 +8,7 @@ import {
   useAdminOrgUsage,
   useAdminOrgTimeline,
   useChangeOrgPlan,
+  useProvisionOrganization,
   adminApi,
   AdminOrg,
 } from "@/services/super-admin-service";
@@ -41,7 +42,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { apiClient } from "@/lib/api-client";
 import { formatDistanceToNow } from "date-fns";
 
 // Reusable Custom UI Components
@@ -53,7 +53,10 @@ import { ConfirmDestructiveAction } from "@/components/super-admin/ui/ConfirmDes
 
 // ── Health Badge ──────────────────────────────────────────────
 
-function HealthBadge({ score }: { score: number }) {
+function HealthBadge({ score }: { score: number | null | undefined }) {
+  if (score == null) {
+    return <span className="text-xs font-medium text-[var(--text-tertiary)]">Not measured</span>;
+  }
   const color = score >= 80 ? "text-[var(--success)]" : score >= 50 ? "text-[var(--warning)]" : "text-[var(--danger)]";
   const bgDot = score >= 80 ? "bg-[#10B981]" : score >= 50 ? "bg-[#F59E0B]" : "bg-[#EF4444]";
   return (
@@ -286,18 +289,19 @@ function SuspendModal({
 
 // ── Inline Creation Panel ─────────────────────────────────────
 
-function CreateOrgPanel({ onClose, plans, onSuccess }: { onClose: () => void; plans: any[]; onSuccess: () => void }) {
+function CreateOrgPanel({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [formData, setFormData] = useState({
     org_name: "",
     slug: "",
     first_name: "",
     last_name: "",
     email: "",
-    password: "",
     country: "US",
     timezone: "America/New_York",
+    reason: "",
   });
-  const [loading, setLoading] = useState(false);
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const provision = useProvisionOrganization();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -316,30 +320,33 @@ function CreateOrgPanel({ onClose, plans, onSuccess }: { onClose: () => void; pl
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.org_name || !formData.slug || !formData.email || !formData.password) {
+    if (!formData.org_name || !formData.slug || !formData.email || !formData.first_name || !formData.last_name) {
       toast.error("Please fill in all required fields");
       return;
     }
-    setLoading(true);
+    if (formData.reason.trim().length < 12) {
+      toast.error("An audit reason of at least 12 characters is required.");
+      return;
+    }
     try {
-      // Direct call to /auth/signup (ignores access token storage so super admin stays logged in)
-      await apiClient.post("/auth/signup", {
-        org_name: formData.org_name,
-        slug: formData.slug,
-        first_name: formData.first_name,
-        last_name: formData.last_name,
-        email: formData.email,
-        password: formData.password,
-        country: formData.country,
-        timezone: formData.timezone,
+      const result = await provision.mutateAsync({
+        idempotencyKey: crypto.randomUUID(),
+        payload: {
+          name: formData.org_name.trim(),
+          slug: formData.slug.trim(),
+          owner_email: formData.email.trim(),
+          owner_first_name: formData.first_name.trim(),
+          owner_last_name: formData.last_name.trim(),
+          country: formData.country.trim().toUpperCase(),
+          timezone: formData.timezone.trim(),
+          reason: formData.reason.trim(),
+        },
       });
-      toast.success("Organization provisioned successfully!");
+      setInvitationToken(result.owner_invitation.token);
+      toast.success(result.replayed ? "Existing provisioning result recovered" : "Organization provisioned");
       onSuccess();
-      onClose();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to create organization");
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Organization provisioning failed");
     }
   };
 
@@ -433,24 +440,34 @@ function CreateOrgPanel({ onClose, plans, onSuccess }: { onClose: () => void; pl
               required
             />
             <input
-              type="password"
-              name="password"
-              placeholder="Secure Password *"
-              value={formData.password}
+              type="text"
+              name="reason"
+              placeholder="Provisioning approval reason *"
+              value={formData.reason}
               onChange={handleChange}
               className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs text-white placeholder-white/20 focus:outline-none focus:border-violet-500/40"
+              minLength={12}
               required
             />
           </div>
         </div>
 
+        {invitationToken && (
+          <div className="md:col-span-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+            <p className="text-xs font-bold text-emerald-300">Owner invitation created</p>
+            <p className="mt-1 break-all font-mono text-[10px] text-white/60">{invitationToken}</p>
+            <button type="button" className="mt-2 text-[10px] font-bold uppercase text-emerald-300" onClick={() => navigator.clipboard.writeText(invitationToken)}>
+              Copy one-time invitation token
+            </button>
+          </div>
+        )}
         <div className="md:col-span-4 flex justify-end pt-2 border-t border-white/5">
           <button
             type="submit"
-            disabled={loading}
+            disabled={provision.isPending}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-xs font-black uppercase text-white shadow-lg transition-all disabled:opacity-40"
           >
-            {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+            {provision.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
             Provision Organization
           </button>
         </div>
@@ -472,8 +489,8 @@ export default function OrganizationsPage() {
   const [suspendTarget, setSuspendTarget] = useState<AdminOrg | null>(null);
   const [activateTarget, setActivateTarget] = useState<AdminOrg | null>(null);
   const [planChangeTarget, setPlanChangeTarget] = useState<{ org: AdminOrg; planId: string; planName: string } | null>(null);
-  const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [changingPlanOrgId, setChangingPlanOrgId] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const { data: orgs = [], isLoading, refetch } = useAdminOrgs({ limit: 100 });
   const { data: plans = [] } = useSubscriptionPlans();
@@ -639,7 +656,7 @@ export default function OrganizationsPage() {
       {
         accessorKey: "health_score",
         header: "Health",
-        cell: ({ row }) => <HealthBadge score={row.original.health_score ?? 100} />,
+        cell: ({ row }) => <HealthBadge score={row.original.health_score} />,
       },
       {
         accessorKey: "events_count",
@@ -649,7 +666,9 @@ export default function OrganizationsPage() {
       {
         accessorKey: "mrr",
         header: "MRR",
-        cell: ({ row }) => <span className="text-xs font-bold font-mono text-[var(--text-secondary)]">${(row.original.mrr ?? 0).toFixed(2)}</span>,
+        cell: ({ row }) => row.original.mrr == null
+          ? <span className="text-xs text-[var(--text-tertiary)]">Not measured</span>
+          : <span className="text-xs font-bold font-mono text-[var(--text-secondary)]">${row.original.mrr.toFixed(2)}</span>,
       },
       {
         accessorKey: "created_at",
@@ -775,22 +794,21 @@ export default function OrganizationsPage() {
               Export CSV
             </button>
             <button
-              onClick={() => setShowCreatePanel(!showCreatePanel)}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 transition-all text-xs font-black uppercase text-white shadow-lg"
+              type="button"
+              onClick={() => setShowCreate((open) => !open)}
+              className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-2.5 text-xs font-black uppercase text-white shadow-lg transition-colors hover:bg-violet-500"
             >
               <Plus className="w-3.5 h-3.5" />
-              Create Org
+              Provision organization
             </button>
           </div>
         }
       />
 
-      {/* Creation form */}
       <AnimatePresence>
-        {showCreatePanel && (
+        {showCreate && (
           <CreateOrgPanel
-            onClose={() => setShowCreatePanel(false)}
-            plans={plans}
+            onClose={() => setShowCreate(false)}
             onSuccess={() => refetch()}
           />
         )}

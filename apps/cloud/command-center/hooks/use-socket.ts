@@ -9,6 +9,7 @@ export function useSocket(eventId?: string) {
   useEffect(() => {
     // 1. Only connect if we have a valid session
     if (!isAuthenticated || !accessToken) {
+      socketService.disconnect();
       return;
     }
 
@@ -44,6 +45,7 @@ export function useSocket(eventId?: string) {
       socket.off('notification', handleNotification);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
+      socketService.disconnect();
     };
   }, [isAuthenticated, accessToken, eventId]);
 }

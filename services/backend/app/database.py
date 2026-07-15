@@ -563,18 +563,34 @@ tenant_org_id: contextvars.ContextVar[Optional[uuid.UUID]] = contextvars.Context
     "tenant_org_id", default=None
 )
 
+_tenant_model_cache: tuple[type, ...] = ()
+_tenant_mapper_count = -1
+
+
+def _tenant_models() -> tuple[type, ...]:
+    """Return mapped tenant-owned classes, refreshing after late model imports."""
+    global _tenant_mapper_count, _tenant_model_cache
+    mappers = tuple(Base.registry.mappers)
+    if len(mappers) != _tenant_mapper_count:
+        _tenant_model_cache = tuple(
+            mapper.class_ for mapper in mappers if hasattr(mapper.class_, "organization_id")
+        )
+        _tenant_mapper_count = len(mappers)
+    return _tenant_model_cache
+
 @event.listens_for(Session, "do_orm_execute")
 def _do_orm_execute(execute_state):
     org_id = tenant_org_id.get()
     if org_id and not execute_state.execution_options.get("skip_tenant_filter", False):
-        execute_state.statement = execute_state.statement.options(
-            with_loader_criteria(
-                Base,
-                lambda cls: cls.organization_id == org_id if hasattr(cls, "organization_id") else org_id == org_id,
-                include_aliases=True,
-                propagate_to_loaders=True
+        for model in _tenant_models():
+            execute_state.statement = execute_state.statement.options(
+                with_loader_criteria(
+                    model,
+                    model.organization_id == org_id,
+                    include_aliases=True,
+                    propagate_to_loaders=True,
+                )
             )
-        )
 
 @event.listens_for(Session, "after_begin")
 def _after_begin(session, transaction, connection):

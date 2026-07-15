@@ -24,7 +24,19 @@ class Invoice(Base):
     invoice_number: Mapped[Optional[str]] = mapped_column(String(50))
     gst_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0, server_default="0.0")
     total_amount_inr: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0, server_default="0.0")
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_changed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
 class InvoiceItem(Base):
     __tablename__ = "invoice_items"
@@ -46,5 +58,4 @@ class PaymentMethod(Base):
     card_last4: Mapped[Optional[str]] = mapped_column(String(4))
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
 

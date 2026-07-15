@@ -60,6 +60,53 @@ export interface CRMPipelineStage {
   order: number;
 }
 
+export type CRMEntityType = "organization" | "account" | "contact" | "lead" | "opportunity";
+
+interface CRMEngagementBase {
+  id: string;
+  organization_id: string;
+  entity_type: CRMEntityType;
+  entity_id: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  archived_at?: string;
+}
+
+export interface CRMActivity extends CRMEngagementBase {
+  activity_type: "CALL" | "EMAIL" | "MEETING" | "DEMO" | "FOLLOW_UP" | "OTHER";
+  description?: string;
+  occurred_at: string;
+}
+
+export interface CRMTask extends CRMEngagementBase {
+  subject: string;
+  due_date?: string;
+  status: "NOT_STARTED" | "IN_PROGRESS" | "BLOCKED" | "COMPLETED" | "CANCELLED";
+  assigned_to?: string;
+  completed_at?: string;
+}
+
+export interface CRMNote extends CRMEngagementBase {
+  content: string;
+}
+
+export interface CRMAccountWorkspace {
+  account: CRMAccount;
+  contacts: CRMContact[];
+  opportunities: CRMOpportunity[];
+  activities: CRMActivity[];
+  tasks: CRMTask[];
+  notes: CRMNote[];
+  metrics: {
+    contact_count: number;
+    active_opportunity_count: number;
+    pipeline_value: number;
+    open_task_count: number;
+  };
+}
+
 export interface CRMSupportScope {
   organizationId?: string;
   supportReason?: string;
@@ -88,6 +135,22 @@ export function useAccounts(scope: CRMSupportScope = {}) {
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: hasHydrated && isAuthenticated && !!scope.organizationId && !!scope.supportReason && !!scope.accessRequestId,
+  });
+}
+
+export function useAccountWorkspace(scope: CRMSupportScope, accountId?: string) {
+  const { hasHydrated, isAuthenticated } = useAuthStore();
+  return useQuery({
+    queryKey: queryKeys.admin.domain("crm-account-workspace", {
+      organizationId: scope.organizationId,
+      accessRequestId: scope.accessRequestId,
+      accountId,
+    }),
+    queryFn: () => apiGet<CRMAccountWorkspace>(
+      `/superadmin/crm/accounts/${accountId}/workspace?organization_id=${scope.organizationId}`,
+      supportHeaders(scope.supportReason),
+    ),
+    enabled: hasHydrated && isAuthenticated && !!scope.organizationId && !!scope.supportReason && !!scope.accessRequestId && !!accountId,
   });
 }
 
@@ -142,7 +205,33 @@ export function usePipelineStages() {
   });
 }
 
-export type CRMResourceType = "account" | "contact" | "lead" | "opportunity";
+export type CRMEngagementType = "activity" | "task" | "note";
+
+const engagementPath: Record<CRMEngagementType, string> = {
+  activity: "activities",
+  task: "tasks",
+  note: "notes",
+};
+
+export type CRMEngagementRecord = CRMActivity | CRMTask | CRMNote;
+
+export function useCrmEngagements(scope: CRMSupportScope, engagementType: CRMEngagementType) {
+  const { hasHydrated, isAuthenticated } = useAuthStore();
+  const path = engagementPath[engagementType];
+  return useInfiniteQuery({
+    queryKey: queryKeys.admin.domain(`crm-${path}`, { organizationId: scope.organizationId, accessRequestId: scope.accessRequestId, includeArchived: scope.includeArchived }),
+    queryFn: ({ pageParam }) => apiGet<CursorPage<CRMEngagementRecord>>(
+      `/superadmin/crm/${path}?organization_id=${scope.organizationId}&limit=50&include_archived=${scope.includeArchived ?? false}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`,
+      supportHeaders(scope.supportReason),
+    ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    enabled: hasHydrated && isAuthenticated && !!scope.organizationId && !!scope.supportReason && !!scope.accessRequestId,
+  });
+}
+
+export type CRMCoreResourceType = "account" | "contact" | "lead" | "opportunity";
+export type CRMResourceType = CRMCoreResourceType | CRMEngagementType;
 export type CRMMutationAction = "create" | "update" | "archive" | "restore";
 
 const resourcePath: Record<CRMResourceType, string> = {
@@ -150,6 +239,9 @@ const resourcePath: Record<CRMResourceType, string> = {
   contact: "contacts",
   lead: "leads",
   opportunity: "opportunities",
+  activity: "activities",
+  task: "tasks",
+  note: "notes",
 };
 
 export function useCrmMutation(scope: CRMSupportScope, resourceType: CRMResourceType) {
@@ -181,8 +273,37 @@ export function useCrmMutation(scope: CRMSupportScope, resourceType: CRMResource
       if (action === "update") return apiPatch(url, payload, config);
       return apiPost(url, payload, config);
     },
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: queryKeys.admin.domain(`crm-${resourcePath[resourceType]}`),
-    }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.domain(`crm-${resourcePath[resourceType]}`),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.domain("crm-account-workspace"),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useLeadConversion(scope: CRMSupportScope) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, payload, idempotencyKey }: { leadId: string; payload: Record<string, unknown>; idempotencyKey: string }) => {
+      if (!scope.organizationId || !scope.supportReason || !scope.accessRequestId) {
+        throw new Error("Apply an audited tenant support scope before converting a lead.");
+      }
+      return apiPost<CRMOpportunity>(
+        `/superadmin/crm/leads/${leadId}/convert?organization_id=${scope.organizationId}`,
+        payload,
+        { headers: { "X-Support-Reason": scope.supportReason, "Idempotency-Key": idempotencyKey } },
+      );
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("crm-leads") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.admin.domain("crm-opportunities") }),
+      ]);
+    },
   });
 }

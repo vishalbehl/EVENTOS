@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, useMemo } from "react"
-import { useStaffCatalog, useCreateStaffRole, useUpdateStaffRole, useImportStaffExcel, formatINR } from "@/services/super-admin-service"
+import { useStaffCatalog, useCreateStaffRole, useUpdateStaffRole, useDeleteStaffRole, useImportStaffExcel, formatINR } from "@/services/super-admin-service"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
 import { MetricRow } from "@/components/super-admin/ui/MetricRow"
@@ -32,6 +32,7 @@ export default function StaffCatalogPage() {
   })
   const createItem = useCreateStaffRole()
   const updateItem = useUpdateStaffRole()
+  const deleteItem = useDeleteStaffRole()
   const importExcel = useImportStaffExcel()
 
   const summary = data?.summary
@@ -166,13 +167,26 @@ export default function StaffCatalogPage() {
     {
       id: "actions",
       cell: ({ row }: any) => (
-        <Button
-          size="sm" variant="ghost"
-          onClick={() => setEditingItem(row.original)}
-          className="text-xs text-secondary hover:text-primary h-8 px-2"
-        >
-          Edit
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => setEditingItem(row.original)}
+            className="text-xs text-secondary hover:text-primary h-8 px-2"
+          >
+            Edit
+          </Button>
+          <Button
+            size="sm" variant="ghost"
+            onClick={async () => {
+              if (window.confirm(`Are you sure you want to delete "${row.original.name}"?`)) {
+                await deleteItem.mutateAsync(row.original.id)
+              }
+            }}
+            className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-2"
+          >
+            Delete
+          </Button>
+        </div>
       )
     }
   ], [])
@@ -311,11 +325,14 @@ export default function StaffCatalogPage() {
           </select>
         </div>
 
-        {activeFiltersCount > 0 && (
+        {(activeFiltersCount > 0 || search) && (
           <div className="ml-auto">
             <Button
               variant="ghost"
-              onClick={resetFilters}
+              onClick={() => {
+                setSearch("")
+                resetFilters()
+              }}
               className="text-xs h-9 text-tertiary hover:text-primary gap-1"
             >
               <RotateCcw className="h-3.5 w-3.5" />

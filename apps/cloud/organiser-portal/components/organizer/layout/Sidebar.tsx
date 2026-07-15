@@ -50,6 +50,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useEvent } from "@/hooks/useEvents";
 import { useCurrentPlan } from "@/hooks/useBilling";
 import { PERMISSIONS, type PermissionCode } from "@/lib/permissions";
+import logoIcon from "../../../../../../public/logo/logo-icon.png";
 
 type NavItem = {
   label: string;
@@ -246,7 +247,7 @@ export function Sidebar() {
             <div className="flex min-w-0 items-center gap-3">
               <div className="hex-icon-shell flex h-10 w-10 items-center justify-center">
                 <img
-                  src="/logo-icon.png"
+                  src={logoIcon.src}
                   alt="Logo"
                   className="h-5 w-5 object-contain"
                   onError={(e) => {
@@ -264,7 +265,7 @@ export function Sidebar() {
           ) : (
             <div className="hex-icon-shell flex h-10 w-10 items-center justify-center">
               <img
-                src="/logo-icon.png"
+                src={logoIcon.src}
                 alt="Logo"
                 className="h-5 w-5 object-contain"
                 onError={(e) => {

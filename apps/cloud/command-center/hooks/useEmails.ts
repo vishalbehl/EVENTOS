@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export interface EmailTemplate {
   id: string;
@@ -21,8 +22,9 @@ export interface AutoInviteResult {
 }
 
 export function useEmailTemplates(eventId: string) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: queryKeys.events.emailTemplates(eventId),
+    queryKey: queryKeys.events.emailTemplates(organizationId, eventId),
     queryFn: () => apiGet<EmailTemplate[]>(`/events/${eventId}/notifications/templates`),
     enabled: !!eventId,
   });
@@ -30,6 +32,7 @@ export function useEmailTemplates(eventId: string) {
 
 export function useSendToSpeakers(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (data: {
       template_id: string;
@@ -41,8 +44,8 @@ export function useSendToSpeakers(eventId: string) {
         { ...data, send_immediately: data.send_immediately ?? true }
       ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.campaigns(eventId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.campaigns(organizationId, eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(organizationId, eventId) });
     },
   });
 }
@@ -60,6 +63,7 @@ export function useBulkInvite(eventId: string) {
  */
 export function useAutoInvite(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: () =>
       apiPost<AutoInviteResult>(
@@ -68,8 +72,8 @@ export function useAutoInvite(eventId: string) {
       ),
     onSuccess: () => {
       // Refresh speaker list to reflect any status changes
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(eventId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.campaigns(eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.speakers(organizationId, eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.campaigns(organizationId, eventId) });
     },
   });
 }

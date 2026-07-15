@@ -29,6 +29,25 @@ Application shell
 - Dialogs and sheets identify their title, trap focus, close predictably, and restore focus.
 - Errors explain the failed operation and available recovery action.
 - Permission denial never reveals protected resource existence.
+- `Ctrl+K` opens command search and every shell menu uses focus-managed primitives.
+- Route changes are announced and move focus to the main content region.
+- Information density is a presentation preference and never changes authorization or data semantics.
+
+## Token contract
+
+- Surfaces, text, borders, controls, status, charts, elevation, radius, spacing, and motion use semantic CSS variables from `app/globals.css`.
+- `plasma-violet` and `light` explicitly set browser color schemes and retain equivalent semantic hierarchy.
+- Shared components cannot introduce hard-coded status colors; domain illustrations require a documented exception.
+- Compact density changes control and table geometry through root tokens rather than page-specific classes.
+- Reduced-motion and forced-color preferences are honored globally.
+
+## Published catalogue and enforcement
+
+- `/design-system` is the live operator-component catalogue.
+- `test/design-system-contract.test.ts` enforces required tokens and theme capabilities.
+- `test/design-system-adoption.test.ts` requires every dashboard route to use an approved page-composition primitive or explicit proxy.
+- `e2e/design-system.spec.ts` verifies command search, theme, density, axe, and 320px mobile navigation.
+- Authentication and public proposal review remain intentional standalone journeys with their own accessibility checks.
 
 ## Shared state language
 

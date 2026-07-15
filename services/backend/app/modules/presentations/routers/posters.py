@@ -150,33 +150,6 @@ async def create_poster(
     return PosterResponse.model_validate(poster)
 
 
-@router.post("/batch-status", response_model=MessageResponse)
-async def batch_update_posters_status(
-    event: CurrentEvent,
-    payload: PosterBatchStatusRequest = Body(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    """Batch update status for multiple posters."""
-    q = select(Poster).where(
-        Poster.id.in_(payload.poster_ids),
-        Poster.event_id == event.id
-    )
-    result = await db.execute(q)
-    posters = result.scalars().all()
-    
-    updated = 0
-    for p in posters:
-        p.status = payload.status
-        if payload.status in ("approved", "rejected"):
-            p.reviewed_by = current_user.id
-            p.reviewed_at = datetime.now(timezone.utc)
-        updated += 1
-    
-    await db.commit()
-    return MessageResponse(message=f"Updated {updated} poster(s) to {payload.status}.")
-
-
 @router.get("/{poster_id}", response_model=PosterResponse)
 async def get_poster(
     poster_id: uuid.UUID,

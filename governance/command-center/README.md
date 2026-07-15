@@ -12,7 +12,10 @@ This directory is the authoritative implementation control surface for completin
 - `MOCK_REMOVAL_REGISTER.md`: production mock/static/fallback closure register.
 - `DEPENDENCY_EXECUTION_MAP.md`: implementation order and cross-domain dependencies.
 - `PHASE3_CHANGE_MANIFEST.md`: active guardrail for Phase 3 batch implementation, including allowed files, banned production patterns, high-risk mutation rules, verification gates, and manifest expansion rules.
+- `PHASES_1_4_INTEGRATED_COMPLETION_PLAN.md`: continuous Codex-owned execution plan, work-package status ledger, estimate, evidence log, and final acceptance gate for Phases 1-4.
 - `CURRENT_PHASE_STATUS.md`: dated evidence-based phase percentages, latest change review, blockers, and immediate execution order.
+- `FRONTEND_CONTRACT_FOUNDATION.md`: authenticated API, generated DTO, test, and CI boundary.
+- `QUERY_INVALIDATION_CONTRACTS.md`: canonical tenant/platform keys, invalidation ownership, cursor pagination, and optimistic concurrency.
 
 Regenerate the route inventory from repository truth:
 

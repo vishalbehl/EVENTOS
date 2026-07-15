@@ -97,4 +97,29 @@ describe("apiClient", () => {
       expect(apiError.retryable).toBe(true);
     }
   });
+
+  it("refreshes once and replays a request with the rotated token", async () => {
+    let attempts = 0;
+    server.use(
+      http.get("http://127.0.0.1:8000/api/v1/protected", ({ request }) => {
+        attempts += 1;
+        if (attempts === 1) return HttpResponse.json({ detail: "Expired" }, { status: 401 });
+        return HttpResponse.json({ authorization: request.headers.get("authorization") });
+      }),
+      http.post("http://127.0.0.1:8000/api/v1/auth/refresh", () =>
+        HttpResponse.json({ access_token: "rotated-token", refresh_token: "rotated-refresh", token_type: "bearer" }),
+      ),
+    );
+
+    const { apiGet } = await import("./api-client");
+    await expect(apiGet<{ authorization: string }>("/protected")).resolves.toEqual({ authorization: "Bearer rotated-token" });
+    expect(attempts).toBe(2);
+    expect(authState.setAuth).toHaveBeenCalledWith(authState.user, "rotated-token", "rotated-refresh", true);
+  });
+
+  it("parses plain and encoded download filenames", async () => {
+    const { parseDownloadFilename } = await import("./api-client");
+    expect(parseDownloadFilename("attachment; filename=events.csv")).toBe("events.csv");
+    expect(parseDownloadFilename("attachment; filename*=UTF-8''event%20report.csv")).toBe("event report.csv");
+  });
 });

@@ -18,23 +18,23 @@ interface KpiCardProps {
 
 const COLOR_MAPS = {
   success: {
-    hex: "#10B981",
+    hex: "var(--chart-2)",
     bg: "bg-[var(--success-muted)] text-[var(--success)]",
   },
   warning: {
-    hex: "#F59E0B",
+    hex: "var(--chart-3)",
     bg: "bg-[var(--warning-muted)] text-[var(--warning)]",
   },
   danger: {
-    hex: "#EF4444",
+    hex: "var(--chart-5)",
     bg: "bg-[var(--danger-muted)] text-[var(--danger)]",
   },
   info: {
-    hex: "#3B82F6",
+    hex: "var(--chart-1)",
     bg: "bg-[var(--info-muted)] text-[var(--info)]",
   },
   brand: {
-    hex: "#7C3AED",
+    hex: "var(--chart-4)",
     bg: "bg-[var(--brand-primary-muted)] text-[var(--brand-primary)]",
   },
 };
@@ -57,7 +57,7 @@ export function KpiCard({
   const gradientId = `kpi-grad-${title.replace(/\s+/g, "-").toLowerCase()}`;
 
   return (
-    <div className={cn("relative overflow-hidden rounded-xl border border-border bg-surface p-5 shadow-sm transition-all duration-200 hover:border-border/80 flex flex-col justify-between", className)}>
+    <article aria-label={`${title}: ${value}`} className={cn("relative flex flex-col justify-between overflow-hidden rounded-xl border border-border bg-surface p-5 shadow-sm transition-all duration-200 hover:border-border/80", className)}>
       <div>
         {/* Top row */}
         <div className="flex items-center justify-between mb-4">
@@ -81,7 +81,8 @@ export function KpiCard({
                   : "bg-[var(--danger-muted)] text-[var(--danger)]"
               )}
             >
-              {isPositive ? `↑ +${delta.toFixed(1)}%` : `↓ ${delta.toFixed(1)}%`}
+              <span className="sr-only">{isPositive ? "Increase" : "Decrease"} </span>
+              {isPositive ? `+${delta.toFixed(1)}%` : `${delta.toFixed(1)}%`}
             </span>
           )}
         </div>
@@ -113,6 +114,6 @@ export function KpiCard({
           </div>
         )}
       </div>
-    </div>
+    </article>
   );
 }

@@ -1,14 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
+import { apiGet, apiPost, apiPatch, apiDelete, apiDownload, saveDownloadedFile } from "@/lib/api-client";
 import { EventSummary, EventResponse } from "@/types/backend";
 import { useAuthStore } from "@/store/use-auth-store";
+import { queryKeys } from "@/lib/query-keys";
+
+function useEventScope(eventId?: string) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
+  return { organizationId, eventId: eventId || "global" };
+}
 
 export function useEvents(filters?: { status?: string; search?: string }) {
   const { user, hasHydrated, isAuthenticated } = useAuthStore();
   const orgId = user?.organization_id ?? null;
 
   return useQuery({
-    queryKey: ["events", orgId, filters],
+    queryKey: queryKeys.events.list(orgId, filters),
     queryFn: () => {
       const params = new URLSearchParams();
       if (filters?.status) params.append("status", filters.status);
@@ -25,7 +31,7 @@ export function useEvent(eventId: string) {
   const orgId = user?.organization_id ?? null;
 
   return useQuery({
-    queryKey: ["event", orgId, eventId],
+    queryKey: queryKeys.events.detail(orgId, eventId),
     queryFn: () => apiGet<EventResponse>(`/events/${eventId}`),
     enabled: hasHydrated && isAuthenticated && !!eventId,
   });
@@ -33,28 +39,31 @@ export function useEvent(eventId: string) {
 
 export function useCreateEvent() {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (data: any) => apiPost<EventResponse>("/events", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.all(organizationId) });
     },
   });
 }
 
 export function useUpdateEvent(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (data: any) => apiPatch<EventResponse>(`/events/${eventId}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
-      queryClient.invalidateQueries({ queryKey: ["event", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.all(organizationId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(organizationId, eventId) });
     },
   });
 }
 
 export function useDashboardStats(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ['dashboard-stats', eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "dashboard"),
     queryFn: () => apiGet<any>(`/events/${eventId}/analytics/dashboard`),
     enabled: !!eventId,
     refetchInterval: 30000,
@@ -62,16 +71,18 @@ export function useDashboardStats(eventId?: string) {
 }
 
 export function useGlobalStats() {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ['global-stats'],
+    queryKey: queryKeys.admin.domain("global-analytics", { organizationId }),
     queryFn: () => apiGet<any>(`/analytics/summary`),
     refetchInterval: 60000,
   });
 }
 
 export function useActivity(eventId?: string, limit: number = 10) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ['activity', eventId, limit],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "activity", { limit }),
     queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/activity`, { params: { limit } }),
     enabled: !!eventId,
     refetchInterval: 15000,
@@ -79,10 +90,11 @@ export function useActivity(eventId?: string, limit: number = 10) {
 }
 export function useDeleteEvent() {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (eventId: string) => apiDelete(`/events/${eventId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.all(organizationId) });
     },
   });
 }
@@ -90,8 +102,9 @@ export function useDeleteEvent() {
 // ── New analytics hooks ────────────────────────────────────────
 
 export function useMainDashboardStats(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["main-dashboard-stats", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "main-dashboard"),
     queryFn: () => apiGet<any>(`/events/${eventId}/analytics/main-dashboard`),
     enabled: !!eventId,
     refetchInterval: 30000,
@@ -99,8 +112,9 @@ export function useMainDashboardStats(eventId?: string) {
 }
 
 export function useApprovalTimes(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["approval-times", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "approval-times"),
     queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/approval-times`),
     enabled: !!eventId,
     staleTime: 60_000,
@@ -108,8 +122,9 @@ export function useApprovalTimes(eventId?: string) {
 }
 
 export function useFileFormats(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["file-formats", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "file-formats"),
     queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/formats`),
     enabled: !!eventId,
     staleTime: 60_000,
@@ -117,8 +132,9 @@ export function useFileFormats(eventId?: string) {
 }
 
 export function useRoomBreakdown(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["room-breakdown", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "room-breakdown"),
     queryFn: () => apiGet<any[]>(`/events/${eventId}/analytics/rooms/breakdown`),
     enabled: !!eventId,
     staleTime: 60_000,
@@ -128,39 +144,15 @@ export function useRoomBreakdown(eventId?: string) {
 /** Triggers a file download by creating a temporary anchor element. */
 export function useExportDownload(eventId: string) {
   return async (format: "csv" | "xlsx" | "pdf") => {
-    // We need the bearer token for the download URL
-    const storage = typeof window !== "undefined"
-      ? localStorage.getItem("obsidian-auth-storage")
-      : null;
-    const token = storage ? JSON.parse(storage)?.state?.accessToken : null;
-
-    const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000") + "/api/v1";
-    const url = `${apiBase}/events/${eventId}/analytics/export?format=${format}`;
-
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
-
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    // Derive filename from Content-Disposition header if present
-    const cd = res.headers.get("Content-Disposition") || "";
-    const match = cd.match(/filename="?([^"]+)"?/);
-    a.download = match ? match[1] : `analytics.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(blobUrl);
+    const file = await apiDownload(`/events/${eventId}/analytics/export`, { params: { format } });
+    saveDownloadedFile(file, `analytics.${format}`);
   };
 }
 
 export function useDashboardSummary(eventId?: string, liveMode: boolean = false) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["dashboard-summary", eventId, liveMode],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "summary", { liveMode }),
     queryFn: () => apiGet<any>("/dashboard/summary", { params: { event_id: eventId } }),
     enabled: !!eventId,
     staleTime: liveMode ? 0 : 5 * 60 * 1000,
@@ -169,8 +161,9 @@ export function useDashboardSummary(eventId?: string, liveMode: boolean = false)
 }
 
 export function useRegistrationsTimeline(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["dashboard-timeline", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "registrations-timeline"),
     queryFn: () => apiGet<any[]>("/dashboard/registrations/timeline", { params: { event_id: eventId } }),
     enabled: !!eventId,
     staleTime: 5 * 60 * 1000,
@@ -178,8 +171,9 @@ export function useRegistrationsTimeline(eventId?: string) {
 }
 
 export function useRolesBreakdown(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["dashboard-roles-breakdown", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "roles-breakdown"),
     queryFn: () => apiGet<any[]>("/dashboard/roles-breakdown", { params: { event_id: eventId } }),
     enabled: !!eventId,
     staleTime: 5 * 60 * 1000,
@@ -187,8 +181,9 @@ export function useRolesBreakdown(eventId?: string) {
 }
 
 export function usePendingActions(eventId?: string, liveMode: boolean = false) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["dashboard-pending-actions", eventId, liveMode],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "pending-actions", { liveMode }),
     queryFn: () => apiGet<any[]>("/dashboard/pending-actions", { params: { event_id: eventId } }),
     enabled: !!eventId,
     staleTime: liveMode ? 0 : 5 * 60 * 1000,
@@ -197,8 +192,9 @@ export function usePendingActions(eventId?: string, liveMode: boolean = false) {
 }
 
 export function useRecentActivity(eventId?: string, liveMode: boolean = false) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["dashboard-recent-activity", eventId, liveMode],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "recent-activity", { liveMode }),
     queryFn: () => apiGet<any[]>("/dashboard/recent-activity", { params: { event_id: eventId } }),
     enabled: !!eventId,
     staleTime: liveMode ? 0 : 5 * 60 * 1000,
@@ -207,8 +203,9 @@ export function useRecentActivity(eventId?: string, liveMode: boolean = false) {
 }
 
 export function useUpcomingDeadlines(eventId?: string) {
+  const scope = useEventScope(eventId);
   return useQuery({
-    queryKey: ["dashboard-deadlines", eventId],
+    queryKey: queryKeys.events.analytics(scope.organizationId, scope.eventId, "deadlines"),
     queryFn: () => apiGet<any[]>("/dashboard/deadlines", { params: { event_id: eventId } }),
     enabled: !!eventId,
     staleTime: 5 * 60 * 1000,

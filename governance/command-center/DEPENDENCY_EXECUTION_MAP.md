@@ -37,12 +37,30 @@ Work may run in parallel only after its shared dependencies have passed their ex
 ## Current Critical Path
 
 ```text
+Phase 1 design-system and shell foundation [complete 2026-07-14]
+  -> Phase 2 typed frontend contracts and CI gates [complete 2026-07-14]
+  -> Phase 3 remaining audit/browser/deployment closure
+  -> Phase 4 remaining commercial workflows
 Durable report export and authorized download [implemented]
   -> live broker/object-storage E2E evidence
 Platform-support tenant read contract [implemented and isolation-tested]
+Support ticket lifecycle, assignment, escalation and private notes [implemented and isolation-tested 2026-07-15]
+Support attachment presign, quarantine, malware-scan handoff and READY-only download [implemented and isolation-tested 2026-07-15]
+Durable scoped audit export and communications mutation assurance [implemented and tested 2026-07-15]
+Access review and break-glass dual control [implemented and tested 2026-07-15]
 Typed CRM and billing cursor pagination [implemented and tested]
 CRM core record lifecycle [implemented and tested]
-  -> CRM activities, tasks, notes and conversion
-  -> billing and finance lifecycle mutations
+Subscription, grant and credit-note lifecycle [implemented and tested]
+  -> controlled CRM lead conversion [implemented and tested 2026-07-15]
+  -> CRM activities, tasks and notes [implemented and tested 2026-07-15]
+  -> CRM account workspace [implemented and tested 2026-07-15]
+  -> granular platform-staff CRM permission journeys
+  -> activation/snapshot/usage administration [implemented 2026-07-14]
+  -> activation transfer/deactivation administration [implemented and tested 2026-07-15]
+  -> tenant invoice/payment reconciliation [implemented 2026-07-14]
+  -> commercial refund lineage and reconciliation [implemented and tested 2026-07-15]
+  -> version-bound invoice PDF artifact and audited download [implemented and tested 2026-07-15]
+  -> verified provider webhook reconciliation
+  -> invoice, payment and provider reconciliation
   -> Phase 4 end-to-end journeys
 ```

@@ -28,7 +28,7 @@ if sys.platform == 'win32':
 import hashlib
 import uuid
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -140,14 +140,6 @@ _TestSessionLocal = async_sessionmaker(
 
 
 # ── pytest-asyncio event loop managed via pytest.ini ──────────
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for each test session."""
-    policy = asyncio.get_event_loop_policy()
-    loop = policy.new_event_loop()
-    yield loop
-    loop.close()
-
 # ── Database schema setup (once per session) ──────────────────
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -253,19 +245,31 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     route handlers operate within the per-test transaction.
     """
     from app.main import app as fastapi_app
-    from app.dependencies import get_db
+    from fastapi import Depends
+    from app.dependencies import get_current_user, get_db, get_token_data
     from app.routers import api_router
-
-    # Include api_router without prefix to support tests using legacy paths
-    fastapi_app.include_router(api_router)
 
     from app.database import async_engine
     await async_engine.dispose()
 
+    fastapi_app.state.test_db_session = db
+
     async def _override_get_db():
-        yield db
+        yield fastapi_app.state.test_db_session
+
+    async def _override_current_user(token_data=Depends(get_token_data)):
+        # Keep real JWT decoding and account validation, but bind the lookup to
+        # the same transaction as the route under test.
+        return await get_current_user(token_data, fastapi_app.state.test_db_session)
 
     fastapi_app.dependency_overrides[get_db] = _override_get_db
+    fastapi_app.dependency_overrides[get_current_user] = _override_current_user
+
+    # Register the prefix-free compatibility routes once. Re-registering them
+    # for every test leaves stale dependency graphs at the front of the router.
+    if not getattr(fastapi_app.state, "legacy_test_router_included", False):
+        fastapi_app.include_router(api_router)
+        fastapi_app.state.legacy_test_router_included = True
 
     import app.database
     
@@ -289,6 +293,7 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     finally:
         app.database.AsyncSessionLocal = original_sessionmaker
         fastapi_app.dependency_overrides.clear()
+        fastapi_app.state.test_db_session = None
 
 
 # ── Domain fixture factories ──────────────────────────────────

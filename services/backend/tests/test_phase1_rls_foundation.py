@@ -4,7 +4,7 @@ import uuid
 from urllib.parse import urlparse, urlunparse
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import app.models  # noqa: F401
@@ -19,6 +19,9 @@ from app.core.tenancy_registry import (
     TENANT_TABLES,
 )
 from app.database import Base, tenant_org_id
+from app.modules.identity.models.user import User
+from app.modules.identity.services.auth_service import hash_password
+from app.modules.platform.models.organization import Organization
 
 
 def test_rls_registry_references_direct_non_nullable_tenant_owners() -> None:
@@ -136,6 +139,39 @@ async def test_verified_tenant_override_restores_transaction_context(db) -> None
     finally:
         tenant_org_id.reset(token)
         await TenantContextGuard.apply(db, None)
+
+
+@pytest.mark.asyncio
+async def test_orm_tenant_filter_does_not_reuse_previous_organization(db) -> None:
+    org_a = Organization(name="ORM Tenant A", slug=f"orm-a-{uuid.uuid4().hex[:8]}", plan="pro")
+    org_b = Organization(name="ORM Tenant B", slug=f"orm-b-{uuid.uuid4().hex[:8]}", plan="pro")
+    db.add_all([org_a, org_b])
+    await db.flush()
+    user_a = User(
+        organization_id=org_a.id,
+        email=f"orm-a-{uuid.uuid4().hex[:8]}@test.example",
+        password_hash=hash_password("test-password-a"),
+        first_name="Tenant",
+        last_name="A",
+        role="organiser",
+        is_active=True,
+    )
+    user_b = User(
+        organization_id=org_b.id,
+        email=f"orm-b-{uuid.uuid4().hex[:8]}@test.example",
+        password_hash=hash_password("test-password-b"),
+        first_name="Tenant",
+        last_name="B",
+        role="organiser",
+        is_active=True,
+    )
+    db.add_all([user_a, user_b])
+    await db.flush()
+
+    async with TenantContextGuard.scoped(db, org_a.id):
+        assert set((await db.scalars(select(User.id))).all()) == {user_a.id}
+    async with TenantContextGuard.scoped(db, org_b.id):
+        assert set((await db.scalars(select(User.id))).all()) == {user_b.id}
 
 
 def test_super_admin_has_no_implicit_tenant_context_bypass() -> None:

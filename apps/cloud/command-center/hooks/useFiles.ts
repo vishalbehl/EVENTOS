@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/store/use-auth-store";
 
 export interface FileValidationDetail {
   id: string;
@@ -108,8 +110,9 @@ export interface PresentationFile {
 
 
 export function useFiles(eventId: string, filters?: { upload_status?: string }) {
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useQuery({
-    queryKey: ["files", eventId, filters],
+    queryKey: queryKeys.events.files(organizationId, eventId, filters),
     queryFn: () => {
       const params = new URLSearchParams();
       if (filters?.upload_status) params.append("upload_status", filters.upload_status);
@@ -123,21 +126,23 @@ export function useFiles(eventId: string, filters?: { upload_status?: string }) 
 
 export function useApproveFile(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: (fileId: string) => apiPost(`/events/${eventId}/files/${fileId}/approve`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["files", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.files(organizationId, eventId) });
     },
   });
 }
 
 export function useRejectFile(eventId: string) {
   const queryClient = useQueryClient();
+  const organizationId = useAuthStore((state) => state.user?.organization_id);
   return useMutation({
     mutationFn: ({ fileId, reason }: { fileId: string; reason: string }) => 
       apiPost(`/events/${eventId}/files/${fileId}/reject`, { reason }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["files", eventId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.files(organizationId, eventId) });
     },
   });
 }

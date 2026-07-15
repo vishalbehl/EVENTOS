@@ -30,6 +30,7 @@ export default function AnnouncementDetailPage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [reason, setReason] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
@@ -52,9 +53,11 @@ export default function AnnouncementDetailPage() {
           title: title.trim(),
           content: content.trim(),
           is_active: isActive,
+          reason: reason.trim(),
         },
       });
       toast.success("Announcement updated.");
+      setReason("");
     } catch (error: any) {
       toast.error(error?.message || "Could not update announcement.");
     }
@@ -127,7 +130,8 @@ export default function AnnouncementDetailPage() {
                   Active
                   <input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />
                 </label>
-                <Button type="submit" disabled={updateAnnouncement.isPending}>
+                <div className="space-y-2"><label htmlFor="announcement-detail-reason" className="text-xs font-medium text-[var(--text-secondary)]">Change reason</label><Input id="announcement-detail-reason" value={reason} onChange={(event) => setReason(event.target.value)} minLength={12} placeholder="Operational purpose and approval reference" required /></div>
+                <Button type="submit" disabled={updateAnnouncement.isPending || reason.trim().length < 12}>
                   <Save className="mr-2 size-4" />
                   {updateAnnouncement.isPending ? "Saving..." : "Save Changes"}
                 </Button>

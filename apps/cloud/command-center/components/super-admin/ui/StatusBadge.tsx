@@ -38,23 +38,23 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
 
   if (["active", "healthy", "paid", "completed"].includes(norm)) {
     bgClass = "bg-[var(--status-success-muted)] text-[var(--status-success)]";
-    dotColor = "bg-[#10B981]";
+    dotColor = "bg-[var(--status-success)]";
     label = norm === "paid" ? "Paid" : norm === "active" ? "Active" : norm === "healthy" ? "Healthy" : "Completed";
   } else if (["trial", "running", "pending", "info"].includes(norm)) {
     bgClass = "bg-[var(--status-info-muted)] text-[var(--status-info)]";
-    dotColor = "bg-[#3B82F6]";
+    dotColor = "bg-[var(--status-info)]";
     label = norm === "trial" ? "Trial" : norm === "running" ? "Running" : norm === "pending" ? "Pending" : "Info";
   } else if (["grace", "warning", "degraded"].includes(norm)) {
     bgClass = "bg-[var(--status-warning-muted)] text-[var(--status-warning)]";
-    dotColor = "bg-[#F59E0B]";
+    dotColor = "bg-[var(--status-warning)]";
     label = norm === "grace" ? "Grace Period" : norm === "warning" ? "Warning" : "Degraded";
   } else if (["suspended", "down", "overdue", "failed", "danger"].includes(norm)) {
     bgClass = "bg-[var(--status-danger-muted)] text-[var(--status-danger)]";
-    dotColor = "bg-[#EF4444]";
+    dotColor = "bg-[var(--status-danger)]";
     label = norm === "suspended" ? "Suspended" : norm === "down" ? "Down" : norm === "overdue" ? "Overdue" : norm === "failed" ? "Failed" : "Danger";
   } else if (["expired", "cancelled", "draft"].includes(norm)) {
     bgClass = "bg-surface-2 text-[var(--text-tertiary)]";
-    dotColor = "bg-[#64748B]";
+    dotColor = "bg-[var(--text-tertiary)]";
     label = norm === "expired" ? "Expired" : norm === "cancelled" ? "Cancelled" : "Draft";
   }
 
@@ -66,7 +66,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
         className
       )}
     >
-      <span className={cn("w-1.5 h-1.5 rounded-full", dotColor)}></span>
+      <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", dotColor)} />
       <span className="capitalize">{label}</span>
     </span>
   );
