@@ -12,7 +12,7 @@ import {
   PanelLeft, ChevronLeft, ChevronRight, Box, LogOut, User,
   Bell, FileText, Info, Layout, ClipboardList, Banknote, Megaphone, Palette, ChevronDown,
   Code, ShieldCheck, Building2, CreditCard, Shield, Activity, Database, Search, Terminal, Share2,
-  Brain, Landmark, DollarSign, Percent, Sparkles, History, Calculator, Network, Grid, Library, KeyRound
+  Landmark, DollarSign, Percent, Sparkles, History, Calculator, Network, Grid, Library, KeyRound
 } from "lucide-react";
 
 import { useUIStore } from "@/store/useUIStore";
@@ -51,11 +51,6 @@ export function Sidebar() {
       href: "/organizations"
     },
     {
-      label: "Website Builder",
-      icon: Layout,
-      href: "/super-admin/builder/sites"
-    },
-    {
       label: "Business",
       icon: Banknote,
       subItems: [
@@ -65,11 +60,11 @@ export function Sidebar() {
         { label: "Quotes", icon: Calculator, href: "/business/sales/quotes/create" },
         { label: "Proposals", icon: FileText, href: "/business/sales/proposals/create" },
         { label: "Pricing", type: "subheader" },
-        { label: "Pricing Simulator", icon: Calculator, href: "/business/pricing/pricing-simulator" },
-        { label: "Saved Simulations", icon: History, href: "/business/pricing/saved-simulations" },
-        { label: "Templates", icon: Library, href: "/business/pricing/templates" },
         { label: "Hardware Catalog", icon: Box, href: "/business/pricing/hardware-catalog" },
         { label: "Staff Catalog", icon: Users, href: "/business/pricing/staff-catalog" },
+        { label: "Templates", icon: Library, href: "/business/pricing/templates" },
+        { label: "Pricing Simulator", icon: Calculator, href: "/business/pricing/pricing-simulator" },
+        { label: "Saved Simulations", icon: History, href: "/business/pricing/saved-simulations" },
         { label: "Subscription", type: "subheader" },
         { label: "Plans", icon: SlidersHorizontal, href: "/business/subscription/plans" },
         { label: "Add-ons", icon: CreditCard, href: "/business/subscription/add-ons" },
@@ -92,17 +87,14 @@ export function Sidebar() {
       label: "Operations Center",
       icon: Settings,
       subItems: [
+        { label: "Overview", icon: LayoutDashboard, href: "/operations-center" },
         { label: "Requests", icon: FileText, href: "/operations-center/requests" },
-        { label: "Projects", icon: Calendar, href: "/operations-center/projects" },
-        { label: "Resources", icon: Users, href: "/operations-center/resources" },
-        { label: "Deployments", icon: ClipboardList, href: "/operations-center/deployments" },
         { label: "Venue Readiness", icon: Activity, href: "/operations-center/venue-readiness" },
         { label: "Risk Analysis", icon: Shield, href: "/operations-center/risk-analysis" },
         { label: "Jobs", icon: ClipboardList, href: "/operations-center/jobs" },
         { label: "Database", icon: Database, href: "/operations-center/database" },
-        { label: "Storage", icon: Box, href: "/operations-center/storage" },
-        { label: "Search", icon: Search, href: "/operations-center/search" },
-        { label: "Analytics", icon: BarChart3, href: "/operations-center/analytics" },
+        { label: "Storage & Queues", icon: Box, href: "/operations-center/storage" },
+        { label: "Search Jobs", icon: Search, href: "/operations-center/search" },
       ]
     },
     {
@@ -122,22 +114,11 @@ export function Sidebar() {
       label: "Developer Platform",
       icon: Terminal,
       subItems: [
-        { label: "APIs", icon: BarChart3, href: "/developer-platform/apis" },
+        { label: "API Catalog", icon: FileText, href: "/developer-platform/apis" },
         { label: "API Keys", icon: SlidersHorizontal, href: "/developer-platform/api-keys" },
         { label: "Webhooks", icon: Megaphone, href: "/developer-platform/webhooks" },
         { label: "Integrations", icon: Share2, href: "/developer-platform/integrations" },
         { label: "Logs", icon: FileText, href: "/developer-platform/logs" },
-      ]
-    },
-    {
-      label: "AI Workspace",
-      icon: Brain,
-      subItems: [
-        { label: "Dashboard", icon: LayoutDashboard, href: "/ai-workspace/dashboard" },
-        { label: "Models", icon: SlidersHorizontal, href: "/ai-workspace/models" },
-        { label: "Agents", icon: ClipboardList, href: "/ai-workspace/agents" },
-        { label: "Prompt Library", icon: ClipboardList, href: "/ai-workspace/prompt-library" },
-        { label: "Automation", icon: SlidersHorizontal, href: "/ai-workspace/automation" },
       ]
     },
     {
@@ -393,7 +374,7 @@ export function Sidebar() {
                         {route.label}
                       </span>
                       {(route as any).isNew && (
-                        <span className="bg-[var(--pri)] text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-tighter">New</span>
+                        <span className="bg-[var(--pri)] text-[var(--primary-foreground)] text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-tighter">New</span>
                       )}
                     </div>
                   )}

@@ -120,3 +120,48 @@ async def test_audit_export_download_conceals_other_tenant_and_is_audited(
             AuditLog.action_type == "AUDIT_EXPORT_DOWNLOADED",
         ))
         assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_audit_export_dispatch_failure_is_durable_and_retry_safe(
+    client: AsyncClient,
+    db: AsyncSession,
+    super_admin: User,
+    organization: Organization,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "app.modules.audit.routers.audit_exports.celery_app.send_task",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+    key = f"audit-outage-{uuid.uuid4()}"
+    url = f"/superadmin/audit-exports?organization_id={organization.id}"
+    response = await client.post(
+        url,
+        json={"reason": REASON},
+        headers=headers(super_admin, key),
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "EXPORT_DISPATCH_FAILED"
+
+    async with TenantContextGuard.scoped(db, organization.id):
+        export = await db.scalar(select(DataExport).where(
+            DataExport.organization_id == organization.id,
+            DataExport.idempotency_key == key,
+        ))
+        assert export is not None
+        assert export.status == "FAILED"
+        assert export.storage_key is None
+        audit = await db.scalar(select(AuditLog).where(
+            AuditLog.resource_id == export.id,
+            AuditLog.action_type == "AUDIT_EXPORT_DISPATCH_FAILED",
+        ))
+        assert audit is not None
+
+    replay = await client.post(
+        url,
+        json={"reason": REASON},
+        headers=headers(super_admin, key),
+    )
+    assert replay.status_code == 202
+    assert replay.json()["status"] == "FAILED"

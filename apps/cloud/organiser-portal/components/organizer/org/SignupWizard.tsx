@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Box, ChevronRight, Eye, EyeOff, Loader2, Lock, Mail, Check,
-  ClipboardList, FileImage, Building2, BarChart3, UserStar
+  ClipboardList, FileImage, Building2, BarChart3, User
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -327,7 +327,7 @@ export function PublicShell({
 }) {
   const features = [
     { name: "Registration Management ", icon: ClipboardList },
-    { name: "Speaker Management", icon: UserStar },
+    { name: "Speaker Management", icon: User },
     { name: "Eposter & Files", icon: FileImage },
     { name: "Venue Operations", icon: Building2 },
     { name: "Analytics & Reporting", icon: BarChart3 },

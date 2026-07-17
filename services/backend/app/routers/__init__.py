@@ -10,6 +10,7 @@ from app.modules.identity.routers import auth, users, me, impersonation
 from app.modules.platform import router as platform
 from app.modules.platform import support_router
 from app.modules.platform.communications_router import router as platform_communications_router
+from app.modules.operations_control.router import router as operations_control_router
 from app.modules.platform.departments.router import router as departments_router
 from app.modules.platform.teams.router import router as teams_router
 from app.modules.platform.roles.router import router as roles_router, assignments_router, admin_router as access_admin_router
@@ -35,7 +36,6 @@ from app.modules.audit.routers.audit import router as audit_router
 # Phase 2: Files, Workflow & AI RAG Platform
 from app.modules.files.routers.files import router as files_router
 from app.modules.workflow.routers.workflows import router as workflows_router
-from app.modules.ai.routers.ai import router as ai_router
 
 
 api_router = APIRouter()
@@ -55,22 +55,13 @@ api_router.include_router(pricing_router)
 api_router.include_router(procurement_router)
 
 # ── Phase 6: Enterprise Template System, Website Builder & Blueprint Engine ────
-from app.modules.templates.router import router as templates_router
-from app.modules.website_builder.router import router as website_builder_router
-from app.modules.blueprints.router import router as blueprints_router
-from app.modules.theme_engine.router import router as theme_engine_router
-from app.modules.marketplace.router import router as marketplace_router
 
-api_router.include_router(templates_router)
-api_router.include_router(website_builder_router)
-api_router.include_router(blueprints_router)
-api_router.include_router(theme_engine_router)
-api_router.include_router(marketplace_router)
 
 api_router.include_router(auth.router)
 api_router.include_router(impersonation.router)
 api_router.include_router(platform.router)
 api_router.include_router(platform_communications_router)
+api_router.include_router(operations_control_router)
 
 api_router.include_router(support_router.router)
 api_router.include_router(departments_router)
@@ -130,7 +121,6 @@ api_router.include_router(audit_router)
 # ── Phase 2: Files, Workflow & AI RAG Platform ────────────────
 api_router.include_router(files_router)
 api_router.include_router(workflows_router)
-api_router.include_router(ai_router)
 
 # ── Phase 3: Applications, Developer Portal & OAuth2 Gateway ──
 from app.modules.developer.routers.developer import router as developer_router
@@ -139,8 +129,10 @@ api_router.include_router(developer_router)
 # ── Phase 4: Billing & Plan Usage ─────────────────────────────
 from app.modules.billing.routers.billing import router as billing_router
 from app.modules.billing.routers.activations import router as activations_router
+from app.modules.billing.routers.provider_webhooks import router as provider_webhooks_router
 api_router.include_router(billing_router)
 api_router.include_router(activations_router)
+api_router.include_router(provider_webhooks_router)
 
 # ── Phase 7: Tech Services & Operations Planning Engine ───────
 from app.modules.operations_planning.router import router as operations_planning_router
@@ -156,8 +148,9 @@ api_router.include_router(deployment_management_router)
 # ── Super Admin Namespace ──────────────────────────────────────
 # Aggregates existing module routers under /api/v1/superadmin/.
 # All routes in this namespace require Super Admin authentication.
-from app.modules.superadmin.router import superadmin_router
+from app.modules.superadmin.router import commercial_staff_router, superadmin_router
 api_router.include_router(superadmin_router)
+api_router.include_router(commercial_staff_router)
 
 
 

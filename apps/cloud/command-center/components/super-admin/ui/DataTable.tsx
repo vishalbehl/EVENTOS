@@ -53,12 +53,11 @@ export function DataTable<TData>({
                       className="sticky top-0 z-10 h-10 px-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-[var(--bg-surface-2)] border-b border-border select-none align-middle"
                       style={{ width: header.getSize() }}
                     >
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
-                          )}
+                      {header.isPlaceholder ? null : (
+                        header.column.columnDef.header == null || header.column.columnDef.header === ""
+                          ? <span className="sr-only">{header.column.id === "actions" ? "Actions" : header.column.id}</span>
+                          : flexRender(header.column.columnDef.header, header.getContext())
+                      )}
                     </th>
                   ))}
                 </tr>

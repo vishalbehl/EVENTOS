@@ -1720,94 +1720,6 @@
         "title": "AdminTicketUpdateRequest",
         "type": "object"
       },
-      "AiChatRequestIn": {
-        "properties": {
-          "message": {
-            "maxLength": 1000,
-            "minLength": 1,
-            "title": "Message",
-            "type": "string"
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "title": "AiChatRequestIn",
-        "type": "object"
-      },
-      "AiChatResponseOut": {
-        "properties": {
-          "citations": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/AiCitation"
-            },
-            "title": "Citations",
-            "type": "array"
-          },
-          "content": {
-            "title": "Content",
-            "type": "string"
-          },
-          "conversation_id": {
-            "format": "uuid",
-            "title": "Conversation Id",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "message_id": {
-            "format": "uuid",
-            "title": "Message Id",
-            "type": "string"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          }
-        },
-        "required": [
-          "message_id",
-          "conversation_id",
-          "role",
-          "content",
-          "created_at"
-        ],
-        "title": "AiChatResponseOut",
-        "type": "object"
-      },
-      "AiCitation": {
-        "properties": {
-          "entity_id": {
-            "format": "uuid",
-            "title": "Entity Id",
-            "type": "string"
-          },
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "similarity": {
-            "title": "Similarity",
-            "type": "number"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "entity_type",
-          "entity_id",
-          "title",
-          "similarity"
-        ],
-        "title": "AiCitation",
-        "type": "object"
-      },
       "AlertItem": {
         "properties": {
           "details": {
@@ -2805,6 +2717,77 @@
         "title": "AttendeeUpdateBody",
         "type": "object"
       },
+      "AttestationIn": {
+        "properties": {
+          "attested_by_name": {
+            "title": "Attested By Name",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "evidence_asset_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Asset Id"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "statement": {
+            "minLength": 5,
+            "title": "Statement",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "READY",
+              "NOT_READY",
+              "CONDITIONAL",
+              "UNKNOWN"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "organization_id",
+          "category",
+          "status",
+          "statement",
+          "attested_by_name",
+          "reason"
+        ],
+        "title": "AttestationIn",
+        "type": "object"
+      },
       "AuditExportCreate": {
         "properties": {
           "action_type": {
@@ -3236,64 +3219,6 @@
           "updated_at"
         ],
         "title": "BadgeResponse",
-        "type": "object"
-      },
-      "BlueprintInstallationCreate": {
-        "properties": {
-          "blueprint_id": {
-            "format": "uuid",
-            "title": "Blueprint Id",
-            "type": "string"
-          },
-          "event_id": {
-            "format": "uuid",
-            "title": "Event Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "event_id",
-          "blueprint_id"
-        ],
-        "title": "BlueprintInstallationCreate",
-        "type": "object"
-      },
-      "BlueprintInstallationOut": {
-        "properties": {
-          "blueprint_id": {
-            "format": "uuid",
-            "title": "Blueprint Id",
-            "type": "string"
-          },
-          "event_id": {
-            "format": "uuid",
-            "title": "Event Id",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "installed_at": {
-            "format": "date-time",
-            "title": "Installed At",
-            "type": "string"
-          },
-          "organization_id": {
-            "format": "uuid",
-            "title": "Organization Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "organization_id",
-          "event_id",
-          "blueprint_id",
-          "installed_at"
-        ],
-        "title": "BlueprintInstallationOut",
         "type": "object"
       },
       "Body_import_participants_csv_api_v1_events__event_id__participants_import_post": {
@@ -6610,6 +6535,38 @@
         "title": "CursorPage[OrganizationSubscriptionAdminResponse]",
         "type": "object"
       },
+      "CursorPage_ProviderWebhookAdminResponse_": {
+        "properties": {
+          "has_next": {
+            "default": false,
+            "title": "Has Next",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderWebhookAdminResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[ProviderWebhookAdminResponse]",
+        "type": "object"
+      },
       "CursorPage_RevenueMetricAdminResponse_": {
         "properties": {
           "has_next": {
@@ -7499,8 +7456,15 @@
             "type": "string"
           },
           "device_key": {
-            "title": "Device Key",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Key"
           },
           "expires_at": {
             "anyOf": [
@@ -7517,12 +7481,16 @@
           "key_version": {
             "title": "Key Version",
             "type": "integer"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
           }
         },
         "required": [
           "device_id",
-          "key_version",
-          "device_key"
+          "key_version"
         ],
         "title": "DeviceKeyResponse",
         "type": "object"
@@ -7593,6 +7561,18 @@
               }
             ],
             "title": "Os Version"
+          },
+          "supplier_assignment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Assignment Id"
           }
         },
         "required": [
@@ -8992,111 +8972,6 @@
           "updated_at"
         ],
         "title": "EventActivationResponse",
-        "type": "object"
-      },
-      "EventBlueprintCreate": {
-        "properties": {
-          "blueprint_data": {
-            "additionalProperties": true,
-            "default": {},
-            "title": "Blueprint Data",
-            "type": "object"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "industry": {
-            "default": "Technology",
-            "title": "Industry",
-            "type": "string"
-          },
-          "is_active": {
-            "default": true,
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "is_system": {
-            "default": false,
-            "title": "Is System",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "steps": {
-            "default": [],
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Steps",
-            "type": "array"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "EventBlueprintCreate",
-        "type": "object"
-      },
-      "EventBlueprintOut": {
-        "properties": {
-          "blueprint_data": {
-            "additionalProperties": true,
-            "default": {},
-            "title": "Blueprint Data",
-            "type": "object"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "industry": {
-            "default": "Technology",
-            "title": "Industry",
-            "type": "string"
-          },
-          "is_active": {
-            "default": true,
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "is_system": {
-            "default": false,
-            "title": "Is System",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "id"
-        ],
-        "title": "EventBlueprintOut",
         "type": "object"
       },
       "EventCreate": {
@@ -12573,6 +12448,93 @@
         "title": "ImportPreviewRow",
         "type": "object"
       },
+      "IncidentIn": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 3,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "title",
+          "severity",
+          "reason"
+        ],
+        "title": "IncidentIn",
+        "type": "object"
+      },
+      "IncidentResolution": {
+        "properties": {
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolution": {
+            "maxLength": 5000,
+            "minLength": 12,
+            "title": "Resolution",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "resolution",
+          "reason"
+        ],
+        "title": "IncidentResolution",
+        "type": "object"
+      },
       "InviteRequest": {
         "properties": {
           "email": {
@@ -15226,166 +15188,6 @@
           "service_id"
         ],
         "title": "PackageServiceCreate",
-        "type": "object"
-      },
-      "PageCreate": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "is_homepage": {
-            "default": false,
-            "title": "Is Homepage",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "seo_description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seo Description"
-          },
-          "seo_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seo Title"
-          },
-          "site_id": {
-            "format": "uuid",
-            "title": "Site Id",
-            "type": "string"
-          },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
-          "sort_order": {
-            "default": 0,
-            "title": "Sort Order",
-            "type": "integer"
-          },
-          "status": {
-            "default": "DRAFT",
-            "title": "Status",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "slug",
-          "title",
-          "site_id"
-        ],
-        "title": "PageCreate",
-        "type": "object"
-      },
-      "PageOut": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "is_homepage": {
-            "default": false,
-            "title": "Is Homepage",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "seo_description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seo Description"
-          },
-          "seo_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seo Title"
-          },
-          "site_id": {
-            "format": "uuid",
-            "title": "Site Id",
-            "type": "string"
-          },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
-          "sort_order": {
-            "default": 0,
-            "title": "Sort Order",
-            "type": "integer"
-          },
-          "status": {
-            "default": "DRAFT",
-            "title": "Status",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "slug",
-          "title",
-          "id",
-          "site_id"
-        ],
-        "title": "PageOut",
         "type": "object"
       },
       "PaginatedEmailLogResponse": {
@@ -20565,6 +20367,138 @@
         "title": "ProposalVersionOut",
         "type": "object"
       },
+      "ProviderWebhookAdminResponse": {
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Detail"
+          },
+          "gateway_id": {
+            "format": "uuid",
+            "title": "Gateway Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Id"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "payload_hash": {
+            "title": "Payload Hash",
+            "type": "string"
+          },
+          "processed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed At"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Created At"
+          },
+          "provider_event_id": {
+            "title": "Provider Event Id",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          }
+        },
+        "required": [
+          "id",
+          "gateway_id",
+          "organization_id",
+          "provider",
+          "provider_event_id",
+          "event_type",
+          "payload_hash",
+          "status",
+          "attempt_count",
+          "received_at"
+        ],
+        "title": "ProviderWebhookAdminResponse",
+        "type": "object"
+      },
       "PublicProposalDecision": {
         "properties": {
           "consent_confirmed": {
@@ -22041,6 +21975,39 @@
         "title": "ReasonRequiredRequest",
         "type": "object"
       },
+      "ReasonedCommand": {
+        "properties": {
+          "event_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "reason"
+        ],
+        "title": "ReasonedCommand",
+        "type": "object"
+      },
       "RefreshRequest": {
         "properties": {
           "refresh_token": {
@@ -22339,10 +22306,15 @@
             "format": "uuid",
             "title": "Organization Id",
             "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
           }
         },
         "required": [
-          "organization_id"
+          "organization_id",
+          "reason"
         ],
         "title": "ReindexTriggerIn",
         "type": "object"
@@ -22365,6 +22337,141 @@
           "ordered_ids"
         ],
         "title": "ReorderSpeakersRequest",
+        "type": "object"
+      },
+      "RequestAssign": {
+        "properties": {
+          "assigned_to": {
+            "format": "uuid",
+            "title": "Assigned To",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 100,
+            "minLength": 2,
+            "title": "Role",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "organization_id",
+          "version",
+          "assigned_to",
+          "role",
+          "reason"
+        ],
+        "title": "RequestAssign",
+        "type": "object"
+      },
+      "RequestPatch": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "organization_id",
+          "version",
+          "reason"
+        ],
+        "title": "RequestPatch",
+        "type": "object"
+      },
+      "RequestTransition": {
+        "properties": {
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "target_status": {
+            "title": "Target Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "organization_id",
+          "version",
+          "target_status",
+          "reason"
+        ],
+        "title": "RequestTransition",
         "type": "object"
       },
       "RequirementCreate": {
@@ -22706,8 +22813,105 @@
         "title": "RevenueSummaryResponse",
         "type": "object"
       },
-      "RiskCreate": {
+      "RiskActionIn": {
         "properties": {
+          "action_description": {
+            "minLength": 3,
+            "title": "Action Description",
+            "type": "string"
+          },
+          "assigned_to": {
+            "format": "uuid",
+            "title": "Assigned To",
+            "type": "string"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "action_description",
+          "assigned_to",
+          "reason"
+        ],
+        "title": "RiskActionIn",
+        "type": "object"
+      },
+      "RiskCommentIn": {
+        "properties": {
+          "comment": {
+            "maxLength": 5000,
+            "minLength": 2,
+            "title": "Comment",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "comment"
+        ],
+        "title": "RiskCommentIn",
+        "type": "object"
+      },
+      "RiskDecision": {
+        "properties": {
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "organization_id",
+          "version",
+          "reason"
+        ],
+        "title": "RiskDecision",
+        "type": "object"
+      },
+      "RiskEvidenceIn": {
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
           "description": {
             "anyOf": [
               {
@@ -22719,43 +22923,23 @@
             ],
             "title": "Description"
           },
-          "mitigation_plan": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mitigation Plan"
-          },
-          "probability": {
-            "default": "MEDIUM",
-            "title": "Probability",
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
             "type": "string"
           },
-          "severity": {
-            "default": "MEDIUM",
-            "title": "Severity",
-            "type": "string"
-          },
-          "status": {
-            "default": "IDENTIFIED",
-            "title": "Status",
-            "type": "string"
-          },
-          "title": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Title",
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
             "type": "string"
           }
         },
         "required": [
-          "title"
+          "organization_id",
+          "asset_id",
+          "reason"
         ],
-        "title": "RiskCreate",
+        "title": "RiskEvidenceIn",
         "type": "object"
       },
       "RiskOut": {
@@ -22820,6 +23004,145 @@
           "status"
         ],
         "title": "RiskOut",
+        "type": "object"
+      },
+      "RiskPatch": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "impact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact"
+          },
+          "mitigation_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Plan"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          },
+          "probability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probability"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "organization_id",
+          "version",
+          "reason"
+        ],
+        "title": "RiskPatch",
         "type": "object"
       },
       "RiskUpdate": {
@@ -23332,23 +23655,6 @@
         "title": "RoomUpdate",
         "type": "object"
       },
-      "SaveDraftRequest": {
-        "properties": {
-          "sections": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Sections",
-            "type": "array"
-          }
-        },
-        "required": [
-          "sections"
-        ],
-        "title": "SaveDraftRequest",
-        "type": "object"
-      },
       "SearchJobOut": {
         "description": "Status of a search reindex job.",
         "properties": {
@@ -23356,6 +23662,54 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "entity_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Types"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
           },
           "id": {
             "format": "uuid",
@@ -23366,6 +23720,70 @@
             "format": "uuid",
             "title": "Organization Id",
             "type": "string"
+          },
+          "predecessor_job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Job Id"
+          },
+          "queued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued At"
+          },
+          "records_processed": {
+            "default": 0,
+            "title": "Records Processed",
+            "type": "integer"
+          },
+          "request_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Reason"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
           },
           "status": {
             "title": "Status",
@@ -25450,152 +25868,6 @@
           "password"
         ],
         "title": "SignupRequest",
-        "type": "object"
-      },
-      "SiteCreate": {
-        "properties": {
-          "domain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Domain"
-          },
-          "event_id": {
-            "format": "uuid",
-            "title": "Event Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "slug": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Slug"
-          },
-          "status": {
-            "default": "DRAFT",
-            "title": "Status",
-            "type": "string"
-          },
-          "template_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template Id"
-          }
-        },
-        "required": [
-          "name",
-          "event_id"
-        ],
-        "title": "SiteCreate",
-        "type": "object"
-      },
-      "SiteOut": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "domain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Domain"
-          },
-          "event_id": {
-            "format": "uuid",
-            "title": "Event Id",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "organization_id": {
-            "format": "uuid",
-            "title": "Organization Id",
-            "type": "string"
-          },
-          "published_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Published At"
-          },
-          "slug": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Slug"
-          },
-          "status": {
-            "default": "DRAFT",
-            "title": "Status",
-            "type": "string"
-          },
-          "template_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template Id"
-          }
-        },
-        "required": [
-          "name",
-          "id",
-          "organization_id",
-          "event_id",
-          "created_at"
-        ],
-        "title": "SiteOut",
         "type": "object"
       },
       "SkippedImportRow": {
@@ -29512,6 +29784,227 @@
         "title": "SuperAdminTemplateInput",
         "type": "object"
       },
+      "SupplierAssignmentIn": {
+        "properties": {
+          "contract_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract Reference"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "responsibility_scope": {
+            "additionalProperties": true,
+            "title": "Responsibility Scope",
+            "type": "object"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          },
+          "vendor_id": {
+            "format": "uuid",
+            "title": "Vendor Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "event_id",
+          "vendor_id",
+          "reason"
+        ],
+        "title": "SupplierAssignmentIn",
+        "type": "object"
+      },
+      "SupplierAssignmentPatch": {
+        "properties": {
+          "contract_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract Reference"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "responsibility_scope": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Responsibility Scope"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ACTIVE",
+                  "SUSPENDED",
+                  "COMPLETED",
+                  "CANCELLED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "organization_id",
+          "reason"
+        ],
+        "title": "SupplierAssignmentPatch",
+        "type": "object"
+      },
+      "SupplierContactIn": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_primary": {
+            "default": false,
+            "title": "Is Primary",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 150,
+            "minLength": 2,
+            "title": "Name",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "reason": {
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "organization_id",
+          "name",
+          "reason"
+        ],
+        "title": "SupplierContactIn",
+        "type": "object"
+      },
       "TaskCreate": {
         "properties": {
           "assigned_to": {
@@ -30097,437 +30590,6 @@
         "title": "TeamUpdate",
         "type": "object"
       },
-      "TemplateCreate": {
-        "properties": {
-          "assets": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assets"
-          },
-          "category_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category Id"
-          },
-          "content": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "is_marketplace": {
-            "default": false,
-            "title": "Is Marketplace",
-            "type": "boolean"
-          },
-          "is_system": {
-            "default": false,
-            "title": "Is System",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "schema_data": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Schema Data"
-          },
-          "slug": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Slug"
-          },
-          "status": {
-            "default": "DRAFT",
-            "title": "Status",
-            "type": "string"
-          },
-          "template_type": {
-            "default": "WEBSITE",
-            "title": "Template Type",
-            "type": "string"
-          },
-          "visibility": {
-            "default": "PRIVATE",
-            "title": "Visibility",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "TemplateCreate",
-        "type": "object"
-      },
-      "TemplateInstallationCreate": {
-        "properties": {
-          "event_id": {
-            "format": "uuid",
-            "title": "Event Id",
-            "type": "string"
-          },
-          "template_id": {
-            "format": "uuid",
-            "title": "Template Id",
-            "type": "string"
-          },
-          "version_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Version Id"
-          }
-        },
-        "required": [
-          "event_id",
-          "template_id"
-        ],
-        "title": "TemplateInstallationCreate",
-        "type": "object"
-      },
-      "TemplateInstallationOut": {
-        "properties": {
-          "event_id": {
-            "format": "uuid",
-            "title": "Event Id",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "installed_at": {
-            "format": "date-time",
-            "title": "Installed At",
-            "type": "string"
-          },
-          "installed_version_id": {
-            "format": "uuid",
-            "title": "Installed Version Id",
-            "type": "string"
-          },
-          "organization_id": {
-            "format": "uuid",
-            "title": "Organization Id",
-            "type": "string"
-          },
-          "template_id": {
-            "format": "uuid",
-            "title": "Template Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "organization_id",
-          "event_id",
-          "template_id",
-          "installed_version_id",
-          "installed_at"
-        ],
-        "title": "TemplateInstallationOut",
-        "type": "object"
-      },
-      "TemplateOut": {
-        "properties": {
-          "category_id": {
-            "format": "uuid",
-            "title": "Category Id",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "created_by": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By"
-          },
-          "current_version_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current Version Id"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "is_marketplace": {
-            "default": false,
-            "title": "Is Marketplace",
-            "type": "boolean"
-          },
-          "is_system": {
-            "default": false,
-            "title": "Is System",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "organization_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Organization Id"
-          },
-          "slug": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Slug"
-          },
-          "status": {
-            "default": "DRAFT",
-            "title": "Status",
-            "type": "string"
-          },
-          "template_type": {
-            "default": "WEBSITE",
-            "title": "Template Type",
-            "type": "string"
-          },
-          "visibility": {
-            "default": "PRIVATE",
-            "title": "Visibility",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "id",
-          "category_id",
-          "created_at"
-        ],
-        "title": "TemplateOut",
-        "type": "object"
-      },
-      "TemplateVersionCreate": {
-        "properties": {
-          "assets": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assets"
-          },
-          "content": {
-            "additionalProperties": true,
-            "title": "Content",
-            "type": "object"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "schema": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Schema"
-          }
-        },
-        "required": [
-          "content"
-        ],
-        "title": "TemplateVersionCreate",
-        "type": "object"
-      },
-      "TemplateVersionOut": {
-        "properties": {
-          "assets": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assets"
-          },
-          "content": {
-            "additionalProperties": true,
-            "title": "Content",
-            "type": "object"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "published_at": {
-            "format": "date-time",
-            "title": "Published At",
-            "type": "string"
-          },
-          "published_by": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Published By"
-          },
-          "schema": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Schema"
-          },
-          "template_id": {
-            "format": "uuid",
-            "title": "Template Id",
-            "type": "string"
-          },
-          "version_number": {
-            "title": "Version Number",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "version_number",
-          "content",
-          "id",
-          "template_id",
-          "published_at"
-        ],
-        "title": "TemplateVersionOut",
-        "type": "object"
-      },
       "TenantLimitsUpdateRequest": {
         "properties": {
           "limits": {
@@ -30568,110 +30630,6 @@
           "to_email"
         ],
         "title": "TestTemplateRequest",
-        "type": "object"
-      },
-      "ThemeAssetCreate": {
-        "properties": {
-          "asset_type": {
-            "title": "Asset Type",
-            "type": "string"
-          },
-          "asset_url": {
-            "title": "Asset Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "asset_url",
-          "asset_type"
-        ],
-        "title": "ThemeAssetCreate",
-        "type": "object"
-      },
-      "ThemeCreate": {
-        "properties": {
-          "assets": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/ThemeAssetCreate"
-            },
-            "title": "Assets",
-            "type": "array"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "theme_data": {
-            "additionalProperties": true,
-            "default": {},
-            "title": "Theme Data",
-            "type": "object"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "ThemeCreate",
-        "type": "object"
-      },
-      "ThemeOut": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "organization_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Organization Id"
-          },
-          "theme_data": {
-            "additionalProperties": true,
-            "default": {},
-            "title": "Theme Data",
-            "type": "object"
-          }
-        },
-        "required": [
-          "name",
-          "id"
-        ],
-        "title": "ThemeOut",
         "type": "object"
       },
       "TicketAttachmentResponse": {
@@ -31624,34 +31582,6 @@
           "file_format"
         ],
         "title": "UploadRequestBody",
-        "type": "object"
-      },
-      "UsageStatsOut": {
-        "properties": {
-          "completion_tokens": {
-            "title": "Completion Tokens",
-            "type": "integer"
-          },
-          "estimated_cost_usd": {
-            "title": "Estimated Cost Usd",
-            "type": "number"
-          },
-          "model": {
-            "title": "Model",
-            "type": "string"
-          },
-          "prompt_tokens": {
-            "title": "Prompt Tokens",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "model",
-          "prompt_tokens",
-          "completion_tokens",
-          "estimated_cost_usd"
-        ],
-        "title": "UsageStatsOut",
         "type": "object"
       },
       "UserAdminActionRequest": {
@@ -33560,6 +33490,58 @@
         "title": "InvoiceSummary",
         "type": "object"
       },
+      "app__modules__deployment_management__schemas__RiskCreate": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "mitigation_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Plan"
+          },
+          "probability": {
+            "default": "MEDIUM",
+            "title": "Probability",
+            "type": "string"
+          },
+          "severity": {
+            "default": "MEDIUM",
+            "title": "Severity",
+            "type": "string"
+          },
+          "status": {
+            "default": "IDENTIFIED",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "RiskCreate",
+        "type": "object"
+      },
       "app__modules__identity__routers__me__PermissionResponse": {
         "properties": {
           "event_id": {
@@ -33648,6 +33630,118 @@
           "organization_id"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "app__modules__operations_control__router__RiskCreate": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "impact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact"
+          },
+          "mitigation_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Plan"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          },
+          "probability": {
+            "default": "MEDIUM",
+            "title": "Probability",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 12,
+            "title": "Reason",
+            "type": "string"
+          },
+          "severity": {
+            "default": "MEDIUM",
+            "title": "Severity",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "project_id",
+          "title",
+          "reason"
+        ],
+        "title": "RiskCreate",
         "type": "object"
       },
       "app__modules__platform__permissions__schemas__PermissionResponse": {
@@ -34383,186 +34477,6 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/v1/ai/conversations": {
-      "post": {
-        "operationId": "create_conversation_api_v1_ai_conversations_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create a new assistant conversation",
-        "tags": [
-          "ai"
-        ]
-      }
-    },
-    "/api/v1/ai/conversations/{conversation_id}/messages": {
-      "get": {
-        "operationId": "list_messages_api_v1_ai_conversations__conversation_id__messages_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get conversation history",
-        "tags": [
-          "ai"
-        ]
-      },
-      "post": {
-        "operationId": "send_message_api_v1_ai_conversations__conversation_id__messages_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AiChatRequestIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiChatResponseOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send a message to the AI Assistant",
-        "tags": [
-          "ai"
-        ]
-      }
-    },
-    "/api/v1/ai/index": {
-      "post": {
-        "operationId": "index_organization_api_v1_ai_index_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Trigger full RAG vector reindexing of organization data",
-        "tags": [
-          "ai"
-        ]
-      }
-    },
-    "/api/v1/ai/usage": {
-      "get": {
-        "operationId": "get_usage_metrics_api_v1_ai_usage_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/UsageStatsOut"
-                  },
-                  "title": "Response Get Usage Metrics Api V1 Ai Usage Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get organization AI usage and cost metrics",
-        "tags": [
-          "ai"
-        ]
-      }
-    },
     "/api/v1/analytics/summary": {
       "get": {
         "description": "Aggregated metrics across all events the user has access to.",
@@ -35872,6 +35786,53 @@
         ]
       }
     },
+    "/api/v1/billing/provider-webhooks/{gateway_id}": {
+      "post": {
+        "operationId": "receive_provider_webhook_api_v1_billing_provider_webhooks__gateway_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gateway_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Gateway Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Receive Provider Webhook Api V1 Billing Provider Webhooks  Gateway Id  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Receive Provider Webhook",
+        "tags": [
+          "billing-provider-webhooks"
+        ]
+      }
+    },
     "/api/v1/billing/subscriptions": {
       "get": {
         "operationId": "list_subscriptions_api_v1_billing_subscriptions_get",
@@ -36332,138 +36293,6 @@
         "summary": "Get Billing Usage",
         "tags": [
           "billing"
-        ]
-      }
-    },
-    "/api/v1/blueprints": {
-      "get": {
-        "operationId": "list_blueprints_api_v1_blueprints_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/EventBlueprintOut"
-                  },
-                  "title": "Response List Blueprints Api V1 Blueprints Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Blueprints",
-        "tags": [
-          "Blueprints"
-        ]
-      },
-      "post": {
-        "operationId": "create_blueprint_api_v1_blueprints_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventBlueprintCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventBlueprintOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Blueprint",
-        "tags": [
-          "Blueprints"
-        ]
-      }
-    },
-    "/api/v1/blueprints/{id}/install": {
-      "post": {
-        "operationId": "install_blueprint_api_v1_blueprints__id__install_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BlueprintInstallationCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BlueprintInstallationOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Install Blueprint",
-        "tags": [
-          "Blueprints"
         ]
       }
     },
@@ -37846,7 +37675,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RiskCreate"
+                "$ref": "#/components/schemas/app__modules__deployment_management__schemas__RiskCreate"
               }
             }
           },
@@ -48305,6 +48134,17 @@
               "title": "Event Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -48383,6 +48223,28 @@
               "description": "Event UUID",
               "format": "uuid",
               "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Reason",
+            "required": true,
+            "schema": {
+              "maxLength": 1000,
+              "minLength": 12,
+              "title": "X-Admin-Reason",
               "type": "string"
             }
           }
@@ -52448,76 +52310,6 @@
         ]
       }
     },
-    "/api/v1/marketplace": {
-      "get": {
-        "operationId": "list_marketplace_listings_api_v1_marketplace_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Marketplace Listings",
-        "tags": [
-          "Template Marketplace"
-        ]
-      }
-    },
-    "/api/v1/marketplace/install": {
-      "post": {
-        "operationId": "install_marketplace_listing_api_v1_marketplace_install_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateInstallationCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TemplateInstallationOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Install Marketplace Listing",
-        "tags": [
-          "Template Marketplace"
-        ]
-      }
-    },
     "/api/v1/me/permissions": {
       "get": {
         "description": "Returns the resolved set of permission codes for the current user.\nIf event_id is provided, includes event-specific role and scoped permissions.",
@@ -53749,255 +53541,6 @@
         "summary": "Get Plan Details",
         "tags": [
           "organisations"
-        ]
-      }
-    },
-    "/api/v1/pages": {
-      "post": {
-        "operationId": "create_page_api_v1_pages_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PageCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Page",
-        "tags": [
-          "Website Builder"
-        ]
-      }
-    },
-    "/api/v1/pages/{id}": {
-      "delete": {
-        "operationId": "delete_page_api_v1_pages__id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Delete Page",
-        "tags": [
-          "Website Builder"
-        ]
-      },
-      "patch": {
-        "operationId": "update_page_api_v1_pages__id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PageCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Update Page",
-        "tags": [
-          "Website Builder"
-        ]
-      }
-    },
-    "/api/v1/pages/{id}/draft": {
-      "post": {
-        "operationId": "save_draft_api_v1_pages__id__draft_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveDraftRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Save Draft",
-        "tags": [
-          "Website Builder"
-        ]
-      }
-    },
-    "/api/v1/pages/{id}/publish": {
-      "post": {
-        "operationId": "publish_page_api_v1_pages__id__publish_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Publish Page",
-        "tags": [
-          "Website Builder"
         ]
       }
     },
@@ -57080,6 +56623,346 @@
         ]
       }
     },
+    "/api/v1/platform/operations/jobs/{source}/{job_id}": {
+      "get": {
+        "operationId": "get_job_detail_api_v1_platform_operations_jobs__source___job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Job Detail Api V1 Platform Operations Jobs  Source   Job Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Job Detail",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/jobs/{source}/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_job_api_v1_platform_operations_jobs__source___job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Job Api V1 Platform Operations Jobs  Source   Job Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Job",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/jobs/{source}/{job_id}/retry": {
+      "post": {
+        "operationId": "retry_job_api_v1_platform_operations_jobs__source___job_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Job Api V1 Platform Operations Jobs  Source   Job Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retry Job",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/overview": {
+      "get": {
+        "operationId": "operations_overview_api_v1_platform_operations_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Operations Overview Api V1 Platform Operations Overview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Operations Overview",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/projects": {
+      "get": {
+        "operationId": "list_operations_projects_api_v1_platform_operations_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Organization Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Operations Projects Api V1 Platform Operations Projects Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Operations Projects",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
     "/api/v1/platform/operations/queues": {
       "get": {
         "operationId": "get_queue_stats_api_v1_platform_operations_queues_get",
@@ -57101,6 +56984,1581 @@
         "summary": "Get Queue Stats",
         "tags": [
           "Platform Admin CRM"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/requests": {
+      "get": {
+        "operationId": "list_operational_requests_api_v1_platform_operations_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Organization Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "priority",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Priority"
+            }
+          },
+          {
+            "in": "query",
+            "name": "request_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Operational Requests Api V1 Platform Operations Requests Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Operational Requests",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/requests/{request_id}": {
+      "get": {
+        "operationId": "get_operational_request_api_v1_platform_operations_requests__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Operational Request Api V1 Platform Operations Requests  Request Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Operational Request",
+        "tags": [
+          "platform-operations-control"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_operational_request_api_v1_platform_operations_requests__request_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Operational Request Api V1 Platform Operations Requests  Request Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Operational Request",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/requests/{request_id}/assign": {
+      "post": {
+        "operationId": "assign_operational_request_api_v1_platform_operations_requests__request_id__assign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestAssign"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Assign Operational Request Api V1 Platform Operations Requests  Request Id  Assign Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Assign Operational Request",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/requests/{request_id}/transition": {
+      "post": {
+        "operationId": "transition_operational_request_api_v1_platform_operations_requests__request_id__transition_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestTransition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Transition Operational Request Api V1 Platform Operations Requests  Request Id  Transition Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transition Operational Request",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks": {
+      "get": {
+        "operationId": "list_risks_api_v1_platform_operations_risks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Organization Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Risks Api V1 Platform Operations Risks Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Risks",
+        "tags": [
+          "platform-operations-control"
+        ]
+      },
+      "post": {
+        "operationId": "create_risk_api_v1_platform_operations_risks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__modules__operations_control__router__RiskCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Risk Api V1 Platform Operations Risks Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Risk",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks/{risk_id}": {
+      "get": {
+        "operationId": "get_risk_api_v1_platform_operations_risks__risk_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Risk Api V1 Platform Operations Risks  Risk Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Risk",
+        "tags": [
+          "platform-operations-control"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_risk_api_v1_platform_operations_risks__risk_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Risk Api V1 Platform Operations Risks  Risk Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Risk",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks/{risk_id}/accept": {
+      "post": {
+        "operationId": "accept_risk_api_v1_platform_operations_risks__risk_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Accept Risk Api V1 Platform Operations Risks  Risk Id  Accept Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Risk",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks/{risk_id}/actions": {
+      "post": {
+        "operationId": "add_risk_action_api_v1_platform_operations_risks__risk_id__actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskActionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Risk Action Api V1 Platform Operations Risks  Risk Id  Actions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Risk Action",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks/{risk_id}/comments": {
+      "post": {
+        "operationId": "add_risk_comment_api_v1_platform_operations_risks__risk_id__comments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskCommentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Risk Comment Api V1 Platform Operations Risks  Risk Id  Comments Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Risk Comment",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks/{risk_id}/evidence": {
+      "post": {
+        "operationId": "add_risk_evidence_api_v1_platform_operations_risks__risk_id__evidence_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskEvidenceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Risk Evidence Api V1 Platform Operations Risks  Risk Id  Evidence Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Risk Evidence",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/risks/{risk_id}/resolve": {
+      "post": {
+        "operationId": "resolve_risk_api_v1_platform_operations_risks__risk_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "risk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Risk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Risk Api V1 Platform Operations Risks  Risk Id  Resolve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve Risk",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/storage": {
+      "get": {
+        "operationId": "storage_telemetry_api_v1_platform_operations_storage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Storage Telemetry Api V1 Platform Operations Storage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Storage Telemetry",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/incidents/{incident_id}/resolve": {
+      "post": {
+        "operationId": "resolve_venue_incident_api_v1_platform_operations_venue_incidents__incident_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Venue Incident Api V1 Platform Operations Venue Incidents  Incident Id  Resolve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve Venue Incident",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/readiness": {
+      "get": {
+        "operationId": "venue_readiness_api_v1_platform_operations_venue_readiness_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Organization Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Venue Readiness Api V1 Platform Operations Venue Readiness Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Venue Readiness",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/supplier-assignments": {
+      "get": {
+        "operationId": "list_supplier_assignments_api_v1_platform_operations_venue_supplier_assignments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Organization Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Supplier Assignments Api V1 Platform Operations Venue Supplier Assignments Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Supplier Assignments",
+        "tags": [
+          "platform-operations-control"
+        ]
+      },
+      "post": {
+        "operationId": "create_supplier_assignment_api_v1_platform_operations_venue_supplier_assignments_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierAssignmentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Supplier Assignment Api V1 Platform Operations Venue Supplier Assignments Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Supplier Assignment",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/supplier-assignments/{assignment_id}": {
+      "delete": {
+        "operationId": "deactivate_supplier_assignment_api_v1_platform_operations_venue_supplier_assignments__assignment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Reason",
+            "required": true,
+            "schema": {
+              "maxLength": 1000,
+              "minLength": 12,
+              "title": "X-Admin-Reason",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Deactivate Supplier Assignment Api V1 Platform Operations Venue Supplier Assignments  Assignment Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deactivate Supplier Assignment",
+        "tags": [
+          "platform-operations-control"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_supplier_assignment_api_v1_platform_operations_venue_supplier_assignments__assignment_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierAssignmentPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Supplier Assignment Api V1 Platform Operations Venue Supplier Assignments  Assignment Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Supplier Assignment",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/supplier-assignments/{assignment_id}/attestations": {
+      "post": {
+        "operationId": "add_readiness_attestation_api_v1_platform_operations_venue_supplier_assignments__assignment_id__attestations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttestationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Readiness Attestation Api V1 Platform Operations Venue Supplier Assignments  Assignment Id  Attestations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Readiness Attestation",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/supplier-assignments/{assignment_id}/contacts": {
+      "post": {
+        "operationId": "add_supplier_contact_api_v1_platform_operations_venue_supplier_assignments__assignment_id__contacts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierContactIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Supplier Contact Api V1 Platform Operations Venue Supplier Assignments  Assignment Id  Contacts Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Supplier Contact",
+        "tags": [
+          "platform-operations-control"
+        ]
+      }
+    },
+    "/api/v1/platform/operations/venue/supplier-assignments/{assignment_id}/incidents": {
+      "post": {
+        "operationId": "create_venue_incident_api_v1_platform_operations_venue_supplier_assignments__assignment_id__incidents_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Venue Incident Api V1 Platform Operations Venue Supplier Assignments  Assignment Id  Incidents Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Venue Incident",
+        "tags": [
+          "platform-operations-control"
         ]
       }
     },
@@ -64770,6 +66228,19 @@
       "post": {
         "description": "Super Admin only. Enqueues a full reindex job for the specified organization.\nReturns the created SearchJob with its status. The actual indexing happens\nasynchronously in the Celery `search` queue.",
         "operationId": "trigger_reindex_api_v1_search_reindex_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -66793,186 +68264,6 @@
         ]
       }
     },
-    "/api/v1/sites": {
-      "get": {
-        "operationId": "list_sites_api_v1_sites_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/SiteOut"
-                  },
-                  "title": "Response List Sites Api V1 Sites Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Sites",
-        "tags": [
-          "Website Builder"
-        ]
-      },
-      "post": {
-        "operationId": "create_site_api_v1_sites_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SiteCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SiteOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Site",
-        "tags": [
-          "Website Builder"
-        ]
-      }
-    },
-    "/api/v1/sites/{id}": {
-      "patch": {
-        "operationId": "update_site_api_v1_sites__id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SiteCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SiteOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Update Site",
-        "tags": [
-          "Website Builder"
-        ]
-      }
-    },
-    "/api/v1/sites/{id}/publish": {
-      "post": {
-        "operationId": "publish_site_api_v1_sites__id__publish_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SiteOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Publish Site",
-        "tags": [
-          "Website Builder"
-        ]
-      }
-    },
     "/api/v1/storage/local-upload": {
       "put": {
         "description": "Simulates S3 PUT upload for local development.\nSaves the raw request body to settings.STORAGE_LOCAL_PATH.",
@@ -68395,7 +69686,7 @@
         ],
         "summary": "List Event Activations",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -68465,7 +69756,7 @@
         ],
         "summary": "Inspect Event Activation",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -68556,7 +69847,7 @@
         ],
         "summary": "Deactivate Event Activation",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -68647,7 +69938,7 @@
         ],
         "summary": "Refresh Event Activation Snapshot",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -68736,7 +70027,7 @@
         ],
         "summary": "Transfer Event Activation",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -68840,7 +70131,7 @@
         ],
         "summary": "List Credit Notes",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       },
@@ -68919,7 +70210,7 @@
         ],
         "summary": "Issue Credit Note",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69010,7 +70301,7 @@
         ],
         "summary": "Update Credit Note Status",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69130,7 +70421,7 @@
         ],
         "summary": "List Entitlement Grants",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       },
@@ -69209,7 +70500,7 @@
         ],
         "summary": "Issue Entitlement Grant",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69300,7 +70591,7 @@
         ],
         "summary": "Update Entitlement Grant Capacity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69414,7 +70705,7 @@
         ],
         "summary": "List Entitlement Grant Consumptions",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69505,7 +70796,7 @@
         ],
         "summary": "Update Entitlement Grant Status",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69625,7 +70916,7 @@
         ],
         "summary": "List Financial Audit Trail",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69729,7 +71020,7 @@
         ],
         "summary": "List Invoices",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69799,7 +71090,7 @@
         ],
         "summary": "Inspect Invoice",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69890,7 +71181,7 @@
         ],
         "summary": "Create Invoice Artifact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -69970,7 +71261,7 @@
         ],
         "summary": "Get Invoice Artifact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70050,7 +71341,7 @@
         ],
         "summary": "Download Invoice Artifact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70141,7 +71432,7 @@
         ],
         "summary": "Record Invoice Payment",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70232,7 +71523,7 @@
         ],
         "summary": "Update Invoice Status",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70368,7 +71659,7 @@
         ],
         "summary": "List Commercial Payments",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70459,7 +71750,7 @@
         ],
         "summary": "Reconcile Invoice Payment",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70550,7 +71841,7 @@
         ],
         "summary": "Refund Invoice Payment",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70582,7 +71873,127 @@
         ],
         "summary": "List Subscription Plans",
         "tags": [
-          "superadmin",
+          "platform-commercial",
+          "billing-superadmin"
+        ]
+      }
+    },
+    "/api/v1/superadmin/billing-admin/provider-webhooks": {
+      "get": {
+        "operationId": "list_provider_webhooks_api_v1_superadmin_billing_admin_provider_webhooks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "in": "query",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Support-Reason",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 12,
+              "title": "X-Support-Reason",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_ProviderWebhookAdminResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Provider Webhooks",
+        "tags": [
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70670,7 +72081,7 @@
         ],
         "summary": "List Revenue Metrics",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70774,7 +72185,7 @@
         ],
         "summary": "List Org Subscriptions",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -70865,7 +72276,7 @@
         ],
         "summary": "Update Subscription Status",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "billing-superadmin"
         ]
       }
@@ -71971,7 +73382,7 @@
         ],
         "summary": "List Accounts",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -72050,7 +73461,7 @@
         ],
         "summary": "Create Account",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72141,7 +73552,7 @@
         ],
         "summary": "Update Account",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72232,7 +73643,7 @@
         ],
         "summary": "Archive Account",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72323,7 +73734,7 @@
         ],
         "summary": "Restore Account",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72394,7 +73805,7 @@
         ],
         "summary": "Get Account Workspace",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72525,7 +73936,7 @@
         ],
         "summary": "List Activities",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -72604,7 +74015,7 @@
         ],
         "summary": "Create Activity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72695,7 +74106,7 @@
         ],
         "summary": "Update Activity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72786,7 +74197,7 @@
         ],
         "summary": "Archive Activity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72877,7 +74288,7 @@
         ],
         "summary": "Restore Activity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -72975,7 +74386,7 @@
         ],
         "summary": "List Contacts",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -73054,7 +74465,7 @@
         ],
         "summary": "Create Contact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73145,7 +74556,7 @@
         ],
         "summary": "Update Contact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73236,7 +74647,7 @@
         ],
         "summary": "Archive Contact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73327,7 +74738,7 @@
         ],
         "summary": "Restore Contact",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73425,7 +74836,7 @@
         ],
         "summary": "List Leads",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -73504,7 +74915,7 @@
         ],
         "summary": "Create Lead",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73595,7 +75006,7 @@
         ],
         "summary": "Update Lead",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73686,7 +75097,7 @@
         ],
         "summary": "Archive Lead",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73777,7 +75188,7 @@
         ],
         "summary": "Convert Lead",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73868,7 +75279,7 @@
         ],
         "summary": "Restore Lead",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -73999,7 +75410,7 @@
         ],
         "summary": "List Notes",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -74078,7 +75489,7 @@
         ],
         "summary": "Create Note",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74169,7 +75580,7 @@
         ],
         "summary": "Update Note",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74260,7 +75671,7 @@
         ],
         "summary": "Archive Note",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74351,7 +75762,7 @@
         ],
         "summary": "Restore Note",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74449,7 +75860,7 @@
         ],
         "summary": "List Opportunities",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -74528,7 +75939,7 @@
         ],
         "summary": "Create Opportunity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74619,7 +76030,7 @@
         ],
         "summary": "Update Opportunity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74710,7 +76121,7 @@
         ],
         "summary": "Archive Opportunity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74801,7 +76212,7 @@
         ],
         "summary": "Restore Opportunity",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74832,7 +76243,7 @@
         ],
         "summary": "List Pipeline Stages",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -74963,7 +76374,7 @@
         ],
         "summary": "List Tasks",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       },
@@ -75042,7 +76453,7 @@
         ],
         "summary": "Create Task",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -75133,7 +76544,7 @@
         ],
         "summary": "Update Task",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -75224,7 +76635,7 @@
         ],
         "summary": "Archive Task",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -75315,7 +76726,7 @@
         ],
         "summary": "Restore Task",
         "tags": [
-          "superadmin",
+          "platform-commercial",
           "superadmin-crm"
         ]
       }
@@ -78476,6 +79887,19 @@
       "post": {
         "description": "Super Admin only. Enqueues a full reindex job for the specified organization.\nReturns the created SearchJob with its status. The actual indexing happens\nasynchronously in the Celery `search` queue.",
         "operationId": "trigger_reindex_api_v1_superadmin_search_reindex_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -80859,461 +82283,6 @@
         "summary": "Get Sync Payload",
         "tags": [
           "sync"
-        ]
-      }
-    },
-    "/api/v1/templates": {
-      "get": {
-        "operationId": "list_templates_api_v1_templates_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/TemplateOut"
-                  },
-                  "title": "Response List Templates Api V1 Templates Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Templates",
-        "tags": [
-          "Templates"
-        ]
-      },
-      "post": {
-        "operationId": "create_template_api_v1_templates_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TemplateOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Template",
-        "tags": [
-          "Templates"
-        ]
-      }
-    },
-    "/api/v1/templates/install": {
-      "post": {
-        "operationId": "install_template_api_v1_templates_install_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateInstallationCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TemplateInstallationOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Install Template",
-        "tags": [
-          "Templates"
-        ]
-      }
-    },
-    "/api/v1/templates/{id}": {
-      "delete": {
-        "operationId": "delete_template_api_v1_templates__id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Delete Template",
-        "tags": [
-          "Templates"
-        ]
-      },
-      "patch": {
-        "operationId": "update_template_api_v1_templates__id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TemplateOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Update Template",
-        "tags": [
-          "Templates"
-        ]
-      }
-    },
-    "/api/v1/templates/{id}/clone": {
-      "post": {
-        "operationId": "clone_template_api_v1_templates__id__clone_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TemplateOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Clone Template",
-        "tags": [
-          "Templates"
-        ]
-      }
-    },
-    "/api/v1/templates/{id}/publish": {
-      "post": {
-        "operationId": "publish_template_api_v1_templates__id__publish_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateVersionCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TemplateVersionOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Publish Template",
-        "tags": [
-          "Templates"
-        ]
-      }
-    },
-    "/api/v1/themes": {
-      "get": {
-        "operationId": "list_themes_api_v1_themes_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ThemeOut"
-                  },
-                  "title": "Response List Themes Api V1 Themes Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Themes",
-        "tags": [
-          "Theme Engine"
-        ]
-      },
-      "post": {
-        "operationId": "create_theme_api_v1_themes_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ThemeCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ThemeOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Theme",
-        "tags": [
-          "Theme Engine"
-        ]
-      }
-    },
-    "/api/v1/themes/{id}/apply": {
-      "post": {
-        "operationId": "apply_theme_api_v1_themes__id__apply_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "site_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Site Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ThemeOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Apply Theme",
-        "tags": [
-          "Theme Engine"
         ]
       }
     },

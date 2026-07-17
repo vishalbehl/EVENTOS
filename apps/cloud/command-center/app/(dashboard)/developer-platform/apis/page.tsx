@@ -2,24 +2,24 @@
 
 import { UnavailableRouteState } from "@/components/super-admin/ui/UnavailableRouteState";
 
-export default function ApiAnalyticsPage() {
+export default function ApiCatalogPage() {
   return (
     <UnavailableRouteState
-      title="API Analytics"
-      description="Monitor API traffic, latency, failure rates, API-key usage, and controlled revocation."
-      breadcrumb={["Console", "Developer", "API Analytics"]}
+      title="API Catalog"
+      description="Publish versioned EventX API domains, authentication, scopes, pagination, errors, rate limits, idempotency, and deprecation guidance."
+      breadcrumb={["Console", "Developer", "API Catalog"]}
       removed={[
-        "Fallback mock API keys after backend failure.",
-        "Static latency/status-code charts presented as real telemetry.",
-        "Simulated API-key revocation on network or API failure.",
+        "Static API usage and latency charts that were not backed by authoritative telemetry.",
+        "Invented request totals and status distributions presented as measured analytics.",
+        "Analytics filters that changed only browser state.",
       ]}
       required={[
-        "API telemetry endpoint with request IDs, tenant-safe aggregation, retention, and redaction controls.",
-        "API-key lifecycle API with scope, expiry, rotation, revocation, last-use, and audit evidence.",
-        "Provider/dependency degradation behavior that never grants access or hides failed revocation.",
-        "Tests for key revocation, permission denial, telemetry privacy, and no-mock fallback on API failure.",
+        "Versioned API-domain catalogue generated from reviewed OpenAPI contracts.",
+        "Authentication, scope, pagination, RFC 9457 error, rate-limit, and idempotency guidance.",
+        "Endpoint lifecycle, deprecation, changelog, examples, and webhook-event references.",
+        "Contract drift checks proving published documentation matches active V1 routes.",
       ]}
-      note="This page is security-sensitive: if revocation fails, the UI must show failure, not locally flip an active key to revoked."
+      note="Developer analytics is outside the current product scope. The active portal keeps only a contract-backed API catalogue."
     />
   );
 }

@@ -35,6 +35,7 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("search", "search_indexes"),
     TenantTable("search", "search_jobs"),
     TenantTable("audit", "data_exports"),
+    TenantTable("operations_planning", "job_control_requests"),
 )
 
 

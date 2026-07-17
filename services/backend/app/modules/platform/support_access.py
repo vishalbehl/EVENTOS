@@ -12,7 +12,7 @@ from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
-from app.modules.superadmin.dependencies import require_super_admin
+from app.modules.superadmin.dependencies import require_platform_staff
 from app.schemas.cursor_pagination import CursorPage, decode_cursor, encode_cursor
 
 
@@ -45,7 +45,7 @@ async def require_platform_support_scope(
         min_length=12,
         max_length=500,
     ),
-    actor: User = Depends(require_super_admin),
+    actor: User = Depends(require_platform_staff),
 ) -> PlatformSupportScope:
     """Require explicit tenant scope and purpose for privileged support reads."""
     reason = support_reason.strip()

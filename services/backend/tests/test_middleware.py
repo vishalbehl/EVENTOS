@@ -3,7 +3,7 @@
 # backend/tests/test_middleware.py
 #
 # Tests cover:
-#   - AuditLogMiddleware: entity extraction, action derivation
+#   - AuditMiddleware: resource extraction, action derivation
 #   - AuthMiddleware: security headers, token state injection
 #   - RateLimitMiddleware: per-path rules, in-memory window limiter
 #   - Middleware does not interfere with successful requests
@@ -13,54 +13,55 @@ from __future__ import annotations
 
 import pytest
 
-from app.middleware.audit_log import (
+from app.middleware.audit_middleware import (
     _derive_action,
-    _extract_entity,
-    _extract_user_from_jwt,
+    _extract_jwt_claims,
+    _extract_resource_type_and_id,
 )
 from app.middleware.rate_limit import _InMemoryLimiter, _find_rule
 
 
 # ── AuditLogMiddleware unit tests ─────────────────────────────
 
-class TestAuditLogEntityExtraction:
+class TestAuditResourceExtraction:
 
     def test_extract_speaker_from_path(self):
-        entity_type, entity_id = _extract_entity("/api/v1/speakers/abc")
+        entity_type, entity_id = _extract_resource_type_and_id("/api/v1/speakers")
         assert entity_type == "speaker"
 
     def test_extract_file_from_path(self):
-        entity_type, _ = _extract_entity("/api/v1/files/123")
+        entity_type, _ = _extract_resource_type_and_id("/api/v1/files")
         assert entity_type == "file"
 
     def test_extract_session_from_path(self):
-        entity_type, _ = _extract_entity("/api/v1/sessions/456")
+        entity_type, _ = _extract_resource_type_and_id("/api/v1/sessions")
         assert entity_type == "session"
 
     def test_extract_event_from_path(self):
-        entity_type, _ = _extract_entity("/api/v1/events/789")
+        entity_type, _ = _extract_resource_type_and_id("/api/v1/events")
         assert entity_type == "event"
 
     def test_extract_import_from_path(self):
-        entity_type, _ = _extract_entity("/api/v1/import/schedule")
-        assert entity_type == "import_job"
+        entity_type, _ = _extract_resource_type_and_id("/api/v1/imports")
+        assert entity_type == "import"
 
     def test_extract_room_from_path(self):
-        entity_type, _ = _extract_entity("/api/v1/rooms/aaa")
+        entity_type, _ = _extract_resource_type_and_id("/api/v1/rooms")
         assert entity_type == "room"
 
     def test_extract_uuid_from_path(self):
         target_id = "550e8400-e29b-41d4-a716-446655440000"
-        entity_type, entity_id = _extract_entity(f"/api/v1/speakers/{target_id}")
+        entity_type, entity_id = _extract_resource_type_and_id(f"/api/v1/speakers/{target_id}")
+        assert entity_type == "speaker"
         assert entity_id is not None
         assert str(entity_id) == target_id
 
     def test_no_uuid_in_path_returns_none(self):
-        _, entity_id = _extract_entity("/api/v1/speakers")
+        _, entity_id = _extract_resource_type_and_id("/api/v1/speakers")
         assert entity_id is None
 
     def test_unknown_path_returns_unknown(self):
-        entity_type, _ = _extract_entity("/api/v1/totally-unknown-endpoint")
+        entity_type, _ = _extract_resource_type_and_id("/")
         assert entity_type == "unknown"
 
 
@@ -102,17 +103,17 @@ class TestJWTExtraction:
     def test_extract_user_from_valid_jwt(self, organizer):
         from app.modules.identity.services.auth_service import create_access_token
         token = create_access_token(organizer)
-        user_id = _extract_user_from_jwt(f"Bearer {token}")
+        user_id, _, _, _ = _extract_jwt_claims(f"Bearer {token}")
         assert user_id == organizer.id
 
     def test_extract_returns_none_for_missing_header(self):
-        assert _extract_user_from_jwt(None) is None
+        assert _extract_jwt_claims(None) == (None, None, None, None)
 
     def test_extract_returns_none_for_malformed_token(self):
-        assert _extract_user_from_jwt("Bearer not-a-real-token") is None
+        assert _extract_jwt_claims("Bearer not-a-real-token") == (None, None, None, None)
 
     def test_extract_returns_none_for_non_bearer(self):
-        assert _extract_user_from_jwt("Basic dXNlcjpwYXNz") is None
+        assert _extract_jwt_claims("Basic dXNlcjpwYXNz") == (None, None, None, None)
 
 
 # ── RateLimitMiddleware unit tests ────────────────────────────

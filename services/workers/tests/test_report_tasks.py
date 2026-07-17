@@ -6,7 +6,7 @@ from __future__ import annotations
 import io
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -324,3 +324,63 @@ class TestGenerateSessionReadinessCsv:
         # UTF-8 BOM marker
         assert uploaded_data[0] is not None
         assert uploaded_data[0][:3] == b"\xef\xbb\xbf"
+
+
+class TestExportRetention:
+    def test_expired_artifacts_are_deleted_but_job_records_are_retained(self):
+        from workers.tasks.report_tasks import _expire_tenant_exports
+
+        organization_id = uuid.uuid4()
+        export = MagicMock()
+        export.id = uuid.uuid4()
+        export.storage_key = f"{organization_id}/audit-exports/evidence.csv"
+        export.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        export.status = "COMPLETED"
+
+        session = MagicMock()
+        query = MagicMock()
+        query.filter.return_value = query
+        query.order_by.return_value = query
+        query.limit.return_value = query
+        query.all.return_value = [export]
+        session.query.return_value = query
+
+        @contextmanager
+        def _ctx(*_args, **_kwargs):
+            yield session
+
+        with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx), \
+             patch("workers.tasks.report_tasks.r2.delete_object") as delete_object:
+            result = _expire_tenant_exports(organization_id)
+
+        delete_object.assert_called_once()
+        assert result == {"expired": 1, "failed": 0}
+        assert export.storage_key is None
+        assert export.status == "EXPIRED"
+        session.commit.assert_called_once()
+
+    def test_storage_failure_preserves_artifact_reference_for_retry(self):
+        from workers.tasks.report_tasks import _expire_tenant_exports
+
+        organization_id = uuid.uuid4()
+        storage_key = f"{organization_id}/exports/retry.pdf"
+        export = MagicMock(id=uuid.uuid4(), storage_key=storage_key, status="COMPLETED")
+        session = MagicMock()
+        query = MagicMock()
+        query.filter.return_value = query
+        query.order_by.return_value = query
+        query.limit.return_value = query
+        query.all.return_value = [export]
+        session.query.return_value = query
+
+        @contextmanager
+        def _ctx(*_args, **_kwargs):
+            yield session
+
+        with patch("workers.tasks.report_tasks.get_db_session", side_effect=_ctx), \
+             patch("workers.tasks.report_tasks.r2.delete_object", side_effect=RuntimeError("storage unavailable")):
+            result = _expire_tenant_exports(organization_id)
+
+        assert result == {"expired": 0, "failed": 1}
+        assert export.storage_key == storage_key
+        assert export.status == "COMPLETED"

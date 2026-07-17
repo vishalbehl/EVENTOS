@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PageContainer } from "@/components/super-admin/ui/PageContainer";
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader";
-import { useAdminOrgs, useSearchJobs } from "@/services/super-admin-service";
+import { useAdminOrgs, useSearchJobs, useTriggerSearchReindex } from "@/services/super-admin-service";
+import { toast } from "sonner";
 
 const PAGE_SIZE = 15;
 
@@ -19,6 +20,9 @@ export default function SearchOperationsPage() {
   const [page, setPage] = useState(1);
   const jobsQuery = useSearchJobs({ page, page_size: PAGE_SIZE });
   const organizationsQuery = useAdminOrgs({ limit: 200 });
+  const reindex = useTriggerSearchReindex();
+  const [selectedOrganization, setSelectedOrganization] = useState("");
+  const [reason, setReason] = useState("");
   const jobs = jobsQuery.data?.items ?? [];
   const total = jobsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -31,7 +35,7 @@ export default function SearchOperationsPage() {
     <PageContainer>
       <SectionHeader
         title="Search Index Operations"
-        description="Observe persisted tenant reindex jobs. Manual reindex remains disabled until reason capture, idempotency, audit, and durable queue acknowledgement are added."
+        description="Observe and trigger governed tenant reindex jobs with reason, idempotency, audit, and queue acknowledgement."
         breadcrumb={["Console", "Operations", "Search"]}
         actions={
           <Button variant="outline" size="sm" onClick={() => jobsQuery.refetch()} disabled={jobsQuery.isFetching}>
@@ -41,12 +45,7 @@ export default function SearchOperationsPage() {
         }
       />
 
-      <Card className="rounded-2xl border-amber-500/20 bg-amber-500/5 p-5">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
-          <div><h2 className="text-sm font-bold text-primary">Manual reindex is temporarily unavailable</h2><p className="mt-1 text-xs leading-5 text-secondary">The existing backend creates a real job, but the privileged operation does not yet capture an administrative reason, idempotency key, immutable audit event, or confirmed queue-delivery result.</p></div>
-        </div>
-      </Card>
+      <Card className="rounded-2xl border-border bg-surface p-5"><h2 className="text-sm font-bold">Governed reindex</h2><div className="mt-3 flex flex-wrap gap-3"><select aria-label="Reindex organization" value={selectedOrganization} onChange={e => setSelectedOrganization(e.target.value)} className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"><option value="">Select organization</option>{organizationsQuery.data?.map(org => <option value={org.id} key={org.id}>{org.name}</option>)}</select><input aria-label="Reindex reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="Administrative reason" className="min-w-72 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm" /><Button disabled={!selectedOrganization || reason.trim().length < 12 || reindex.isPending} onClick={async () => { try { await reindex.mutateAsync({ organizationId: selectedOrganization, reason, idempotencyKey: crypto.randomUUID() }); toast.success("Reindex request recorded"); setReason(""); } catch (e) { toast.error(e instanceof Error ? e.message : "Reindex failed"); } }}>Start reindex</Button></div></Card>
 
       <Card className="overflow-hidden rounded-2xl border-border bg-surface">
         <div className="border-b border-border px-5 py-4"><h2 className="flex items-center gap-2 text-sm font-bold text-primary"><Search className="h-4 w-4" /> Reindex job history</h2><p className="mt-1 text-xs text-secondary">Server-persisted jobs across organizations.</p></div>

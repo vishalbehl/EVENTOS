@@ -71,6 +71,11 @@ export default function DatabaseOperationsPage() {
               { label: "Dead tuples", value: stats.dead_tuples.toLocaleString(), icon: Table2 },
             ]}
           />
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card className="p-5"><p className="text-xs uppercase tracking-wider text-tertiary">Migration revision</p><p className="mt-2 break-all font-mono text-sm text-primary">{stats.migration?.current_revision || "UNVERIFIED"}</p><p className="mt-2 text-xs text-secondary">{stats.migration?.status || "UNVERIFIED"}</p></Card>
+            <Card className="p-5"><p className="text-xs uppercase tracking-wider text-tertiary">RLS enforcement</p><p className="mt-2 text-xl font-black text-primary">{stats.rls ? `${stats.rls.forced_tables}/${stats.rls.enabled_tables}` : "UNVERIFIED"}</p><p className="mt-2 text-xs text-secondary">Forced / enabled tenant tables observed</p></Card>
+            <Card className="p-5"><p className="text-xs uppercase tracking-wider text-tertiary">Backup and restore</p><p className="mt-2 text-xl font-black text-warning">{stats.backup?.status || "UNVERIFIED"}</p><p className="mt-2 text-xs text-secondary">No backup claim is made without external evidence.</p></Card>
+          </div>
 
           <div className="grid gap-6 xl:grid-cols-2">
             <Card className="overflow-hidden rounded-2xl border-border bg-surface">

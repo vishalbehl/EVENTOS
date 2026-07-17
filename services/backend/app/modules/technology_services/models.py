@@ -78,6 +78,7 @@ class ServiceRequest(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     items: Mapped[list["ServiceRequestItem"]] = relationship(
         back_populates="service_request", cascade="all, delete-orphan"
     )

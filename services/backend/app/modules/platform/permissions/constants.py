@@ -28,5 +28,14 @@ DEFAULT_PERMISSIONS = [
     {"code": "operations.projects.manage", "name": "Manage Operations Projects", "module": "OPERATIONS", "description": "Can create, update, and manage operations projects, milestones, and tasks"},
     {"code": "operations.resources.manage", "name": "Manage Operations Resources", "module": "OPERATIONS", "description": "Can allocate staff, assign equipment, and plan travel"},
     {"code": "operations.deployments.manage", "name": "Manage Deployments", "module": "OPERATIONS", "description": "Can track deployments, complete checklists, and manage readiness and risks"}
+    ,{"code": "operations.overview.view", "name": "View Operations Overview", "module": "OPERATIONS", "description": "Can view authoritative platform operations status"}
+    ,{"code": "operations.jobs.view", "name": "View Operations Jobs", "module": "OPERATIONS", "description": "Can view durable background-job records"}
+    ,{"code": "operations.jobs.manage", "name": "Manage Operations Jobs", "module": "OPERATIONS", "description": "Can request supported retries and cooperative cancellation"}
+    ,{"code": "operations.infrastructure.view", "name": "View Infrastructure Telemetry", "module": "OPERATIONS", "description": "Can view database, queue, and storage telemetry"}
+    ,{"code": "operations.search.manage", "name": "Manage Search Operations", "module": "OPERATIONS", "description": "Can trigger governed tenant reindex jobs"}
+    ,{"code": "operations.risks.view", "name": "View Operational Risks", "module": "OPERATIONS", "description": "Can view the operational risk register"}
+    ,{"code": "operations.risks.manage", "name": "Manage Operational Risks", "module": "OPERATIONS", "description": "Can manage risks, actions, evidence, and resolution"}
+    ,{"code": "operations.venue.view", "name": "View Venue Readiness", "module": "OPERATIONS", "description": "Can view supplier and venue readiness"}
+    ,{"code": "operations.venue.manage", "name": "Manage Venue Readiness", "module": "OPERATIONS", "description": "Can manage event supplier accountability and readiness"}
 ]
 

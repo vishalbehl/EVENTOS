@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   JobExecution,
   useBackgroundJobs,
+  useJobControl,
 } from "@/services/super-admin-service";
+import { toast } from "sonner";
 import { 
   Play, CheckCircle2, AlertCircle, RefreshCw, Clock,
   ChevronDown, ChevronRight, ShieldAlert,
@@ -52,6 +54,9 @@ export default function JobsMonitorPage() {
 
   const [expandedExecutionId, setExpandedExecutionId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [controlTarget, setControlTarget] = useState<{ job: JobExecution; action: "retry" | "cancel" } | null>(null);
+  const [controlReason, setControlReason] = useState("");
+  const jobControl = useJobControl();
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
   const {
@@ -77,14 +82,13 @@ export default function JobsMonitorPage() {
   };
 
   // Debounced search filtering
-  const filteredExecutions = useMemo(() => {
-    if (!debouncedSearchTerm) return executions;
-    const term = debouncedSearchTerm.toLowerCase();
-    return executions.filter(e => 
+  const term = debouncedSearchTerm.toLowerCase();
+  const filteredExecutions = debouncedSearchTerm
+    ? executions.filter(e =>
       e.task_name?.toLowerCase().includes(term) ||
       e.id.toLowerCase().includes(term)
-    );
-  }, [executions, debouncedSearchTerm]);
+    )
+    : executions;
 
   const kpis = [
     { label: "Running Now", value: (stats?.running ?? 0).toString(), icon: Play, delta: stats?.running ? "Active process" : "Idle" },
@@ -122,6 +126,7 @@ export default function JobsMonitorPage() {
           <div className="flex items-center gap-2 bg-surface border border-border rounded-xl px-3 py-1.5 flex-1 min-w-[200px] max-w-[320px]">
             <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Search:</span>
             <input
+              aria-label="Search jobs"
               type="text"
               placeholder="Filter by job name or ID..."
               value={searchTerm}
@@ -139,7 +144,7 @@ export default function JobsMonitorPage() {
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border",
                   statusFilter === st
-                    ? "bg-[var(--brand-primary)] text-white border-transparent shadow-sm"
+                    ? "bg-[var(--brand-primary)] text-[var(--primary-foreground)] border-transparent shadow-sm"
                     : "bg-transparent border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                 )}
               >
@@ -152,6 +157,7 @@ export default function JobsMonitorPage() {
           <div className="flex items-center gap-1.5 bg-surface border border-border rounded-xl px-2.5">
             <span className="text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider font-bold pl-1">Queue:</span>
             <select
+              aria-label="Queue filter"
               value={queueFilter}
               onChange={(e) => {
                 setQueueFilter(e.target.value);
@@ -223,7 +229,7 @@ export default function JobsMonitorPage() {
                         </div>
                       </td>
                       <td className="px-5 py-4 font-mono text-[var(--text-tertiary)]">
-                        {exe.id.slice(0, 8)}…{exe.id.slice(-8)}
+                        {exe.id.slice(0, 8)}...{exe.id.slice(-8)}
                       </td>
                       <td className="px-5 py-4">
                         <StatusBadge status={Style.status} className="text-[10px] py-0 px-2 font-bold uppercase" />
@@ -231,36 +237,34 @@ export default function JobsMonitorPage() {
                       <td className="px-5 py-4 font-mono text-[var(--text-secondary)]">
                         {exe.duration_seconds !== undefined && exe.duration_seconds !== null
                           ? `${exe.duration_seconds.toFixed(2)}s`
-                          : "—"}
+                          : "-"}
                       </td>
                       <td className="px-5 py-4 font-mono text-[var(--text-secondary)]">
-                        {exe.started_at ? formatDistanceToNow(new Date(exe.started_at), { addSuffix: true }) : "—"}
+                        {exe.started_at ? formatDistanceToNow(new Date(exe.started_at), { addSuffix: true }) : "-"}
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex items-center justify-between gap-4">
                           <span className="font-mono text-[var(--text-tertiary)]">
-                            {exe.finished_at ? new Date(exe.finished_at).toLocaleTimeString() : "—"}
+                            {exe.finished_at ? new Date(exe.finished_at).toLocaleTimeString() : "-"}
                           </span>
 
                           <div className="flex gap-1.5" onClick={(e) => e.stopPropagation()}>
-                            {isFailed && (
+                            {isFailed && exe.capabilities?.retry && (
                               <Button
                                 size="sm"
-                                disabled
-                                title="Retry requires a durable job-control contract before it can be enabled."
+                                onClick={() => setControlTarget({ job: exe, action: "retry" })}
                                 className="h-7 px-2.5 rounded bg-[var(--brand-primary-muted)] border border-[var(--brand-primary)]/20 hover:bg-[var(--brand-primary-muted)]/40 text-[var(--brand-primary)] text-[9px] font-bold"
                               >
-                                Retry unavailable
+                                Retry
                               </Button>
                             )}
-                            {isPending && (
+                            {isPending && exe.capabilities?.cancel && (
                               <Button
                                 size="sm"
-                                disabled
-                                title="Cancellation requires a durable job-control contract before it can be enabled."
+                                onClick={() => setControlTarget({ job: exe, action: "cancel" })}
                                 className="h-7 px-2.5 rounded bg-[var(--danger-muted)] border border-[var(--danger)]/20 hover:bg-[var(--danger-muted)]/40 text-[var(--danger)] text-[9px] font-bold"
                               >
-                                Cancel unavailable
+                                Cancel
                               </Button>
                             )}
                             <button onClick={() => setExpandedExecutionId(isExpanded ? null : exe.id)} className="text-[var(--text-tertiary)] p-1 hover:text-[var(--text-primary)]">
@@ -307,7 +311,7 @@ export default function JobsMonitorPage() {
                                     ) : (
                                       <p className="text-[var(--text-tertiary)]">No failure detail recorded for this job source.</p>
                                     )}
-                                    <p className="text-[var(--text-tertiary)]">Retry and cancellation controls are disabled until durable job-control APIs are implemented.</p>
+                                    <p className="text-[var(--text-tertiary)]">Controls are exposed only when the source adapter declares the action safe.</p>
                                   </div>
                                 </div>
                               </div>
@@ -328,7 +332,7 @@ export default function JobsMonitorPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between px-1 mt-4">
           <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
-            Page {page} of {totalPages} · Showing {executions.length} of {totalExecutions} executions
+            Page {page} of {totalPages} / Showing {executions.length} of {totalExecutions} executions
           </span>
           <div className="flex gap-2">
             <Button
@@ -350,6 +354,7 @@ export default function JobsMonitorPage() {
           </div>
         </div>
       )}
+      {controlTarget && <div className="mt-5 rounded-xl border border-border bg-surface p-5"><h2 className="text-sm font-bold text-primary">{controlTarget.action === "cancel" ? "Cancel" : "Retry"} {controlTarget.job.task_name}</h2><p className="mt-1 text-xs text-secondary">This records an idempotent control request and immutable audit event.</p><div className="mt-3 flex flex-wrap gap-3"><input value={controlReason} onChange={e => setControlReason(e.target.value)} placeholder="Administrative reason" className="min-w-72 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm" /><Button disabled={controlReason.trim().length < 12 || jobControl.isPending} onClick={async () => { const job = controlTarget.job; if (!job.organization_id || !job.source) return toast.error("Job tenant scope is unavailable."); try { await jobControl.mutateAsync({ source: job.source, jobId: job.job_id, action: controlTarget.action, organizationId: job.organization_id, eventId: job.event_id, reason: controlReason, idempotencyKey: crypto.randomUUID() }); toast.success(`Job ${controlTarget.action} request recorded`); setControlTarget(null); setControlReason(""); } catch (e) { toast.error(e instanceof Error ? e.message : "Job control failed"); } }}>Confirm</Button><Button variant="outline" onClick={() => setControlTarget(null)}>Close</Button></div></div>}
     </PageContainer>
   );
 }

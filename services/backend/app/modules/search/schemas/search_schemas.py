@@ -46,6 +46,16 @@ class SearchJobOut(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     status: str   # pending | indexing | completed | failed
+    entity_types: Optional[List[str]] = None
+    records_processed: int = 0
+    requested_by: Optional[uuid.UUID] = None
+    request_reason: Optional[str] = None
+    predecessor_job_id: Optional[uuid.UUID] = None
+    error_code: Optional[str] = None
+    error_detail: Optional[str] = None
+    queued_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -55,6 +65,7 @@ class ReindexTriggerIn(BaseModel):
     """Request to trigger a search reindex for an organization."""
     organization_id: uuid.UUID
     entity_types: Optional[List[str]] = None  # None = all types
+    reason: str
 
 
 class PaginatedSearchJobs(BaseModel):

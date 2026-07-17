@@ -98,6 +98,7 @@ TABLE_SCHEMAS = {
     "organization_subscriptions": "billing",
     "plan_features": "billing",
     "organization_feature_overrides": "billing",
+    "provider_webhook_events": "billing",
     "addons": "billing",
     "addon_features": "billing",
     "organization_addons": "billing",
@@ -303,11 +304,20 @@ TABLE_SCHEMAS = {
     "job_failures": "jobs",
     "job_schedules": "jobs",
     "job_locks": "jobs",
+    "job_control_requests": "operations_planning",
 
     # search
     "search_indexes": "search",
     "search_documents": "search",
     "search_jobs": "search",
+
+    # operations control extensions
+    "risk_evidence": "deployment_management",
+    "venue_supplier_assignments": "venue",
+    "venue_supplier_contacts": "venue",
+    "venue_readiness_attestations": "venue",
+    "venue_operational_incidents": "venue",
+    "venue_credential_operations": "venue",
 
     # sponsors
     "sponsors": "sponsors",

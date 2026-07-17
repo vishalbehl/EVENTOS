@@ -532,7 +532,7 @@ async def get_template_details(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_active_user)
 ):
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # 1. Check RoomTemplate
     room_stmt = select(RoomTemplate).where(RoomTemplate.slug == slug)
@@ -628,7 +628,7 @@ async def superadmin_get_templates(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # Get room templates
     room_res = await db.execute(select(RoomTemplate))
@@ -747,7 +747,7 @@ async def superadmin_create_template(
 ):
     import uuid
     import re
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     from sqlalchemy import update
     
     # Generate slug from name
@@ -820,7 +820,7 @@ async def superadmin_update_template(
     db: AsyncSession = Depends(get_db)
 ):
     from sqlalchemy import update
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     t_type = body.template_type.lower()
     if t_type == "room":
@@ -877,7 +877,7 @@ async def superadmin_duplicate_template(
 ):
     import uuid
     import re
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # Try to find the template in any template table
     tpl = None
@@ -930,7 +930,7 @@ async def superadmin_set_default_template(
     db: AsyncSession = Depends(get_db)
 ):
     from sqlalchemy import update
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # Try to find the template in any template table
     tpl = None
@@ -962,7 +962,7 @@ async def superadmin_delete_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    from app.modules.templates.models import RoomTemplate, RegistrationTemplate, SrrTemplate
+    from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # Try to delete from any template table
     for mc in [RoomTemplate, RegistrationTemplate, SrrTemplate]:

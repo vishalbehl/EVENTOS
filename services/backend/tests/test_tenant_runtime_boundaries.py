@@ -104,14 +104,6 @@ def test_worker_tasks_require_explicit_organization_payload():
         detect_all_resource_conflicts,
         generate_upcoming_deployment_checklists,
     )
-    from app.tasks.platform_builder_tasks import (
-        cleanup_unused_assets,
-        generate_sitemaps,
-        generate_static_pages,
-        issue_ssl_certificates,
-        publish_scheduled_sites,
-        verify_domains,
-    )
     from app.tasks.platform_commercial_tasks import calculate_forecasts
     from app.tasks.workflow_jobs import check_escalations, check_expired_approvals, send_reminders
 
@@ -122,12 +114,6 @@ def test_worker_tasks_require_explicit_organization_payload():
     assert "organization_id_str" in calculate_all_readiness_scores.run.__code__.co_varnames
     assert "organization_id_str" in detect_all_resource_conflicts.run.__code__.co_varnames
     assert "organization_id_str" in generate_upcoming_deployment_checklists.run.__code__.co_varnames
-    assert "organization_id_str" in publish_scheduled_sites.run.__code__.co_varnames
-    assert "organization_id_str" in generate_static_pages.run.__code__.co_varnames
-    assert "organization_id_str" in generate_sitemaps.run.__code__.co_varnames
-    assert "organization_id_str" in verify_domains.run.__code__.co_varnames
-    assert "organization_id_str" in issue_ssl_certificates.run.__code__.co_varnames
-    assert "organization_id_str" in cleanup_unused_assets.run.__code__.co_varnames
     assert "organization_id_str" in calculate_forecasts.run.__code__.co_varnames
     assert "organization_id_str" in check_expired_approvals.run.__code__.co_varnames
     assert "organization_id_str" in check_escalations.run.__code__.co_varnames

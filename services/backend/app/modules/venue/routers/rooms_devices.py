@@ -7,12 +7,14 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import DeviceAuth, get_db, get_current_user, get_current_event, CurrentEvent
+from app.dependencies import DeviceAuth, StepUpAuth, get_db, get_current_user, get_current_event, CurrentEvent
+from app.modules.audit.models.audit_log import AuditLog
+from app.modules.operations_control.models import VenueCredentialOperation, VenueSupplierAssignment
 from app.modules.venue.models.room_device import RoomDevice
 from app.modules.identity.models.user import User
 from app.modules.events.models.room import Room
@@ -29,6 +31,7 @@ class DeviceRegisterRequest(BaseModel):
     hostname: Optional[str] = None
     os_version: Optional[str] = None
     app_version: Optional[str] = None
+    supplier_assignment_id: Optional[uuid.UUID] = None
 
 
 class DeviceResponse(BaseModel):
@@ -50,7 +53,8 @@ class DeviceKeyResponse(BaseModel):
     device_id: uuid.UUID
     key_version: int
     expires_at: Optional[datetime] = None
-    device_key: str  # plain-text — shown ONCE on registration
+    device_key: Optional[str] = None
+    replayed: bool = False
 
 
 # ── Endpoints ─────────────────────────────────────────────────
@@ -94,11 +98,21 @@ async def register_device(
     room = await db.scalar(select(Room).where(Room.id == room_id, Room.event_id == event.id))
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found.")
+    if payload.supplier_assignment_id:
+        assignment = await db.scalar(select(VenueSupplierAssignment).where(
+            VenueSupplierAssignment.id == payload.supplier_assignment_id,
+            VenueSupplierAssignment.organization_id == event.organization_id,
+            VenueSupplierAssignment.event_id == event.id,
+            VenueSupplierAssignment.status == "ACTIVE",
+        ))
+        if assignment is None:
+            raise HTTPException(status_code=404, detail="Supplier assignment not found.")
 
     device = RoomDevice(
         organization_id=event.organization_id,
         event_id=event.id,
         room_id=room_id,
+        supplier_assignment_id=payload.supplier_assignment_id,
         device_key_hash=hashlib.sha256(plain_key.encode("utf-8")).hexdigest(),
         device_key_expires_at=expires_at,
         device_type=payload.device_type,
@@ -126,9 +140,13 @@ async def rotate_device_key(
     device_id: uuid.UUID,
     payload: DeviceKeyRotateRequest,
     event: CurrentEvent,
-    _: User = Depends(get_current_user),
+    step_up: StepUpAuth,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
 ) -> DeviceKeyResponse:
+    del step_up
     if not 1 <= payload.expires_in_days <= 365:
         raise HTTPException(status_code=422, detail="expires_in_days must be between 1 and 365.")
     device = await db.scalar(select(RoomDevice).where(
@@ -139,6 +157,16 @@ async def rotate_device_key(
     ))
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found.")
+    request_hash = hashlib.sha256(f"ROTATE:{device_id}:{payload.expires_in_days}:{reason}".encode()).hexdigest()
+    existing = await db.scalar(select(VenueCredentialOperation).where(
+        VenueCredentialOperation.organization_id == event.organization_id,
+        VenueCredentialOperation.operation_type == "ROTATE",
+        VenueCredentialOperation.idempotency_key == idempotency_key,
+    ))
+    if existing:
+        if existing.request_hash != request_hash:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "message": "Idempotency key was reused with different rotation parameters."})
+        return DeviceKeyResponse(device_id=device.id, key_version=existing.result_key_version, expires_at=existing.result_expires_at, replayed=True)
     now = datetime.now(timezone.utc)
     plain_key = secrets.token_urlsafe(48)
     device.device_key_hash = hashlib.sha256(plain_key.encode("utf-8")).hexdigest()
@@ -147,12 +175,15 @@ async def rotate_device_key(
     device.device_key_revoked_at = None
     device.device_key_revocation_reason = None
     device.device_key_expires_at = now + timedelta(days=payload.expires_in_days)
+    db.add(VenueCredentialOperation(organization_id=event.organization_id, event_id=event.id, device_id=device.id, operation_type="ROTATE", idempotency_key=idempotency_key, request_hash=request_hash, result_key_version=device.device_key_version, result_expires_at=device.device_key_expires_at, requested_by=actor.id, reason=reason))
+    db.add(AuditLog(organization_id=event.organization_id, actor_user_id=actor.id, actor_role=actor.platform_role or actor.role, resource_type="venue_device", resource_id=device.id, action_type="VENUE_CREDENTIAL_ROTATED", new_state={"reason": reason, "key_version": device.device_key_version, "expires_at": device.device_key_expires_at.isoformat()}, is_sensitive=True))
     await db.commit()
     return DeviceKeyResponse(
         device_id=device.id,
         device_key=plain_key,
         key_version=device.device_key_version,
         expires_at=device.device_key_expires_at,
+        replayed=False,
     )
 
 
@@ -162,9 +193,12 @@ async def revoke_device_key(
     device_id: uuid.UUID,
     payload: DeviceKeyRevokeRequest,
     event: CurrentEvent,
-    _: User = Depends(get_current_user),
+    step_up: StepUpAuth,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
+    del step_up
     device = await db.scalar(select(RoomDevice).where(
         RoomDevice.id == device_id,
         RoomDevice.room_id == room_id,
@@ -173,8 +207,20 @@ async def revoke_device_key(
     ))
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found.")
+    request_hash = hashlib.sha256(f"REVOKE:{device_id}:{payload.reason}".encode()).hexdigest()
+    existing = await db.scalar(select(VenueCredentialOperation).where(
+        VenueCredentialOperation.organization_id == event.organization_id,
+        VenueCredentialOperation.operation_type == "REVOKE",
+        VenueCredentialOperation.idempotency_key == idempotency_key,
+    ))
+    if existing:
+        if existing.request_hash != request_hash:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "message": "Idempotency key was reused with a different revocation request."})
+        return MessageResponse(message="Device key already revoked.")
     device.device_key_revoked_at = datetime.now(timezone.utc)
     device.device_key_revocation_reason = payload.reason[:255]
+    db.add(VenueCredentialOperation(organization_id=event.organization_id, event_id=event.id, device_id=device.id, operation_type="REVOKE", idempotency_key=idempotency_key, request_hash=request_hash, result_key_version=device.device_key_version, result_expires_at=device.device_key_expires_at, requested_by=actor.id, reason=payload.reason))
+    db.add(AuditLog(organization_id=event.organization_id, actor_user_id=actor.id, actor_role=actor.platform_role or actor.role, resource_type="venue_device", resource_id=device.id, action_type="VENUE_CREDENTIAL_REVOKED", new_state={"reason": payload.reason, "key_version": device.device_key_version}, is_sensitive=True))
     await db.commit()
     return MessageResponse(message="Device key revoked.")
 

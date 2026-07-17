@@ -2599,7 +2599,11 @@ async def get_queue_stats(
                 "depth": length,
                 "status": "HEALTHY" if length < 100
                          else "DEGRADED" if length < 500
-                         else "OVERLOADED"
+                         else "OVERLOADED",
+                "oldest_message_age_seconds": None,
+                "dead_letter_depth": None,
+                "worker_status": "UNVERIFIED",
+                "freshness_at": datetime.now(timezone.utc).isoformat(),
             })
     except Exception as exc:
         raise HTTPException(
@@ -2674,6 +2678,16 @@ async def get_database_stats(
     dead_tuples = await db.scalar(text(
         "SELECT SUM(n_dead_tup) FROM pg_stat_user_tables"
     )) or 0
+
+    migration_revision = None
+    if await db.scalar(text("SELECT to_regclass('public.alembic_version') IS NOT NULL")):
+        migration_revision = await db.scalar(text("SELECT version_num FROM public.alembic_version LIMIT 1"))
+    rls_row = (await db.execute(text("""
+        SELECT COUNT(*) FILTER (WHERE relrowsecurity) AS enabled,
+               COUNT(*) FILTER (WHERE relforcerowsecurity) AS forced
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind='r' AND n.nspname NOT IN ('pg_catalog','information_schema')
+    """))).one()
     
     return {
         "connections": {"total": c.total, "active": c.active, "idle": c.idle, "waiting": c.waiting},
@@ -2683,6 +2697,10 @@ async def get_database_stats(
         "cache_hit_ratio": float(cache_ratio),
         "database_size_bytes": db_size,
         "dead_tuples": dead_tuples,
+        "migration": {"current_revision": migration_revision, "expected_revision": None, "status": "UNVERIFIED" if migration_revision is None else "OBSERVED"},
+        "rls": {"enabled_tables": rls_row.enabled, "forced_tables": rls_row.forced, "status": "OBSERVED"},
+        "backup": {"status": "UNVERIFIED", "latest_backup_at": None, "latest_restore_test_at": None},
+        "freshness_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -2723,16 +2741,18 @@ async def get_background_jobs(
             "table": "registration.import_jobs",
             "source": "registration_import",
             "sql": """
-                SELECT id::text AS id,
-                       id::text AS job_id,
-                       status,
-                       created_at AS started_at,
-                       completed_at AS finished_at,
-                       ('registration.import.' || COALESCE(job_type, 'schedule')) AS task_name,
+                SELECT j.id::text AS id,
+                       j.id::text AS job_id,
+                       e.organization_id::text AS organization_id,
+                       j.event_id::text AS event_id,
+                       j.status,
+                       j.created_at AS started_at,
+                       j.completed_at AS finished_at,
+                       ('registration.import.' || COALESCE(j.job_type, 'schedule')) AS task_name,
                        'imports' AS queue,
                        NULL::text AS error_message
-                FROM registration.import_jobs
-                ORDER BY created_at DESC
+                FROM registration.import_jobs j JOIN events.events e ON e.id=j.event_id
+                ORDER BY j.created_at DESC
                 LIMIT 500
             """,
         },
@@ -2742,12 +2762,14 @@ async def get_background_jobs(
             "sql": """
                 SELECT id::text AS id,
                        id::text AS job_id,
+                       organization_id::text AS organization_id,
+                       NULL::text AS event_id,
                        status,
                        created_at AS started_at,
-                       NULL::timestamptz AS finished_at,
+                       finished_at,
                        'search.reindex' AS task_name,
                        'search' AS queue,
-                       NULL::text AS error_message
+                       CASE WHEN error_code IS NULL THEN NULL ELSE 'Failure detail available' END AS error_message
                 FROM search.search_jobs
                 ORDER BY created_at DESC
                 LIMIT 500
@@ -2757,16 +2779,18 @@ async def get_background_jobs(
             "table": "presentations.processing_jobs",
             "source": "presentation_processing",
             "sql": """
-                SELECT id::text AS id,
-                       id::text AS job_id,
-                       status,
-                       created_at AS started_at,
+                SELECT j.id::text AS id,
+                       j.id::text AS job_id,
+                       e.organization_id::text AS organization_id,
+                       f.event_id::text AS event_id,
+                       j.status,
+                       j.created_at AS started_at,
                        NULL::timestamptz AS finished_at,
                        'presentation.processing' AS task_name,
                        'presentations' AS queue,
-                       logs AS error_message
-                FROM presentations.processing_jobs
-                ORDER BY created_at DESC
+                       CASE WHEN j.logs IS NULL THEN NULL ELSE 'Failure detail available' END AS error_message
+                FROM presentations.processing_jobs j JOIN presentations.files f ON f.id=j.file_id JOIN events.events e ON e.id=f.event_id
+                ORDER BY j.created_at DESC
                 LIMIT 500
             """,
         },
@@ -2774,16 +2798,18 @@ async def get_background_jobs(
             "table": "registration.badge_print_jobs",
             "source": "badge_print",
             "sql": """
-                SELECT id::text AS id,
-                       id::text AS job_id,
-                       status,
-                       queued_at AS started_at,
-                       printed_at AS finished_at,
+                SELECT j.id::text AS id,
+                       j.id::text AS job_id,
+                       e.organization_id::text AS organization_id,
+                       p.event_id::text AS event_id,
+                       j.status,
+                       j.queued_at AS started_at,
+                       j.printed_at AS finished_at,
                        'badge.print' AS task_name,
                        'badges' AS queue,
                        NULL::text AS error_message
-                FROM registration.badge_print_jobs
-                ORDER BY queued_at DESC
+                FROM registration.badge_print_jobs j JOIN registration.badges b ON b.id=j.badge_id JOIN registration.participants p ON p.id=b.participant_id JOIN events.events e ON e.id=p.event_id
+                ORDER BY j.queued_at DESC
                 LIMIT 500
             """,
         },
@@ -2791,16 +2817,18 @@ async def get_background_jobs(
             "table": "venue.sync_jobs",
             "source": "venue_sync",
             "sql": """
-                SELECT id::text AS id,
-                       id::text AS job_id,
-                       status,
-                       COALESCE(started_at, created_at) AS started_at,
-                       completed_at AS finished_at,
-                       ('venue.sync.' || COALESCE(sync_type, 'download')) AS task_name,
+                SELECT j.id::text AS id,
+                       j.id::text AS job_id,
+                       e.organization_id::text AS organization_id,
+                       j.event_id::text AS event_id,
+                       j.status,
+                       COALESCE(j.started_at, j.created_at) AS started_at,
+                       j.completed_at AS finished_at,
+                       ('venue.sync.' || COALESCE(j.sync_type, 'download')) AS task_name,
                        'venue-sync' AS queue,
-                       error_message
-                FROM venue.sync_jobs
-                ORDER BY created_at DESC
+                       CASE WHEN j.error_message IS NULL THEN NULL ELSE 'Failure detail available' END AS error_message
+                FROM venue.sync_jobs j JOIN events.events e ON e.id=j.event_id
+                ORDER BY j.created_at DESC
                 LIMIT 500
             """,
         },
@@ -2823,6 +2851,8 @@ async def get_background_jobs(
                 item = {
                     "id": row["id"],
                     "job_id": row["job_id"],
+                    "organization_id": row.get("organization_id"),
+                    "event_id": row.get("event_id"),
                     "status": normalized,
                     "raw_status": row.get("status"),
                     "started_at": row["started_at"].isoformat() if row.get("started_at") else None,
@@ -2832,6 +2862,10 @@ async def get_background_jobs(
                     "queue": row.get("queue"),
                     "source": source["source"],
                     "error_message": row.get("error_message") if normalized == "failed" else None,
+                    "capabilities": {
+                        "retry": source["source"] == "search_index" and normalized == "failed",
+                        "cancel": source["source"] == "search_index" and normalized == "queued",
+                    },
                 }
                 items.append(item)
         except Exception as exc:

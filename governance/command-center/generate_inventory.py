@@ -178,15 +178,21 @@ def build_backend_rows() -> list[dict[str, str]]:
         text = source.read_text(encoding="utf-8", errors="replace")
         for match in ROUTE_DECORATOR_PATTERN.finditer(text):
             module = source.relative_to(backend_root).as_posix()
+            path = match.group("path") or "/"
+            is_phase5 = module == "modules/operations_control/router.py" or (
+                module == "modules/platform/router.py" and path.startswith("/operations/")
+            ) or (
+                module.startswith("modules/search/") and path in {"/jobs", "/reindex"}
+            )
             rows.append(
                 {
                     "method": match.group("method").upper(),
-                    "declared_path": match.group("path") or "/",
+                    "declared_path": path,
                     "router_symbol": match.group("router"),
                     "backend_module": module,
-                    "command_center_mapping": "REQUIRES_ROUTE_MAPPING",
-                    "authorization_evidence": "REQUIRES_VERIFICATION",
-                    "test_evidence": "REQUIRES_VERIFICATION",
+                    "command_center_mapping": "PHASE5_OPERATIONS_CENTER" if is_phase5 else "REQUIRES_ROUTE_MAPPING",
+                    "authorization_evidence": "SUPER_ADMIN_TENANT_SCOPED" if is_phase5 else "REQUIRES_VERIFICATION",
+                    "test_evidence": "PHASE5_INTEGRATION_AND_E2E" if is_phase5 else "REQUIRES_VERIFICATION",
                 }
             )
     return rows
@@ -214,7 +220,7 @@ def merge_reviewed_fields(
         if not reviewed:
             continue
         for field in reviewed_fields:
-            if field in reviewed:
+            if field in reviewed and reviewed[field] not in {"REQUIRES_ROUTE_MAPPING", "REQUIRES_VERIFICATION"}:
                 row[field] = reviewed[field]
     return rows
 

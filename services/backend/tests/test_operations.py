@@ -115,9 +115,13 @@ async def test_platform_queue_stats_report_real_depths(client: AsyncClient, supe
 
     assert response.status_code == 200
     queues = {item["name"]: item for item in response.json()}
-    assert queues["default"] == {"name": "default", "depth": 4, "status": "HEALTHY"}
-    assert queues["files"] == {"name": "files", "depth": 120, "status": "DEGRADED"}
-    assert queues["sync"] == {"name": "sync", "depth": 600, "status": "OVERLOADED"}
+    assert {key: queues["default"][key] for key in ("name", "depth", "status")} == {"name": "default", "depth": 4, "status": "HEALTHY"}
+    assert {key: queues["files"][key] for key in ("name", "depth", "status")} == {"name": "files", "depth": 120, "status": "DEGRADED"}
+    assert {key: queues["sync"][key] for key in ("name", "depth", "status")} == {"name": "sync", "depth": 600, "status": "OVERLOADED"}
+    assert queues["default"]["worker_status"] == "UNVERIFIED"
+    assert queues["default"]["oldest_message_age_seconds"] is None
+    assert queues["default"]["dead_letter_depth"] is None
+    assert queues["default"]["freshness_at"]
     mock_redis.aclose.assert_awaited_once()
 
 

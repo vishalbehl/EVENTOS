@@ -34,6 +34,50 @@ COMMERCIAL_REPORT_FORMATS = {
 }
 
 
+def _expire_tenant_exports(organization_id: uuid.UUID, *, limit: int = 500) -> dict[str, int]:
+    """Delete expired tenant artifacts while retaining their immutable job records."""
+    from app.modules.audit.models.audit_domain_tables import DataExport
+
+    now = datetime.now(timezone.utc)
+    deleted = 0
+    failed = 0
+    with get_db_session(organization_id) as db:
+        exports = (
+            db.query(DataExport)
+            .filter(
+                DataExport.organization_id == organization_id,
+                DataExport.expires_at.is_not(None),
+                DataExport.expires_at <= now,
+                DataExport.storage_key.is_not(None),
+            )
+            .order_by(DataExport.expires_at.asc(), DataExport.id.asc())
+            .limit(limit)
+            .all()
+        )
+        for export in exports:
+            try:
+                r2.delete_object(settings.S3_BUCKET_EXPORTS, export.storage_key)
+            except Exception:
+                failed += 1
+                logger.exception("[report] Failed to delete expired export %s", export.id)
+                continue
+            export.storage_key = None
+            export.status = "EXPIRED"
+            export.failure_reason = None
+            deleted += 1
+        db.commit()
+    return {"expired": deleted, "failed": failed}
+
+
+@app.task(
+    name="workers.tasks.report_tasks.expire_tenant_exports",
+    soft_time_limit=300,
+)
+def expire_tenant_exports(organization_id: str, limit: int = 500) -> dict[str, int]:
+    """Tenant-scoped retention command; control-plane fanout supplies each tenant."""
+    return _expire_tenant_exports(uuid.UUID(organization_id), limit=max(1, min(limit, 2000)))
+
+
 def _cell_value(value):
     if value is None:
         return ""

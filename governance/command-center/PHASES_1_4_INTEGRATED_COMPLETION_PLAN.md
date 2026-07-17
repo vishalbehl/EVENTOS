@@ -1,6 +1,6 @@
 # Command Center Phases 1-4 Integrated Completion Plan
 
-Status: `IN_PROGRESS`
+Status: `REPOSITORY_COMPLETE_EXTERNAL_EVIDENCE_PENDING`
 
 Owner: Codex implementation agent
 
@@ -37,8 +37,8 @@ Time is an estimate, not acceptance evidence. A work package closes only when it
 |---|---:|---:|---|
 | Phase 1 - Design System and Shell | 68% | 100% | `COMPLETE` |
 | Phase 2 - Frontend Foundation | 76% | 100% | `COMPLETE` |
-| Phase 3 - Critical Defect Closure | 74% | 100% | `IN_PROGRESS` (98%) |
-| Phase 4 - Commercial, Subscription, and Finance | 72% | 100% | `IN_PROGRESS` (96%) |
+| Phase 3 - Critical Defect Closure | 74% | 100% | `COMPLETE` (repository) |
+| Phase 4 - Commercial, Subscription, and Finance | 72% | 100% | `COMPLETE` (repository) |
 
 The percentages above mirror `CURRENT_PHASE_STATUS.md`. They must be updated together after evidence is verified.
 
@@ -46,16 +46,16 @@ The percentages above mirror `CURRENT_PHASE_STATUS.md`. They must be updated tog
 
 | ID | Work package | Phase coverage | Status | Exit evidence |
 |---|---|---|---|---|
-| `P14-01` | Baseline and change control | 1-4 | `COMPLETE` | 103-route and 729-endpoint inventories, generated-artifact policy, integrated change ledger, reproducible test/build baseline, and one Alembic head |
+| `P14-01` | Baseline and change control | 1-4 | `COMPLETE` | 103-route and 731-endpoint inventories, generated-artifact policy, integrated change ledger, reproducible test/build baseline, and one applied Alembic head |
 | `P14-02` | Design-system foundation | 1 | `COMPLETE` | Semantic tokens, responsive shell, accessible overlays/navigation, command search, live notification state, density, catalogue, 52 frontend tests, five Playwright journeys, axe, and production build |
 | `P14-03` | Frontend contract foundation | 2 | `COMPLETE` | Deterministic FastAPI OpenAPI generation, generated TypeScript DTOs, zero raw query keys, canonical scoped key factories and invalidation contracts, cursor/version contracts, authenticated Playwright fixtures, axe integration, dependency audit, and CI gates; 67 unit tests, six browser journeys, and production build pass |
-| `P14-04` | Identity, authorization, and organizations | 3 | `IN_PROGRESS` | Tenant-scoped roles/permissions, version conflict, platform-role/session/MFA/status controls, reason/step-up/audit, fail-closed deletion, provisioning, membership/assignment/seat enforcement, tenant-filter isolation, dual-control access reviews, and authenticated denial journeys are implemented; deployment cache evidence remains |
-| `P14-05` | Support and audit closure | 3 | `IN_PROGRESS` | Tenant-scoped ticket lifecycle, private notes, secure attachment quarantine/scan/readiness, scoped durable audit exports, announcement/maintenance assurance, audit/isolation tests, zero mock debt, and browser denial journeys are implemented; live infrastructure and manual evidence remain |
-| `P14-06` | Commercial and CRM completion | 4 | `IN_PROGRESS` | CRM core, activity/task/note lifecycles, bounded audited account workspace and controlled lead conversion are implemented; granular platform-staff permissions, quote/proposal live conversion, canonical totals, and full E2E remain |
-| `P14-07` | Subscription and licensing completion | 4 | `IN_PROGRESS` | Transfer/deactivation, continuity policy, consumption lineage, snapshot refresh/integrity, step-up, idempotency and backend lifecycle tests are implemented; dedicated browser and forced-RLS deployment evidence remain |
-| `P14-08` | Finance completion | 4 | `IN_PROGRESS` | Manual reconciliation, versioned refund lineage, and durable version-bound invoice PDF generation/download are implemented; verified provider webhook ingestion, outage/replay tests, and full financial E2E remain |
-| `P14-09` | App-wide responsive and accessibility adoption | 1-4 | `IN_PROGRESS` | Current 103-route composition contract and shell checks pass; repeat responsive, axe, and manual critical-journey review after Phase 3-4 domain changes |
-| `P14-10` | Integrated release verification | 1-4 | `IN_PROGRESS` | Generated contracts, zero-debt mock gate, zero-error lint, 68 frontend tests, 11 worker tests, nine Playwright/axe journeys, 86-page build, 34 focused backend tests and migration validation pass; full live domain/security/manual gates remain |
+| `P14-04` | Identity, authorization, and organizations | 3 | `COMPLETE` | Tenant-scoped roles/permissions, version conflict, platform-role/session/MFA/status controls, reason/step-up/audit, fail-closed deletion, provisioning, membership/assignment/seat enforcement, database-authoritative authorization, tenant-filter isolation, dual-control access reviews, and browser success/denial journeys pass |
+| `P14-05` | Support and audit closure | 3 | `COMPLETE` | Tenant-scoped ticket lifecycle, private notes, attachment quarantine/scan/readiness, durable audit exports, broker-failure durability, tenant-scoped retention cleanup, announcement/maintenance assurance, zero mock debt, isolation tests, and browser/axe journeys pass |
+| `P14-06` | Commercial and CRM completion | 4 | `COMPLETE` | CRM core/engagement/account workspace, controlled lead conversion, granular staff boundaries, canonical server totals, version-bound quote approval, immutable proposal conversion, client acceptance, and browser E2E pass |
+| `P14-07` | Subscription and licensing completion | 4 | `COMPLETE` | Transfer/deactivation, continuity policy, consumption lineage, snapshot refresh/integrity, step-up, idempotency, backend lifecycle and dedicated browser/axe evidence pass |
+| `P14-08` | Finance completion | 4 | `COMPLETE` | Reconciliation, refund lineage, invoice PDF artifacts, verified Stripe/Razorpay receipt ingestion, replay protection, deterministic reconciliation, outage behavior and financial browser evidence pass |
+| `P14-09` | App-wide responsive and accessibility adoption | 1-4 | `COMPLETE` | The 103-route composition contract, responsive shell, semantic primary foreground, empty table headers, 320px reflow and 15 automated axe/browser journeys pass; independent manual assessment remains a Phase 10 release artifact |
+| `P14-10` | Integrated release verification | 1-4 | `BLOCKED_EXTERNAL` | Generated contracts, zero-debt mock gate, zero-error lint, 68 frontend tests, 13 worker tests, 15 Playwright/axe journeys, 86-page build, 66 focused backend tests and applied migration head pass; live provider/storage/broker, schema-drift, security, and independent manual gates remain |
 
 Allowed states are `PENDING`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `BLOCKED_DECISION`, and `COMPLETE`.
 
@@ -136,6 +136,8 @@ Percentages increase only after tests and acceptance evidence pass. A blocked ex
 | 2026-07-15 | `P14-05`, `P14-06`, `P14-08`, `P14-10` | Added durable scoped audit exports, announcement/maintenance mutation assurance, controlled lead-to-opportunity conversion, commercial refund parent lineage, reconciliation and authenticated denial journeys | 30 focused backend tests, 67 frontend tests, eight Playwright/axe journeys, 103-route/706-endpoint inventory checks, OpenAPI drift, contract/mock gates, TypeScript, zero-error lint, 86-page build, Python compilation and Alembic upgrade to `commercial_refund_lineage_0740` pass | Phase 3 increased from 92% to 96%; Phase 4 increased from 80% to 88%; remaining contracts stay explicit |
 | 2026-07-15 | `P14-05`, `P14-06`, `P14-10` | Completed CRM activity/task/note lifecycles, secure ticket attachment upload/quarantine/scan/readiness/download controls, and removed the final registered production mock-debt files | 32 focused backend tests, 67 frontend tests, nine Playwright/axe journeys, 103-route/725-endpoint inventory checks, OpenAPI drift, zero-debt contract/mock gates, TypeScript, zero-error lint, 86-page build, Python compilation, diff validation and Alembic head `support_attachment_safety_0760` pass | Phase 3 increased from 96% to 98%; Phase 4 increased from 88% to 93%; remaining work requires live infrastructure/provider or deeper domain evidence |
 | 2026-07-15 | `P14-06`, `P14-08`, `P14-10` | Repaired opportunity pagination, added the audited bounded CRM account workspace, and implemented immutable version-bound invoice PDF jobs with private audited downloads | 34 focused backend tests, 68 frontend tests, 11 worker report tests, nine Playwright/axe journeys, 103-route/729-endpoint inventory checks, OpenAPI drift, zero-debt contract/mock gates, TypeScript, zero-error lint, 86-page build, diff validation and Alembic head `support_attachment_safety_0760` pass | Phase 4 increased from 93% to 96%; provider webhooks, granular staff permissions, outage tests and full commercial E2E remain |
+| 2026-07-16 | `P14-06`, `P14-08`, `P14-10` | Added domain-scoped Support/Finance access, forced-RLS provider receipts, Stripe/Razorpay verification/reconciliation, Finance receipt visibility, and browser evidence for the existing version-bound approval-to-proposal workflow; fixed shared success-toast contrast | 45 focused backend tests, 68 frontend tests, ten Playwright/axe journeys, generated OpenAPI/TypeScript drift, 103-route/731-endpoint inventory, Python compilation, applied Alembic head, zero-debt contract/mock gates, and 86-page build pass | Phase 4 increased from 96% to 99%; only real provider and deployed broker/storage evidence remains for production sign-off. Broad legacy Alembic metadata drift is separately governed |
+| 2026-07-16 | `P14-04`, `P14-05`, `P14-07`, `P14-08`, `P14-09`, `P14-10` | Added tenant-scoped export retention and storage-outage retry, durable broker-dispatch failure evidence, five Phase 3/4 browser acceptance journeys, accessible action-column headers, and semantic active-control foregrounds across shared tabs and affected admin filters | 66 focused backend tests, 13 worker tests, 68 frontend tests, 15 Playwright/axe journeys, generated contract and zero-debt mock checks, TypeScript, zero-error lint and 86-page production build pass | Phases 3 and 4 reached 100% repository implementation; `P14-10` remains `BLOCKED_EXTERNAL` for live provider/deployed infrastructure, schema-drift, security and independent manual evidence |
 
 ## Final Acceptance Gate
 

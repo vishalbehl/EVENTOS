@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 class Poster(Base):
     """
-    A digital ePoster submission — V2 feature.
+    A digital ePoster submission.
 
     Workflow:
         1. Author submits PDF via speaker portal /poster/[token]

@@ -9,6 +9,7 @@ const eslintConfig = [
       "node_modules/**",
       "dist/**",
       "out/**",
+      "v2/**",
       "test-results/**",
       "playwright-report/**"
     ],

@@ -20,6 +20,7 @@ from app.modules.billing.models.billing_domain_tables import Invoice, InvoiceIte
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.modules.billing.models.event_activation import EventActivation
 from app.modules.billing.models.licensing import EntitlementGrant, GrantConsumption
+from app.modules.billing.models.provider_webhook_event import ProviderWebhookEvent
 from app.modules.billing.models.subscription import (
     OrganizationSubscription,
     RevenueMetric,
@@ -55,6 +56,7 @@ from app.modules.billing.schemas.billing_admin import (
     InvoiceArtifactResponse,
     InvoiceDetailAdminResponse,
     InvoiceStatusUpdate,
+    ProviderWebhookAdminResponse,
 )
 from app.modules.billing.services.activation_admin_service import BillingActivationAdminService
 from app.modules.billing.services.admin_lifecycle_service import BillingAdminLifecycleService
@@ -72,6 +74,34 @@ from app.worker import celery_app
 
 router = APIRouter(prefix="/billing-admin", tags=["billing-superadmin"])
 IdempotencyKey = Header(..., alias="Idempotency-Key", min_length=8, max_length=128)
+
+
+@router.get("/provider-webhooks", response_model=CursorPage[ProviderWebhookAdminResponse])
+async def list_provider_webhooks(
+    db: DB,
+    support_scope: PlatformSupportScopeDependency,
+    cursor: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    receipt_status: str | None = Query(None, alias="status"),
+    provider: str | None = Query(None),
+):
+    statement = select(ProviderWebhookEvent).where(
+        ProviderWebhookEvent.organization_id == support_scope.organization_id
+    )
+    if receipt_status:
+        statement = statement.where(ProviderWebhookEvent.status == receipt_status.upper())
+    if provider:
+        statement = statement.where(ProviderWebhookEvent.provider == provider.upper())
+    return await execute_platform_support_cursor_read(
+        db,
+        support_scope,
+        statement,
+        timestamp_column=ProviderWebhookEvent.received_at,
+        id_column=ProviderWebhookEvent.id,
+        cursor=cursor,
+        limit=limit,
+        resource_type="billing_provider_webhooks",
+    )
 
 
 def _invoice_artifact_out(export: DataExport) -> InvoiceArtifactResponse:

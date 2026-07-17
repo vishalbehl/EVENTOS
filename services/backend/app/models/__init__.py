@@ -38,6 +38,7 @@ from app.modules.billing.models.billing_domain_tables import (
 from app.modules.billing.models.subscription_analytics import SubscriptionAnalytics
 from app.modules.billing.models.org_credits import OrgCredit
 from app.modules.billing.models.payment_gateway import PaymentGateway
+from app.modules.billing.models.provider_webhook_event import ProviderWebhookEvent
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.modules.billing.models.credit_notes import CreditNote
 
@@ -173,13 +174,6 @@ from app.modules.mobile.models.mobile import (
     MobileDevice, MobileSession, MobileDeviceToken, MobileAppVersion, MobileCrashLog, MobilePushQueue, MobileSyncQueue, MobileOfflineChange
 )
 
-from app.modules.ai.models.ai import (
-    AiAssistant, AiPrompt, AiPromptVersion, AiConversation, AiMessage, AiUsage, AiCostTracking, AiFeedback, AiEmbedding
-)
-
-# platform_notifications models
-from app.modules.platform_notifications.templates.models import NotificationTemplate
-
 # commercial models
 from app.modules.commercial.models import (
     ServiceCategory, Service, ServiceFeature, ServicePackage,
@@ -204,34 +198,13 @@ from app.modules.procurement.models import (
     Vendor, VendorService
 )
 
-# templates models
-from app.modules.templates.models import (
-    TemplateCategory, RoomTemplate, RegistrationTemplate, SrrTemplate,
-    Template, TemplateVersion, TemplateInstallation, TemplateUsage, TemplateReview,
-    MarketplaceListing, MarketplacePurchase, MarketplaceFavorite
-)
-
-# theme_engine models
-from app.modules.theme_engine.models import (
-    Theme, ThemeAsset
-)
+# V1 pricing template models retain their existing templates schema.
+from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
 
 # design_system models
 from app.modules.design_system.models import (
     DesignToken, ThemePreset, ComponentLibrary
 )
-
-# website_builder models
-from app.modules.website_builder.models import (
-    Site, Page, PageSection, PageComponent, PageAsset,
-    NavigationMenu, MenuItem, Blog, SiteDomain
-)
-
-# blueprints models
-from app.modules.blueprints.models import (
-    EventBlueprint, BlueprintTemplate, BlueprintStep
-)
-
 
 # technology_services models
 from app.modules.technology_services.models import (
@@ -256,8 +229,14 @@ from app.modules.resource_management.models import (
 # deployment_management models
 from app.modules.deployment_management.models import (
     Deployment, DeploymentChecklist, DeploymentLog, ReadinessScore, Risk,
-    DeploymentRunbook, DeploymentStep, Issue, RiskAction, RiskEscalation, RiskComment,
+    DeploymentRunbook, DeploymentStep, Issue, RiskAction, RiskEscalation, RiskComment, RiskEvidence,
     ProjectCost, ProjectActual, ProjectProfitability
+)
+
+from app.modules.operations_control.models import (
+    JobControlRequest, VenueSupplierAssignment, VenueSupplierContact,
+    VenueReadinessAttestation, VenueOperationalIncident,
+    VenueCredentialOperation,
 )
 
 

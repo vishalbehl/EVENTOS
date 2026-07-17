@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.modules.superadmin.dependencies import require_super_admin
+from app.modules.superadmin.dependencies import require_billing_read, require_crm_read, require_super_admin
 
 # ── Import existing module routers (not rewritten — re-exported) ──
 from app.modules.rbac.routers.organisations import router as orgs_router
@@ -63,7 +63,9 @@ superadmin_router.include_router(dashboard_router)
 superadmin_router.include_router(developer_router)
 superadmin_router.include_router(search_router)
 superadmin_router.include_router(platform_health_router)
-superadmin_router.include_router(crm_router)
-superadmin_router.include_router(billing_superadmin_router)
 superadmin_router.include_router(reports_router)
 superadmin_router.include_router(audit_exports_router)
+
+commercial_staff_router = APIRouter(prefix="/superadmin", tags=["platform-commercial"])
+commercial_staff_router.include_router(crm_router, dependencies=[Depends(require_crm_read)])
+commercial_staff_router.include_router(billing_superadmin_router, dependencies=[Depends(require_billing_read)])

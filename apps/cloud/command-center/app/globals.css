@@ -144,6 +144,11 @@
   }
 }
 
+/* Sonner's default rich-success foreground misses AA for normal text. */
+[data-sonner-toast][data-type="success"] [data-title] {
+  color: #006b24 !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

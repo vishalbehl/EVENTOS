@@ -24,6 +24,28 @@ from app.dependencies import require_active_user
 from app.modules.identity.models.user import User
 
 
+def _is_legacy_super_admin(user: User) -> bool:
+    return user.role == "super_admin" or user.platform_role == "SUPER_ADMIN" or getattr(user, "is_platform_admin", False)
+
+
+async def require_platform_staff(current_user: User = Depends(require_active_user)) -> User:
+    if not (_is_legacy_super_admin(current_user) or current_user.platform_role in {"SUPPORT_ADMIN", "FINANCE_ADMIN"}):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform staff access required.")
+    return current_user
+
+
+async def require_crm_read(current_user: User = Depends(require_active_user)) -> User:
+    if not (_is_legacy_super_admin(current_user) or current_user.platform_role == "SUPPORT_ADMIN"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CRM read access required.")
+    return current_user
+
+
+async def require_billing_read(current_user: User = Depends(require_active_user)) -> User:
+    if not (_is_legacy_super_admin(current_user) or current_user.platform_role == "FINANCE_ADMIN"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Billing access required.")
+    return current_user
+
+
 async def require_super_admin(
     current_user: User = Depends(require_active_user),
 ) -> User:
@@ -37,11 +59,7 @@ async def require_super_admin(
     Raises:
         HTTP 403 — if the authenticated user is not a Super Admin.
     """
-    is_super_admin = (
-        current_user.role == "super_admin"
-        or current_user.platform_role == "SUPER_ADMIN"
-        or getattr(current_user, "is_platform_admin", False)
-    )
+    is_super_admin = _is_legacy_super_admin(current_user)
 
     if not is_super_admin:
         raise HTTPException(

@@ -225,6 +225,25 @@ export interface CommercialPayment {
   updated_at: string;
 }
 
+export interface ProviderWebhookReceipt {
+  id: string;
+  gateway_id: string;
+  organization_id: string;
+  invoice_id?: string;
+  transaction_id?: string;
+  provider: string;
+  provider_event_id: string;
+  event_type: string;
+  provider_created_at?: string;
+  payload_hash: string;
+  status: "RECEIVED" | "PROCESSED" | "REVIEW_REQUIRED" | "FAILED" | "IGNORED";
+  attempt_count: number;
+  failure_code?: string;
+  failure_detail?: string;
+  received_at: string;
+  processed_at?: string;
+}
+
 export interface BillingInvoiceDetail {
   invoice: BillingInvoice;
   items: BillingInvoiceItem[];
@@ -511,6 +530,17 @@ export function useCommercialPayments(
       reconciliation_status: params.reconciliationStatus,
       provider: params.provider,
     },
+  );
+}
+
+export function useProviderWebhookReceipts(
+  params: BillingSupportParams & { status?: string; provider?: string } = {},
+) {
+  return useBillingCursor<ProviderWebhookReceipt>(
+    "billing-provider-webhooks",
+    "/superadmin/billing-admin/provider-webhooks",
+    { ...params, limit: params.limit ?? 50 },
+    { status: params.status, provider: params.provider },
   );
 }
 

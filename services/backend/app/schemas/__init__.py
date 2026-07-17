@@ -50,9 +50,6 @@ from app.modules.registration.schemas.participant import (
 from app.modules.registration.schemas.print_template import (
     PrintTemplateCreate, PrintTemplateUpdate, PrintTemplateResponse,
 )
-from app.modules.registration.schemas.ticket_type import (
-    TicketTypeCreate, TicketTypeUpdate, TicketTypeResponse,
-)
 from app.modules.registration.schemas.registration import (
     ParticipantRegistrationCreate, ParticipantRegistrationUpdate,
     ParticipantRegistrationResponse, RegistrationApprovalRequest,
@@ -100,7 +97,6 @@ __all__ = [
     "ParticipantCreate", "ParticipantUpdate", "ParticipantResponse",
     "CheckInCreate", "CheckInResponse",
     "PrintTemplateCreate", "PrintTemplateUpdate", "PrintTemplateResponse",
-    "TicketTypeCreate", "TicketTypeUpdate", "TicketTypeResponse",
     "ParticipantRegistrationCreate", "ParticipantRegistrationUpdate",
     "ParticipantRegistrationResponse", "RegistrationApprovalRequest",
     "RegistrationRejectionRequest",

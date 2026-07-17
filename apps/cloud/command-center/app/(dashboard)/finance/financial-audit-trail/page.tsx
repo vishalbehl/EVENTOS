@@ -130,7 +130,7 @@ export default function FinancialAuditTrailPage() {
               onClick={() => setActivityFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all ${
                 activityFilter === f
-                  ? "bg-[var(--brand-primary)] text-white border-[var(--brand-primary)]"
+                  ? "bg-[var(--brand-primary)] text-[var(--primary-foreground)] border-[var(--brand-primary)]"
                   : "bg-[var(--bg-surface)] border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               }`}
             >

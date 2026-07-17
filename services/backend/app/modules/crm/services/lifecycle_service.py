@@ -72,6 +72,19 @@ class CrmLifecycleService:
     }
 
     @staticmethod
+    def _require_mutation_access(scope: PlatformSupportScope) -> None:
+        actor = scope.actor
+        if not (
+            actor.role == "super_admin"
+            or actor.platform_role == "SUPER_ADMIN"
+            or getattr(actor, "is_platform_admin", False)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "PERMISSION_DENIED", "message": "CRM mutation access requires Super Admin authorization."},
+            )
+
+    @staticmethod
     async def _begin_operation(
         db: AsyncSession,
         organization_id: uuid.UUID,
@@ -182,6 +195,7 @@ class CrmLifecycleService:
 
     @staticmethod
     async def create(db: AsyncSession, scope: PlatformSupportScope, resource_type: str, payload: BaseModel, idempotency_key: str) -> Any:
+        CrmLifecycleService._require_mutation_access(scope)
         model = MODEL_TYPES[resource_type]
         values = payload.model_dump(exclude={"reason"})
         reason = payload.reason
@@ -223,6 +237,7 @@ class CrmLifecycleService:
 
     @staticmethod
     async def update(db: AsyncSession, scope: PlatformSupportScope, resource_type: str, record_id: uuid.UUID, payload: BaseModel, idempotency_key: str) -> Any:
+        CrmLifecycleService._require_mutation_access(scope)
         model = MODEL_TYPES[resource_type]
         reason = payload.reason
         values = payload.model_dump(exclude={"reason", "version"}, exclude_unset=True)
@@ -267,6 +282,7 @@ class CrmLifecycleService:
 
     @staticmethod
     async def set_archived(db: AsyncSession, scope: PlatformSupportScope, resource_type: str, record_id: uuid.UUID, payload: BaseModel, idempotency_key: str, archived: bool) -> Any:
+        CrmLifecycleService._require_mutation_access(scope)
         model = MODEL_TYPES[resource_type]
         action = "ARCHIVE" if archived else "RESTORE"
         operation_type = f"{action}_{resource_type.upper()}"
@@ -315,6 +331,7 @@ class CrmLifecycleService:
         payload: BaseModel,
         idempotency_key: str,
     ) -> Opportunity:
+        CrmLifecycleService._require_mutation_access(scope)
         operation_payload = {"lead_id": lead_id, **payload.model_dump(mode="json")}
         async with TenantContextGuard.scoped(db, scope.organization_id):
             operation, replay = await CrmLifecycleService._begin_operation(

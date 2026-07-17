@@ -14,15 +14,6 @@ from .platform_commercial_tasks import (
     low_stock_alerts,
     maintenance_reminders
 )
-from .platform_builder_tasks import (
-    publish_scheduled_sites,
-    generate_static_pages,
-    generate_sitemaps,
-    verify_domains,
-    issue_ssl_certificates,
-    cleanup_unused_assets,
-    generate_marketplace_analytics
-)
 from .operations_jobs import (
     calculate_all_readiness_scores,
     detect_all_resource_conflicts,

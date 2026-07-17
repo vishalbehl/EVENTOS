@@ -30,6 +30,7 @@ from app.modules.billing.models.org_credits import OrgCredit
 from app.modules.billing.models.payment_gateway import PaymentGateway
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.modules.billing.models.credit_notes import CreditNote
+from app.modules.billing.models.provider_webhook_event import ProviderWebhookEvent
 
 __all__ = [
     # Subscription
@@ -61,4 +62,5 @@ __all__ = [
     "PaymentGateway",
     "FinancialAuditTrail",
     "CreditNote",
+    "ProviderWebhookEvent",
 ]

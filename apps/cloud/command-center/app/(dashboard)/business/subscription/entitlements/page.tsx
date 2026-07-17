@@ -130,7 +130,7 @@ export default function EntitlementsPage() {
         <TabsList><TabsTrigger value="grants">Entitlement grants</TabsTrigger><TabsTrigger value="activations">Event activations</TabsTrigger><TabsTrigger value="subscriptions">Organization subscriptions</TabsTrigger></TabsList>
         <div className="my-4 flex flex-wrap gap-2">
           {["ALL", "ACTIVE", "TRIAL", "PENDING", "PENDING_PAYMENT", "GRACE_PERIOD", "SUSPENDED", "EXPIRED", "DEACTIVATED", "TRANSFER_PENDING", "CANCELLED", "ARCHIVED"].filter((status) => activeTab === "subscriptions" ? !["PENDING", "DEACTIVATED", "TRANSFER_PENDING"].includes(status) : activeTab === "activations" ? !["TRIAL", "PENDING_PAYMENT", "GRACE_PERIOD", "ARCHIVED"].includes(status) : !["TRIAL", "PENDING_PAYMENT", "GRACE_PERIOD", "ARCHIVED", "DEACTIVATED", "TRANSFER_PENDING"].includes(status)).map((status) => (
-            <button key={status} onClick={() => setStatusFilter(status)} className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${statusFilter === status ? "border-[var(--brand-primary)] bg-[var(--brand-primary)] text-white" : "border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)]"}`}>{status.replaceAll("_", " ")}</button>
+            <button key={status} onClick={() => setStatusFilter(status)} className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${statusFilter === status ? "border-[var(--brand-primary)] bg-[var(--brand-primary)] text-[var(--primary-foreground)]" : "border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)]"}`}>{status.replaceAll("_", " ")}</button>
           ))}
         </div>
 

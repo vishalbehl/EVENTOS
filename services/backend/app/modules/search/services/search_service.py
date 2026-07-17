@@ -10,8 +10,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
+from fastapi import HTTPException
 from loguru import logger
 from sqlalchemy import select, func, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -192,14 +194,35 @@ class SearchService:
         db: AsyncSession,
         organization_id: uuid.UUID,
         entity_types: Optional[List[str]] = None,
+        actor_user_id: Optional[uuid.UUID] = None,
+        reason: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> SearchJobOut:
         """
         Create a SearchJob record and enqueue the Celery reindex task.
         """
+        if idempotency_key:
+            existing = await db.scalar(select(SearchJob).where(
+                SearchJob.organization_id == organization_id,
+                SearchJob.idempotency_key == idempotency_key,
+            ))
+            if existing:
+                requested_entities = entity_types or SUPPORTED_ENTITY_TYPES
+                if existing.entity_types != requested_entities or existing.request_reason != reason:
+                    raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "message": "Idempotency key was already used with different reindex parameters."})
+                return SearchJobOut.model_validate(existing)
+
+        now = datetime.now(timezone.utc)
         job = SearchJob(
             id=uuid.uuid4(),
             organization_id=organization_id,
             status="pending",
+            entity_types=entity_types or SUPPORTED_ENTITY_TYPES,
+            records_processed=0,
+            requested_by=actor_user_id,
+            request_reason=reason,
+            idempotency_key=idempotency_key,
+            queued_at=now,
         )
         db.add(job)
         await db.flush()
@@ -210,12 +233,15 @@ class SearchService:
             reindex_organization.delay(
                 str(organization_id),
                 str(job.id),
-                entity_types or SUPPORTED_ENTITY_TYPES,
+                job.entity_types,
             )
             logger.info(f"[search] Reindex job {job.id} queued for org={organization_id}")
-        except Exception as exc:
-            logger.warning(f"[search] Could not enqueue reindex task: {exc}")
+        except Exception:
+            logger.exception("[search] Could not enqueue reindex task")
             job.status = "failed"
+            job.error_code = "QUEUE_UNAVAILABLE"
+            job.error_detail = "Search worker dispatch failed."
+            job.finished_at = datetime.now(timezone.utc)
 
         return SearchJobOut.model_validate(job)
 

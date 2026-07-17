@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Optional, List
 from sqlalchemy import String, Text, DateTime, Date, ForeignKey, Index, Numeric, Boolean, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -77,11 +77,35 @@ class Risk(Base):
     probability: Mapped[str] = mapped_column(String(20), default="MEDIUM") # LOW, MEDIUM, HIGH
     mitigation_plan: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="IDENTIFIED") # IDENTIFIED, MITIGATED, OCCURRED, RESOLVED
+    category: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    impact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True, index=True)
+    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    accepted_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    acceptance_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     project: Mapped["app.modules.operations_planning.models.Project"] = relationship("Project", back_populates="risks")
     actions: Mapped[List["RiskAction"]] = relationship("RiskAction", back_populates="risk", cascade="all, delete-orphan")
     comments: Mapped[List["RiskComment"]] = relationship("RiskComment", back_populates="risk", cascade="all, delete-orphan")
     escalations: Mapped[List["RiskEscalation"]] = relationship("RiskEscalation", back_populates="risk", cascade="all, delete-orphan")
+    evidence: Mapped[List["RiskEvidence"]] = relationship("RiskEvidence", back_populates="risk", cascade="all, delete-orphan")
+
+
+class RiskEvidence(Base):
+    __tablename__ = "risk_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    risk_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deployment_management.risks.id", ondelete="CASCADE"), nullable=False, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("files.assets.id", ondelete="RESTRICT"), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    risk: Mapped["Risk"] = relationship("Risk", back_populates="evidence")
 
 class DeploymentRunbook(Base):
     __tablename__ = "deployment_runbooks"

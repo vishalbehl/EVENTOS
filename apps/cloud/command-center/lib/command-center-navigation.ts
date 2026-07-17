@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, BarChart3, Bell, Brain, Building2, Calculator, ClipboardList,
+  Activity, BarChart3, Bell, Building2, Calculator, ClipboardList,
   Code2, CreditCard, Database, FileSpreadsheet, FileText, Landmark,
-  LayoutDashboard, Library, Palette, Search, Settings, ShieldCheck,
+  LayoutDashboard, Library, Palette, Settings, ShieldCheck,
   Terminal, Users,
 } from "lucide-react";
 
@@ -45,14 +45,12 @@ export const COMMAND_CENTER_DESTINATIONS: CommandCenterDestination[] = [
   { label: "API keys", href: "/developer-platform/api-keys", group: "Developer platform", keywords: ["credentials", "token"], icon: Code2 },
   { label: "Webhooks", href: "/developer-platform/webhooks", group: "Developer platform", keywords: ["delivery", "signatures"], icon: Terminal },
   { label: "Integrations", href: "/developer-platform/integrations", group: "Developer platform", keywords: ["providers", "connections"], icon: Terminal },
-  { label: "AI workspace", href: "/ai-workspace/dashboard", group: "AI", keywords: ["models", "agents"], icon: Brain },
   { label: "Support tickets", href: "/support-center/tickets", group: "Support", keywords: ["sla", "customers"], icon: ClipboardList },
   { label: "Announcements", href: "/support-center/announcements", group: "Support", keywords: ["maintenance", "broadcast"], icon: Bell },
   { label: "Platform settings", href: "/platform-settings/general", group: "Settings", keywords: ["configuration"], icon: Settings },
   { label: "Authentication settings", href: "/platform-settings/authentication", group: "Settings", keywords: ["mfa", "security"], icon: ShieldCheck },
   { label: "UI component catalogue", href: "/design-system", group: "Standards", keywords: ["design", "accessibility", "tokens"], icon: Palette },
   { label: "Reports and exports", href: "/reports/exports", group: "Reports", keywords: ["download", "jobs"], icon: BarChart3 },
-  { label: "Website builder", href: "/super-admin/builder/sites", group: "Builder", keywords: ["sites", "publish"], icon: Search },
 ];
 
 export function searchDestinations(query: string) {

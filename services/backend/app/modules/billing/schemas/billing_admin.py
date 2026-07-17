@@ -163,6 +163,25 @@ class CommercialPaymentAdminResponse(BillingAdminSchema):
     updated_at: datetime
 
 
+class ProviderWebhookAdminResponse(BillingAdminSchema):
+    id: uuid.UUID
+    gateway_id: uuid.UUID
+    organization_id: uuid.UUID
+    invoice_id: uuid.UUID | None = None
+    transaction_id: uuid.UUID | None = None
+    provider: str
+    provider_event_id: str
+    event_type: str
+    provider_created_at: datetime | None = None
+    payload_hash: str
+    status: str
+    attempt_count: int
+    failure_code: str | None = None
+    failure_detail: str | None = None
+    received_at: datetime
+    processed_at: datetime | None = None
+
+
 class InvoiceDetailAdminResponse(BaseModel):
     invoice: InvoiceAdminResponse
     items: list[InvoiceItemAdminResponse]

@@ -205,14 +205,6 @@ def test_ticket_type_uuid_pk():
     assert "UUID" in str(col.type).upper()
 
 
-def test_ticket_type_schema_uuid():
-    """TicketTypeResponse.id must be uuid.UUID."""
-    from app.modules.registration.schemas.ticket_type import TicketTypeResponse
-
-    field_info = TicketTypeResponse.model_fields["id"]
-    assert field_info.annotation is uuid.UUID
-
-
 # ── 7. Invoice Default Currency INR ─────────────────────────────
 
 

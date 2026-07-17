@@ -391,7 +391,10 @@ export interface JobExecution {
   task_name?: string;
   queue?: string;
   source?: string;
+  organization_id?: string | null;
+  event_id?: string | null;
   error_message?: string | null;
+  capabilities?: { retry: boolean; cancel: boolean };
 }
 
 export type CommercialReportType =
@@ -1882,6 +1885,10 @@ export interface DatabaseStats {
   cache_hit_ratio: number
   database_size_bytes: number
   dead_tuples: number
+  migration?: { current_revision?: string | null; expected_revision?: string | null; status: string }
+  rls?: { enabled_tables: number; forced_tables: number; status: string }
+  backup?: { status: string; latest_backup_at?: string | null; latest_restore_test_at?: string | null }
+  freshness_at?: string
 }
 
 export interface QuoteLineItemInput {
@@ -2098,7 +2105,21 @@ export interface QueueStat {
   name: string
   depth: number
   status: 'HEALTHY' | 'DEGRADED' | 'OVERLOADED'
+  oldest_message_age_seconds?: number | null
+  dead_letter_depth?: number | null
+  worker_status?: string
+  freshness_at?: string
 }
+
+export interface OperationsSourceStatus { key: string; status: "HEALTHY" | "DEGRADED" | "DOWN" | "UNAVAILABLE" | "STALE"; freshness_at?: string | null; detail: string }
+export interface OperationsOverview { overall_status: string; checked_at: string; sources: OperationsSourceStatus[] }
+export interface StorageTelemetry { provider_status: string; provider_detail: string; total_objects: number; total_bytes: number; capacity_bytes: number | null; by_status: Array<{ status: string; count: number; bytes: number }>; freshness_at: string }
+export interface OperationalRequest { id: string; organization_id: string; event_id: string; request_number: string; title: string; description?: string | null; status: string; priority: string; request_type: string; version: number; created_at: string; updated_at: string }
+export interface CursorResponse<T> { items: T[]; next_cursor?: string | null; has_next: boolean }
+export interface OperationalRisk { id: string; organization_id: string; event_id: string; project_id: string; title: string; description?: string | null; severity: string; probability: string; category?: string | null; impact?: string | null; owner_user_id?: string | null; due_date?: string | null; mitigation_plan?: string | null; status: string; version: number; accepted_by?: string | null; accepted_at?: string | null; resolved_at?: string | null }
+export interface OperationsProject { id: string; organization_id: string; event_id: string; name: string; project_code: string; status: string }
+export interface VenueReadinessItem { id: string; organization_id: string; event_id: string; event_name: string; vendor_id: string; supplier_name: string; contract_reference?: string | null; responsibility_scope: Record<string, unknown>; starts_on?: string | null; ends_on?: string | null; status: string; readiness_status: string; latest_attestation_at?: string | null; device_count: number; online_device_count: number; expired_credentials: number; open_incidents: number; sync_failures: number }
+export interface ProcurementVendor { id: string; name: string; type: string; status: string; city: string; country: string }
 
 export const useDatabaseStats = () =>
   useQuery({
@@ -2107,6 +2128,92 @@ export const useDatabaseStats = () =>
     refetchInterval: 30_000,
     staleTime: 15_000,
   });
+
+export const useOperationsOverview = () => useQuery({
+  queryKey: platformKey('operations-overview'),
+  queryFn: () => apiClient.get<OperationsOverview>('/platform/operations/overview'),
+  refetchInterval: 30_000,
+  staleTime: 10_000,
+});
+
+export const useStorageTelemetry = () => useQuery({
+  queryKey: platformKey('operations-storage'),
+  queryFn: () => apiClient.get<StorageTelemetry>('/platform/operations/storage'),
+  refetchInterval: 30_000,
+  staleTime: 10_000,
+});
+
+export const useOperationalRequests = (params?: Record<string, string | number | undefined>) => useQuery({
+  queryKey: platformKey('operations-requests', params),
+  queryFn: () => apiClient.get<CursorResponse<OperationalRequest>>('/platform/operations/requests', { params }),
+});
+
+export const useOperationalRequestMutation = () => {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; action: 'patch' | 'assign' | 'transition'; body: Record<string, unknown> }) => input.action === 'patch'
+      ? apiClient.patch<OperationalRequest>(`/platform/operations/requests/${input.id}`, input.body)
+      : apiClient.post<OperationalRequest>(`/platform/operations/requests/${input.id}/${input.action}`, input.body),
+    onSuccess: () => client.invalidateQueries({ queryKey: platformKey('operations-requests') }),
+  });
+};
+
+export const useOperationalRisks = (params?: Record<string, string | number | undefined>) => useQuery({
+  queryKey: platformKey('operations-risks', params),
+  queryFn: () => apiClient.get<{ items: OperationalRisk[] }>('/platform/operations/risks', { params }),
+});
+
+export const useOperationsProjects = (params?: Record<string, string | undefined>) => useQuery({
+  queryKey: platformKey('operations-projects', params),
+  queryFn: () => apiClient.get<{ items: OperationsProject[] }>('/platform/operations/projects', { params }),
+});
+
+export const useRiskMutation = () => {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id?: string; action: 'create' | 'patch' | 'accept' | 'resolve' | 'actions' | 'comments' | 'evidence'; body: Record<string, unknown>; idempotencyKey?: string }) => {
+      if (input.action === 'create') return apiClient.post<OperationalRisk>('/platform/operations/risks', input.body);
+      if (input.action === 'patch') return apiClient.patch<OperationalRisk>(`/platform/operations/risks/${input.id}`, input.body);
+      return apiClient.post<OperationalRisk>(`/platform/operations/risks/${input.id}/${input.action}`, input.body, { headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : undefined });
+    },
+    onSuccess: () => client.invalidateQueries({ queryKey: platformKey('operations-risks') }),
+  });
+};
+
+export const useVenueReadiness = (params?: Record<string, string | undefined>) => useQuery({
+  queryKey: platformKey('operations-venue-readiness', params),
+  queryFn: () => apiClient.get<{ items: VenueReadinessItem[]; freshness_at: string }>('/platform/operations/venue/readiness', { params }),
+  refetchInterval: 30_000,
+});
+
+export const useProcurementVendors = () => useQuery({
+  queryKey: platformKey('procurement-vendors'),
+  queryFn: () => apiClient.get<ProcurementVendor[]>('/vendors', { params: { status: 'ACTIVE', limit: 200 } }),
+});
+
+export const useVenueMutation = () => {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { path: string; body: Record<string, unknown>; idempotencyKey?: string }) => apiClient.post(`/platform/operations/venue/${input.path}`, input.body, { headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : undefined }),
+    onSuccess: () => client.invalidateQueries({ queryKey: platformKey('operations-venue-readiness') }),
+  });
+};
+
+export const useJobControl = () => {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { source: string; jobId: string; action: 'retry' | 'cancel'; organizationId: string; eventId?: string | null; reason: string; idempotencyKey: string }) => apiClient.post(`/platform/operations/jobs/${input.source}/${input.jobId}/${input.action}`, { organization_id: input.organizationId, event_id: input.eventId, reason: input.reason }, { headers: { 'Idempotency-Key': input.idempotencyKey } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: platformKey('bg-jobs') }),
+  });
+};
+
+export const useTriggerSearchReindex = () => {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { organizationId: string; entityTypes?: string[]; reason: string; idempotencyKey: string }) => apiClient.post<SearchJob>('/search/reindex', { organization_id: input.organizationId, entity_types: input.entityTypes, reason: input.reason }, { headers: { 'Idempotency-Key': input.idempotencyKey } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.searchJobs() }),
+  });
+};
 
 export const useBackgroundJobs = (params?: { status?: string; queue?: string; skip?: number; limit?: number }) =>
   useQuery({

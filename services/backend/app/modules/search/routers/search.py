@@ -10,9 +10,10 @@ from __future__ import annotations
 import uuid
 from typing import Optional, List
 
-from fastapi import APIRouter, Query, HTTPException, status
+from fastapi import APIRouter, Query, HTTPException, Header, status
 
-from app.dependencies import DB, SuperAdminOnly, ActiveUser
+from app.dependencies import DB, SuperAdminOnly, ActiveUser, StepUpAuth
+from app.modules.audit.models.audit_log import AuditLog
 from app.modules.search.services.search_service import SearchService
 from app.modules.search.schemas.search_schemas import (
     SearchResponse,
@@ -69,19 +70,39 @@ async def global_search(
 )
 async def trigger_reindex(
     body: ReindexTriggerIn,
-    _: SuperAdminOnly,
+    actor: SuperAdminOnly,
+    step_up: StepUpAuth,
     db: DB,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
 ) -> SearchJobOut:
     """
     Super Admin only. Enqueues a full reindex job for the specified organization.
     Returns the created SearchJob with its status. The actual indexing happens
     asynchronously in the Celery `search` queue.
     """
-    return await SearchService.trigger_reindex(
+    del step_up
+    if len(body.reason.strip()) < 12:
+        raise HTTPException(status_code=422, detail={"code": "REASON_REQUIRED", "message": "A meaningful administrative reason is required."})
+    job = await SearchService.trigger_reindex(
         db=db,
         organization_id=body.organization_id,
         entity_types=body.entity_types,
+        actor_user_id=actor.id,
+        reason=body.reason.strip(),
+        idempotency_key=idempotency_key,
     )
+    db.add(AuditLog(
+        organization_id=body.organization_id,
+        actor_user_id=actor.id,
+        actor_role=actor.platform_role or actor.role,
+        resource_type="search_job",
+        resource_id=job.id,
+        action_type="SEARCH_REINDEX_REQUESTED",
+        new_state={"reason": body.reason.strip(), "entity_types": body.entity_types, "status": job.status},
+        is_sensitive=True,
+    ))
+    await db.commit()
+    return job
 
 
 @router.get(
