@@ -106,15 +106,15 @@ describe("apiClient", () => {
         if (attempts === 1) return HttpResponse.json({ detail: "Expired" }, { status: 401 });
         return HttpResponse.json({ authorization: request.headers.get("authorization") });
       }),
-      http.post("http://127.0.0.1:8000/api/v1/auth/refresh", () =>
-        HttpResponse.json({ access_token: "rotated-token", refresh_token: "rotated-refresh", token_type: "bearer" }),
+      http.post("http://127.0.0.1:8000/api/v1/auth/command-center/refresh", () =>
+        HttpResponse.json({ access_token: "rotated-token", token_type: "bearer", user: authState.user }),
       ),
     );
 
     const { apiGet } = await import("./api-client");
     await expect(apiGet<{ authorization: string }>("/protected")).resolves.toEqual({ authorization: "Bearer rotated-token" });
     expect(attempts).toBe(2);
-    expect(authState.setAuth).toHaveBeenCalledWith(authState.user, "rotated-token", "rotated-refresh", true);
+    expect(authState.setAuth).toHaveBeenCalledWith(authState.user, "rotated-token", undefined, true);
   });
 
   it("parses plain and encoded download filenames", async () => {

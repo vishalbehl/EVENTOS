@@ -44,7 +44,7 @@ class PlanGuardMiddleware:
         method = request.method
 
         # 1. Skip public and platform-admin paths
-        if path.startswith(("/auth/login", "/auth/signup", "/auth/refresh", "/health", "/docs", "/redoc", "/platform")):
+        if path.startswith(("/auth/login", "/auth/command-center/", "/auth/signup", "/auth/refresh", "/health", "/docs", "/redoc", "/platform")):
             await self.app(scope, receive, send)
             return
 

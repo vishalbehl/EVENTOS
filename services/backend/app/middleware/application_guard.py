@@ -39,7 +39,7 @@ class ApplicationGuardMiddleware:
         path = request.url.path
 
         # Skip public/system/platform paths
-        if path.startswith(("/auth/login", "/auth/signup", "/auth/refresh", "/health", "/docs", "/redoc", "/platform")):
+        if path.startswith(("/auth/login", "/auth/command-center/", "/auth/signup", "/auth/refresh", "/health", "/docs", "/redoc", "/platform")):
             await self.app(scope, receive, send)
             return
 

@@ -115,7 +115,7 @@ class RBACMiddleware:
         method = request.method
 
         # Skip public paths
-        if path.startswith(("/auth/login", "/auth/signup", "/auth/check-slug", "/auth/accept-invite", "/auth/refresh", "/health", "/docs", "/redoc", "/openapi.json")):
+        if path.startswith(("/auth/login", "/auth/command-center/", "/auth/signup", "/auth/check-slug", "/auth/accept-invite", "/auth/refresh", "/health", "/docs", "/redoc", "/openapi.json")):
             await self.app(scope, receive, send)
             return
 

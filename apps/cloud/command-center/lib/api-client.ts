@@ -26,6 +26,7 @@ export class ApiError extends Error {
   readonly requestId?: string;
   readonly correlationId?: string;
   readonly retryable: boolean;
+  readonly retryAfter?: number;
 
   constructor(options: {
     message: string;
@@ -35,6 +36,7 @@ export class ApiError extends Error {
     requestId?: string;
     correlationId?: string;
     retryable?: boolean;
+    retryAfter?: number;
   }) {
     super(options.message);
     this.name = "ApiError";
@@ -44,6 +46,7 @@ export class ApiError extends Error {
     this.requestId = options.requestId;
     this.correlationId = options.correlationId;
     this.retryable = options.retryable ?? false;
+    this.retryAfter = options.retryAfter;
   }
 }
 
@@ -53,8 +56,8 @@ interface RetriableRequestConfig extends InternalAxiosRequestConfig {
 
 interface RefreshResponse {
   access_token: string;
-  refresh_token: string;
   token_type: string;
+  user: import("@/store/use-auth-store").User;
 }
 
 export interface DownloadedFile {
@@ -95,7 +98,7 @@ function toApiError(error: AxiosError<ProblemDetails>): ApiError {
   return new ApiError({
     message,
     status,
-    code: problem?.code || (status ? `HTTP_${status}` : error.code || "NETWORK_ERROR"),
+    code: problem?.code || headerValue(responseHeaders, "x-error-code") || (status ? `HTTP_${status}` : error.code || "NETWORK_ERROR"),
     problem,
     requestId:
       headerValue(responseHeaders, "x-request-id") ||
@@ -106,6 +109,7 @@ function toApiError(error: AxiosError<ProblemDetails>): ApiError {
       headerValue(requestHeaders, "X-Correlation-ID") ||
       headerValue(requestHeaders, "x-correlation-id"),
     retryable: !status || status === 408 || status === 429 || status >= 500,
+    retryAfter: Number(headerValue(responseHeaders, "retry-after")) || undefined,
   });
 }
 
@@ -118,6 +122,7 @@ class ApiClient {
       baseURL: API_BASE_URL,
       timeout: DEFAULT_TIMEOUT_MS,
       headers: { "Content-Type": "application/json", Accept: "application/json" },
+      withCredentials: true,
     });
 
     this.initializeRequestInterceptor();
@@ -144,7 +149,7 @@ class ApiClient {
       (response: AxiosResponse) => response,
       async (error: AxiosError<ProblemDetails>) => {
         const request = error.config as RetriableRequestConfig | undefined;
-        const isRefreshRequest = request?.url?.includes("/auth/refresh");
+        const isRefreshRequest = request?.url?.includes("/auth/command-center/refresh");
 
         if (error.response?.status === 401 && request && !request._authRetry && !isRefreshRequest) {
           request._authRetry = true;
@@ -154,6 +159,7 @@ class ApiClient {
             return await this.client.request(request);
           } catch {
             useAuthStore.getState().logout();
+            if (typeof window !== "undefined") window.dispatchEvent(new Event("auth:session-expired"));
           }
         }
 
@@ -165,19 +171,18 @@ class ApiClient {
   private refreshAccessToken(): Promise<string> {
     if (this.refreshPromise) return this.refreshPromise;
 
-    const { refreshToken, user, rememberMe } = useAuthStore.getState();
-    if (!refreshToken || !user) return Promise.reject(new Error("No refresh session is available."));
-
     this.refreshPromise = axios
-      .post<RefreshResponse>(`${API_BASE_URL}/auth/refresh`, { refresh_token: refreshToken }, {
+      .post<RefreshResponse>(`${API_BASE_URL}/auth/command-center/refresh`, undefined, {
         timeout: DEFAULT_TIMEOUT_MS,
+        withCredentials: true,
         headers: {
           "Content-Type": "application/json",
           "X-Request-ID": newRequestId(),
         },
       })
       .then(({ data }) => {
-        useAuthStore.getState().setAuth(user, data.access_token, data.refresh_token, rememberMe);
+        const rememberMe = useAuthStore.getState().rememberMe;
+        useAuthStore.getState().setAuth(data.user, data.access_token, undefined, rememberMe);
         return data.access_token;
       })
       .finally(() => {

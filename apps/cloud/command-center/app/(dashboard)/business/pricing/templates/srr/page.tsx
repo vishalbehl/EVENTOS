@@ -96,7 +96,7 @@ export default function SrrTemplatesPage() {
       </div>
       <SectionHeader
         title="SRR Templates"
-        description="Configure Speaker Ready Room layouts, preview stations, and equipment specifications"
+        description="Configure SRR layouts, preview stations, and equipment specifications"
         actions={
           <div className="flex gap-2">
             <div className="relative w-48 sm:w-64">

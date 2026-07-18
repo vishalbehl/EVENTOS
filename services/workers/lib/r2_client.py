@@ -22,8 +22,6 @@ from workers.config import settings
 
 def _make_client():
     kwargs = dict(
-        aws_access_key_id=settings.S3_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
         region_name=settings.S3_REGION,
         config=Config(
             retries={"max_attempts": 3, "mode": "standard"},
@@ -33,6 +31,9 @@ def _make_client():
     )
     if settings.S3_ENDPOINT_URL:
         kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
+    if settings.S3_ACCESS_KEY_ID and settings.S3_SECRET_ACCESS_KEY:
+        kwargs["aws_access_key_id"] = settings.S3_ACCESS_KEY_ID
+        kwargs["aws_secret_access_key"] = settings.S3_SECRET_ACCESS_KEY
     return boto3.client("s3", **kwargs)
 
 

@@ -9,17 +9,20 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authService } from "@/services/auth-service";
+import { ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/use-auth-store";
 
 export default function AdminLoginPage() {
   const router = useRouter();
   const prefersReducedMotion = useReducedMotion();
-  const { isAuthenticated, accessToken, user } = useAuthStore();
+  const { isAuthenticated, accessToken, user, hasHydrated } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [restored, setRestored] = useState(false);
   const emailId = useId();
   const passwordId = useId();
   const mfaId = useId();
@@ -30,6 +33,20 @@ export default function AdminLoginPage() {
     const isAdmin = user.platform_role === "SUPER_ADMIN" || user.is_platform_admin || user.role === "super_admin";
     if (isAdmin) router.replace("/dashboard/overview");
   }, [isAuthenticated, accessToken, user, router]);
+
+  useEffect(() => {
+    if (!hasHydrated || restored || isAuthenticated) return;
+    setRestored(true);
+    void authService.restore().then((active) => {
+      if (active) router.replace("/dashboard/overview");
+    });
+  }, [hasHydrated, restored, isAuthenticated, router]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setInterval(() => setCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldown]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,6 +68,7 @@ export default function AdminLoginPage() {
       toast.success("Identity and MFA verified.");
       router.replace("/dashboard/overview");
     } catch (error) {
+      if (error instanceof ApiError && error.status === 429) setCooldown(error.retryAfter || 900);
       toast.error(error instanceof Error ? error.message : "Authentication failed.");
     } finally {
       setLoading(false);
@@ -78,7 +96,7 @@ export default function AdminLoginPage() {
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-purple-500/30 bg-purple-500/10 shadow-[0_10px_20px_rgba(139,92,246,0.15)]">
               <ShieldCheck aria-hidden className="h-8 w-8 text-purple-400" />
             </div>
-            <h1 className="text-2xl font-black tracking-tight text-white">Platform Control Plane</h1>
+            <h1 className="text-2xl font-black tracking-tight text-white">Platform Control Panel</h1>
             <p className="mt-1 text-[9px] font-black uppercase tracking-[0.25em] text-purple-400/70">Super Admin Console</p>
           </div>
 
@@ -164,10 +182,10 @@ export default function AdminLoginPage() {
 
             <Button
               type="submit"
-              disabled={loading}
+              disabled={loading || cooldown > 0}
               className="mt-2 flex h-13 w-full items-center justify-center gap-2 rounded-full border-0 bg-purple-600 text-[11px] font-black uppercase tracking-[0.2em] text-white shadow-[0_10px_20px_rgba(139,92,246,0.2)] hover:bg-purple-500"
             >
-              {loading ? <Loader2 aria-label="Verifying identity" className="h-4 w-4 animate-spin" /> : <>Verify and continue <ChevronRight aria-hidden className="h-4 w-4" /></>}
+              {loading ? <Loader2 aria-label="Verifying identity" className="h-4 w-4 animate-spin" /> : cooldown > 0 ? `Try again in ${Math.ceil(cooldown / 60)} min` : <>Verify and continue <ChevronRight aria-hidden className="h-4 w-4" /></>}
             </Button>
           </form>
         </div>

@@ -16,12 +16,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { PremiumAssetIcon, type PremiumAssetKey } from "@/components/super-admin/ui/PremiumAssetIcon";
+import { PremiumObjectCard } from "@/components/super-admin/ui/PremiumObjectCard";
 
 const tokenGroups = [
   { title: "Surfaces", tokens: ["--bg-base", "--bg-surface", "--bg-surface-2", "--border-default"] },
   { title: "Status", tokens: ["--status-success", "--status-info", "--status-warning", "--status-danger"] },
   { title: "Charts", tokens: ["--chart-1", "--chart-2", "--chart-3", "--chart-5"] },
 ];
+
+const assetKeys: PremiumAssetKey[] = ["document", "spreadsheet", "presentation", "invoice", "proposal", "organization", "subscription", "integration", "deployment", "database", "security", "workflow"];
 
 export default function DesignSystemCataloguePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -37,6 +41,18 @@ export default function DesignSystemCataloguePage() {
       </PageHeader>
 
       <div className="space-y-8">
+        <section aria-labelledby="assets-title" className="space-y-4">
+          <div><h2 id="assets-title" className="text-lg font-semibold">Premium object language</h2><p className="mt-1 text-sm text-[var(--text-secondary)]">Sculpted, theme-aware assets identify detailed cards without turning routine controls into decoration.</p></div>
+          <div className="grid grid-cols-3 gap-3 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-panel)] sm:grid-cols-6 xl:grid-cols-12">
+            {assetKeys.map((assetKey, index) => <div key={assetKey} className="flex flex-col items-center gap-2"><PremiumAssetIcon assetKey={assetKey} tone={(["neutral", "blue", "green", "amber", "red", "violet"] as const)[index % 6]} size="lg" /><span className="text-[10px] capitalize text-[var(--text-secondary)]">{assetKey}</span></div>)}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <PremiumObjectCard assetKey="proposal" tone="blue" title="Enterprise service proposal" description="Commercial scope, venue allocations, and approval history." status={<StatusBadge status="active" />} metadata="v4 · Updated 12 min ago" />
+            <PremiumObjectCard assetKey="invoice" tone="green" title="INV-2026-0842" description="Meridian Conferences · July platform subscription." status={<StatusBadge status="paid" />} metadata="₹4,82,000 · GST included" />
+            <PremiumObjectCard assetKey="deployment" tone="violet" title="Command Center production" description="Next.js application deployment in ap-south-1." status={<StatusBadge status="healthy" />} metadata="Build 8f21a · 18 min ago" />
+            <PremiumObjectCard assetKey="security" tone="amber" title="Quarterly access review" description="Privileged role and policy certification workflow." status={<StatusBadge status="pending" />} metadata="12 reviewers · Due 28 Jul" />
+          </div>
+        </section>
         <section aria-labelledby="tokens-title" className="space-y-4">
           <div><h2 id="tokens-title" className="text-lg font-semibold">Semantic tokens</h2><p className="mt-1 text-sm text-[var(--text-secondary)]">Components consume semantic variables so light and dark themes retain the same meaning and contrast hierarchy.</p></div>
           <div className="cc-grid-auto">

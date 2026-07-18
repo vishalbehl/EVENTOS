@@ -36,7 +36,7 @@ describe("privileged auth persistence", () => {
     expect(useAuthStore.getState().accessToken).toBe("access");
   });
 
-  it("persists the administrator session but never the active impersonation token", () => {
+  it("persists only non-secret administrator metadata and never impersonation tokens", () => {
     useAuthStore.getState().setAuth(administrator, "admin-access", "admin-refresh", true);
     useAuthStore.getState().startImpersonation(
       { ...administrator, id: "user_2", email: "member@example.com", is_platform_admin: false },
@@ -46,9 +46,9 @@ describe("privileged auth persistence", () => {
     );
 
     expect(persistedState()).toMatchObject({
-      user: { id: "admin_1" },
-      accessToken: "admin-access",
-      refreshToken: "admin-refresh",
+      user: null,
+      accessToken: null,
+      refreshToken: null,
       originalUser: null,
       originalAccessToken: null,
       originalRefreshToken: null,

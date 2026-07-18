@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { COMMAND_CENTER_DESTINATIONS, searchDestinations } from "@/lib/command-center-navigation";
+import { CONSOLE_REGISTRY, resolveConsoleKey } from "@/lib/console-registry";
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -36,11 +37,11 @@ export function CommandPalette() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="hidden h-9 min-w-48 items-center gap-2 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 text-left text-xs text-[var(--text-secondary)] hover:border-[var(--text-tertiary)] lg:flex"
+        className="hidden h-9 min-w-64 items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-left text-xs text-[var(--text-secondary)] shadow-[var(--shadow-panel)] hover:border-[var(--text-tertiary)] lg:flex xl:min-w-80"
         aria-label="Open command search"
       >
         <Search aria-hidden className="size-3.5" />
-        <span className="flex-1">Search controls</span>
+        <span className="flex-1">Search for something...</span>
         <kbd className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] px-1.5 py-0.5 font-mono text-[10px]">Ctrl K</kbd>
       </button>
       <button
@@ -73,6 +74,7 @@ export function CommandPalette() {
           <div className="cc-scroll-region max-h-[32rem] overflow-y-auto p-2" role="listbox" aria-label="Search results">
             {results.length ? results.map((destination, index) => {
               const Icon = destination.icon;
+              const owner = CONSOLE_REGISTRY[resolveConsoleKey(destination.href)];
               return (
                 <button
                   key={destination.href}
@@ -87,7 +89,7 @@ export function CommandPalette() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold">{destination.label}</span>
-                    <span className="block truncate text-[11px] text-[var(--text-secondary)]">{destination.group}</span>
+                    <span className="block truncate text-[11px] text-[var(--text-secondary)]">{owner.name} · {destination.group}</span>
                   </span>
                   <span className="hidden font-mono text-[10px] text-[var(--text-tertiary)] sm:block">{destination.href}</span>
                 </button>

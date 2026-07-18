@@ -6,7 +6,7 @@ test.describe("Command Center entry", () => {
     await page.goto("/");
 
     await expect(page).toHaveTitle(/EventX OS/);
-    await expect(page.getByRole("heading", { name: /platform control plane/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Platform Control Panel/i })).toBeVisible();
     await expect(page.getByLabel(/admin identity/i)).toBeVisible();
     await expect(page.getByLabel(/^password$/i)).toBeVisible();
     await expect(page.getByLabel(/authenticator code/i)).toBeVisible();

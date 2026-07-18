@@ -16,10 +16,7 @@ html {
 }
 
 body {
-  background:
-    radial-gradient(circle at 78% -10%, rgba(59,158,255,0.16), transparent 34rem),
-    radial-gradient(circle at 8% 8%, rgba(34,255,153,0.08), transparent 28rem),
-    var(--base);
+  background: var(--base);
   color: var(--text);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
@@ -49,10 +46,10 @@ body {
 
 .glass-3d,
 .glass-card {
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: var(--card);
   border: 1px solid var(--border);
-  backdrop-filter: blur(18px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-panel);
 }
 
 .theme-swatch {
@@ -68,15 +65,8 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent);
 }
 
-.theme-swatch-void-indigo { --swatch-base: var(--theme-void-indigo-base); --swatch-pri: var(--theme-void-indigo-pri); }
-.theme-swatch-obsidian-rose { --swatch-base: var(--theme-obsidian-rose-base); --swatch-pri: var(--theme-obsidian-rose-pri); }
-.theme-swatch-carbon-teal { --swatch-base: var(--theme-carbon-teal-base); --swatch-pri: var(--theme-carbon-teal-pri); }
-.theme-swatch-amber-noir { --swatch-base: var(--theme-amber-noir-base); --swatch-pri: var(--theme-amber-noir-pri); }
-.theme-swatch-slate-aurora { --swatch-base: var(--theme-slate-aurora-base); --swatch-pri: var(--theme-slate-aurora-pri); }
-.theme-swatch-forest-ink { --swatch-base: var(--theme-forest-ink-base); --swatch-pri: var(--theme-forest-ink-pri); }
-.theme-swatch-copper-oxide { --swatch-base: var(--theme-copper-oxide-base); --swatch-pri: var(--theme-copper-oxide-pri); }
-.theme-swatch-plasma-violet { --swatch-base: var(--theme-plasma-violet-base); --swatch-pri: var(--theme-plasma-violet-pri); }
 .theme-swatch-light { --swatch-base: var(--theme-light-base); --swatch-pri: var(--theme-light-pri); }
+.theme-swatch-dark { --swatch-base: var(--theme-dark-base); --swatch-pri: var(--theme-dark-pri); }
 
 .neomorphic-inset {
   box-shadow: 

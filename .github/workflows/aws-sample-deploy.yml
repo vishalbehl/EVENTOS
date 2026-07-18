@@ -1,0 +1,202 @@
+name: Deploy AWS sample backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      infrastructure_only:
+        description: "Create/update infrastructure without starting application services"
+        required: true
+        type: boolean
+        default: false
+      run_database_bootstrap:
+        description: "Run role bootstrap, Alembic, and post-migration grant refresh"
+        required: true
+        type: boolean
+        default: true
+      run_identity_bootstrap:
+        description: "Create the first MFA-enrolled super administrator"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-sample-deployment
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_DIR: infrastructure/terraform/environments/nonprod
+  IMAGE_TAG: ${{ github.sha }}-${{ github.run_attempt }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: sample
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Initialize Terraform
+        working-directory: ${{ env.TF_DIR }}
+        run: >-
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.AWS_TF_STATE_BUCKET }}"
+          -backend-config="key=sample/terraform.tfstate"
+          -backend-config="region=${{ env.AWS_REGION }}"
+          -backend-config="dynamodb_table=${{ vars.AWS_TF_LOCK_TABLE }}"
+          -backend-config="encrypt=true"
+
+      - name: Ensure network, storage, logs, and ECR foundation
+        working-directory: ${{ env.TF_DIR }}
+        run: >-
+          terraform apply -auto-approve -input=false
+          -target=module.network
+          -target=module.foundation
+          -var="alert_email=${{ vars.OPERATIONS_ALERT_EMAIL }}"
+          -var="monthly_budget_usd=${{ vars.SAMPLE_MONTHLY_BUDGET_USD }}"
+
+      - name: Resolve ECR repositories
+        id: ecr
+        working-directory: ${{ env.TF_DIR }}
+        shell: bash
+        run: |
+          echo "backend=$(terraform output -json foundation | jq -r '.ecr_repository_urls.backend')" >> "$GITHUB_OUTPUT"
+          echo "workers=$(terraform output -json foundation | jq -r '.ecr_repository_urls.workers')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push immutable backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/backend
+          file: services/backend/Dockerfile
+          push: true
+          tags: ${{ steps.ecr.outputs.backend }}:${{ env.IMAGE_TAG }}
+
+      - name: Build and push immutable worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/workers
+          file: services/workers/Dockerfile
+          push: true
+          tags: ${{ steps.ecr.outputs.workers }}:${{ env.IMAGE_TAG }}
+
+      - name: Apply application infrastructure at zero tasks
+        working-directory: ${{ env.TF_DIR }}
+        run: >-
+          terraform apply -auto-approve -input=false
+          -var="deploy_application=true"
+          -var="enable_services=false"
+          -var="api_domain_name=${{ vars.SAMPLE_API_DOMAIN }}"
+          -var="speaker_portal_url=${{ vars.SAMPLE_SPEAKER_URL }}"
+          -var="certificate_arn=${{ vars.SAMPLE_API_CERTIFICATE_ARN }}"
+          -var='portal_origins=${{ vars.SAMPLE_PORTAL_ORIGINS_TF }}'
+          -var="backend_image=${{ steps.ecr.outputs.backend }}:${{ env.IMAGE_TAG }}"
+          -var="worker_image=${{ steps.ecr.outputs.workers }}:${{ env.IMAGE_TAG }}"
+          -var="alert_email=${{ vars.OPERATIONS_ALERT_EMAIL }}"
+          -var="monthly_budget_usd=${{ vars.SAMPLE_MONTHLY_BUDGET_USD }}"
+
+      - name: Read deployment outputs
+        id: tf
+        working-directory: ${{ env.TF_DIR }}
+        shell: bash
+        run: |
+          terraform output -json application > /tmp/application.json
+          echo "cluster=$(jq -r '.ecs_cluster_name' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "backend_service=$(jq -r '.backend_service_name' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "worker_service=$(jq -r '.worker_service_name' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "bootstrap_task=$(jq -r '.database_bootstrap_task_arn' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "migration_task=$(jq -r '.migration_task_arn' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "identity_task=$(jq -r '.identity_bootstrap_task_arn' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "security_group=$(jq -r '.runtime_security_group_id' /tmp/application.json)" >> "$GITHUB_OUTPUT"
+          echo "subnets=$(terraform output -json network | jq -r '.public_subnet_ids | join(",")')" >> "$GITHUB_OUTPUT"
+
+      - name: Require configured application secrets
+        if: ${{ !inputs.infrastructure_only }}
+        shell: bash
+        run: |
+          test -n "${{ secrets.RUNTIME_SECRET_JSON }}"
+          test -n "${{ secrets.DEPLOYMENT_SECRET_JSON }}"
+
+      - name: Require identity bootstrap secret
+        if: ${{ !inputs.infrastructure_only && inputs.run_identity_bootstrap }}
+        shell: bash
+        run: test -n "${{ secrets.IDENTITY_BOOTSTRAP_SECRET_JSON }}"
+
+      - name: Publish runtime and deployment secrets
+        if: ${{ !inputs.infrastructure_only }}
+        working-directory: ${{ env.TF_DIR }}
+        shell: bash
+        env:
+          RUNTIME_SECRET_JSON: ${{ secrets.RUNTIME_SECRET_JSON }}
+          DEPLOYMENT_SECRET_JSON: ${{ secrets.DEPLOYMENT_SECRET_JSON }}
+        run: |
+          runtime_arn=$(terraform output -json application | jq -r '.runtime_secret_arn')
+          deployment_arn=$(terraform output -json application | jq -r '.deployment_secret_arn')
+          current_runtime=$(aws secretsmanager get-secret-value --secret-id "$runtime_arn" --query SecretString --output text 2>/dev/null || echo '{}')
+          current_deployment=$(aws secretsmanager get-secret-value --secret-id "$deployment_arn" --query SecretString --output text 2>/dev/null || echo '{}')
+          merged_runtime=$(jq -cn --argjson current "$current_runtime" --argjson supplied "$RUNTIME_SECRET_JSON" '$current * $supplied')
+          merged_deployment=$(jq -cn --argjson current "$current_deployment" --argjson supplied "$DEPLOYMENT_SECRET_JSON" '$current * $supplied')
+          aws secretsmanager put-secret-value --secret-id "$runtime_arn" --secret-string "$merged_runtime" >/dev/null
+          aws secretsmanager put-secret-value --secret-id "$deployment_arn" --secret-string "$merged_deployment" >/dev/null
+
+      - name: Publish one-time identity bootstrap input
+        if: ${{ !inputs.infrastructure_only && inputs.run_identity_bootstrap }}
+        working-directory: ${{ env.TF_DIR }}
+        shell: bash
+        env:
+          IDENTITY_BOOTSTRAP_SECRET_JSON: ${{ secrets.IDENTITY_BOOTSTRAP_SECRET_JSON }}
+        run: |
+          identity_arn=$(terraform output -json application | jq -r '.identity_bootstrap_secret_arn')
+          aws secretsmanager put-secret-value --secret-id "$identity_arn" --secret-string "$IDENTITY_BOOTSTRAP_SECRET_JSON" >/dev/null
+
+      - name: Run database bootstrap and migration
+        if: ${{ !inputs.infrastructure_only && inputs.run_database_bootstrap }}
+        shell: bash
+        run: |
+          network="awsvpcConfiguration={subnets=[${{ steps.tf.outputs.subnets }}],securityGroups=[${{ steps.tf.outputs.security_group }}],assignPublicIp=ENABLED}"
+          run_and_wait() {
+            task_arn=$(aws ecs run-task --cluster "${{ steps.tf.outputs.cluster }}" --launch-type FARGATE --task-definition "$1" --network-configuration "$network" --query 'tasks[0].taskArn' --output text)
+            test "$task_arn" != "None"
+            aws ecs wait tasks-stopped --cluster "${{ steps.tf.outputs.cluster }}" --tasks "$task_arn"
+            exit_code=$(aws ecs describe-tasks --cluster "${{ steps.tf.outputs.cluster }}" --tasks "$task_arn" --query 'tasks[0].containers[0].exitCode' --output text)
+            test "$exit_code" = "0"
+          }
+          run_and_wait "${{ steps.tf.outputs.bootstrap_task }}"
+          run_and_wait "${{ steps.tf.outputs.migration_task }}"
+          run_and_wait "${{ steps.tf.outputs.bootstrap_task }}"
+
+      - name: Run one-time MFA identity bootstrap
+        if: ${{ !inputs.infrastructure_only && inputs.run_identity_bootstrap }}
+        shell: bash
+        run: |
+          network="awsvpcConfiguration={subnets=[${{ steps.tf.outputs.subnets }}],securityGroups=[${{ steps.tf.outputs.security_group }}],assignPublicIp=ENABLED}"
+          task_arn=$(aws ecs run-task --cluster "${{ steps.tf.outputs.cluster }}" --launch-type FARGATE --task-definition "${{ steps.tf.outputs.identity_task }}" --network-configuration "$network" --query 'tasks[0].taskArn' --output text)
+          test "$task_arn" != "None"
+          aws ecs wait tasks-stopped --cluster "${{ steps.tf.outputs.cluster }}" --tasks "$task_arn"
+          exit_code=$(aws ecs describe-tasks --cluster "${{ steps.tf.outputs.cluster }}" --tasks "$task_arn" --query 'tasks[0].containers[0].exitCode' --output text)
+          test "$exit_code" = "0"
+
+      - name: Deploy API and worker services
+        if: ${{ !inputs.infrastructure_only }}
+        shell: bash
+        run: |
+          aws ecs update-service --cluster "${{ steps.tf.outputs.cluster }}" --service "${{ steps.tf.outputs.backend_service }}" --task-definition eventx-sample-backend --desired-count 1 >/dev/null
+          aws ecs update-service --cluster "${{ steps.tf.outputs.cluster }}" --service "${{ steps.tf.outputs.worker_service }}" --task-definition eventx-sample-workers --desired-count 1 >/dev/null
+          aws ecs wait services-stable --cluster "${{ steps.tf.outputs.cluster }}" --services "${{ steps.tf.outputs.backend_service }}" "${{ steps.tf.outputs.worker_service }}"
+
+      - name: Verify readiness
+        if: ${{ !inputs.infrastructure_only }}
+        run: curl --fail --retry 10 --retry-delay 15 "https://${{ vars.SAMPLE_API_DOMAIN }}/ready"

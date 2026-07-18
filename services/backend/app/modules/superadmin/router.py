@@ -38,6 +38,7 @@ from app.modules.crm.routers.crm_router import router as crm_router
 from app.modules.billing.routers.billing_superadmin import router as billing_superadmin_router
 from app.modules.platform.reports_router import router as reports_router
 from app.modules.audit.routers.audit_exports import router as audit_exports_router
+from app.modules.console_summary.router import router as console_summary_router
 
 
 # ── Top-level superadmin router ───────────────────────────────
@@ -65,6 +66,7 @@ superadmin_router.include_router(search_router)
 superadmin_router.include_router(platform_health_router)
 superadmin_router.include_router(reports_router)
 superadmin_router.include_router(audit_exports_router)
+superadmin_router.include_router(console_summary_router)
 
 commercial_staff_router = APIRouter(prefix="/superadmin", tags=["platform-commercial"])
 commercial_staff_router.include_router(crm_router, dependencies=[Depends(require_crm_read)])

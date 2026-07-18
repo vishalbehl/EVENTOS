@@ -3,9 +3,9 @@ import { useAuthStore, User } from '@/store/use-auth-store';
 
 export interface LoginResponse {
   access_token: string;
-  refresh_token: string;
   token_type: string;
   user: User;
+  expires_in: number;
 }
 
 export interface LoginCredentials {
@@ -23,11 +23,17 @@ export const authService = {
    * Authenticate with email and password
    */
   login: async (credentials: LoginCredentials, rememberMe = false): Promise<LoginResponse> => {
-    const data = await apiClient.post<LoginResponse>('/auth/login', credentials);
+    const data = await apiClient.post<LoginResponse>('/auth/command-center/login', {
+      email: credentials.email,
+      password: credentials.password,
+      totp_code: credentials.mfa_code,
+      remember_me: rememberMe,
+    }, { withCredentials: true });
 
     if (!isPlatformAdministrator(data.user)) {
       try {
-        await apiClient.post('/auth/logout', undefined, {
+        await apiClient.post('/auth/command-center/logout', undefined, {
+          withCredentials: true,
           headers: { Authorization: `Bearer ${data.access_token}` },
         });
       } catch {
@@ -41,7 +47,7 @@ export const authService = {
     useAuthStore.getState().setAuth(
       data.user,
       data.access_token,
-      data.refresh_token,
+      undefined,
       rememberMe
     );
     
@@ -62,7 +68,7 @@ export const authService = {
    */
   logout: async () => {
     try {
-      await apiClient.post('/auth/logout');
+      await apiClient.post('/auth/command-center/logout', undefined, { withCredentials: true });
     } catch (error) {
       console.error('Logout request failed', error);
     } finally {
@@ -73,8 +79,19 @@ export const authService = {
   /**
    * Refresh JWT tokens
    */
-  refresh: async (refreshToken: string): Promise<{ access_token: string }> => {
-    const data = await apiClient.post<{ access_token: string }>('/auth/refresh', { refresh_token: refreshToken });
+  refresh: async (): Promise<LoginResponse> => {
+    const data = await apiClient.post<LoginResponse>('/auth/command-center/refresh', undefined, { withCredentials: true });
+    useAuthStore.getState().setAuth(data.user, data.access_token, undefined, useAuthStore.getState().rememberMe);
     return data;
-  }
+  },
+
+  restore: async (): Promise<boolean> => {
+    try {
+      await authService.refresh();
+      return true;
+    } catch {
+      useAuthStore.getState().logout();
+      return false;
+    }
+  },
 };

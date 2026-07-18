@@ -8,7 +8,12 @@ import { useQuery, useMutation, useQueryClient, QueryClient } from "@tanstack/re
 import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
 import { platformKey, adminKeys, queryKeys } from "@/lib/query-keys";
+import type { ConsoleKey } from "@/lib/console-registry";
 export { platformKey, adminKeys };
+
+export interface ConsoleMetric { key: string; label: string; value: string | number; unit?: string | null; comparison?: number | null; comparison_label?: string | null; status?: "neutral" | "success" | "warning" | "danger"; destination?: string }
+export interface ConsoleAttentionItem { id: string; label: string; severity: "info" | "warning" | "critical"; destination: string }
+export interface ConsoleSummary { console_key: ConsoleKey; health: "healthy" | "degraded" | "down" | "unknown"; generated_at: string; metrics: ConsoleMetric[]; attention: ConsoleAttentionItem[]; recent_activity: Array<{ id: string; label: string; occurred_at: string; destination?: string }>; resource_count: number; capabilities: Record<string, { available: boolean; reason?: string }> }
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -620,6 +625,7 @@ export interface OrganizationProvisionResult {
 // ── API Functions ─────────────────────────────────────────────
 
 export const adminApi = {
+  getConsoleSummary: (consoleKey: ConsoleKey) => apiClient.get<ConsoleSummary>(`/superadmin/consoles/${consoleKey}/summary`),
   getDashboard: () =>
     apiClient.get<DashboardMetrics>("/platform/dashboard"),
 
@@ -928,6 +934,14 @@ export const adminApi = {
 };
 
 // ── React Query Hooks ─────────────────────────────────────────
+
+export const useConsoleSummary = (consoleKey: ConsoleKey) =>
+  useQuery({
+    queryKey: platformKey("console-summary", consoleKey),
+    queryFn: () => adminApi.getConsoleSummary(consoleKey),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
 
 export const useAdminDashboard = () =>
   useQuery({

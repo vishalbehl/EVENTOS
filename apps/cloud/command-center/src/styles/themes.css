@@ -1,69 +1,72 @@
 :root,
-[data-theme="void-indigo"] {
-  color-scheme: dark;
-  --base:#05070B; --surf:#090D13; --card:#0E141D; --border:rgba(226,236,255,0.16);
-  --text:#F7FAFF; --muted:#A6B2C4;
-  --pri:#F7FAFF; --sec:#C7D6EA; --acc:#55A9FF; --warn:#F5BE4F; --dan:#FF5A6F; --success:#2DDCA0;
-}
-
-[data-theme="obsidian-rose"] {
-  --base:#0D0810; --surf:#160D18; --card:#1F1025; --border:rgba(255,255,255,0.07);
-  --text:#F5E8FF; --muted:rgba(245,232,255,0.45);
-  --pri:#C084FC; --sec:#E879F9; --acc:#67E8F9; --warn:#FCD34D; --dan:#FB7185; --success:#67E8F9;
-}
-
-[data-theme="carbon-teal"] {
-  --base:#050A09; --surf:#0A1410; --card:#0F1E19; --border:rgba(255,255,255,0.06);
-  --text:#D6FFF4; --muted:rgba(214,255,244,0.4);
-  --pri:#14B8A6; --sec:#2DD4BF; --acc:#818CF8; --warn:#FCD34D; --dan:#FB7185; --success:#2DD4BF;
-}
-
-[data-theme="amber-noir"] {
-  --base:#0C0900; --surf:#141000; --card:#1C1600; --border:rgba(255,255,255,0.07);
-  --text:#FFF8E1; --muted:rgba(255,248,225,0.45);
-  --pri:#F59E0B; --sec:#FCD34D; --acc:#34D399; --warn:#F97316; --dan:#EF4444; --success:#34D399;
-}
-
-[data-theme="slate-aurora"] {
-  --base:#060A12; --surf:#0C1220; --card:#111C2E; --border:rgba(255,255,255,0.07);
-  --text:#E0F2FE; --muted:rgba(224,242,254,0.45);
-  --pri:#38BDF8; --sec:#7DD3FC; --acc:#A78BFA; --warn:#FCD34D; --dan:#FB7185; --success:#38BDF8;
-}
-
-[data-theme="forest-ink"] {
-  --base:#030907; --surf:#071210; --card:#0C1D17; --border:rgba(255,255,255,0.06);
-  --text:#DCFCE7; --muted:rgba(220,252,231,0.45);
-  --pri:#22C55E; --sec:#4ADE80; --acc:#F472B6; --warn:#FCD34D; --dan:#FB7185; --success:#4ADE80;
-}
-
-[data-theme="copper-oxide"] {
-  --base:#0A0805; --surf:#140F08; --card:#1C150C; --border:rgba(255,255,255,0.07);
-  --text:#FEF3C7; --muted:rgba(254,243,199,0.45);
-  --pri:#D97706; --sec:#B45309; --acc:#5EEAD4; --warn:#F97316; --dan:#FB7185; --success:#5EEAD4;
-}
-
-[data-theme="plasma-violet"] {
-  color-scheme: dark;
-  --base:#05070B; --surf:#090D13; --card:#0E141D; --border:rgba(226,236,255,0.16);
-  --text:#F7FAFF; --muted:#A6B2C4;
-  --pri:#F7FAFF; --sec:#C7D6EA; --acc:#55A9FF; --warn:#F5BE4F; --dan:#FF5A6F; --success:#2DDCA0;
-}
-
 [data-theme="light"] {
   color-scheme: light;
-  --base:#F3F6FA; --surf:#FFFFFF; --card:#FFFFFF; --border:rgba(20,37,61,0.17);
-  --text:#101827; --muted:#526176;
-  --pri:#152237; --sec:#33445E; --acc:#0A67C7; --warn:#966000; --dan:#C72E45; --success:#087A58;
+  --base: #f0f1f3;
+  --surf: #ffffff;
+  --card: #ffffff;
+  --raised: #f7f7f8;
+  --inset: #f3f3f4;
+  --border: #e3e4e7;
+  --text: #202124;
+  --muted: #74777d;
+  --pri: #252629;
+  --sec: #3d3f43;
+  --acc: #4f7cff;
+  --warn: #c88905;
+  --dan: #dc5360;
+  --success: #1f9d58;
+  --shadow-color: 28 31 36;
+  --theme-light-base: #f0f1f3;
+  --theme-light-pri: #252629;
+  --primary-contrast: #ffffff;
+  --theme-dark-base: #050505;
+  --theme-dark-pri: #3548ff;
 }
 
-:root {
-  --theme-void-indigo-base:#080912; --theme-void-indigo-pri:#6366F1;
-  --theme-obsidian-rose-base:#0D0810; --theme-obsidian-rose-pri:#C084FC;
-  --theme-carbon-teal-base:#050A09; --theme-carbon-teal-pri:#14B8A6;
-  --theme-amber-noir-base:#0C0900; --theme-amber-noir-pri:#F59E0B;
-  --theme-slate-aurora-base:#060A12; --theme-slate-aurora-pri:#38BDF8;
-  --theme-forest-ink-base:#030907; --theme-forest-ink-pri:#22C55E;
-  --theme-copper-oxide-base:#0A0805; --theme-copper-oxide-pri:#D97706;
-  --theme-plasma-violet-base:#000000; --theme-plasma-violet-pri:#FCFDFF;
-  --theme-light-base:#F7F8FC; --theme-light-pri:#6366F1;
+[data-theme="dark"] {
+  color-scheme: dark;
+  --base: #050505;
+  --surf: #111111;
+  --card: #0a0a0a;
+  --raised: #121212;
+  --inset: #1b1b1d;
+  --border: #303034;
+  --text: #f7f7f8;
+  --muted: #929298;
+  --pri: #3548ff;
+  --sec: #5262ff;
+  --acc: #3548ff;
+  --warn: #ff9f2f;
+  --dan: #ff4d57;
+  --success: #2ed57b;
+  --primary-contrast: #ffffff;
+  --shadow-color: 0 0 0;
+}
+
+/* Compatibility for saved preferences created before the paired theme system. */
+[data-theme="plasma-violet"],
+[data-theme="void-indigo"],
+[data-theme="obsidian-rose"],
+[data-theme="carbon-teal"],
+[data-theme="amber-noir"],
+[data-theme="slate-aurora"],
+[data-theme="forest-ink"],
+[data-theme="copper-oxide"] {
+  color-scheme: dark;
+  --base: #050505;
+  --surf: #111111;
+  --card: #0a0a0a;
+  --raised: #121212;
+  --inset: #1b1b1d;
+  --border: #303034;
+  --text: #f7f7f8;
+  --muted: #929298;
+  --pri: #3548ff;
+  --sec: #5262ff;
+  --acc: #3548ff;
+  --warn: #ff9f2f;
+  --dan: #ff4d57;
+  --success: #2ed57b;
+  --primary-contrast: #ffffff;
+  --shadow-color: 0 0 0;
 }

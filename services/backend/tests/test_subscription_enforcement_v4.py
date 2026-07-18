@@ -114,3 +114,61 @@ async def test_billing_plan_supports_multiple_active_subscriptions(client, db, o
     assert len(payload["subscriptions"]) == 2
     assert {item["plan_id"] for item in payload["subscriptions"]} == {str(basic.id), str(pro.id)}
     assert payload["usage"]["events"]["max"] == 2
+
+
+@pytest.mark.asyncio
+async def test_public_signup_issues_demo_subscription_and_grant(client, db):
+    demo_plan = SubscriptionPlan(
+        name="Demo Public",
+        max_events=1,
+        max_users=2,
+        max_event_team_members=2,
+        max_registrations=50,
+        max_speakers=10,
+        max_sessions=10,
+        max_rooms=3,
+        max_ticket_categories=2,
+        max_badge_templates=1,
+        max_certificate_templates=1,
+        max_emails_per_event=20,
+        storage_quota_mb=100,
+        is_active=True,
+    )
+    db.add(demo_plan)
+    await db.commit()
+
+    suffix = uuid.uuid4().hex[:10]
+    response = await client.post(
+        "/auth/signup",
+        json={
+            "org_name": f"Demo {suffix}",
+            "slug": f"demo-{suffix}",
+            "first_name": "Demo",
+            "last_name": "Owner",
+            "email": f"demo-{suffix}@example.com",
+            "password": "SafeDemoPassword123!",
+            "country": "IN",
+            "timezone": "Asia/Kolkata",
+        },
+    )
+    assert response.status_code == 201, response.text
+    organization_id = uuid.UUID(response.json()["organization"]["id"])
+
+    subscription = await db.scalar(
+        select(OrganizationSubscription).where(
+            OrganizationSubscription.organization_id == organization_id,
+            OrganizationSubscription.plan_id == demo_plan.id,
+        )
+    )
+    assert subscription is not None
+    assert subscription.status == "TRIAL"
+
+    grant = await db.scalar(
+        select(EntitlementGrant).where(
+            EntitlementGrant.organization_id == organization_id,
+            EntitlementGrant.subscription_id == subscription.id,
+        )
+    )
+    assert grant is not None
+    assert grant.quantity_total == 1
+    assert grant.status == "ACTIVE"

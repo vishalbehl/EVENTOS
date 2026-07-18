@@ -159,6 +159,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/command-center/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Privileged Command Center login */
+        post: operations["command_center_login_api_v1_auth_command_center_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/command-center/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Command Center Logout */
+        post: operations["command_center_logout_api_v1_auth_command_center_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/command-center/logout-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Command Center Logout All */
+        post: operations["command_center_logout_all_api_v1_auth_command_center_logout_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/command-center/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Command Center Refresh */
+        post: operations["command_center_refresh_api_v1_auth_command_center_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/impersonation/start": {
         parameters: {
             query?: never;
@@ -10040,6 +10108,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/superadmin/consoles/{console_key}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Console Summary
+         * @description Return live, auditable aggregates only; unsupported domains are explicit.
+         */
+        get: operations["get_console_summary_api_v1_superadmin_consoles__console_key__summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/superadmin/crm/accounts": {
         parameters: {
             query?: never;
@@ -13322,6 +13410,17 @@ export interface components {
             /** Phone */
             phone?: string | null;
         };
+        /** AttentionItem */
+        AttentionItem: {
+            /** Destination */
+            destination: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Severity */
+            severity: string;
+        };
         /** AttestationIn */
         AttestationIn: {
             /** Attested By Name */
@@ -13901,6 +14000,13 @@ export interface components {
             /** Total Recipients */
             total_recipients: number;
         };
+        /** Capability */
+        Capability: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
         /** CapacityRuleCreate */
         CapacityRuleCreate: {
             /**
@@ -14129,6 +14235,36 @@ export interface components {
             promo_code?: string | null;
             /** Redirect Base Url */
             redirect_base_url: string;
+        };
+        /** CommandCenterLoginRequest */
+        CommandCenterLoginRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** Password */
+            password: string;
+            /**
+             * Remember Me
+             * @default false
+             */
+            remember_me: boolean;
+            /** Totp Code */
+            totp_code: string;
+        };
+        /** CommandCenterTokenResponse */
+        CommandCenterTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Expires In */
+            expires_in: number;
+            /**
+             * Token Type
+             * @default bearer
+             */
+            token_type: string;
+            user: components["schemas"]["UserMeResponse"];
         };
         /** CommercialExportCreate */
         CommercialExportCreate: {
@@ -14444,6 +14580,61 @@ export interface components {
         CompleteTaskRequest: {
             /** Comment */
             comment?: string | null;
+        };
+        /**
+         * ConsoleKey
+         * @enum {string}
+         */
+        ConsoleKey: "home" | "business" | "revenue" | "operations" | "security" | "developer" | "support" | "settings";
+        /** ConsoleMetric */
+        ConsoleMetric: {
+            /** Comparison */
+            comparison?: number | null;
+            /** Comparison Label */
+            comparison_label?: string | null;
+            /** Destination */
+            destination?: string | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @default neutral
+             */
+            status: string;
+            /** Unit */
+            unit?: string | null;
+            /** Value */
+            value: number | string;
+        };
+        /** ConsoleSummary */
+        ConsoleSummary: {
+            /** Attention */
+            attention?: components["schemas"]["AttentionItem"][];
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: components["schemas"]["Capability"];
+            };
+            console_key: components["schemas"]["ConsoleKey"];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Health */
+            health: string;
+            /** Metrics */
+            metrics?: components["schemas"]["ConsoleMetric"][];
+            /** Recent Activity */
+            recent_activity?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Resource Count
+             * @default 0
+             */
+            resource_count: number;
         };
         /** ContactCreate */
         ContactCreate: {
@@ -25432,6 +25623,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    command_center_login_api_v1_auth_command_center_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandCenterLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandCenterTokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    command_center_logout_api_v1_auth_command_center_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+        };
+    };
+    command_center_logout_all_api_v1_auth_command_center_logout_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+        };
+    };
+    command_center_refresh_api_v1_auth_command_center_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandCenterTokenResponse"];
                 };
             };
         };
@@ -46672,6 +46956,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_console_summary_api_v1_superadmin_consoles__console_key__summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                console_key: components["schemas"]["ConsoleKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsoleSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -22,7 +22,19 @@ celery_app.conf.update(
             "task": "app.tasks.platform_tasks.flush_api_usage",
             "schedule": 300.0,  # every 5 minutes
         },
-    }
+    },
+    # The API publishes standalone processing tasks by name. Route those task
+    # families away from the backend-only `celery` queue so the processing
+    # worker that imports workers.tasks consumes them.
+    task_routes={
+        "workers.tasks.file_tasks.*": {"queue": "files"},
+        "workers.tasks.video_tasks.*": {"queue": "videos"},
+        "workers.tasks.import_tasks.*": {"queue": "imports"},
+        "workers.tasks.report_tasks.*": {"queue": "imports"},
+        "workers.tasks.notification_tasks.*": {"queue": "default"},
+        "workers.tasks.sync_tasks.*": {"queue": "default"},
+        "workers.tasks.search_tasks.*": {"queue": "search"},
+    },
 )
 
 # Autodiscover tasks in app.tasks package

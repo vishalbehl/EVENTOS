@@ -73,7 +73,8 @@ export default function DashboardLayout({
 
   useEffect(() => {
     const fetchUser = async () => {
-      if (!isAuthenticated || !accessToken || user) return;
+      if (!isAuthenticated || !accessToken) return;
+      if (user && user.onboarding_completed) return;
       try {
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
           headers: { Authorization: `Bearer ${accessToken}` },

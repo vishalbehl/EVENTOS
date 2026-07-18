@@ -21,6 +21,7 @@ from jose import jwt
 from loguru import logger
 from passlib.context import CryptContext
 from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -219,6 +220,24 @@ async def revoke_user_refresh_tokens(
     return count
 
 
+async def revoke_refresh_token_family(
+    db: AsyncSession,
+    token_hash: str,
+    reason: str = "logout",
+) -> int:
+    """Revoke only the browser/device session containing the supplied token."""
+    result = await db.execute(select(RefreshToken.family_id).where(RefreshToken.token_hash == token_hash))
+    family_id = result.scalar_one_or_none()
+    if family_id is None:
+        return 0
+    revoked = await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.family_id == family_id, RefreshToken.is_revoked.is_(False))
+        .values(is_revoked=True, revoked_at=datetime.now(timezone.utc), revoked_reason=reason)
+    )
+    return revoked.rowcount
+
+
 async def login(
     db: AsyncSession,
     email: str,
@@ -227,6 +246,7 @@ async def login(
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     mfa_code: Optional[str] = None,
+    access_expires_minutes: Optional[int] = None,
 ) -> dict:
     """
     Authenticate a user by email + password.
@@ -241,7 +261,7 @@ async def login(
     """
     # Always hash the password to prevent timing attacks
     result = await db.execute(
-        select(User).where(User.email == email.lower().strip())
+        select(User).options(selectinload(User.organization)).where(User.email == email.lower().strip())
     )
     user = result.scalar_one_or_none()
 
@@ -264,7 +284,11 @@ async def login(
         mfa_authenticated_at = await verify_user_mfa(db, user, mfa_code)
 
     # Issue tokens
-    access_token = create_access_token(user, mfa_authenticated_at=mfa_authenticated_at)
+    access_token = create_access_token(
+        user,
+        mfa_authenticated_at=mfa_authenticated_at,
+        expires_minutes=access_expires_minutes,
+    )
     plain_refresh = create_refresh_token_string()
     await persist_refresh_token(
         db, user, plain_refresh,

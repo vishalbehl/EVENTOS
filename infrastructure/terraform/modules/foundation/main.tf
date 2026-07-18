@@ -9,10 +9,66 @@ locals {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "kms" {
+  statement {
+    sid    = "EnableAccountIAMPolicies"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+
+    actions   = ["kms:*"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowCloudWatchLogs"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${var.aws_region}.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:Encrypt*",
+      "kms:Decrypt*",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "kms:EncryptionContext:aws:logs:arn"
+      values   = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/${var.project}/${var.environment}/*"]
+    }
+  }
+
+  statement {
+    sid    = "AllowSNS"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey*"]
+    resources = ["*"]
+  }
+}
+
 resource "aws_kms_key" "platform" {
   description             = "${local.name_prefix} platform encryption key"
   deletion_window_in_days = 30
   enable_key_rotation     = true
+  policy                  = data.aws_iam_policy_document.kms.json
 
   tags = local.common_tags
 }
@@ -91,4 +147,98 @@ resource "aws_s3_bucket_versioning" "storage" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+resource "aws_s3_bucket_ownership_controls" "storage" {
+  for_each = aws_s3_bucket.storage
+
+  bucket = each.value.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "storage" {
+  for_each = length(var.storage_cors_origins) > 0 ? aws_s3_bucket.storage : {}
+
+  bucket = each.value.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD", "PUT", "POST"]
+    allowed_origins = sort(tolist(var.storage_cors_origins))
+    expose_headers  = ["ETag", "x-amz-checksum-sha256", "x-amz-request-id"]
+    max_age_seconds = 300
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "storage" {
+  for_each = aws_s3_bucket.storage
+
+  bucket = each.value.id
+
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+
+  dynamic "rule" {
+    for_each = contains(["imports", "exports"], each.key) ? [each.key] : []
+    content {
+      id     = "expire-temporary-${rule.value}"
+      status = "Enabled"
+
+      filter {
+        prefix = "temporary/"
+      }
+
+      expiration {
+        days = var.temporary_object_retention_days
+      }
+
+      noncurrent_version_expiration {
+        noncurrent_days = var.temporary_object_retention_days
+      }
+    }
+  }
+}
+
+data "aws_iam_policy_document" "storage" {
+  for_each = aws_s3_bucket.storage
+
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+    resources = [
+      each.value.arn,
+      "${each.value.arn}/*",
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "storage" {
+  for_each = aws_s3_bucket.storage
+
+  bucket = each.value.id
+  policy = data.aws_iam_policy_document.storage[each.key].json
 }

@@ -2717,6 +2717,34 @@
         "title": "AttendeeUpdateBody",
         "type": "object"
       },
+      "AttentionItem": {
+        "properties": {
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "severity",
+          "destination"
+        ],
+        "title": "AttentionItem",
+        "type": "object"
+      },
       "AttestationIn": {
         "properties": {
           "attested_by_name": {
@@ -4150,6 +4178,30 @@
         "title": "CampaignResponse",
         "type": "object"
       },
+      "Capability": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "Capability",
+        "type": "object"
+      },
       "CapacityRuleCreate": {
         "properties": {
           "auto_promote": {
@@ -4712,6 +4764,66 @@
           "redirect_base_url"
         ],
         "title": "CheckoutRequest",
+        "type": "object"
+      },
+      "CommandCenterLoginRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "remember_me": {
+            "default": false,
+            "title": "Remember Me",
+            "type": "boolean"
+          },
+          "totp_code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^\\d{6}$",
+            "title": "Totp Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "totp_code"
+        ],
+        "title": "CommandCenterLoginRequest",
+        "type": "object"
+      },
+      "CommandCenterTokenResponse": {
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "token_type": {
+            "default": "bearer",
+            "title": "Token Type",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserMeResponse"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_in",
+          "user"
+        ],
+        "title": "CommandCenterTokenResponse",
         "type": "object"
       },
       "CommercialExportCreate": {
@@ -5588,6 +5700,159 @@
           }
         },
         "title": "CompleteTaskRequest",
+        "type": "object"
+      },
+      "ConsoleKey": {
+        "enum": [
+          "home",
+          "business",
+          "revenue",
+          "operations",
+          "security",
+          "developer",
+          "support",
+          "settings"
+        ],
+        "title": "ConsoleKey",
+        "type": "string"
+      },
+      "ConsoleMetric": {
+        "properties": {
+          "comparison": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison"
+          },
+          "comparison_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Label"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "default": "neutral",
+            "title": "Status",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "value"
+        ],
+        "title": "ConsoleMetric",
+        "type": "object"
+      },
+      "ConsoleSummary": {
+        "properties": {
+          "attention": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "title": "Attention",
+            "type": "array"
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "console_key": {
+            "$ref": "#/components/schemas/ConsoleKey"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "health": {
+            "title": "Health",
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/ConsoleMetric"
+            },
+            "title": "Metrics",
+            "type": "array"
+          },
+          "recent_activity": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recent Activity",
+            "type": "array"
+          },
+          "resource_count": {
+            "default": 0,
+            "title": "Resource Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "console_key",
+          "health",
+          "generated_at"
+        ],
+        "title": "ConsoleSummary",
         "type": "object"
       },
       "ContactCreate": {
@@ -34928,6 +35193,115 @@
         "summary": "Check Slug",
         "tags": [
           "organisations"
+        ]
+      }
+    },
+    "/api/v1/auth/command-center/login": {
+      "post": {
+        "operationId": "command_center_login_api_v1_auth_command_center_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandCenterLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandCenterTokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Privileged Command Center login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/command-center/logout": {
+      "post": {
+        "operationId": "command_center_logout_api_v1_auth_command_center_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Command Center Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/command-center/logout-all": {
+      "post": {
+        "operationId": "command_center_logout_all_api_v1_auth_command_center_logout_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Command Center Logout All",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/command-center/refresh": {
+      "post": {
+        "operationId": "command_center_refresh_api_v1_auth_command_center_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandCenterTokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Command Center Refresh",
+        "tags": [
+          "auth"
         ]
       }
     },
@@ -73285,6 +73659,54 @@
         "tags": [
           "superadmin",
           "billing"
+        ]
+      }
+    },
+    "/api/v1/superadmin/consoles/{console_key}/summary": {
+      "get": {
+        "description": "Return live, auditable aggregates only; unsupported domains are explicit.",
+        "operationId": "get_console_summary_api_v1_superadmin_consoles__console_key__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "console_key",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ConsoleKey"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Console Summary",
+        "tags": [
+          "superadmin",
+          "superadmin-consoles"
         ]
       }
     },

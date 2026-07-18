@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.database import AsyncSessionLocal
+from app.config import settings
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.identity.services.auth_service import hash_password
@@ -439,6 +440,30 @@ async def ensure_plans_and_features():
             # 2. Seed Default Plans
             plans = [
                 {
+                    "name": "Demo Public",
+                    "tagline": "Time-limited public product evaluation",
+                    "description": "A tightly capped sample plan for verified public demo accounts.",
+                    "billing_model": "PER_EVENT",
+                    "currency": "INR",
+                    "price_per_event_min": 0,
+                    "price_per_event_max": 0,
+                    "max_events": 1,
+                    "max_users": 2,
+                    "max_event_team_members": 2,
+                    "max_registrations": 50,
+                    "max_speakers": 10,
+                    "max_sessions": 10,
+                    "max_rooms": 3,
+                    "max_ticket_categories": 2,
+                    "max_badge_templates": 1,
+                    "max_certificate_templates": 1,
+                    "max_emails_per_event": 20,
+                    "storage_quota_mb": 100,
+                    "display_order": 0,
+                    "is_popular": False,
+                    "color_hex": "#0F766E"
+                },
+                {
                     "name": "Basic",
                     "tagline": "Registration + Speaker Management",
                     "description": "Perfect for small events and basic registration.",
@@ -448,6 +473,7 @@ async def ensure_plans_and_features():
                     "price_per_event_max": 25000,
                     "max_events": 1,
                     "max_users": 2,
+                    "max_event_team_members": 2,
                     "max_registrations": 150,
                     "max_speakers": 30,
                     "max_sessions": 25,
@@ -455,6 +481,7 @@ async def ensure_plans_and_features():
                     "max_ticket_categories": 3,
                     "max_badge_templates": 3,
                     "max_certificate_templates": 3,
+                    "max_emails_per_event": 450,
                     "storage_quota_mb": 10240, # 10 GB
                     "display_order": 1,
                     "is_popular": False,
@@ -470,6 +497,7 @@ async def ensure_plans_and_features():
                     "price_per_event_max": 120000,
                     "max_events": 1,
                     "max_users": 10,
+                    "max_event_team_members": 10,
                     "max_registrations": 1000,
                     "max_speakers": 100,
                     "max_sessions": 100,
@@ -477,6 +505,7 @@ async def ensure_plans_and_features():
                     "max_ticket_categories": 10,
                     "max_badge_templates": None,
                     "max_certificate_templates": None,
+                    "max_emails_per_event": 5000,
                     "storage_quota_mb": 51200, # 50 GB
                     "display_order": 2,
                     "is_popular": True,
@@ -492,6 +521,7 @@ async def ensure_plans_and_features():
                     "price_per_event_max": None,
                     "max_events": 1,
                     "max_users": 50,
+                    "max_event_team_members": 50,
                     "max_registrations": None,
                     "max_speakers": 500,
                     "max_sessions": None,
@@ -499,6 +529,7 @@ async def ensure_plans_and_features():
                     "max_ticket_categories": None,
                     "max_badge_templates": None,
                     "max_certificate_templates": None,
+                    "max_emails_per_event": None,
                     "storage_quota_mb": 204800, # 200 GB
                     "display_order": 3,
                     "is_popular": False,
@@ -522,6 +553,7 @@ async def ensure_plans_and_features():
                         price_per_event_max=p_data["price_per_event_max"],
                         max_events=p_data["max_events"],
                         max_users=p_data["max_users"],
+                        max_event_team_members=p_data["max_event_team_members"],
                         max_registrations=p_data["max_registrations"],
                         max_speakers=p_data["max_speakers"],
                         max_sessions=p_data["max_sessions"],
@@ -529,6 +561,7 @@ async def ensure_plans_and_features():
                         max_ticket_categories=p_data["max_ticket_categories"],
                         max_badge_templates=p_data["max_badge_templates"],
                         max_certificate_templates=p_data["max_certificate_templates"],
+                        max_emails_per_event=p_data["max_emails_per_event"],
                         storage_quota_mb=p_data["storage_quota_mb"],
                         display_order=p_data["display_order"],
                         is_popular=p_data["is_popular"],
@@ -543,7 +576,7 @@ async def ensure_plans_and_features():
                         feat = all_feats.get(f_data["key"])
                         if feat:
                             enabled = True
-                            if plan.name == "Basic":
+                            if plan.name in {"Basic", "Demo Public"}:
                                 enabled = f_data["display_value_basic"] != "❌"
                             elif plan.name == "Professional":
                                 enabled = f_data["display_value_professional"] != "❌"
@@ -812,32 +845,6 @@ async def ensure_plans_and_features():
                         db.add(AddonFeature(addon_id=addon_obj.id, feature_id=feat_obj.id))
                         logger.info(f"Seeded addon-feature mapping: {addon_key} -> {feat_key}")
             await db.flush()
-            # Clean up obsolete plans
-            from app.modules.billing.models.subscription import OrganizationSubscription
-            from sqlalchemy import update
-
-            default_plans_res = await db.execute(
-                select(SubscriptionPlan).where(SubscriptionPlan.name.in_(["Basic", "Professional", "Enterprise"]))
-            )
-            default_plans_map = {p.name: p for p in default_plans_res.scalars().all()}
-            basic_plan = default_plans_map.get("Basic")
-
-            if basic_plan:
-                obsolete_plans_res = await db.execute(
-                    select(SubscriptionPlan).where(SubscriptionPlan.name.not_in(["Basic", "Professional", "Enterprise"]))
-                )
-                obsolete_plans = obsolete_plans_res.scalars().all()
-                for op_plan in obsolete_plans:
-                    logger.info(f"Cleaning up obsolete subscription plan: {op_plan.name} ({op_plan.id})")
-                    # Migrate subscriptions to Basic fallback
-                    await db.execute(
-                        update(OrganizationSubscription)
-                        .where(OrganizationSubscription.plan_id == op_plan.id)
-                        .values(plan_id=basic_plan.id)
-                    )
-                    # Delete obsolete plan (cascading to plan_features table)
-                    await db.delete(op_plan)
-
             await db.commit()
             logger.info("Subscription plans and features seeded.")
         except Exception as e:
@@ -847,8 +854,11 @@ async def ensure_plans_and_features():
 
 async def ensure_admin_user():
     """
-    Ensures that at least one organization and one admin user exist in the database.
-    Default Admin: admin@eventos.com / admin123
+    Seed local development defaults and verify production bootstrap state.
+
+    Production never creates a privileged account with a known password. The
+    first super administrator must be provisioned through an audited one-off
+    identity bootstrap process.
     """
     # Seed RBAC first
     await ensure_rbac_defaults()
@@ -938,21 +948,28 @@ async def ensure_admin_user():
             super_admin = result.first()
 
             if not super_admin:
-                admin_email = "admin@eventos.com"
-                logger.info(f"No Super Admin found. Creating default admin {admin_email}...")
-                admin = User(
-                    id=uuid.uuid4(),
-                    organization_id=org.id,
-                    email=admin_email,
-                    password_hash=hash_password("admin123"),
-                    first_name="Default",
-                    last_name="Admin",
-                    role="super_admin",
-                    is_active=True
-                )
-                db.add(admin)
-                await db.commit()
-                logger.info(f"Created default admin: {admin_email} / admin123")
+                if settings.is_production:
+                    logger.warning(
+                        "No super administrator exists. Production startup will not create "
+                        "a default privileged credential; run the audited identity bootstrap."
+                    )
+                    await db.commit()
+                else:
+                    admin_email = "admin@eventos.com"
+                    logger.info(f"No Super Admin found. Creating local development admin {admin_email}...")
+                    admin = User(
+                        id=uuid.uuid4(),
+                        organization_id=org.id,
+                        email=admin_email,
+                        password_hash=hash_password("admin123"),
+                        first_name="Default",
+                        last_name="Admin",
+                        role="super_admin",
+                        is_active=True
+                    )
+                    db.add(admin)
+                    await db.commit()
+                    logger.info("Created local development admin account.")
             else:
                 logger.debug("At least one Super Admin already exists. Skipping default admin creation.")
                 await db.commit()
@@ -960,3 +977,5 @@ async def ensure_admin_user():
         except Exception as e:
             logger.error(f"Failed to ensure admin user: {e}")
             await db.rollback()
+            if settings.is_production:
+                raise

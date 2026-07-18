@@ -1,0 +1,55 @@
+name: Deploy Vercel portals
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/cloud/**"
+      - "package-lock.json"
+      - ".github/workflows/vercel-portals-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-portals-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: sample
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: command-center
+            project_secret: VERCEL_COMMAND_CENTER_PROJECT_ID
+          - app: organiser-portal
+            project_secret: VERCEL_ORGANISER_PROJECT_ID
+          - app: registration-portal
+            project_secret: VERCEL_REGISTRATION_PROJECT_ID
+          - app: speaker-portal
+            project_secret: VERCEL_SPEAKER_PROJECT_ID
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build portal
+        working-directory: apps/cloud/${{ matrix.app }}
+        env:
+          NEXT_PUBLIC_API_URL: https://${{ vars.SAMPLE_API_DOMAIN }}
+          NEXT_PUBLIC_WS_URL: https://${{ vars.SAMPLE_API_DOMAIN }}
+        run: npm run build
+      - name: Deploy portal
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets[matrix.project_secret] }}
+        run: npx vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN" --cwd "apps/cloud/${{ matrix.app }}"
+

@@ -21,7 +21,7 @@ export function ChartCard({
   className,
 }: ChartCardProps) {
   return (
-    <section aria-label={title} className={cn("flex flex-col justify-between rounded-xl border border-border bg-surface p-5 shadow-sm", className)}>
+    <section aria-label={title} className={cn("flex flex-col justify-between rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-panel)]", className)}>
       <div className="flex items-start justify-between gap-4 mb-4">
         <div className="space-y-0.5 min-w-0">
           <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate">{title}</h3>

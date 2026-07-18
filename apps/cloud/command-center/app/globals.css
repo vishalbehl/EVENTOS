@@ -1,21 +1,21 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
 @import "../src/styles/themes.css";
 @import "../src/styles/global.css";
 
 :root {
-  --font-display: 'Space Grotesk', sans-serif;
-  --font-dm-sans: 'IBM Plex Sans', sans-serif;
+  --font-display: 'Inter', sans-serif;
+  --font-dm-sans: 'Inter', sans-serif;
   --font-dm-mono: 'IBM Plex Mono', monospace;
-  --font-sans: 'IBM Plex Sans', sans-serif;
+  --font-sans: 'Inter', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
 
   /* Dynamically derive variables from the active theme in themes.css */
   --bg-base: var(--base);
   --bg-surface: var(--card);
-  --bg-surface-2: color-mix(in srgb, var(--card) 92%, var(--base));
-  --bg-surface-3: color-mix(in srgb, var(--card) 85%, var(--base));
+  --bg-surface-2: var(--raised);
+  --bg-surface-3: var(--inset);
   --bg-surface-deep: var(--surf);
-  --bg-surface-hover: color-mix(in srgb, var(--card) 88%, var(--text));
+  --bg-surface-hover: color-mix(in srgb, var(--raised) 88%, var(--text));
   --border-default: var(--border);
   --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
 
@@ -26,7 +26,7 @@
 
   --brand-primary: var(--pri);
   --brand-primary-hover: var(--sec);
-  --brand-primary-muted: color-mix(in srgb, var(--pri) 8%, transparent);
+  --brand-primary-muted: color-mix(in srgb, var(--acc) 11%, transparent);
   --brand-secondary: var(--sec);
   
   /* Semantic */
@@ -56,25 +56,27 @@
   /* Shared system geometry */
   --space-page-x: clamp(1rem, 2.4vw, 2.5rem);
   --space-page-y: clamp(1.25rem, 2.4vw, 2.5rem);
-  --radius-control: 0.625rem;
-  --radius-panel: 0.875rem;
-  --radius-overlay: 1.125rem;
-  --control-height: 2.5rem;
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
+  --radius-card: 1rem;
+  --radius-overlay: 1rem;
+  --control-height: 2.75rem;
   --table-row-height: 3.25rem;
-  --shadow-panel: 0 18px 50px color-mix(in srgb, #000 28%, transparent);
-  --shadow-overlay: 0 28px 90px color-mix(in srgb, #000 48%, transparent);
-  --motion-fast: 120ms;
-  --motion-standard: 220ms;
-  --motion-slow: 360ms;
+  --shadow-panel: 0 1px 2px rgb(var(--shadow-color) / 0.04), 0 8px 24px rgb(var(--shadow-color) / 0.035);
+  --shadow-card-hover: 0 18px 42px rgb(var(--shadow-color) / 0.09);
+  --shadow-overlay: 0 28px 80px rgb(var(--shadow-color) / 0.22);
+  --motion-fast: 140ms;
+  --motion-standard: 240ms;
+  --motion-slow: 420ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* Sidebar */
-  --sidebar-bg: var(--base);
+  --sidebar-bg: var(--surf);
   --sidebar-border: var(--border);
-  --sidebar-item-active-bg: var(--brand-primary-muted);
-  --sidebar-item-active-border: var(--brand-primary);
-  --sidebar-item-hover-bg: color-mix(in srgb, var(--card) 95%, var(--text));
+  --sidebar-item-active-bg: var(--inset);
+  --sidebar-item-active-border: var(--border);
+  --sidebar-item-hover-bg: var(--raised);
 
   /* Map ALL shadcn CSS variables to these custom tokens */
   --background: var(--bg-base);
@@ -84,11 +86,45 @@
   --foreground: var(--text-primary);
   --muted-foreground: var(--text-secondary);
   --primary: var(--brand-primary);
-  --primary-foreground: var(--bg-base);
+  --primary-foreground: var(--primary-contrast);
   --radius: 0.75rem;
   --accent: color-mix(in srgb, var(--pri) 12%, transparent);
   --accent-foreground: var(--text-primary);
   --ring: var(--pri);
+}
+
+[data-theme="dark"] {
+  /* Reference direction: true-black control room with graphite structure. */
+  --bg-surface-2: #080808;
+  --bg-surface-3: #171719;
+  --bg-surface-deep: #111111;
+  --bg-surface-hover: #1b1b1e;
+  --border-default: #303034;
+  --border-subtle: #202024;
+  --text-tertiary: #6f6f76;
+  --text-disabled: #505057;
+  --brand-primary-muted: rgb(53 72 255 / 0.14);
+  --status-info: #c4c4ca;
+  --status-info-muted: rgb(196 196 202 / 0.12);
+  --chart-grid: #202024;
+  --sidebar-bg: #111111;
+  --sidebar-border: #29292d;
+  --sidebar-item-active-bg: #222225;
+  --sidebar-item-active-border: #35353a;
+  --sidebar-item-hover-bg: #19191b;
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.025), 0 14px 34px rgb(0 0 0 / 0.28);
+  --shadow-card-hover: 0 20px 48px rgb(0 0 0 / 0.48);
+  --shadow-overlay: 0 32px 90px rgb(0 0 0 / 0.72);
+  --popover: #111113;
+  --accent: rgb(53 72 255 / 0.14);
+  --ring: #5262ff;
+}
+
+/* Blue is an interaction signal in dark mode, never general-purpose copy. */
+[data-theme="dark"] :is(p, span, a, label, h1, h2, h3, h4, h5, h6, td, th)[class~="text-brand-primary"],
+[data-theme="dark"] :is(p, span, a, label, h1, h2, h3, h4, h5, h6, td, th)[class*="text-[var(--brand-primary)]"],
+[data-theme="dark"] :is(p, span, a, label, h1, h2, h3, h4, h5, h6, td, th)[class*="text-[var(--pri)]"] {
+  color: var(--text-primary) !important;
 }
 
 [data-density="compact"] {
@@ -104,7 +140,7 @@
 @layer base {
   body {
     @apply antialiased;
-    font-family: var(--font-dm-sans), sans-serif;
+    font-family: var(--font-sans), sans-serif;
     min-width: 20rem;
   }
 
@@ -165,7 +201,7 @@
 
 @layer utilities {
   .perspective-1000 { perspective: 1000px; }
-  .text-glow-indigo { text-shadow: 0 0 10px color-mix(in srgb, var(--pri) 40%, transparent); }
+  .text-glow-indigo { text-shadow: none; }
 }
 
 @keyframes float {
@@ -174,15 +210,27 @@
   100% { transform: translateY(0px) rotate(0deg); }
 }
 
-.animate-float {
-  animation: float 6s ease-in-out infinite;
-}
+.animate-float { animation: none; }
 
 .cc-panel {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-panel);
   background: var(--bg-surface);
   box-shadow: var(--shadow-panel);
+}
+
+.cc-route-enter { animation: cc-route-enter var(--motion-slow) var(--ease-emphasized) both; }
+
+.cc-premium-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+@keyframes cc-route-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .cc-control {

@@ -309,7 +309,7 @@ export default function ProposalGeneratorPage() {
   // Categories config
   const categories = [
     { id: "registration", label: "Registration Templates", icon: Users, desc: "Check-in counters, self-service kiosks, badge printers", count: registrationTemplates.length },
-    { id: "srr", label: "Speaker Ready Room", icon: Grid, desc: "Preview stations, upload zones, crew operators", count: srrTemplates.length },
+    { id: "srr", label: "SRR", icon: Grid, desc: "Preview stations, upload zones, crew operators", count: srrTemplates.length },
     { id: "room", label: "Presentation Rooms", icon: Layout, desc: "Standard setups, parallel room configs, technician crew", count: roomTemplates.length },
   ] as const
 

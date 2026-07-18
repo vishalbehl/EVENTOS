@@ -35,3 +35,15 @@ variable "storage_buckets" {
   description = "Private object storage buckets required by the platform."
   default     = ["presentations", "posters", "thumbnails", "imports", "assets", "exports"]
 }
+
+variable "storage_cors_origins" {
+  type        = set(string)
+  description = "Exact browser origins permitted to use presigned S3 requests."
+  default     = []
+}
+
+variable "temporary_object_retention_days" {
+  type        = number
+  description = "Retention for temporary imports, exports, and incomplete multipart uploads."
+  default     = 14
+}

@@ -11,6 +11,7 @@
 from pathlib import Path
 from typing import List
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # .env lives one directory above workers/
@@ -18,6 +19,7 @@ _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class WorkerSettings(BaseSettings):
+    environment: str = "development"
     # ── Database (sync psycopg2 — workers use sync SQLAlchemy) ─
     DATABASE_URL_SYNC: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/eventos_db"
 
@@ -34,6 +36,7 @@ class WorkerSettings(BaseSettings):
     S3_BUCKET_POSTERS: str = "posters"
     S3_BUCKET_THUMBNAILS: str = "thumbnails"
     S3_BUCKET_IMPORTS: str = "imports"
+    S3_BUCKET_ASSETS: str = "assets"
     S3_BUCKET_EXPORTS: str = "exports"
     S3_REGION: str = "auto"
 
@@ -81,6 +84,25 @@ class WorkerSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "WorkerSettings":
+        if self.environment != "production":
+            return self
+        errors: list[str] = []
+        if not self.DATABASE_URL_SYNC.startswith("postgresql+"):
+            errors.append("DATABASE_URL_SYNC must use PostgreSQL")
+        if not self.REDIS_URL.startswith("rediss://"):
+            errors.append("REDIS_URL must use TLS")
+        if not self.CELERY_BROKER_URL.startswith("rediss://"):
+            errors.append("CELERY_BROKER_URL must use TLS")
+        if not self.CELERY_RESULT_BACKEND.startswith("rediss://"):
+            errors.append("CELERY_RESULT_BACKEND must use TLS")
+        if self.S3_ENDPOINT_URL == "" and (self.S3_ACCESS_KEY_ID or self.S3_SECRET_ACCESS_KEY):
+            errors.append("AWS S3 must use the ECS task role instead of static access keys")
+        if errors:
+            raise ValueError("Unsafe production worker configuration: " + "; ".join(errors))
+        return self
 
     @property
     def venue_server_list(self) -> List[str]:

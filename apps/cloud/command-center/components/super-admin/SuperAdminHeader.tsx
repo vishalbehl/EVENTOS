@@ -113,7 +113,7 @@ export function SuperAdminHeader() {
 
         {/* Theme Toggle */}
         <button
-          onClick={() => setTheme(theme === "light" ? "plasma-violet" : "light")}
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           className="p-2 rounded-lg border border-border bg-surface text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-surface-2 transition-all flex items-center justify-center cursor-pointer"
           title="Switch Dark/Light Theme"
         >

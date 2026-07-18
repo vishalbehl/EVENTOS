@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     API_BASE_URL: str = "http://127.0.0.1:8000"
     environment: str = "development"        # development | staging | production
     debug: bool = False
+    PUBLIC_DEMO_SIGNUP_ENABLED: bool = False
+    PUBLIC_DEMO_PLAN_NAME: str = "Demo Public"
+    PUBLIC_DEMO_RETENTION_DAYS: int = 14
 
     # ── Database ──────────────────────────────────────────
     # Sync URL used by Alembic migrations & legacy sync code
@@ -39,6 +42,16 @@ class Settings(BaseSettings):
     PROPOSAL_SHARE_SECRET: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480          # 8 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    COMMAND_CENTER_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    COMMAND_CENTER_COOKIE_NAME: str = "cc_refresh"
+    COMMAND_CENTER_COOKIE_SECURE: bool = False
+    COMMAND_CENTER_COOKIE_SAMESITE: str = "lax"
+    COMMAND_CENTER_LOGIN_ACCOUNT_LIMIT: int = 5
+    COMMAND_CENTER_LOGIN_IP_LIMIT: int = 20
+    COMMAND_CENTER_LOGIN_WINDOW_SECONDS: int = 900
+    COMMAND_CENTER_ACCOUNT_LOCK_SECONDS: int = 900
+    COMMAND_CENTER_IP_LOCK_SECONDS: int = 1800
+    TRUSTED_PROXY_CIDRS: List[str] = []
     ENFORCE_PRIVILEGED_MFA: bool = False
     MFA_STEP_UP_MAX_AGE_SECONDS: int = 600
     WS_AUTH_TIMEOUT_SECONDS: int = 10
@@ -165,6 +178,13 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
+    @field_validator("TRUSTED_PROXY_CIDRS", mode="before")
+    @classmethod
+    def parse_trusted_proxy_cidrs(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if not self.is_production:
@@ -187,8 +207,26 @@ class Settings(BaseSettings):
             errors.append("REQUIRE_RLS_SAFE_RUNTIME_ROLE must be enabled")
         if self.ACCESS_TOKEN_EXPIRE_MINUTES > 60:
             errors.append("ACCESS_TOKEN_EXPIRE_MINUTES must not exceed 60 in production")
+        if self.COMMAND_CENTER_ACCESS_TOKEN_EXPIRE_MINUTES > 15:
+            errors.append("COMMAND_CENTER_ACCESS_TOKEN_EXPIRE_MINUTES must not exceed 15 in production")
+        if not self.COMMAND_CENTER_COOKIE_SECURE:
+            errors.append("COMMAND_CENTER_COOKIE_SECURE must be enabled in production")
         if any("localhost" in origin or "127.0.0.1" in origin or "0.0.0.0" in origin for origin in self.CORS_ORIGINS):
             errors.append("CORS_ORIGINS must contain only production origins")
+        if "*" in self.CORS_ORIGINS or any(not origin.startswith("https://") for origin in self.CORS_ORIGINS):
+            errors.append("CORS_ORIGINS must be explicit HTTPS origins")
+        if not self.API_BASE_URL.startswith("https://"):
+            errors.append("API_BASE_URL must use HTTPS")
+        if self.STORAGE_MODE != "s3":
+            errors.append("STORAGE_MODE must be s3")
+        if not self.REDIS_URL.startswith("rediss://"):
+            errors.append("REDIS_URL must use TLS")
+        if not self.CELERY_BROKER_URL.startswith("rediss://"):
+            errors.append("CELERY_BROKER_URL must use TLS")
+        if not self.CELERY_RESULT_BACKEND.startswith("rediss://"):
+            errors.append("CELERY_RESULT_BACKEND must use TLS")
+        if self.S3_ENDPOINT_URL == "" and (self.S3_ACCESS_KEY_ID or self.S3_SECRET_ACCESS_KEY):
+            errors.append("AWS S3 must use the ECS task role instead of static access keys")
         if errors:
             raise ValueError("Unsafe production configuration: " + "; ".join(errors))
         return self

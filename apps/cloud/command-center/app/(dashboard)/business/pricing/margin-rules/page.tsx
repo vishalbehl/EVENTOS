@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Plus, RefreshCw, Percent, Sliders, CheckCircle2, AlertTriangle, Settings, Pencil } from "lucide-react"
 import { toast } from "sonner"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 export default function MarginRulesPage() {
   const { data: rules = [], isLoading, refetch } = usePricingRules()
@@ -186,17 +186,17 @@ export default function MarginRulesPage() {
         )}
       </div>
 
-      {/* Slideout Configuration Panel */}
-      <Sheet open={showForm} onOpenChange={setShowForm}>
-        <SheetContent className="bg-[var(--bg-surface)] border-[var(--border-default)] w-[480px] sm:max-w-[480px]">
-          <SheetHeader className="border-b border-border pb-4 mb-6">
-            <SheetTitle className="text-primary font-bold">{isEditing ? "Modify Margin Rule Set" : "Create Margin Rule Set"}</SheetTitle>
-            <SheetDescription className="text-secondary text-xs">
+      {/* Centered configuration window */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto border-[var(--border-default)] bg-[var(--bg-surface)] p-0 sm:max-w-2xl">
+          <DialogHeader className="sticky top-0 z-10 border-b border-border bg-[var(--bg-surface)] px-6 py-5 text-left">
+            <DialogTitle className="text-primary font-bold">{isEditing ? "Modify Margin Rule Set" : "Create Margin Rule Set"}</DialogTitle>
+            <DialogDescription className="text-secondary text-xs">
               Define the percentage-based rules for calculating final pricing totals in EventX quoting flows.
-            </SheetDescription>
-          </SheetHeader>
+            </DialogDescription>
+          </DialogHeader>
 
-          <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          <form onSubmit={handleSubmit} className="space-y-4 px-6 pb-6 text-xs">
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold uppercase text-secondary">Configuration Name</label>
               <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Standard Margin FY27" className="bg-surface-2 border-border" />
@@ -283,8 +283,8 @@ export default function MarginRulesPage() {
               </Button>
             </div>
           </form>
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   )
 }

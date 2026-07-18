@@ -146,10 +146,10 @@ export const useAuthStore = create<AuthState>()(
           impersonatedUserName: null,
         };
 
-        if (state.rememberMe) return safeState;
-
         return {
           ...safeState,
+          // Authentication tokens are deliberately memory-only. The HttpOnly
+          // refresh cookie is the sole authority for restoring a session.
           user: null,
           accessToken: null,
           refreshToken: null,

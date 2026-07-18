@@ -4,8 +4,8 @@ import { Providers } from "@/components/providers";
 import { ImpersonationBanner } from "@/components/super-admin/ImpersonationBanner";
 
 export const metadata: Metadata = {
-  title: "EventX OS | Ecosystem Control",
-  description: "Advanced administrative terminal for ecosystem management.",
+  title: "EventX OS | Command Center",
+  description: "Organization-grade administration for the EventX OS ecosystem.",
 };
 
 export default function RootLayout({
@@ -21,11 +21,16 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  var themes = ['plasma-violet', 'light'];
                   var saved = localStorage.getItem('eventos-theme');
-                  var theme = themes.indexOf(saved) >= 0 ? saved : 'plasma-violet';
-                  document.documentElement.setAttribute('data-theme', theme);
-                  if (theme !== 'light') {
+                  var preference = saved === 'light' || saved === 'dark' || saved === 'system' ? saved : (saved ? 'dark' : 'system');
+                  var resolved = preference === 'system'
+                    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                    : preference;
+                  if (saved !== preference) localStorage.setItem('eventos-theme', preference);
+                  document.documentElement.setAttribute('data-theme-preference', preference);
+                  document.documentElement.setAttribute('data-theme', resolved);
+                  document.documentElement.style.colorScheme = resolved;
+                  if (resolved === 'dark') {
                     document.documentElement.classList.add('dark');
                   } else {
                     document.documentElement.classList.remove('dark');

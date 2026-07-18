@@ -24,12 +24,12 @@ describe("authService privileged login", () => {
   it("submits the MFA code and stores a verified administrator session", async () => {
     let submittedBody: unknown;
     server.use(
-      http.post("http://127.0.0.1:8000/api/v1/auth/login", async ({ request }) => {
+      http.post("http://127.0.0.1:8000/api/v1/auth/command-center/login", async ({ request }) => {
         submittedBody = await request.json();
         return HttpResponse.json({
           access_token: "admin-access",
-          refresh_token: "admin-refresh",
           token_type: "bearer",
+          expires_in: 900,
           user: baseUser,
         });
       }),
@@ -43,12 +43,13 @@ describe("authService privileged login", () => {
     expect(submittedBody).toEqual({
       email: "admin@example.com",
       password: "secret",
-      mfa_code: "123456",
+      totp_code: "123456",
+      remember_me: true,
     });
     expect(useAuthStore.getState()).toMatchObject({
       isAuthenticated: true,
       accessToken: "admin-access",
-      refreshToken: "admin-refresh",
+      refreshToken: null,
       rememberMe: true,
     });
   });
@@ -56,15 +57,15 @@ describe("authService privileged login", () => {
   it("revokes and refuses a valid non-administrator identity", async () => {
     let logoutAuthorization: string | null = null;
     server.use(
-      http.post("http://127.0.0.1:8000/api/v1/auth/login", () =>
+      http.post("http://127.0.0.1:8000/api/v1/auth/command-center/login", () =>
         HttpResponse.json({
           access_token: "organizer-access",
-          refresh_token: "organizer-refresh",
           token_type: "bearer",
+          expires_in: 900,
           user: { ...baseUser, role: "organizer", is_platform_admin: false },
         }),
       ),
-      http.post("http://127.0.0.1:8000/api/v1/auth/logout", ({ request }) => {
+      http.post("http://127.0.0.1:8000/api/v1/auth/command-center/logout", ({ request }) => {
         logoutAuthorization = request.headers.get("authorization");
         return HttpResponse.json({ message: "Logged out successfully." });
       }),

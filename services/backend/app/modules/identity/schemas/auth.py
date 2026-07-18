@@ -14,6 +14,20 @@ class LoginRequest(BaseModel):
     mfa_code: Optional[str] = Field(default=None, min_length=6, max_length=6)
 
 
+class CommandCenterLoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1)
+    totp_code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    remember_me: bool = False
+
+
+class CommandCenterTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: "UserMeResponse"
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None

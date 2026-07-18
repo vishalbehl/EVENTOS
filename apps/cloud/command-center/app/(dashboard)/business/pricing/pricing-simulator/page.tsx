@@ -412,7 +412,7 @@ export default function PricingSimulatorPage() {
   // Category Configuration
   const categoriesList = [
     { id: "registration", label: "Registration", icon: Users, desc: "Check-in counters, kiosks and badge printers", count: registrationTemplates.length },
-    { id: "srr", label: "Speaker Ready Room", icon: Grid, desc: "Preview stations and check-in desks for speakers", count: srrTemplates.length },
+    { id: "srr", label: "SRR", icon: Grid, desc: "Preview stations and check-in desks for speakers", count: srrTemplates.length },
     { id: "room", label: "Rooms", icon: Layout, desc: "Equipment and staff for presentation rooms", count: roomTemplates.length },
   ]
   */
@@ -690,7 +690,7 @@ export default function PricingSimulatorPage() {
 
   const categoriesList: Array<{ id: TemplateCategory; label: string; icon: typeof Users; desc: string; count: number }> = [
     { id: "registration", label: "Registration", icon: Users, desc: "Check-in counters, kiosks and badge printers", count: registrationTemplates.length },
-    { id: "srr", label: "Speaker Ready Room", icon: Grid, desc: "Preview stations and check-in desks for speakers", count: srrTemplates.length },
+    { id: "srr", label: "SRR", icon: Grid, desc: "Preview stations and check-in desks for speakers", count: srrTemplates.length },
     { id: "room", label: "Rooms", icon: Layout, desc: "Equipment and staff for presentation rooms", count: roomTemplates.length },
   ]
 
@@ -2746,7 +2746,7 @@ export default function PricingSimulatorPage() {
                             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
                               {!categoryHasSelection ? (
                                 <div className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-[11px] text-white/50">
-                                  Select a {modalTemplateCategory === "registration" ? "registration template" : "speaker ready room template"} first to enable these add-ons.
+                                  Select a {modalTemplateCategory === "registration" ? "registration template" : "SRR template"} first to enable these add-ons.
                                 </div>
                               ) : stepAddonsForCategory.length === 0 ? (
                                 <div className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-[11px] text-white/50">

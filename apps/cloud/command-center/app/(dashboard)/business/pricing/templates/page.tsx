@@ -24,7 +24,7 @@ export default function TemplatesLibraryDashboard() {
     const all = [
       ...(data.room_templates ?? []).map(t => ({ ...t, type: "Room Setup" })),
       ...(data.registration_templates ?? []).map(t => ({ ...t, type: "Registration counter" })),
-      ...(data.srr_templates ?? []).map(t => ({ ...t, type: "Speaker Ready Room" })),
+      ...(data.srr_templates ?? []).map(t => ({ ...t, type: "SRR" })),
     ]
     return all.slice(0, 5)
   }, [data])
@@ -40,7 +40,7 @@ export default function TemplatesLibraryDashboard() {
         { label: "Total Reusable Presets", value: totalTemplates },
         { label: "Room Setups", value: roomCount },
         { label: "Registration Counters", value: regCount },
-        { label: "Speaker Ready Rooms", value: srrCount },
+        { label: "SRR", value: srrCount },
       ]} />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
@@ -63,7 +63,7 @@ export default function TemplatesLibraryDashboard() {
           },
           {
             title: "SRR Templates",
-            desc: "Speaker Ready Room station configurations, operators count, computers and workflow controls.",
+            desc: "SRR station configurations, operator counts, computers, and workflow controls.",
             count: srrCount,
             href: "/business/pricing/templates/srr",
             icon: Grid,

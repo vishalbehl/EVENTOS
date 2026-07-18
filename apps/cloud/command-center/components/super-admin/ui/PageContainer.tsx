@@ -9,7 +9,7 @@ interface PageContainerProps extends React.HTMLAttributes<HTMLElement> {
 
 export function PageContainer({ children, className, ...props }: PageContainerProps) {
   return (
-    <section className={cn("mx-auto flex min-h-0 w-full max-w-[1600px] flex-col space-y-6 px-[var(--space-page-x)] py-[var(--space-page-y)]", className)} {...props}>
+    <section className={cn("mx-auto flex min-h-full w-full max-w-[1600px] shrink-0 flex-col space-y-6 px-[var(--space-page-x)] py-[var(--space-page-y)]", className)} {...props}>
       {children}
     </section>
   );

@@ -217,6 +217,13 @@ async def check_slug(slug: str = Query(..., min_length=3, max_length=50), db: As
 
 @router.post("/auth/signup", status_code=status.HTTP_201_CREATED)
 async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.config import settings
+
+    if settings.is_production and not settings.PUBLIC_DEMO_SIGNUP_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "PUBLIC_SIGNUP_DISABLED", "message": "Public demo signup is not enabled."},
+        )
     slug = _clean_slug(payload.slug)
     if not SLUG_RE.match(slug):
         raise HTTPException(status_code=422, detail="Slug must be 3-50 lowercase letters, numbers, or hyphens.")
@@ -248,6 +255,42 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
     db.add(user)
     await db.flush()
     db.add(OrganizationMember(organization_id=org.id, user_id=user.id, org_role="owner", accepted_at=datetime.now(timezone.utc)))
+
+    from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
+    from app.modules.billing.services.activation_service import ActivationService
+
+    demo_plan = await db.scalar(
+        select(SubscriptionPlan).where(
+            SubscriptionPlan.name == settings.PUBLIC_DEMO_PLAN_NAME,
+            SubscriptionPlan.is_active.is_(True),
+        )
+    )
+    if demo_plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "DEMO_PLAN_UNAVAILABLE", "message": "The public demo plan is unavailable."},
+        )
+
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.PUBLIC_DEMO_RETENTION_DAYS)
+    subscription = OrganizationSubscription(
+        organization_id=org.id,
+        plan_id=demo_plan.id,
+        status="TRIAL",
+        trial_ends_at=expires_at,
+        current_period_end=expires_at,
+        status_reason="PUBLIC_DEMO_SIGNUP",
+        status_changed_at=datetime.now(timezone.utc),
+        status_changed_by=user.id,
+    )
+    db.add(subscription)
+    await db.flush()
+    await ActivationService.ensure_subscription_grant(db, subscription)
+    org.plan = "trial"
+    org.max_events = demo_plan.max_events
+    org.max_users = demo_plan.max_users
+    org.max_storage_gb = max(1, demo_plan.storage_quota_mb // 1024)
+    org.plan_expires_at = expires_at
+
     access_token = auth_service.create_access_token(user)
     await db.commit()
     await db.refresh(org)

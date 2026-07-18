@@ -11,10 +11,14 @@ import { DataTable } from "@/components/super-admin/ui/DataTable"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Package, Plus, Search, FileSpreadsheet, SlidersHorizontal, RotateCcw, X, Upload } from "lucide-react"
+import { Package, Plus, Search, FileSpreadsheet, SlidersHorizontal, RotateCcw, X, Upload, Pencil, Trash2 } from "lucide-react"
 import { useDebounce } from "@/hooks/use-debounce"
 import { useReactTable, getCoreRowModel } from "@tanstack/react-table"
 import { useDropzone } from "react-dropzone"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
+
+const normalizeCatalogueCategory = (value?: string | null) =>
+  value === "Speaker Ready Room (SRR)" || value === "Speaker Ready Room" ? "SRR" : (value || "Accessories")
 
 export default function HardwareCatalogPage() {
   const [search, setSearch] = useState("")
@@ -23,12 +27,29 @@ export default function HardwareCatalogPage() {
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [activeOnly, setActiveOnly] = useState(false)
   const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(10)
+  const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({})
   const [showCreatePanel, setShowCreatePanel] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
-  const limit = 20
+  const limit = pageSize
 
   const debouncedSearch = useDebounce(search, 300)
+
+  useEffect(() => setRowSelection({}), [page, pageSize, debouncedSearch, categoryFilter, pricingUnitFilter, statusFilter, activeOnly])
+
+  useEffect(() => {
+    if (!showCreatePanel && !editingItem && !showImportModal) return
+    const pageScroller = document.getElementById("command-center-main")
+    const previousBodyOverflow = document.body.style.overflow
+    const previousPageOverflow = pageScroller?.style.overflow
+    document.body.style.overflow = "hidden"
+    if (pageScroller) pageScroller.style.overflow = "hidden"
+    return () => {
+      document.body.style.overflow = previousBodyOverflow
+      if (pageScroller) pageScroller.style.overflow = previousPageOverflow || ""
+    }
+  }, [showCreatePanel, editingItem, showImportModal])
 
   // Mapping status filter
   const statusParam = activeOnly ? "AVAILABLE" : (statusFilter === "Active" ? "AVAILABLE" : (statusFilter === "Inactive" ? "INACTIVE" : undefined))
@@ -96,6 +117,11 @@ export default function HardwareCatalogPage() {
 
   const columns = useMemo(() => [
     {
+      id: "select",
+      header: ({ table }: any) => <input type="checkbox" aria-label="Select all hardware on this page" checked={table.getIsAllPageRowsSelected()} onChange={table.getToggleAllPageRowsSelectedHandler()} className="size-4 rounded border-border accent-[var(--text-primary)]" />,
+      cell: ({ row }: any) => <input type="checkbox" aria-label={`Select ${row.original.name}`} checked={row.getIsSelected()} onChange={row.getToggleSelectedHandler()} className="size-4 rounded border-border accent-[var(--text-primary)]" />,
+    },
+    {
       accessorKey: "item_code",
       header: "Hardware Code",
       cell: ({ row }: any) => (
@@ -124,7 +150,7 @@ export default function HardwareCatalogPage() {
       accessorKey: "category_name",
       header: "Category",
       cell: ({ row }: any) => {
-        const cat = row.original.category_name || "Accessories"
+        const cat = normalizeCatalogueCategory(row.original.category_name)
         const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['Accessories']
         return (
           <Badge variant="outline" className={`text-[10px] border font-bold px-2 py-0.5 rounded-full ${colors}`}>
@@ -187,27 +213,17 @@ export default function HardwareCatalogPage() {
     },
     {
       id: "actions",
+      header: "Edit",
       cell: ({ row }: any) => (
-        <div className="flex items-center gap-1">
           <Button
-            size="sm" variant="ghost"
+            size="icon" variant="ghost"
             onClick={() => setEditingItem(row.original)}
-            className="text-xs text-secondary hover:text-primary h-8 px-2"
+            className="size-8 text-secondary hover:text-primary"
+            aria-label={`Edit ${row.original.name}`}
+            title="Edit"
           >
-            Edit
+            <Pencil className="size-3.5" />
           </Button>
-          <Button
-            size="sm" variant="ghost"
-            onClick={async () => {
-              if (window.confirm(`Are you sure you want to delete "${row.original.name}"?`)) {
-                await deleteItem.mutateAsync(row.original.id)
-              }
-            }}
-            className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-2"
-          >
-            Delete
-          </Button>
-        </div>
       )
     }
   ], [categories])
@@ -217,14 +233,19 @@ export default function HardwareCatalogPage() {
     columns,
     pageCount: Math.ceil((data?.total ?? 0) / limit),
     state: {
+      rowSelection,
       pagination: {
         pageIndex: page,
         pageSize: limit
       }
     },
+    onRowSelectionChange: setRowSelection,
+    enableRowSelection: true,
+    getRowId: (row: any) => String(row.id),
     onPaginationChange: (updater: any) => {
       const nextVal = typeof updater === 'function' ? updater({ pageIndex: page, pageSize: limit }) : updater
       setPage(nextVal.pageIndex)
+      setPageSize(nextVal.pageSize)
     },
     manualPagination: true,
     getCoreRowModel: getCoreRowModel(),
@@ -255,7 +276,6 @@ export default function HardwareCatalogPage() {
     <PageContainer>
       <SectionHeader
         title="Hardware Catalog"
-        description="Manage all hardware assets, pricing and availability"
         actions={
           <div className="flex gap-2">
             <Button
@@ -319,7 +339,7 @@ export default function HardwareCatalogPage() {
           >
             <option value="">All Categories</option>
             {(data as any)?.active_categories?.map((catName: string) => (
-              <option key={catName} value={catName}>{catName}</option>
+              <option key={catName} value={catName}>{normalizeCatalogueCategory(catName)}</option>
             ))}
           </select>
         </div>
@@ -384,9 +404,10 @@ export default function HardwareCatalogPage() {
       </div>
 
       {/* Centered Pop-up Modal Window for Add/Edit Form */}
-      {(showCreatePanel || !!editingItem) && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl relative">
+      <Dialog open={showCreatePanel || !!editingItem} onOpenChange={(open) => { if (!open) { setShowCreatePanel(false); setEditingItem(null) } }}>
+          <DialogContent className="left-1/2 top-[4dvh] block max-h-[92dvh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 translate-y-0 overflow-y-auto overscroll-contain p-0 sm:max-w-2xl">
+            <DialogTitle className="sr-only">{editingItem ? "Edit hardware item" : "Add hardware item"}</DialogTitle>
+            <DialogDescription className="sr-only">Configure hardware catalogue details, pricing, inventory, and tax information.</DialogDescription>
             <HardwareItemForm
               item={editingItem}
               categories={categories ?? []}
@@ -406,9 +427,8 @@ export default function HardwareCatalogPage() {
               }}
               isLoading={createItem.isPending || updateItem.isPending}
             />
-          </div>
-        </div>
-      )}
+          </DialogContent>
+      </Dialog>
 
       {/* Centered Pop-up Modal Window for Excel Import */}
       {showImportModal && (
@@ -471,9 +491,11 @@ export default function HardwareCatalogPage() {
 
 
       {/* Table */}
+      {Object.keys(rowSelection).length > 0 && <div className="flex items-center justify-between rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] px-4 py-3"><span className="text-xs font-medium text-[var(--text-secondary)]">{Object.keys(rowSelection).length} selected</span><Button variant="destructive" size="sm" disabled={deleteItem.isPending} onClick={async () => { const selectedIds = Object.keys(rowSelection); if (!window.confirm(`Delete ${selectedIds.length} selected hardware item${selectedIds.length === 1 ? "" : "s"}?`)) return; await Promise.all(selectedIds.map((id) => deleteItem.mutateAsync(id))); setRowSelection({}); }}><Trash2 className="mr-2 size-3.5" />Delete selected</Button></div>}
       <DataTable
         table={table}
         isLoading={isLoading}
+        totalRows={data?.total ?? 0}
         emptyState={{
           icon: Package,
           title: 'No hardware items',
@@ -533,7 +555,7 @@ function HardwareItemForm({ item, categories, nextItemCode, onSubmit, onClose, i
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex justify-between items-center pb-2 border-b border-border">
+      <div className="flex items-center justify-between border-b border-border pb-2 pr-12">
         <h3 className="text-base font-extrabold text-primary">
           {item ? 'Edit Hardware Item' : 'Add New Hardware'}
         </h3>
@@ -546,9 +568,6 @@ function HardwareItemForm({ item, categories, nextItemCode, onSubmit, onClose, i
             <option value="AVAILABLE">Active</option>
             <option value="INACTIVE">Inactive</option>
           </select>
-          <button onClick={onClose} className="text-secondary hover:text-primary">
-            <X className="h-4 w-4" />
-          </button>
         </div>
       </div>
 
@@ -573,7 +592,7 @@ function HardwareItemForm({ item, categories, nextItemCode, onSubmit, onClose, i
               className="w-full px-3 py-2 text-xs bg-surface-2 border border-border rounded-lg text-primary">
               <option value="">Select category</option>
               {categories?.map((c: any) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>{normalizeCatalogueCategory(c.name)}</option>
               ))}
             </select>
           </div>

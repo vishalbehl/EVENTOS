@@ -57,14 +57,16 @@ def _get_s3_client():
     Returns a boto3 S3 client configured for Cloudflare R2.
     R2 requires the endpoint URL and region='auto'.
     """
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.S3_ENDPOINT_URL or None,
-        aws_access_key_id=settings.S3_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
-        region_name=settings.S3_REGION,
-        config=Config(signature_version="s3v4"),
-    )
+    kwargs = {
+        "region_name": settings.S3_REGION,
+        "config": Config(signature_version="s3v4"),
+    }
+    if settings.S3_ENDPOINT_URL:
+        kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
+    if settings.S3_ACCESS_KEY_ID and settings.S3_SECRET_ACCESS_KEY:
+        kwargs["aws_access_key_id"] = settings.S3_ACCESS_KEY_ID
+        kwargs["aws_secret_access_key"] = settings.S3_SECRET_ACCESS_KEY
+    return boto3.client("s3", **kwargs)
 
 
 # ── Storage path builders ─────────────────────────────────────

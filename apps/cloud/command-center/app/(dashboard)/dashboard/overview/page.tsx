@@ -8,6 +8,9 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Building2, Users, TrendingUp, Calendar, TicketCheck, BadgeIndianRupee, AlertTriangle } from "lucide-react"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
+import { Button } from "@/components/ui/button"
+import { CalendarDays, Plus } from "lucide-react"
 
 export default function SuperAdminDashboard() {
   const { data, isLoading, error, refetch } = useAdminDashboard()
@@ -17,6 +20,12 @@ export default function SuperAdminDashboard() {
   if (isLoading) return <DashboardSkeleton />
   if (error) return (
     <PageContainer>
+      <SectionHeader
+        title="Welcome back"
+        description="Monitor organizations, revenue, subscriptions, and platform activity from one workspace."
+        breadcrumb={["Command Center", "Dashboard"]}
+        actions={<><Button variant="outline"><CalendarDays className="mr-2 size-4" />This month</Button><Button onClick={() => router.push('/organizations')}><Plus className="mr-2 size-4" />Create organization</Button></>}
+      />
       <div className="flex flex-col items-center gap-3 py-20">
         <AlertTriangle className="h-10 w-10 text-danger" />
         <p className="text-sm text-secondary">Failed to load dashboard</p>
@@ -91,7 +100,6 @@ export default function SuperAdminDashboard() {
 
       {/* ── ROW 1: KPI CARDS (5) ──────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <button type="button" onClick={() => router.push('/organizations')} className="text-left">
           <KpiCard
             title="Total Organizations"
             value={data.total_organizations.toLocaleString('en-IN')}
@@ -100,8 +108,8 @@ export default function SuperAdminDashboard() {
             trend={data.orgs_trend}
             icon={Building2}
             iconColor="brand"
+            destination="/organizations"
           />
-        </button>
         <KpiCard
           title="Active Users (30d)"
           value={data.active_users_30d.toLocaleString('en-IN')}
@@ -111,7 +119,6 @@ export default function SuperAdminDashboard() {
           icon={Users}
           iconColor="info"
         />
-        <button type="button" onClick={() => router.push('/business/revenue')} className="text-left">
           <KpiCard
             title="MRR"
             value={formatINR(data.mrr_current)}
@@ -120,8 +127,8 @@ export default function SuperAdminDashboard() {
             trend={data.mrr_trend}
             icon={TrendingUp}
             iconColor="success"
+            destination="/business/revenue"
           />
-        </button>
         <KpiCard
           title="Events This Month"
           value={data.events_this_month.toLocaleString('en-IN')}
@@ -131,7 +138,6 @@ export default function SuperAdminDashboard() {
           icon={Calendar}
           iconColor="brand"
         />
-        <button type="button" onClick={() => router.push('/support-center/tickets')} className="text-left">
           <KpiCard
             title="Open Tickets"
             value={data.open_tickets.toLocaleString('en-IN')}
@@ -140,8 +146,8 @@ export default function SuperAdminDashboard() {
             trend={[]}
             icon={TicketCheck}
             iconColor="warning"
+            destination="/support-center/tickets"
           />
-        </button>
       </div>
 
       {/* ── ROW 2: KPI CARDS (4 more) ─────────────────── */}

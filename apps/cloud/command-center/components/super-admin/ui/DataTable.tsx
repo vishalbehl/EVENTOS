@@ -17,6 +17,7 @@ interface DataTableProps<TData> {
     actionLabel?: string;
     onAction?: () => void;
   };
+  totalRows?: number;
 }
 
 export function DataTable<TData>({
@@ -25,6 +26,7 @@ export function DataTable<TData>({
   isLoading = false,
   onRowClick,
   emptyState,
+  totalRows: totalRowsProp,
 }: DataTableProps<TData>) {
   const columns = table.getAllColumns();
   const rows = table.getRowModel().rows;
@@ -32,26 +34,28 @@ export function DataTable<TData>({
   const pageIndex = paginationState.pageIndex;
   const pageSize = paginationState.pageSize;
   
-  const totalRows = table.getFilteredRowModel().rows.length;
+  const totalRows = totalRowsProp ?? table.getFilteredRowModel().rows.length;
   const fromRow = totalRows === 0 ? 0 : pageIndex * pageSize + 1;
   const toRow = Math.min(totalRows, (pageIndex + 1) * pageSize);
 
   const pageCount = table.getPageCount();
 
   return (
-    <div className="space-y-4 w-full">
-      <div className="w-full overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="cc-scroll-region min-h-[300px] w-full overflow-auto max-h-[calc(100dvh-420px)]">
-          <table aria-label={ariaLabel} aria-busy={isLoading} className="w-full border-collapse text-left">
+    <div className="flex min-h-[420px] max-h-[calc(100dvh-16rem)] w-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-panel)]">
+      <div className="min-h-0 w-full flex-1">
+        <div className="cc-scroll-region h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain">
+          <table aria-label={ariaLabel} aria-busy={isLoading} className="w-full table-fixed border-collapse text-left">
             <caption className="sr-only">{ariaLabel}</caption>
+            <colgroup>
+              {table.getVisibleLeafColumns().map((column) => <col key={column.id} style={column.id === "select" ? { width: 40 } : column.id === "actions" ? { width: 48 } : column.id === "name" ? { width: "24%" } : undefined} />)}
+            </colgroup>
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-border/80">
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="sticky top-0 z-10 h-10 px-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-[var(--bg-surface-2)] border-b border-border select-none align-middle"
-                      style={{ width: header.getSize() }}
+                      className="sticky top-0 z-10 h-9 select-none border-b border-[var(--border-subtle)] bg-[var(--bg-surface-3)] px-2 align-middle text-[10px] font-semibold text-[var(--text-tertiary)] sm:px-3"
                     >
                       {header.isPlaceholder ? null : (
                         header.column.columnDef.header == null || header.column.columnDef.header === ""
@@ -67,9 +71,9 @@ export function DataTable<TData>({
               {isLoading ? (
                 // Shimmer Skeleton State
                 Array.from({ length: Math.max(rows.length, 5) }).map((_, rIdx) => (
-                <tr key={rIdx} className="h-[var(--table-row-height)] border-b border-border/40">
+                <tr key={rIdx} className="h-10 border-b border-border/40">
                     {columns.map((col, cIdx) => (
-                      <td key={cIdx} className="px-4 py-3 align-middle">
+                      <td key={cIdx} className="px-2 py-1.5 align-middle sm:px-3">
                         <div className="h-4 bg-surface-2 animate-pulse rounded-md w-3/4" />
                       </td>
                     ))}
@@ -123,15 +127,15 @@ export function DataTable<TData>({
                         }
                       }}
                       className={cn(
-                        "group h-[var(--table-row-height)] min-h-[var(--table-row-height)] border-b border-border/40 align-middle transition-colors duration-100",
+                        "group h-10 border-b border-border/40 align-middle transition-colors duration-100",
                         onRowClick && "cursor-pointer hover:bg-surface-hover/50",
                         !onRowClick && "hover:bg-surface-hover/50",
                         isSelected && "bg-[var(--brand-primary-muted)] border-l-2 border-[var(--brand-primary)]"
                       )}
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-4 py-2 text-sm text-[var(--text-secondary)] align-middle">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        <td key={cell.id} className="break-words px-2 py-1.5 align-middle text-xs text-[var(--text-secondary)] sm:px-3">
+                          <div className="min-w-0 whitespace-normal break-words">{flexRender(cell.column.columnDef.cell, cell.getContext())}</div>
                         </td>
                       ))}
                     </tr>
@@ -144,14 +148,21 @@ export function DataTable<TData>({
       </div>
 
       {/* Pagination row as a separate card below the table canvas */}
-      {pageCount > 1 && (
-        <nav aria-label={`${ariaLabel} pagination`} className="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3.5 sm:flex-row sm:items-center sm:px-6">
+      <nav aria-label={`${ariaLabel} pagination`} className="z-20 flex shrink-0 flex-col justify-between gap-3 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 shadow-[0_-8px_24px_rgb(var(--shadow-color)/.08)] lg:flex-row lg:items-center">
+          <div className="flex flex-wrap items-center gap-4">
           <p className="text-xs text-[var(--text-secondary)] font-medium">
             Showing <span className="font-semibold text-[var(--text-primary)]">{fromRow}</span> to{" "}
             <span className="font-semibold text-[var(--text-primary)]">{toRow}</span> of{" "}
             <span className="font-semibold text-[var(--text-primary)]">{totalRows}</span> results
           </p>
-          <div className="flex items-center gap-2 self-end sm:self-center">
+          <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            Rows per page
+            <select value={pageSize} onChange={(event) => table.setPagination({ pageIndex: 0, pageSize: Number(event.target.value) })} className="h-8 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2 font-mono text-xs text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+              {[10, 20, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          </div>
+          <div className="flex items-center gap-2 self-end lg:self-center">
             {/* Prev button */}
             <button
               type="button"
@@ -165,14 +176,15 @@ export function DataTable<TData>({
 
             {/* Page number buttons */}
             <div className="flex items-center gap-1">
-              {Array.from({ length: pageCount }).map((_, idx) => {
+              {Array.from({ length: Math.max(pageCount, 1) }).map((_, idx) => idx).filter((idx) => pageCount <= 7 || idx === 0 || idx === pageCount - 1 || Math.abs(idx - pageIndex) <= 1).map((idx, position, visiblePages) => {
                 const isCurrent = idx === pageIndex;
                 return (
+                  <React.Fragment key={idx}>
+                  {position > 0 && idx - visiblePages[position - 1] > 1 ? <span aria-hidden className="px-1 text-xs text-[var(--text-tertiary)]">…</span> : null}
                   <button
                     type="button"
                     aria-label={`Go to page ${idx + 1}`}
                     aria-current={isCurrent ? "page" : undefined}
-                    key={idx}
                     onClick={() => table.setPageIndex(idx)}
                     className={cn(
                       "w-7 h-7 text-xs font-semibold rounded-lg flex items-center justify-center transition-all duration-150",
@@ -183,6 +195,7 @@ export function DataTable<TData>({
                   >
                     {idx + 1}
                   </button>
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -199,7 +212,6 @@ export function DataTable<TData>({
             </button>
           </div>
         </nav>
-      )}
     </div>
   );
 }

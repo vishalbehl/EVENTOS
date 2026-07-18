@@ -1,14 +1,20 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
+export type CardVariant = "default" | "inset" | "interactive" | "featured" | "critical"
+
 const Card = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
+  React.HTMLAttributes<HTMLDivElement> & { variant?: CardVariant }
+>(({ className, variant = "default", ...props }, ref) => (
   <div
     ref={ref}
     className={cn(
-      "card rounded-xl text-[var(--text)] shadow-none",
+      "card rounded-[var(--radius-panel)] text-[var(--text)] shadow-[var(--shadow-panel)]",
+      variant === "inset" && "bg-[var(--bg-surface-3)] shadow-none",
+      variant === "interactive" && "cursor-pointer rounded-[var(--radius-card)] transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-[var(--text-tertiary)] hover:shadow-[var(--shadow-card-hover)]",
+      variant === "featured" && "rounded-[var(--radius-card)] border-[color-mix(in_srgb,var(--status-info)_24%,var(--border-default))]",
+      variant === "critical" && "border-[color-mix(in_srgb,var(--status-danger)_28%,var(--border-default))] bg-[var(--status-danger-muted)]",
       className
     )}
     {...props}

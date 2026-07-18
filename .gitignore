@@ -23,6 +23,8 @@ excel_templates/
 .vscode/
 .codex/
 .claude/
+.cache/
+.terraform/
 .agents/
 md files/
 tools/
