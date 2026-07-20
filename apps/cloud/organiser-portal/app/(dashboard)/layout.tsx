@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams, usePathname } from "next/navigation";
-import { Lock } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Lock, Loader2, X } from "lucide-react";
 import { Sidebar } from "@/components/organizer/layout/Sidebar";
 import { Header } from "@/components/organizer/layout/Header";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ export default function DashboardLayout({
   const { data: event, isLoading: isEventLoading } = useEvent(eventId);
 
   const { isAuthenticated, accessToken, user, setAuth, logout, hasHydrated } = useAuthStore();
-  const isSidebarCollapsed = useUIStore((state) => state.isSidebarCollapsed);
+  const { isSidebarCollapsed, isMobileOpen, setMobileOpen } = useUIStore();
   const [hydrated, setHydrated] = useState(false);
   const [impersonatingOrg, setImpersonatingOrg] = useState<string | null>(null);
 
@@ -214,8 +215,40 @@ export default function DashboardLayout({
     );
   }
 
+  if (!hydrated || !hasHydrated || !isAuthenticated || !accessToken) {
+    return (
+      <div className="h-screen w-screen bg-[#050505] flex flex-col items-center justify-center space-y-3 z-50">
+        <Loader2 className="h-8 w-8 text-[#e0ff00] animate-spin" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-white/50">Verifying Session...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="relative h-screen overflow-hidden" style={{ background: "var(--color-bg)" }}>
+      {/* Mobile Sidebar Navigation Drawer Overlay */}
+      <AnimatePresence>
+        {isMobileOpen && (
+          <div className="fixed inset-0 z-[100] md:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="relative h-full w-[280px] bg-[#08080a] border-r border-white/10"
+            >
+              <Sidebar />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <div
         className="pointer-events-none absolute inset-0 opacity-60"
         style={{

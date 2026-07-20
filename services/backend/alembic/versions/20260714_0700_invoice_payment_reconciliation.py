@@ -16,6 +16,16 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Alembic creates version_num as VARCHAR(32) by default. This revision ID
+    # is longer than that, so a clean from-zero migration must widen the
+    # bookkeeping column before Alembic records this revision.
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=128),
+        existing_nullable=False,
+    )
     op.add_column("invoices", sa.Column("version", sa.Integer(), server_default="1", nullable=False), schema="billing")
     op.add_column("invoices", sa.Column("status_reason", sa.Text(), nullable=True), schema="billing")
     op.add_column("invoices", sa.Column("status_changed_at", sa.DateTime(timezone=True), nullable=True), schema="billing")
@@ -76,3 +86,11 @@ def downgrade() -> None:
     op.drop_constraint("fk_invoices_status_changed_by", "invoices", schema="billing", type_="foreignkey")
     for column in ("updated_at", "status_changed_by", "status_changed_at", "status_reason", "version"):
         op.drop_column("invoices", column, schema="billing")
+
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=128),
+        type_=sa.String(length=32),
+        existing_nullable=False,
+    )

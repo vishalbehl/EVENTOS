@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { motion, useReducedMotion } from "framer-motion";
-import { ChevronRight, KeyRound, Loader2, Lock, Mail, ShieldCheck } from "lucide-react";
+import { motion } from "framer-motion";
+import { Activity, Check, ChevronRight, KeyRound, Loader2, Lock, Mail, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,6 @@ import { useAuthStore } from "@/store/use-auth-store";
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const prefersReducedMotion = useReducedMotion();
   const { isAuthenticated, accessToken, user, hasHydrated } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
@@ -76,37 +76,85 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#07070a] px-6">
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(124,58,237,0.16)_0%,transparent_58%)]" />
-        <div className="absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-purple-600/10 blur-[150px]" />
-        <div className="absolute bottom-0 right-1/4 h-[400px] w-[400px] rounded-full bg-indigo-800/10 blur-[150px]" />
-      </div>
+    <main className="relative min-h-svh overflow-x-hidden bg-[#050505] text-[#f4f4f5] selection:bg-white selection:text-black">
+      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.025)_1px,transparent_1px)] [background-size:48px_48px]" />
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" />
 
-      <motion.div
-        initial={prefersReducedMotion ? false : { opacity: 0, y: 20, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: prefersReducedMotion ? 0 : 0.45 }}
-        className="z-10 w-full max-w-[440px]"
-      >
-        <div className="relative overflow-hidden rounded-[2.5rem] border border-purple-500/20 bg-[#0e0d16]/90 p-8 shadow-[0_30px_60px_-15px_rgba(139,92,246,0.2)] backdrop-blur-md sm:p-10">
-          <div aria-hidden className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-purple-500 via-violet-600 to-indigo-500" />
-
-          <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-purple-500/30 bg-purple-500/10 shadow-[0_10px_20px_rgba(139,92,246,0.15)]">
-              <ShieldCheck aria-hidden className="h-8 w-8 text-purple-400" />
-            </div>
-            <h1 className="text-2xl font-black tracking-tight text-white">Platform Control Panel</h1>
-            <p className="mt-1 text-[9px] font-black uppercase tracking-[0.25em] text-purple-400/70">Super Admin Console</p>
+      <div className="relative mx-auto flex min-h-svh w-full max-w-[1440px] flex-col px-5 py-5 sm:px-8 sm:py-8 lg:px-12">
+        <header className="flex items-center justify-between border-b border-white/[0.09] pb-5">
+          <Image src="/logo.png" alt="eventos IT" width={185} height={49} priority className="w-[148px] sm:w-[168px]" style={{ height: "auto" }} />
+          <div className="flex items-center gap-2.5 text-[11px] text-white/48">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-40 motion-reduce:animate-none" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+            </span>
+            Identity service available
           </div>
+        </header>
 
-          <form onSubmit={handleLogin} className="space-y-4" noValidate>
+        <div className="grid flex-1 items-center gap-12 py-10 lg:grid-cols-[minmax(0,1fr)_440px] lg:gap-20 xl:gap-28">
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
+            className="hidden max-w-2xl lg:block"
+          >
+            <div className="mb-10 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">
+              <span className="h-px w-9 bg-white/30" /> Command center / Restricted access
+            </div>
+            <h1 className="max-w-xl text-[clamp(3rem,5.2vw,5.5rem)] font-semibold leading-[0.94] tracking-[-0.055em] text-white">
+              Operate the platform with confidence.
+            </h1>
+            <p className="mt-7 max-w-lg text-base leading-7 text-white/48">
+              Secure access to organization controls, revenue operations, infrastructure, identity, and support workflows.
+            </p>
+
+            <div className="mt-14 grid max-w-xl grid-cols-3 border-y border-white/[0.09] py-5">
+              {[
+                ["MFA", "Required"],
+                ["Session", "Protected"],
+                ["Activity", "Audited"],
+              ].map(([label, value], index) => (
+                <div key={label} className={index ? "border-l border-white/[0.09] pl-6" : ""}>
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">{label}</p>
+                  <p className="mt-1.5 text-sm font-medium text-white/78">{value}</p>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+
+          <motion.section
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, delay: 0.08, ease: "easeOut" }}
+            className="w-full"
+            aria-labelledby="login-title"
+          >
+            <div className="border border-white/[0.12] bg-[#0b0b0c]/95 shadow-[0_28px_80px_rgba(0,0,0,.42)]">
+              <div className="flex items-center justify-between border-b border-white/[0.09] px-6 py-5 sm:px-8">
+                <div className="flex items-center gap-3">
+                  <span className="grid size-9 place-items-center border border-white/[0.12] bg-white/[0.045]">
+                    <ShieldCheck aria-hidden className="size-4 text-white/80" />
+                  </span>
+                  <div>
+                    <p className="text-xs font-semibold text-white/88">Privileged sign in</p>
+                    <p className="mt-0.5 text-[10px] text-white/34">Super administrator</p>
+                  </div>
+                </div>
+                <Activity aria-label="Identity service online" className="size-4 text-emerald-400" />
+              </div>
+
+              <div className="px-6 py-7 sm:px-8 sm:py-8">
+                <h2 id="login-title" className="text-[28px] font-semibold tracking-[-0.035em] text-white">Verify your identity</h2>
+                <p className="mt-2 text-sm leading-6 text-white/42">Enter your administrator credentials and current authenticator code.</p>
+
+                <form onSubmit={handleLogin} className="mt-8 space-y-5" noValidate>
             <div className="space-y-2">
-              <label htmlFor={emailId} className="px-1 text-[9px] font-black uppercase tracking-[0.2em] text-white/50">
-                Admin identity
+              <label htmlFor={emailId} className="text-[11px] font-medium text-white/66">
+                Work email
               </label>
-              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-colors focus-within:border-purple-500/50">
-                <Mail aria-hidden className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+              <div className="relative border border-white/[0.12] bg-white/[0.025] transition-colors focus-within:border-white/40 focus-within:bg-white/[0.04]">
+                <Mail aria-hidden className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/30" />
                 <Input
                   id={emailId}
                   type="email"
@@ -114,7 +162,7 @@ export default function AdminLoginPage() {
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder="admin@example.com"
-                  className="h-13 rounded-2xl border-0 bg-transparent pl-12 text-[13px] font-bold text-white placeholder:text-white/20 focus-visible:ring-0"
+                  className="h-12 rounded-none border-0 bg-transparent pl-11 text-[13px] font-medium text-white placeholder:text-white/22 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/30"
                   required
                   disabled={loading}
                 />
@@ -122,18 +170,18 @@ export default function AdminLoginPage() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor={passwordId} className="px-1 text-[9px] font-black uppercase tracking-[0.2em] text-white/50">
+              <label htmlFor={passwordId} className="text-[11px] font-medium text-white/66">
                 Password
               </label>
-              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-colors focus-within:border-purple-500/50">
-                <Lock aria-hidden className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+              <div className="relative border border-white/[0.12] bg-white/[0.025] transition-colors focus-within:border-white/40 focus-within:bg-white/[0.04]">
+                <Lock aria-hidden className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/30" />
                 <Input
                   id={passwordId}
                   type="password"
                   autoComplete="current-password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  className="h-13 rounded-2xl border-0 bg-transparent pl-12 text-[13px] font-bold text-white focus-visible:ring-0"
+                  className="h-12 rounded-none border-0 bg-transparent pl-11 text-[13px] font-medium text-white focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/30"
                   required
                   disabled={loading}
                 />
@@ -141,11 +189,11 @@ export default function AdminLoginPage() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor={mfaId} className="px-1 text-[9px] font-black uppercase tracking-[0.2em] text-white/50">
+              <label htmlFor={mfaId} className="text-[11px] font-medium text-white/66">
                 Authenticator code
               </label>
-              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-colors focus-within:border-purple-500/50">
-                <KeyRound aria-hidden className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+              <div className="relative border border-white/[0.12] bg-white/[0.025] transition-colors focus-within:border-white/40 focus-within:bg-white/[0.04]">
+                <KeyRound aria-hidden className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/30" />
                 <Input
                   id={mfaId}
                   type="text"
@@ -156,44 +204,54 @@ export default function AdminLoginPage() {
                   value={mfaCode}
                   onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
                   aria-describedby={`${mfaId}-help`}
-                  className="h-13 rounded-2xl border-0 bg-transparent pl-12 font-mono text-[13px] font-bold tracking-[0.35em] text-white focus-visible:ring-0"
+                  placeholder="000000"
+                  className="h-12 rounded-none border-0 bg-transparent pl-11 font-mono text-[13px] font-semibold tracking-[0.35em] text-white placeholder:tracking-[0.35em] placeholder:text-white/18 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/30"
                   required
                   disabled={loading}
                 />
               </div>
-              <p id={`${mfaId}-help`} className="px-1 text-[10px] leading-4 text-white/40">
-                Privileged accounts require a current six-digit TOTP code.
+              <p id={`${mfaId}-help`} className="text-[10px] leading-4 text-white/32">
+                Use the six-digit code from your registered authenticator.
               </p>
             </div>
 
-            <div className="flex items-center gap-2 px-1 py-1">
+            <div className="flex items-start gap-3 border-y border-white/[0.08] py-4">
               <input
                 id={rememberId}
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(event) => setRememberMe(event.target.checked)}
-                className="h-4 w-4 rounded border-white/20 bg-white/5 accent-purple-600"
+                className="mt-0.5 size-4 rounded-none border-white/20 bg-white/5 accent-white"
                 disabled={loading}
               />
-              <label htmlFor={rememberId} className="text-[10px] font-bold text-white/50">
-                Keep this privileged session after closing the tab
-              </label>
+              <div>
+                <label htmlFor={rememberId} className="block text-[11px] font-medium text-white/70">Remember this device</label>
+                <p className="mt-1 text-[10px] leading-4 text-white/32">Keep the secure session available for up to 30 days.</p>
+              </div>
             </div>
 
             <Button
               type="submit"
               disabled={loading || cooldown > 0}
-              className="mt-2 flex h-13 w-full items-center justify-center gap-2 rounded-full border-0 bg-purple-600 text-[11px] font-black uppercase tracking-[0.2em] text-white shadow-[0_10px_20px_rgba(139,92,246,0.2)] hover:bg-purple-500"
+              className="group flex h-12 w-full items-center justify-center gap-2 rounded-none border border-white bg-white text-[11px] font-semibold text-black shadow-none transition-colors hover:bg-[#dedede] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0b0c]"
             >
-              {loading ? <Loader2 aria-label="Verifying identity" className="h-4 w-4 animate-spin" /> : cooldown > 0 ? `Try again in ${Math.ceil(cooldown / 60)} min` : <>Verify and continue <ChevronRight aria-hidden className="h-4 w-4" /></>}
+              {loading ? <Loader2 aria-label="Verifying identity" className="size-4 animate-spin" /> : cooldown > 0 ? `Try again in ${Math.ceil(cooldown / 60)} min` : <>Continue to command center <ChevronRight aria-hidden className="size-4 transition-transform group-hover:translate-x-0.5" /></>}
             </Button>
-          </form>
+                </form>
+              </div>
+
+              <div className="flex items-center gap-2 border-t border-white/[0.09] bg-white/[0.018] px-6 py-4 text-[10px] text-white/32 sm:px-8">
+                <Check aria-hidden className="size-3.5 text-emerald-400" /> Credentials are encrypted in transit and access is audited.
+              </div>
+            </div>
+          </motion.section>
         </div>
 
-        <p className="mt-6 text-center text-[9px] font-bold uppercase tracking-[0.2em] text-white/25">
-          Password and MFA verification required
-        </p>
-      </motion.div>
+        <footer className="flex flex-col gap-3 border-t border-white/[0.09] pt-5 text-[10px] text-white/28 sm:flex-row sm:items-center sm:justify-between">
+          <p>© 2026 eventos IT. Authorized personnel only.</p>
+          <p>Security policy · Session monitoring enabled</p>
+        </footer>
+      </div>
     </main>
   );
 }

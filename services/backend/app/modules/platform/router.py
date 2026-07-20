@@ -25,6 +25,9 @@ from app.modules.billing.models.subscription import (
     ActivityTimeline, RevenueMetric
 )
 from app.modules.billing.models.billing_domain_tables import Invoice, InvoiceItem
+from app.modules.billing.models.licensing import EntitlementGrant, GrantConsumption
+from app.modules.billing.models.event_activation import EventActivation
+from app.modules.rbac.models.organization_member import OrganizationMember
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.dependencies import get_current_user
 from pydantic import BaseModel, Field
@@ -616,6 +619,7 @@ class FeatureOverrideRequest(BaseModel):
     feature_id: uuid.UUID
     is_enabled: bool
     reason: str = Field(..., min_length=8, max_length=1000)
+    expires_at: Optional[datetime] = None
 
 
 class FeatureOverrideDeleteRequest(BaseModel):
@@ -642,8 +646,22 @@ async def override_organization_feature(org_id: uuid.UUID, payload: FeatureOverr
     
     if override:
         override.is_enabled = payload.is_enabled
+        override.effective_from = datetime.now(timezone.utc)
+        override.expires_at = payload.expires_at
+        override.reason = payload.reason
+        override.override_by = current_user.id
+        override.override_at = datetime.now(timezone.utc)
+        override.version += 1
     else:
-        new_override = OrganizationFeature(organization_id=org_id, feature_id=payload.feature_id, is_enabled=payload.is_enabled)
+        new_override = OrganizationFeature(
+            organization_id=org_id,
+            feature_id=payload.feature_id,
+            is_enabled=payload.is_enabled,
+            override_by=current_user.id,
+            effective_from=datetime.now(timezone.utc),
+            expires_at=payload.expires_at,
+            reason=payload.reason,
+        )
         db.add(new_override)
         
     # Log timeline event
@@ -2215,6 +2233,132 @@ async def update_organization_status(
         "is_active": org.is_active,
         "suspended_at": org.suspended_at.isoformat() if org.suspended_at else None,
         "suspension_reason": org.suspension_reason,
+    }
+
+
+@router.get("/organizations/{org_id}/dossier")
+async def get_organization_dossier(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin),
+):
+    """Return a coherent, point-in-time command-center view of one tenant."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    now = datetime.now(timezone.utc)
+    subscriptions = (await db.execute(
+        select(OrganizationSubscription)
+        .where(OrganizationSubscription.organization_id == org_id)
+        .options(selectinload(OrganizationSubscription.plan))
+        .order_by(OrganizationSubscription.created_at.desc())
+    )).scalars().all()
+    current_sub = next((s for s in subscriptions if s.status in {"ACTIVE", "TRIAL", "GRACE_PERIOD"}), subscriptions[0] if subscriptions else None)
+
+    grants = (await db.execute(
+        select(EntitlementGrant).where(EntitlementGrant.organization_id == org_id).order_by(EntitlementGrant.created_at.desc())
+    )).scalars().all()
+    event_grants = [g for g in grants if g.unit_type == "EVENT" and g.status == "ACTIVE"]
+    purchased = sum(int(g.quantity_total or 0) for g in event_grants)
+    consumed = sum(int(g.quantity_consumed or 0) for g in event_grants)
+    reserved = sum(int(g.quantity_reserved or 0) for g in event_grants)
+
+    actual_events = int(await db.scalar(select(func.count(Event.id)).where(Event.organization_id == org_id)) or 0)
+    activation_rows = (await db.execute(
+        select(EventActivation.status, func.count(EventActivation.id))
+        .where(EventActivation.organization_id == org_id)
+        .group_by(EventActivation.status)
+    )).all()
+    activation_counts = {str(status).upper(): int(count) for status, count in activation_rows}
+
+    plan_feature_ids = set()
+    if current_sub:
+        plan_feature_ids = set((await db.execute(
+            select(PlanFeature.feature_id).where(PlanFeature.plan_id == current_sub.plan_id, PlanFeature.enabled == True)
+        )).scalars().all())
+    overrides = (await db.execute(
+        select(OrganizationFeature).where(OrganizationFeature.organization_id == org_id)
+    )).scalars().all()
+    override_map = {item.feature_id: item for item in overrides}
+    addon_rows = (await db.execute(
+        select(OrganizationAddon, Addon).join(Addon, Addon.id == OrganizationAddon.addon_id)
+        .where(OrganizationAddon.organization_id == org_id)
+        .order_by(OrganizationAddon.purchased_at.desc())
+    )).all()
+    addon_ids = [row[1].id for row in addon_rows if row[0].status == "ACTIVE" and (not row[0].expires_at or row[0].expires_at > now)]
+    addon_feature_ids = set()
+    if addon_ids:
+        addon_feature_ids = set((await db.execute(
+            select(AddonFeature.feature_id).where(AddonFeature.addon_id.in_(addon_ids))
+        )).scalars().all())
+    catalog = (await db.execute(select(FeatureCatalog).order_by(FeatureCatalog.category, FeatureCatalog.name))).scalars().all()
+    capabilities = []
+    for feature in catalog:
+        override = override_map.get(feature.id)
+        override_active = bool(override and (not override.expires_at or override.expires_at > now))
+        plan_enabled = feature.id in plan_feature_ids
+        addon_enabled = feature.id in addon_feature_ids
+        enabled = override.is_enabled if override_active else (plan_enabled or addon_enabled)
+        source = "override" if override_active else "addon" if addon_enabled else "plan" if plan_enabled else "none"
+        capabilities.append({
+            "id": str(feature.id), "key": feature.key, "name": feature.name,
+            "category": feature.category, "description": feature.description,
+            "enabled": enabled, "source": source,
+            "extended": bool(override_active and override.is_enabled),
+            "expires_at": override.expires_at if override_active else None,
+            "reason": override.reason if override_active else None,
+        })
+
+    usage = await db.get(OrganizationUsage, org_id)
+    health = await db.scalar(select(OrganizationHealth).where(OrganizationHealth.organization_id == org_id))
+    member_count = int(await db.scalar(select(func.count(OrganizationMember.id)).where(OrganizationMember.organization_id == org_id)) or 0)
+    owner = await db.scalar(select(User).where(User.organization_id == org_id).order_by(User.created_at.asc()).limit(1))
+    # Use the stable legacy invoice columns here. Some deployments predate the
+    # richer invoice projection and ORM-selecting the whole model would make an
+    # otherwise healthy dossier fail on optional columns.
+    invoice_summary = (await db.execute(text("""
+        SELECT COUNT(*) AS invoice_count, COALESCE(SUM(amount), 0) AS invoiced_total
+        FROM billing.invoices WHERE organization_id = :org_id
+    """), {"org_id": org_id})).one()
+
+    def subscription_payload(sub):
+        return {
+            "id": str(sub.id), "plan_id": str(sub.plan_id), "plan_name": sub.plan.name if sub.plan else "Unknown",
+            "status": sub.status, "billing_model": sub.plan.billing_model if sub.plan else None,
+            "currency": sub.plan.currency if sub.plan else org.currency[:3],
+            "price_per_event": float(sub.plan.price_per_event) if sub.plan and sub.plan.price_per_event is not None else None,
+            "trial_ends_at": sub.trial_ends_at, "current_period_end": sub.current_period_end,
+            "cancel_at_period_end": sub.cancel_at_period_end, "created_at": sub.created_at,
+        }
+
+    return {
+        "generated_at": now,
+        "profile": {
+            "id": str(org.id), "name": org.name, "slug": org.slug, "logo_url": org.logo_url,
+            "is_active": org.is_active, "is_platform_org": org.is_platform_org,
+            "billing_email": org.billing_email, "custom_domain": org.custom_domain,
+            "country": org.country, "timezone": org.timezone, "currency": org.currency,
+            "language": org.language, "portal_name": org.portal_name, "date_format": org.date_format,
+            "time_format": org.time_format, "organization_type": org.organization_type,
+            "industry": org.industry, "expected_events_per_year": org.expected_events_per_year,
+            "average_attendees_per_event": org.average_attendees_per_event, "primary_goal": org.primary_goal,
+            "enabled_modules": org.enabled_modules or [], "onboarding_completed": org.onboarding_completed,
+            "onboarding_step": org.onboarding_step, "created_at": org.created_at, "updated_at": org.updated_at,
+            "suspended_at": org.suspended_at, "suspension_reason": org.suspension_reason,
+        },
+        "owner": {"id": str(owner.id), "name": f"{owner.first_name or ''} {owner.last_name or ''}".strip(), "email": owner.email} if owner else None,
+        "health": {"score": health.health_score if health else None, "status": health.status if health else "NOT_MEASURED", "warnings": health.warnings if health else []},
+        "subscription": subscription_payload(current_sub) if current_sub else None,
+        "subscription_history": [subscription_payload(item) for item in subscriptions],
+        "event_entitlement": {"purchased": purchased, "reserved": reserved, "consumed": consumed, "remaining": max(0, purchased - consumed - reserved), "actual_events": actual_events, "activations": activation_counts},
+        "grants": [{"id": str(g.id), "type": g.grant_type, "source": g.source_type, "status": g.status, "total": g.quantity_total, "consumed": g.quantity_consumed, "reserved": g.quantity_reserved, "valid_until": g.valid_until} for g in grants],
+        "capabilities": capabilities,
+        "addons": [{"id": str(oa.id), "catalog_id": str(addon.id), "name": addon.name, "key": addon.key, "type": addon.addon_type, "status": oa.status, "scope": "activation" if oa.activation_id else "event" if oa.event_id else "organization", "quantity": oa.quantity, "unit_price": float(oa.unit_price_snapshot) if oa.unit_price_snapshot is not None else float(addon.final_price or 0), "currency": oa.currency, "purchased_at": oa.purchased_at, "expires_at": oa.expires_at, "event_id": str(oa.event_id) if oa.event_id else None, "activation_id": str(oa.activation_id) if oa.activation_id else None} for oa, addon in addon_rows],
+        "usage": {"active_events": usage.active_events_count if usage else 0, "active_users": usage.active_users_count if usage else 0, "registrations": usage.total_registrations_count if usage else 0, "storage_bytes": usage.storage_used_bytes if usage else 0, "calculated_at": usage.last_calculated_at if usage else None},
+        "people": {"members": member_count},
+        "billing": {"invoice_count": int(invoice_summary.invoice_count), "invoiced_total": float(invoice_summary.invoiced_total), "currency": current_sub.plan.currency if current_sub and current_sub.plan else "INR"},
+        "availability": {"profile": True, "subscriptions": True, "entitlements": True, "capabilities": True, "addons": True, "events": True, "people": True, "billing": True},
     }
 
     org.is_active = payload.is_active

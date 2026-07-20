@@ -499,10 +499,11 @@ function SidebarLeaf({
   isPlatformWorkspace: boolean;
   isSubItem?: boolean;
 }) {
+  const setMobileOpen = useUIStore((state) => state.setMobileOpen);
   const isActive = pathname === route.href || Boolean(route.href && pathname.startsWith(`${route.href}/`));
 
   return (
-    <Link href={route.href || "#"} className="block">
+    <Link href={route.href || "#"} onClick={() => setMobileOpen(false)} className="block">
       <div
         className={cn(
           "group relative flex items-center rounded-xl transition-all",

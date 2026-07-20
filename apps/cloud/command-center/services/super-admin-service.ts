@@ -402,6 +402,32 @@ export interface JobExecution {
   capabilities?: { retry: boolean; cancel: boolean };
 }
 
+export interface OrganizationDossier {
+  generated_at: string;
+  profile: {
+    id: string; name: string; slug: string; logo_url?: string | null; is_active: boolean;
+    is_platform_org: boolean; billing_email?: string | null; custom_domain?: string | null;
+    country: string; timezone: string; currency: string; language: string; portal_name?: string | null;
+    date_format: string; time_format: string; organization_type?: string | null; industry?: string | null;
+    expected_events_per_year?: string | null; average_attendees_per_event?: string | null;
+    primary_goal?: string | null; enabled_modules: string[]; onboarding_completed: boolean;
+    onboarding_step: number; created_at: string; updated_at: string; suspended_at?: string | null;
+    suspension_reason?: string | null;
+  };
+  owner?: { id: string; name: string; email: string } | null;
+  health: { score?: number | null; status: string; warnings: string[] };
+  subscription?: { id: string; plan_id: string; plan_name: string; status: string; billing_model?: string | null; currency: string; price_per_event?: number | null; trial_ends_at?: string | null; current_period_end?: string | null; cancel_at_period_end: boolean; created_at: string } | null;
+  subscription_history: OrganizationDossier["subscription"][];
+  event_entitlement: { purchased: number; reserved: number; consumed: number; remaining: number; actual_events: number; activations: Record<string, number> };
+  grants: Array<{ id: string; type: string; source: string; status: string; total?: number | null; consumed?: number | null; reserved?: number | null; valid_until?: string | null }>;
+  capabilities: Array<{ id: string; key: string; name: string; category?: string | null; description?: string | null; enabled: boolean; source: "plan" | "addon" | "override" | "none"; extended: boolean; expires_at?: string | null; reason?: string | null }>;
+  addons: Array<{ id: string; catalog_id: string; name: string; key: string; type: string; status: string; scope: string; quantity: number; unit_price: number; currency: string; purchased_at: string; expires_at?: string | null; event_id?: string | null; activation_id?: string | null }>;
+  usage: { active_events: number; active_users: number; registrations: number; storage_bytes: number; calculated_at?: string | null };
+  people: { members: number };
+  billing: { invoice_count: number; invoiced_total: number; currency: string };
+  availability: Record<string, boolean>;
+}
+
 export type CommercialReportType =
   | "hardware_catalog"
   | "staff_catalog"
@@ -634,6 +660,9 @@ export const adminApi = {
 
   getOrgDetail: (id: string) =>
     apiClient.get<OrgDetail>(`/platform/organizations/${id}`),
+
+  getOrgDossier: (id: string) =>
+    apiClient.get<OrganizationDossier>(`/platform/organizations/${id}/dossier`),
 
   getOrgUsage: (id: string) =>
     apiClient.get<OrgUsage>(`/platform/organizations/${id}/usage`),
@@ -1125,6 +1154,13 @@ export const useGlobalUsers = (
     queryKey: adminKeys.globalUsers(params),
     queryFn: () => adminApi.getGlobalUsers(params),
     enabled: options?.enabled ?? true,
+  });
+
+export const useOrganizationDossier = (id: string) =>
+  useQuery({
+    queryKey: [...adminKeys.orgDetail(id), "dossier"],
+    queryFn: () => adminApi.getOrgDossier(id),
+    enabled: !!id,
   });
 
 export const usePlatformApplications = () =>

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -53,6 +53,21 @@ class Organization(Base):
     suspended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     suspension_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    
+    # ── Expanded Onboarding Profile ───────────────────────
+    organization_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    industry: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    expected_events_per_year: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    average_attendees_per_event: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    primary_goal: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    language: Mapped[str] = mapped_column(String(50), nullable=False, default="English")
+    portal_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    date_format: Mapped[str] = mapped_column(String(20), nullable=False, default="DD/MM/YYYY")
+    time_format: Mapped[str] = mapped_column(String(20), nullable=False, default="24 Hour")
+    currency: Mapped[str] = mapped_column(String(20), nullable=False, default="INR (₹)")
+    enabled_modules: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=lambda: [])
+    onboarding_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    onboarding_draft: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

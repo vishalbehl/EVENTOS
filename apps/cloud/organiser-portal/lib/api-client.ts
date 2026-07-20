@@ -68,6 +68,23 @@ class ApiClient {
             "Something went wrong"
           )
           apiError.details = error.response.data
+
+          if (error.response.status === 401 && typeof window !== "undefined") {
+            try {
+              const storage = localStorage.getItem("obsidian-auth-storage")
+              if (storage) {
+                const parsed = JSON.parse(storage)
+                if (parsed.state?.isAuthenticated || parsed.state?.accessToken) {
+                  localStorage.removeItem("obsidian-auth-storage")
+                  if (!window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup")) {
+                    window.location.href = "/login?expired=1"
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Failed to handle 401 session expiry", e)
+            }
+          }
         } else if (error.request) {
           apiError.message = "No response from server"
         } else {

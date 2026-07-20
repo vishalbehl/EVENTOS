@@ -14,10 +14,12 @@ import {
   User,
   Wifi,
   WifiOff,
+  Menu,
   Search,
 } from "lucide-react";
 import { cn, getTimezoneAbbrev } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useUIStore } from "@/store/useUIStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 export function Header() {
@@ -27,6 +29,7 @@ export function Header() {
   const eventId = params?.eventId as string | undefined;
   const isPlatformWorkspace = !eventId;
   const { user, logout } = useAuthStore();
+  const toggleMobileSidebar = useUIStore((state) => state.toggleMobileSidebar);
   const { isConnected } = useWebSocket(eventId || "");
   const [time, setTime] = useState<Date | null>(null);
   const [timezone, setTimezone] = useState("Asia/Kolkata");
@@ -92,7 +95,7 @@ export function Header() {
 
   return (
     <header
-      className={cn("sticky top-0 z-30 flex w-full items-center justify-between px-6", isPlatformWorkspace ? "h-[78px]" : "h-[72px]")}
+      className={cn("sticky top-0 z-30 flex w-full items-center justify-between px-4 md:px-6", isPlatformWorkspace ? "h-[78px]" : "h-[72px]")}
       style={{
         background: "rgba(5,5,5,0.78)",
         borderBottom: "1px solid var(--color-border)",
@@ -100,40 +103,50 @@ export function Header() {
         backdropFilter: "blur(14px)",
       }}
     >
-      {!isPlatformWorkspace ? (
-        <div className="flex min-w-0 items-center gap-3">
-          <div
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-            style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)" }}
-          >
-            <Box className="h-4 w-4 text-[var(--color-primary-mid)]" />
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={toggleMobileSidebar}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white hover:bg-white/10 md:hidden"
+          title="Toggle Navigation Menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
+        {!isPlatformWorkspace ? (
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              className="hidden sm:flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)" }}
+            >
+              <Box className="h-4 w-4 text-[var(--color-primary-mid)]" />
+            </div>
+            <div className="flex items-center gap-1.5 overflow-hidden">
+              {breadcrumbs.map((crumb, index) => (
+                <div key={crumb.href} className="flex items-center gap-1.5 whitespace-nowrap">
+                  {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />}
+                  <Link
+                    href={crumb.href}
+                    className={cn(
+                      "text-[10px] font-black uppercase tracking-widest transition-colors truncate",
+                      index === breadcrumbs.length - 1
+                        ? "text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
+                    )}
+                  >
+                    {crumb.label}
+                  </Link>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 overflow-hidden">
-            {breadcrumbs.map((crumb, index) => (
-              <div key={crumb.href} className="flex items-center gap-1.5 whitespace-nowrap">
-                {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />}
-                <Link
-                  href={crumb.href}
-                  className={cn(
-                    "text-[10px] font-black uppercase tracking-widest transition-colors",
-                    index === breadcrumbs.length - 1
-                      ? "text-[var(--color-text-primary)]"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
-                  )}
-                >
-                  {crumb.label}
-                </Link>
-              </div>
-            ))}
+        ) : (
+          <div className="min-w-0">
+            <h1 className="truncate text-xl md:text-[28px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
+              {pageTitle}
+            </h1>
           </div>
-        </div>
-      ) : (
-        <div className="min-w-0">
-          <h1 className="truncate text-[28px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-            {pageTitle}
-          </h1>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Centered Search Command Bar */}
       <div className="hidden max-w-sm flex-1 md:block relative mx-4">

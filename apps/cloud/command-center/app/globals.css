@@ -16,13 +16,19 @@
   --bg-surface-3: var(--inset);
   --bg-surface-deep: var(--surf);
   --bg-surface-hover: color-mix(in srgb, var(--raised) 88%, var(--text));
+  --surface-1: var(--bg-surface);
+  --surface-inset: var(--bg-surface-3);
+  --surface-inverse: var(--text-primary);
   --border-default: var(--border);
   --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
+  --border-strong: var(--border-default);
 
   --text-primary: var(--text);
   --text-secondary: var(--muted);
   --text-tertiary: color-mix(in srgb, var(--text) 55%, transparent);
   --text-disabled: color-mix(in srgb, var(--text) 30%, transparent);
+  --text-inverse: var(--bg-base);
+  --focus-ring: var(--ring);
 
   --brand-primary: var(--pri);
   --brand-primary-hover: var(--sec);

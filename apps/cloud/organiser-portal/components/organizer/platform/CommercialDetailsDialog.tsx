@@ -114,6 +114,9 @@ export function CommercialDetailsDialog({
               <DialogTitle className="text-xl md:text-2xl font-black tracking-tight text-white leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
                 {data.name}
               </DialogTitle>
+              <DialogDescription className="sr-only">
+                Specification and commercial details for {data.name}
+              </DialogDescription>
             </div>
             <div className="text-right shrink-0 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
               <span className="text-[8px] uppercase tracking-widest text-white/40 block font-bold">Commercial Rate</span>

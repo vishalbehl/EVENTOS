@@ -94,7 +94,7 @@ export function CommercialPlanCard({
   return (
     <article
       className={cn(
-        "relative flex min-h-[560px] flex-col overflow-hidden rounded-[30px] border bg-[var(--bg-surface)] transition-all duration-200 hover:-translate-y-1",
+        "relative flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border bg-[var(--bg-surface)] transition-all duration-200 hover:-translate-y-1",
         plan.isPopular && "ring-1 ring-[var(--pri)]/30 dark:ring-[var(--pri)]/20",
         isCurrentPlan && "ring-2 ring-[rgba(194,245,66,0.35)]"
       )}
@@ -128,26 +128,26 @@ export function CommercialPlanCard({
         ) : null}
 
         {/* Icon */}
-        <div className="mb-7 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--text-primary)]">
+        <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--text-primary)]">
           <Icon className="h-5 w-5" />
         </div>
 
         <p className="text-[10px] font-bold uppercase tracking-[.2em] text-[var(--text-tertiary)]">
           Tier {String(index + 1).padStart(2, "0")}
         </p>
-        <h2 className="mt-2 text-2xl font-semibold text-[var(--text-primary)]">{plan.name}</h2>
-        <p className="mt-2 min-h-10 text-sm leading-5 text-[var(--text-secondary)]">
+        <h2 className="mt-1.5 text-2xl font-semibold text-[var(--text-primary)]">{plan.name}</h2>
+        <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
           {plan.tagline || plan.description || "A configurable enterprise service tier."}
         </p>
 
-        <div className="my-6 border-y border-[var(--border-default)] py-5">
-          <span className="font-mono text-2xl font-semibold text-[var(--text-primary)]">{plan.priceLabel}</span>
+        <div className="my-4 border-y border-[var(--border-default)] py-4">
+          <span className="font-mono text-2xl font-bold text-[var(--text-primary)]">{plan.priceLabel}</span>
         </div>
 
         <ul className="space-y-3">
           {plan.highlights.map((item) => (
-            <li key={item} className="flex items-center gap-2.5 text-sm text-[var(--text-secondary)]">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--text-primary)]">
+            <li key={item} className="flex items-center gap-2.5 text-xs text-[var(--text-secondary)]">
+              <span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--text-primary)]">
                 <Check className="h-3 w-3" />
               </span>
               {item}
@@ -155,7 +155,7 @@ export function CommercialPlanCard({
           ))}
         </ul>
 
-        <div className="mt-auto flex gap-2 pt-7">
+        <div className="mt-auto flex gap-2 pt-5">
           <Button
             onClick={actionVariant === "current" ? undefined : onAction}
             disabled={actionVariant === "current"}
@@ -175,13 +175,6 @@ export function CommercialPlanCard({
             </Button>
           ) : null}
         </div>
-      </div>
-
-      <div className="flex items-center justify-between border-t border-[var(--border-default)] bg-[var(--bg-surface-2)]/50 px-6 py-3 text-[10px] uppercase tracking-wider text-[var(--text-tertiary)]">
-        <span>{plan.subscribersLabel || "Workspace ready"}</span>
-        <span className={plan.isActive === false ? "text-[var(--text-tertiary)]" : "text-[var(--text-primary)]"}>
-          {plan.isActive === false ? "Inactive" : "Active"}
-        </span>
       </div>
     </article>
   );

@@ -25,6 +25,19 @@ class OrganizationUpdate(BaseModel):
     country: Optional[str] = Field(None, min_length=2, max_length=2)
     timezone: Optional[str] = None
     onboarding_completed: Optional[bool] = None
+    organization_type: Optional[str] = None
+    industry: Optional[str] = None
+    expected_events_per_year: Optional[str] = None
+    average_attendees_per_event: Optional[str] = None
+    primary_goal: Optional[str] = None
+    language: Optional[str] = None
+    portal_name: Optional[str] = None
+    date_format: Optional[str] = None
+    time_format: Optional[str] = None
+    currency: Optional[str] = None
+    enabled_modules: Optional[list] = None
+    onboarding_step: Optional[int] = None
+    onboarding_draft: Optional[dict] = None
 
 
 class OrganizationResponse(BaseModel):
@@ -41,6 +54,19 @@ class OrganizationResponse(BaseModel):
     billing_email: Optional[str] = None
     country: str = "IN"
     timezone: str = "Asia/Kolkata"
+    organization_type: Optional[str] = None
+    industry: Optional[str] = None
+    expected_events_per_year: Optional[str] = None
+    average_attendees_per_event: Optional[str] = None
+    primary_goal: Optional[str] = None
+    language: str = "English"
+    portal_name: Optional[str] = None
+    date_format: str = "DD/MM/YYYY"
+    time_format: str = "24 Hour"
+    currency: str = "INR (₹)"
+    enabled_modules: Optional[list] = None
+    onboarding_step: int = 0
+    onboarding_draft: Optional[dict] = None
     max_events: int = 1
     max_users: int = 2
     max_storage_gb: int = 10
