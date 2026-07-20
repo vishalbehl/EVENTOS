@@ -18,6 +18,8 @@ function isPlatformAdministrator(user: User): boolean {
   return user.platform_role === 'SUPER_ADMIN' || user.is_platform_admin === true || user.role === 'super_admin';
 }
 
+let restorePromise: Promise<boolean> | null = null;
+
 export const authService = {
   /**
    * Authenticate with email and password
@@ -86,12 +88,22 @@ export const authService = {
   },
 
   restore: async (): Promise<boolean> => {
-    try {
-      await authService.refresh();
-      return true;
-    } catch {
-      useAuthStore.getState().logout();
-      return false;
-    }
+    const current = useAuthStore.getState();
+    if (current.isAuthenticated && current.accessToken && current.user) return true;
+    if (restorePromise) return restorePromise;
+
+    restorePromise = (async () => {
+      try {
+        await authService.refresh();
+        return true;
+      } catch {
+        useAuthStore.getState().logout();
+        return false;
+      } finally {
+        restorePromise = null;
+      }
+    })();
+
+    return restorePromise;
   },
 };

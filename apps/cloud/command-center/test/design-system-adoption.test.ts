@@ -13,10 +13,8 @@ function filesUnder(directory: string): string[] {
 
 describe("app-wide design system adoption", () => {
   it("routes dashboard pages through approved composition primitives", () => {
-    const pages = filesUnder(appRoot).filter((path) => path.endsWith("page.tsx"));
-    const standaloneExceptions = [resolve(appRoot, "(auth)/page.tsx"), resolve(appRoot, "proposal-share/page.tsx")];
+    const pages = filesUnder(resolve(appRoot, "(command-center)")).filter((path) => path.endsWith("page.tsx"));
     const failures = pages.filter((path) => {
-      if (standaloneExceptions.includes(path)) return false;
       const source = readFileSync(path, "utf8");
       return !/PageWrapper|PageContainer|UnavailableRouteState|ProposalForm|QuoteForm|export\s*\{\s*default\s*\}/.test(source);
     });

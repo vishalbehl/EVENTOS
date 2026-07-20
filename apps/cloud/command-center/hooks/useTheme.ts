@@ -33,6 +33,7 @@ function applyTheme(theme: Theme, prefersDark: boolean) {
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>("system");
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -40,9 +41,13 @@ export function useTheme() {
     const saved = normalizeStoredTheme(localStorage.getItem(STORAGE_KEY));
     if (localStorage.getItem(STORAGE_KEY) !== saved) localStorage.setItem(STORAGE_KEY, saved);
     setThemeState(saved);
+    setResolvedTheme(resolveTheme(saved, media.matches));
     applyTheme(saved, media.matches);
     const onChange = (event: MediaQueryListEvent) => {
-      if (normalizeStoredTheme(localStorage.getItem(STORAGE_KEY)) === "system") applyTheme("system", event.matches);
+      if (normalizeStoredTheme(localStorage.getItem(STORAGE_KEY)) === "system") {
+        setResolvedTheme(resolveTheme("system", event.matches));
+        applyTheme("system", event.matches);
+      }
     };
     media.addEventListener("change", onChange);
     setMounted(true);
@@ -52,8 +57,10 @@ export function useTheme() {
   const setTheme = useCallback((nextTheme: Theme) => {
     setThemeState(nextTheme);
     localStorage.setItem(STORAGE_KEY, nextTheme);
-    applyTheme(nextTheme, window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setResolvedTheme(resolveTheme(nextTheme, prefersDark));
+    applyTheme(nextTheme, prefersDark);
   }, []);
 
-  return { theme, setTheme, themes: THEMES, mounted };
+  return { theme, resolvedTheme, setTheme, themes: THEMES, mounted };
 }

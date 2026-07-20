@@ -100,7 +100,7 @@
 }
 
 [data-theme="dark"] {
-  /* Reference direction: true-black control room with graphite structure. */
+  /* Monochrome enterprise control room: white actions, graphite structure. */
   --bg-surface-2: #080808;
   --bg-surface-3: #171719;
   --bg-surface-deep: #111111;
@@ -109,7 +109,7 @@
   --border-subtle: #202024;
   --text-tertiary: #6f6f76;
   --text-disabled: #505057;
-  --brand-primary-muted: rgb(53 72 255 / 0.14);
+  --brand-primary-muted: rgb(255 255 255 / 0.1);
   --status-info: #c4c4ca;
   --status-info-muted: rgb(196 196 202 / 0.12);
   --chart-grid: #202024;
@@ -122,8 +122,10 @@
   --shadow-card-hover: 0 20px 48px rgb(0 0 0 / 0.48);
   --shadow-overlay: 0 32px 90px rgb(0 0 0 / 0.72);
   --popover: #111113;
-  --accent: rgb(53 72 255 / 0.14);
-  --ring: #5262ff;
+  --chart-1: #d4d4d8;
+  --chart-4: #a1a1aa;
+  --accent: rgb(255 255 255 / 0.1);
+  --ring: #f4f4f5;
 }
 
 /* Blue is an interaction signal in dark mode, never general-purpose copy. */
@@ -131,6 +133,50 @@
 [data-theme="dark"] :is(p, span, a, label, h1, h2, h3, h4, h5, h6, td, th)[class*="text-[var(--brand-primary)]"],
 [data-theme="dark"] :is(p, span, a, label, h1, h2, h3, h4, h5, h6, td, th)[class*="text-[var(--pri)]"] {
   color: var(--text-primary) !important;
+}
+
+/* Legacy utility accents resolve to the monochrome system in dark mode. */
+[data-theme="dark"] [class*="text-blue-"],
+[data-theme="dark"] [class*="text-indigo-"],
+[data-theme="dark"] [class*="text-violet-"],
+[data-theme="dark"] [class*="text-purple-"],
+[data-theme="dark"] [class*="text-cyan-"],
+[data-theme="dark"] [class*="text-sky-"] {
+  color: #d4d4d8 !important;
+}
+
+[data-theme="dark"] [class*="bg-blue-"],
+[data-theme="dark"] [class*="bg-indigo-"],
+[data-theme="dark"] [class*="bg-violet-"],
+[data-theme="dark"] [class*="bg-purple-"],
+[data-theme="dark"] [class*="bg-cyan-"],
+[data-theme="dark"] [class*="bg-sky-"] {
+  background-color: rgb(255 255 255 / 0.08) !important;
+}
+
+[data-theme="dark"] [class*="border-blue-"],
+[data-theme="dark"] [class*="border-indigo-"],
+[data-theme="dark"] [class*="border-violet-"],
+[data-theme="dark"] [class*="border-purple-"],
+[data-theme="dark"] [class*="border-cyan-"],
+[data-theme="dark"] [class*="border-sky-"] {
+  border-color: rgb(255 255 255 / 0.16) !important;
+}
+
+[data-theme="dark"] .recharts-wrapper :is(path, line, rect)[stroke="#3B82F6"],
+[data-theme="dark"] .recharts-wrapper :is(path, line, rect)[stroke="#4F46E5"],
+[data-theme="dark"] .recharts-wrapper :is(path, line, rect)[stroke="#6366F1"],
+[data-theme="dark"] .recharts-wrapper :is(path, line, rect)[stroke="#7C3AED"],
+[data-theme="dark"] .recharts-wrapper :is(path, line, rect)[stroke="#8B5CF6"] {
+  stroke: #d4d4d8 !important;
+}
+
+[data-theme="dark"] .recharts-wrapper :is(path, rect)[fill="#3B82F6"],
+[data-theme="dark"] .recharts-wrapper :is(path, rect)[fill="#4F46E5"],
+[data-theme="dark"] .recharts-wrapper :is(path, rect)[fill="#6366F1"],
+[data-theme="dark"] .recharts-wrapper :is(path, rect)[fill="#7C3AED"],
+[data-theme="dark"] .recharts-wrapper :is(path, rect)[fill="#8B5CF6"] {
+  fill: #71717a !important;
 }
 
 [data-density="compact"] {

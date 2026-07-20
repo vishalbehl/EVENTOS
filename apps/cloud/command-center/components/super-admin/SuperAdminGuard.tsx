@@ -2,45 +2,40 @@
 
 import { useAuthStore } from "@/store/use-auth-store";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { authService } from "@/services/auth-service";
 
 export function SuperAdminGuard({ children }: { children: React.ReactNode }) {
   const { user, isAuthenticated, hasHydrated } = useAuthStore();
   const router = useRouter();
-  const [restoring, setRestoring] = useState(false);
-  const restoreAttempted = useRef(false);
+  const [restoreState, setRestoreState] = useState<"idle" | "restoring" | "restored" | "failed">("idle");
 
   useEffect(() => {
     if (!hasHydrated) return;
     const isAdmin = user?.platform_role === "SUPER_ADMIN" || user?.is_platform_admin || user?.role === "super_admin";
     if (!isAuthenticated) {
-      if (restoreAttempted.current) {
+      if (restoreState === "restoring") return;
+      if (restoreState === "failed") {
         router.replace("/");
         return;
       }
-      restoreAttempted.current = true;
-      let active = true;
-      setRestoring(true);
+      setRestoreState("restoring");
       void authService.restore().then((restored) => {
-        if (!active) return;
-        setRestoring(false);
-        if (!restored) router.replace("/");
+        setRestoreState(restored ? "restored" : "failed");
       });
-      return () => { active = false; };
+      return;
     }
-    restoreAttempted.current = false;
-    setRestoring(false);
+    if (restoreState !== "restored") setRestoreState("restored");
     const onExpired = () => router.replace("/");
     window.addEventListener("auth:session-expired", onExpired);
     if (!isAdmin) {
       router.replace("/dashboard");
     }
     return () => window.removeEventListener("auth:session-expired", onExpired);
-  }, [hasHydrated, isAuthenticated, user, router]);
+  }, [hasHydrated, isAuthenticated, user, router, restoreState]);
 
-  if (!hasHydrated || restoring || !isAuthenticated) return null;
+  if (!hasHydrated || restoreState === "idle" || restoreState === "restoring" || !isAuthenticated) return null;
 
   const isAdmin = user?.platform_role === "SUPER_ADMIN" || user?.is_platform_admin || user?.role === "super_admin";
   if (!isAdmin) {

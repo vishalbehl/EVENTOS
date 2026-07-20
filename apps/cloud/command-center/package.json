@@ -15,8 +15,9 @@
     "contracts:generate": "node scripts/generate-contracts.mjs",
     "contracts:check": "node scripts/check-generated-contracts.mjs",
     "quality:contracts": "node scripts/check-frontend-contracts.mjs && node scripts/check-production-mocks.mjs",
+    "architecture:check": "node scripts/check-app-router-architecture.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=high",
-    "quality:ci": "npm run contracts:check && npm run quality:contracts && npm run audit:production && npm run type-check && npm run lint && npm run test && npm run build && npm run test:e2e"
+    "quality:ci": "npm run contracts:check && npm run quality:contracts && npm run architecture:check && npm run audit:production && npm run type-check && npm run lint && npm run test && npm run build && npm run test:e2e"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

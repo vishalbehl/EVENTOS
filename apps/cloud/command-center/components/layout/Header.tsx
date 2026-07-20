@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, HelpCircle, LogOut, Menu, Palette, Settings, Sparkles, User } from "lucide-react";
+import { Check, ChevronDown, HelpCircle, LogOut, Menu, Moon, Settings, Sparkles, Sun, User } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -9,8 +9,7 @@ import { CommandPalette } from "@/components/layout/CommandPalette";
 import { NotificationCenter } from "@/components/layout/NotificationCenter";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
-  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/hooks/useTheme";
 import { getTimezoneAbbrev } from "@/lib/utils";
@@ -28,10 +27,8 @@ export function Header() {
   const [signingOut, setSigningOut] = useState(false);
   const [time, setTime] = useState<Date | null>(null);
   const [timezone, setTimezone] = useState("Asia/Kolkata");
-  const { theme, setTheme, themes } = useTheme();
+  const { resolvedTheme, setTheme, mounted } = useTheme();
   const user = useAuthStore((state) => state.user);
-  const density = useUIStore((state) => state.density);
-  const setDensity = useUIStore((state) => state.setDensity);
   const setMobileSidebarOpen = useUIStore((state) => state.setMobileSidebarOpen);
   const displayName = user?.full_name || [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email || "Platform administrator";
 
@@ -89,25 +86,25 @@ export function Header() {
 
         <NotificationCenter />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button type="button" aria-label="Appearance settings" className="grid size-9 place-items-center rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-              <Palette aria-hidden className="size-4" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56 border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)]">
-            <DropdownMenuLabel className="text-xs">Theme</DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as typeof theme)}>
-              {themes.map((item) => <DropdownMenuRadioItem key={item.name} value={item.name}>{item.label}</DropdownMenuRadioItem>)}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
-            <DropdownMenuLabel className="text-xs">Information density</DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={density} onValueChange={(value) => setDensity(value as typeof density)}>
-              <DropdownMenuRadioItem value="comfortable">Comfortable</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="compact">Compact</DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={resolvedTheme === "dark"}
+          aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} theme`}
+          title={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} theme`}
+          disabled={!mounted}
+          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+          className="group relative flex h-9 w-[4.25rem] items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-1 text-[var(--text-secondary)] shadow-[var(--shadow-panel)] transition-colors hover:border-[var(--border-strong)] disabled:opacity-60"
+        >
+          <Sun aria-hidden className="absolute left-2 size-3.5" />
+          <Moon aria-hidden className="absolute right-2 size-3.5" />
+          <span
+            aria-hidden
+            className={`relative z-10 grid size-7 place-items-center rounded-full bg-[var(--surface-inverse)] text-[var(--text-inverse)] shadow-sm transition-transform duration-200 ${resolvedTheme === "dark" ? "translate-x-7" : "translate-x-0"}`}
+          >
+            {resolvedTheme === "dark" ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}
+          </span>
+        </button>
 
         <Link aria-label="Open UI component catalogue" href="/design-system" className="hidden size-9 place-items-center rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] sm:grid">
           <HelpCircle aria-hidden className="size-4" />
