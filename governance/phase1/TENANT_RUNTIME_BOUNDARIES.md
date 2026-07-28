@@ -158,7 +158,7 @@ instead of being resolved through an unscoped resource lookup.
   enforcement.
 - 12 tenant runtime boundary tests passed after scheduled-job closure.
 - 34 focused Phase 1 backend tests passed after scheduled-job closure.
-- The RLS canary includes `venue.printers` and passed against `eventx_runtime`.
+- The RLS canary includes `venue.printers` and passed against `Event_runtime`.
 - The RLS canary includes export visibility, cross-tenant export update, and
   cross-tenant export insert checks.
 - Alembic current/head is `phase1_exports_0550`.

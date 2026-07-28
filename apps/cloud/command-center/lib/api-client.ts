@@ -12,7 +12,7 @@ export interface ProblemDetails {
   type?: string;
   title?: string;
   status?: number;
-  detail?: string;
+  detail?: string | Record<string, unknown> | unknown[];
   instance?: string;
   code?: string;
   errors?: Record<string, string[] | string>;
@@ -93,7 +93,21 @@ function toApiError(error: AxiosError<ProblemDetails>): ApiError {
   const status = error.response?.status;
   const requestHeaders = error.config?.headers;
   const responseHeaders = error.response?.headers;
-  const message = problem?.detail || problem?.title || error.message || "The request could not be completed.";
+
+  let message = "The request could not be completed.";
+  if (typeof problem?.detail === "string") {
+    message = problem.detail;
+  } else if (Array.isArray(problem?.detail)) {
+    message = problem.detail
+      .map((item: any) => (typeof item === "string" ? item : item?.msg || item?.message || JSON.stringify(item)))
+      .join(", ");
+  } else if (problem?.detail && typeof problem.detail === "object") {
+    message = JSON.stringify(problem.detail);
+  } else if (problem?.title) {
+    message = String(problem.title);
+  } else if (error.message) {
+    message = error.message;
+  }
 
   return new ApiError({
     message,

@@ -4,11 +4,11 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,8 +31,17 @@ from app.modules.speakers.schemas.speaker import (
 )
 from app.schemas.common import MessageResponse
 from app.services import email_service, qr_service
+from app.modules.platform.services.metering_service import MeteringService
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 
-router = APIRouter(prefix="/events/{event_id}/speakers", tags=["speakers"])
+router = APIRouter(prefix="/events/{event_id}/speakers", tags=["speakers"], dependencies=[require_event_operation("speakers.manage")])
+abstracts_router = APIRouter(
+    prefix="/events/{event_id}/abstracts",
+    tags=["speaker-abstracts"],
+    dependencies=[require_event_operation("abstracts.review")],
+)
 
 
 # ── Inline response schema for speaker's session list ────────────────
@@ -53,6 +62,227 @@ class SpeakerTalkResponse(BaseModel):
     files_uploaded: int
     files_total: int   # equals 1 expected per slot
     event_timezone: str = "UTC"
+    abstract_text: Optional[str] = None
+    abstract_keywords: List[str] = []
+    abstract_status: str = "DRAFT"
+    abstract_version: int = 1
+    abstract_submitted_at: Optional[datetime] = None
+    abstract_reviewed_at: Optional[datetime] = None
+    abstract_review_notes: Optional[str] = None
+
+
+class AdminAbstractResponse(BaseModel):
+    session_speaker_id: uuid.UUID
+    event_id: uuid.UUID
+    speaker_id: uuid.UUID
+    speaker_name: str
+    speaker_email: str
+    session_id: uuid.UUID
+    session_name: str
+    presentation_title: Optional[str]
+    abstract_text: Optional[str]
+    keywords: List[str]
+    status: str
+    version: int
+    submitted_at: Optional[datetime]
+    reviewed_at: Optional[datetime]
+    reviewed_by: Optional[uuid.UUID]
+    review_notes: Optional[str]
+
+
+class AdminAbstractPage(BaseModel):
+    items: List[AdminAbstractResponse]
+    next_cursor: Optional[uuid.UUID] = None
+
+
+class AbstractReviewRequest(BaseModel):
+    decision: Literal[
+        "UNDER_REVIEW",
+        "ACCEPTED",
+        "REJECTED",
+        "REVISION_REQUESTED",
+    ]
+    notes: Optional[str] = Field(None, max_length=4000)
+    reason: str = Field(min_length=5, max_length=1000)
+    case_reference: Optional[str] = Field(None, max_length=160)
+
+
+def _admin_abstract_response(
+    slot: SessionSpeaker,
+    speaker: Speaker,
+    session: Session,
+) -> AdminAbstractResponse:
+    return AdminAbstractResponse(
+        session_speaker_id=slot.id,
+        event_id=session.event_id,
+        speaker_id=speaker.id,
+        speaker_name=speaker.full_name,
+        speaker_email=speaker.email,
+        session_id=session.id,
+        session_name=session.name,
+        presentation_title=slot.presentation_title,
+        abstract_text=slot.abstract_text,
+        keywords=slot.abstract_keywords or [],
+        status=slot.abstract_status,
+        version=slot.abstract_version,
+        submitted_at=slot.abstract_submitted_at,
+        reviewed_at=slot.abstract_reviewed_at,
+        reviewed_by=slot.abstract_reviewed_by,
+        review_notes=slot.abstract_review_notes,
+    )
+
+
+@abstracts_router.get("", response_model=AdminAbstractPage)
+async def list_abstracts(
+    event: CurrentEvent,
+    status_filter: Optional[str] = Query(None, alias="status", max_length=24),
+    search: Optional[str] = Query(None, max_length=120),
+    cursor: Optional[uuid.UUID] = Query(None),
+    limit: int = Query(100, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+) -> AdminAbstractPage:
+    query = (
+        select(SessionSpeaker, Speaker, Session)
+        .join(Speaker, Speaker.id == SessionSpeaker.speaker_id)
+        .join(Session, Session.id == SessionSpeaker.session_id)
+        .where(
+            Speaker.event_id == event.id,
+            Session.event_id == event.id,
+            Speaker.deleted_at.is_(None),
+            Session.deleted_at.is_(None),
+        )
+        .order_by(SessionSpeaker.id)
+        .limit(limit + 1)
+    )
+    if status_filter:
+        query = query.where(
+            SessionSpeaker.abstract_status == status_filter.upper()
+        )
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Speaker.first_name.ilike(needle),
+                Speaker.last_name.ilike(needle),
+                Speaker.email.ilike(needle),
+                Session.name.ilike(needle),
+                SessionSpeaker.presentation_title.ilike(needle),
+            )
+        )
+    if cursor:
+        query = query.where(SessionSpeaker.id > cursor)
+    rows = (await db.execute(query)).all()
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    return AdminAbstractPage(
+        items=[
+            _admin_abstract_response(slot, speaker, session)
+            for slot, speaker, session in page_rows
+        ],
+        next_cursor=page_rows[-1][0].id if has_more and page_rows else None,
+    )
+
+
+@abstracts_router.patch(
+    "/{session_speaker_id}/review",
+    response_model=AdminAbstractResponse,
+)
+async def review_abstract(
+    session_speaker_id: uuid.UUID,
+    payload: AbstractReviewRequest,
+    event: CurrentEvent,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AdminAbstractResponse:
+    """abstract_review_mutations: review one event-scoped abstract."""
+    row = (
+        await db.execute(
+            select(SessionSpeaker, Speaker, Session)
+            .join(Speaker, Speaker.id == SessionSpeaker.speaker_id)
+            .join(Session, Session.id == SessionSpeaker.session_id)
+            .where(
+                SessionSpeaker.id == session_speaker_id,
+                Speaker.event_id == event.id,
+                Session.event_id == event.id,
+                Speaker.deleted_at.is_(None),
+                Session.deleted_at.is_(None),
+            )
+            .with_for_update(of=SessionSpeaker)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Abstract not found.")
+    slot, speaker, session = row
+    if slot.abstract_idempotency_key == idempotency_key:
+        return _admin_abstract_response(slot, speaker, session)
+    if slot.abstract_version != expected_version:
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "VERSION_CONFLICT",
+                "current_version": slot.abstract_version,
+            },
+        )
+    if payload.decision in {"REJECTED", "REVISION_REQUESTED"} and not (
+        payload.notes or ""
+    ).strip():
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "REVIEW_NOTES_REQUIRED"},
+        )
+    allowed_from = {
+        "UNDER_REVIEW": {"SUBMITTED"},
+        "ACCEPTED": {"SUBMITTED", "UNDER_REVIEW"},
+        "REJECTED": {"SUBMITTED", "UNDER_REVIEW"},
+        "REVISION_REQUESTED": {"SUBMITTED", "UNDER_REVIEW"},
+    }
+    if slot.abstract_status not in allowed_from[payload.decision]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_ABSTRACT_STATE",
+                "status": slot.abstract_status,
+                "decision": payload.decision,
+            },
+        )
+    old_state = {
+        "status": slot.abstract_status,
+        "version": slot.abstract_version,
+    }
+    slot.abstract_status = payload.decision
+    slot.abstract_review_notes = (payload.notes or "").strip() or None
+    slot.abstract_reviewed_at = datetime.now(timezone.utc)
+    slot.abstract_reviewed_by = current_user.id
+    slot.abstract_version += 1
+    slot.abstract_idempotency_key = idempotency_key
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type=f"SPEAKER_ABSTRACT_{payload.decision}",
+            resource_type="speaker_abstract",
+            resource_id=slot.id,
+            actor_user_id=current_user.id,
+            organization_id=event.organization_id,
+            actor_role=getattr(current_user, "role", None),
+            old_state=old_state,
+            new_state={
+                "event_id": str(event.id),
+                "speaker_id": str(speaker.id),
+                "status": slot.abstract_status,
+                "version": slot.abstract_version,
+                "reason": payload.reason,
+                "case_reference": payload.case_reference,
+                "idempotency_key": idempotency_key,
+            },
+        ),
+        db,
+    )
+    await db.commit()
+    await db.refresh(slot)
+    return _admin_abstract_response(slot, speaker, session)
 
 
 @router.get("", response_model=List[SpeakerSummary])
@@ -299,6 +529,8 @@ async def manual_register_speaker(
     )
     speaker = dup.scalar_one_or_none()
     
+    created_new = speaker is None
+    reservation = None
     if speaker:
         # Update existing
         speaker.first_name = payload.first_name
@@ -308,8 +540,16 @@ async def manual_register_speaker(
         speaker.designation = payload.designation
         speaker.country = payload.country
     else:
-        from app.modules.billing.services.limit_guard import LimitGuard
-        await LimitGuard.check_speakers(db, event.organization_id, event.id)
+        reservation = await UsageReservationService.reserve(
+            db,
+            organization_id=event.organization_id,
+            event_id=event.id,
+            limit_key="max_speakers",
+            quantity=1,
+            unit="speaker",
+            idempotency_key=f"speaker-manual:{event.id}:{str(payload.email).strip().lower()}",
+            metadata={"email_hash": hashlib.sha256(str(payload.email).strip().lower().encode()).hexdigest()},
+        )
         
         token = str(uuid.uuid4())
         # Generate a human-readable code (8 chars, uppercase)
@@ -330,6 +570,12 @@ async def manual_register_speaker(
         db.add(speaker)
     
     await db.flush()
+    if created_new and reservation:
+        await UsageReservationService.consume(
+            db,
+            reservation.id,
+            source="organizer_portal.speakers.manual_register",
+        )
 
     # 2. Link to sessions/posters if provided
     for talk in payload.talks:
@@ -441,8 +687,16 @@ async def update_speaker(
     speaker_id: uuid.UUID,
     payload: SpeakerUpdate,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "speakers.profiles.manage",
+        user_id=current_user.id,
+    )
     speaker = await _get_speaker_or_404(db, speaker_id, event.id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         if field == "email" and value:
@@ -472,17 +726,28 @@ async def delete_speaker(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     speaker = await _get_speaker_or_404(db, speaker_id, event.id)
-    await db.delete(speaker)
+    if speaker.deleted_at is None:
+        speaker.deleted_at = datetime.now(timezone.utc)
+        speaker.deleted_by = user.id
+        await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="speakers", quantity=-1, unit="count", source="organizer_portal.speakers.archive", idempotency_key=f"speaker-archive:{speaker.id}:{speaker.deleted_at.isoformat()}", actor_user_id=user.id, metadata={"resource_id": str(speaker.id)})
     await db.commit()
-    return MessageResponse(message="Speaker deleted.")
+    return MessageResponse(message="Speaker archived and remains recoverable.")
 
 
 @router.post("/{speaker_id}/send-invite", response_model=MessageResponse)
 async def send_invite(
     speaker_id: uuid.UUID,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "communications.speaker.send",
+        user_id=current_user.id,
+    )
     speaker = await _get_speaker_or_404(db, speaker_id, event.id)
     upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{speaker.event_id}/{speaker.upload_token}"
     await email_service.send_upload_invitation(speaker, event.name, upload_url, db=db)
@@ -494,8 +759,16 @@ async def send_invite(
 async def bulk_invite(
     payload: SpeakerBulkInviteRequest,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "communications.speaker.send",
+        user_id=current_user.id,
+    )
     sent = 0
     for spk_id in payload.speaker_ids:
         result = await db.execute(
@@ -649,6 +922,13 @@ async def get_speaker_sessions(
             files_uploaded=files_uploaded,
             files_total=files_total,
             event_timezone=event.timezone,
+            abstract_text=ss.abstract_text,
+            abstract_keywords=ss.abstract_keywords or [],
+            abstract_status=ss.abstract_status,
+            abstract_version=ss.abstract_version,
+            abstract_submitted_at=ss.abstract_submitted_at,
+            abstract_reviewed_at=ss.abstract_reviewed_at,
+            abstract_review_notes=ss.abstract_review_notes,
         ))
     return talks
 
@@ -771,10 +1051,28 @@ async def fetch_speakers_from_registration(
         imported_count += 1
 
     if imported_speakers:
+        import_identity = hashlib.sha256(
+            ",".join(sorted(str(participant.id) for participant in participants)).encode()
+        ).hexdigest()
+        reservation = await UsageReservationService.reserve(
+            db,
+            organization_id=event.organization_id,
+            event_id=event.id,
+            limit_key="max_speakers",
+            quantity=len(imported_speakers),
+            unit="speaker",
+            idempotency_key=f"speaker-registration-import:{event.id}:{import_identity}",
+            metadata={"import": "registration", "count": len(imported_speakers)},
+        )
         await db.flush()
         # Set dynamic QR codes
         for speaker in imported_speakers:
             speaker.qr_code_url = f"{settings.API_BASE_URL}/api/v1/portal/speaker-qr/{speaker.id}/download?format=jpg"
+        await UsageReservationService.consume(
+            db,
+            reservation.id,
+            source="organizer_portal.speakers.registration_import",
+        )
         await db.commit()
 
     return MessageResponse(message=f"Successfully imported {imported_count} speakers from registration.")

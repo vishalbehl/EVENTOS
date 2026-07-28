@@ -1058,7 +1058,7 @@ export default function PublicRegistrationPortal() {
             The registration portal for <span className="text-indigo-400">{config?.event_name || "this event"}</span> is currently inactive or draft.
           </p>
           <div className="text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-40">
-            EventX OS Intelligence Desk
+            Event OS Intelligence Desk
           </div>
         </motion.div>
       </div>
@@ -2048,7 +2048,7 @@ export default function PublicRegistrationPortal() {
 
               <div className="pt-6 border-t border-white/5">
                 <div className="text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-40 text-center">
-                  EventX OS Intelligence Desk
+                  Event OS Intelligence Desk
                 </div>
               </div>
             </motion.div>

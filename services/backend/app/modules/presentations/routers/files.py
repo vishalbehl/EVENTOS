@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,17 +26,25 @@ from app.schemas.common import MessageResponse
 from app.services import upload_service
 from app.modules.notifications.services.email_service import send_file_approved, send_file_rejected
 from app.websocket.events import broadcast_file_event, EventType
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_feature, require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.platform.models.organization_console import UsageReservation
+from app.modules.platform.services.metering_service import MeteringService
+from app.modules.presentations.services.file_administration_service import PresentationFileAdministrationService
 
-router = APIRouter(prefix="/events/{event_id}/files", tags=["files"])
+router = APIRouter(prefix="/events/{event_id}/files", tags=["files"], dependencies=[require_event_feature("FEAT_FILE_UPLOADS")])
 
 
 @router.post("/upload-url", response_model=PresignedUploadResponse)
 async def request_upload_url(
     payload: UploadRequestBody,
     event: CurrentEvent,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PresignedUploadResponse:
     """Generate a pre-signed S3 upload URL. Browser uploads directly to R2."""
+    await enforce_event_operation(db, event.organization_id, event.id, "presentations.upload", user_id=actor.id)
     ss_result = await db.execute(
         select(SessionSpeaker).where(
             SessionSpeaker.id == payload.session_speaker_id,
@@ -58,7 +67,6 @@ async def request_upload_url(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds maximum size of {event.max_file_size_mb} MB.",
         )
-
     # Calculate version number dynamically
     from sqlalchemy import func
     version_result = await db.execute(
@@ -68,6 +76,14 @@ async def request_upload_url(
     )
     max_version = version_result.scalar() or 0
     next_version = max_version + 1
+    if next_version > 1:
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "presentations.versions.create",
+            user_id=actor.id,
+        )
 
     storage_path, stored_filename = upload_service.build_presentation_path(
         event.id,
@@ -80,7 +96,39 @@ async def request_upload_url(
         speaker_name=ss.speaker.full_name,
     )
 
+    file_id = uuid.uuid5(uuid.NAMESPACE_URL, f"eventos:presentation-upload:{event.organization_id}:{idempotency_key}")
+    request_fingerprint = hashlib.sha256(f"{payload.session_speaker_id}|{payload.filename}|{payload.file_size_bytes}|{payload.mime_type}|{payload.file_format}".encode()).hexdigest()
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="storage_quota_mb",
+        quantity=max(1, (payload.file_size_bytes + 1024 * 1024 - 1) // (1024 * 1024)),
+        unit="megabyte",
+        idempotency_key=f"presentation-upload:{file_id}",
+        ttl_seconds=settings.S3_PRESIGNED_EXPIRY_SECONDS,
+        metadata={
+            "file_id": str(file_id), "bytes": payload.file_size_bytes,
+            "request_fingerprint": request_fingerprint,
+            "consumption_quantity": payload.file_size_bytes, "consumption_unit": "byte",
+        },
+    )
+    if reservation.metadata_json.get("request_fingerprint") not in {None, request_fingerprint}:
+        raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    existing_file = await db.get(PresentationFile, file_id)
+    if existing_file is not None:
+        if existing_file.event_id != event.id:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+        upload_info = upload_service.create_presigned_upload(
+            bucket=settings.S3_BUCKET_PRESENTATIONS,
+            storage_path=existing_file.storage_path,
+            content_type=existing_file.mime_type,
+            max_size_bytes=existing_file.file_size_bytes,
+        )
+        return PresignedUploadResponse(upload_url=upload_info["url"], file_id=existing_file.id, expires_in=settings.S3_PRESIGNED_EXPIRY_SECONDS, max_file_size_bytes=max_bytes)
+
     pf = PresentationFile(
+        id=file_id,
         speaker_id=ss.speaker_id,
         session_speaker_id=ss.id,
         event_id=event.id,
@@ -96,6 +144,7 @@ async def request_upload_url(
         is_current_version=False,
     )
     db.add(pf)
+    await db.flush()
     await db.commit()
     await db.refresh(pf)
 
@@ -117,6 +166,7 @@ async def request_upload_url(
 async def confirm_upload(
     payload: UploadConfirmRequest,
     event: CurrentEvent,
+    actor: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PresentationFileResponse:
     pf = await _get_file_or_404(db, payload.file_id, event.id)
@@ -134,6 +184,11 @@ async def confirm_upload(
     speaker = await db.get(Speaker, pf.speaker_id)
     if speaker:
         speaker.upload_status = "uploaded"
+    reservation = await db.scalar(select(UsageReservation).where(UsageReservation.organization_id == event.organization_id, UsageReservation.idempotency_key == f"presentation-upload:{pf.id}"))
+    if not reservation:
+        raise HTTPException(status_code=409, detail={"code": "RESERVATION_UNAVAILABLE"})
+    await UsageReservationService.consume(db, reservation.id, source="presentations.confirm_upload", actor_user_id=actor.id)
+    await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="file_count", quantity=1, unit="file", source="presentations.confirm_upload", idempotency_key=f"presentation-file-count:{pf.id}", metadata={"file_id": str(pf.id)})
     await db.commit()
     
     # Trigger background validation
@@ -230,35 +285,19 @@ async def get_file(
     )
 
 
-@router.post("/{file_id}/approve", response_model=PresentationFileResponse)
+@router.post(
+    "/{file_id}/approve",
+    response_model=PresentationFileResponse,
+    dependencies=[require_event_operation("presentations.validate")],
+)
 async def approve_file(
     file_id: uuid.UUID,
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PresentationFileResponse:
-    pf = await _get_file_or_404(db, file_id, event.id)
-    pf.upload_status = "approved"
-    pf.approved_by = current_user.id
-    pf.approved_at = datetime.now(timezone.utc)
-    pf.rejection_reason = None
-    sp = await db.get(Speaker, pf.speaker_id)
-    if sp:
-        sp.upload_status = "approved"
-        await send_file_approved(sp, event.name, db=db)
-        
-    # Log approval
-    from app.modules.venue.models.venue_activity_log import VenueActivityLog
-    db.add(VenueActivityLog(
-        event_id=event.id,
-        speaker_id=pf.speaker_id,
-        file_id=pf.id,
-        performed_by=current_user.id,
-        action="approve",
-        action_category="FILE_OPS",
-        details={"source": "organizer_portal"}
-    ))
-    
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_PRESENTATION_VALIDATION", user_id=current_user.id)
+    await PresentationFileAdministrationService.apply(db, event, file_id, current_user.id, "APPROVE", source="organizer_portal")
     await db.commit()
     await broadcast_file_event(event.id, EventType.FILE_APPROVED, {"file_id": str(file_id)})
     return PresentationFileResponse.model_validate(
@@ -266,7 +305,11 @@ async def approve_file(
     )
 
 
-@router.post("/{file_id}/reject", response_model=PresentationFileResponse)
+@router.post(
+    "/{file_id}/reject",
+    response_model=PresentationFileResponse,
+    dependencies=[require_event_operation("presentations.validate")],
+)
 async def reject_file(
     file_id: uuid.UUID,
     payload: FileRejectRequest,
@@ -274,32 +317,8 @@ async def reject_file(
     current_user: User = Depends(get_current_user), # Add current_user
     db: AsyncSession = Depends(get_db),
 ) -> PresentationFileResponse:
-    pf = await _get_file_or_404(db, file_id, event.id)
-    pf.upload_status = "rejected"
-    timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    reason_entry = f"[{timestamp_str}]: {payload.reason}"
-    if pf.rejection_reason:
-        pf.rejection_reason = f"{pf.rejection_reason}\n{reason_entry}"
-    else:
-        pf.rejection_reason = reason_entry
-    sp = await db.get(Speaker, pf.speaker_id)
-    if sp:
-        sp.upload_status = "rejected"
-        upload_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event.id}/{sp.upload_token}"
-        await send_file_rejected(sp, event.name, upload_url, payload.reason, db=db)
-        
-    # Log rejection
-    from app.modules.venue.models.venue_activity_log import VenueActivityLog
-    db.add(VenueActivityLog(
-        event_id=event.id,
-        speaker_id=pf.speaker_id,
-        file_id=pf.id,
-        performed_by=current_user.id,
-        action="reject",
-        action_category="FILE_OPS",
-        details={"source": "organizer_portal", "reason": payload.reason}
-    ))
-    
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_PRESENTATION_VALIDATION", user_id=current_user.id)
+    await PresentationFileAdministrationService.apply(db, event, file_id, current_user.id, "REJECT", reason=payload.reason, source="organizer_portal")
     await db.commit()
     await broadcast_file_event(event.id, EventType.FILE_REJECTED, {"file_id": str(file_id)})
     return PresentationFileResponse.model_validate(
@@ -307,28 +326,19 @@ async def reject_file(
     )
 
 
-@router.post("/{file_id}/lock", response_model=PresentationFileResponse)
+@router.post(
+    "/{file_id}/lock",
+    response_model=PresentationFileResponse,
+    dependencies=[require_event_operation("presentations.validate")],
+)
 async def lock_file(
     file_id: uuid.UUID,
     event: CurrentEvent,
     current_user: User = Depends(get_current_user), # Add current_user
     db: AsyncSession = Depends(get_db),
 ) -> PresentationFileResponse:
-    pf = await _get_file_or_404(db, file_id, event.id)
-    pf.is_locked = True
-    
-    # Log lock
-    from app.modules.venue.models.venue_activity_log import VenueActivityLog
-    db.add(VenueActivityLog(
-        event_id=event.id,
-        speaker_id=pf.speaker_id,
-        file_id=pf.id,
-        performed_by=current_user.id,
-        action="lock",
-        action_category="FILE_OPS",
-        details={"source": "organizer_portal"}
-    ))
-    
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_PRESENTATION_VALIDATION", user_id=current_user.id)
+    await PresentationFileAdministrationService.apply(db, event, file_id, current_user.id, "LOCK", source="organizer_portal")
     await db.commit()
     return PresentationFileResponse.model_validate(
         await _get_file_or_404(db, file_id, event.id)

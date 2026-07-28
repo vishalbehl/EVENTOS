@@ -4,8 +4,8 @@ import { Providers } from "@/components/providers";
 import { ImpersonationBanner } from "@/components/super-admin/ImpersonationBanner";
 
 export const metadata: Metadata = {
-  title: "EventX OS | Command Center",
-  description: "Organization-grade administration for the EventX OS ecosystem.",
+  title: "Event OS | Command Center",
+  description: "Organization-grade administration for the Event OS ecosystem.",
 };
 
 export default function RootLayout({

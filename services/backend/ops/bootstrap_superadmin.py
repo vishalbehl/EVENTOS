@@ -42,13 +42,13 @@ async def bootstrap() -> tuple[str, str]:
             raise RuntimeError("A user with the bootstrap email already exists; refusing to rotate it")
 
         organization = await db.scalar(
-            select(Organization).where(Organization.slug == "eventxos")
+            select(Organization).where(Organization.slug == "Eventos")
         )
         if organization is None:
             organization = Organization(
                 id=uuid.uuid4(),
-                name="Eventxos",
-                slug="eventxos",
+                name="Eventos",
+                slug="Eventos",
                 is_platform_org=True,
                 is_active=True,
             )

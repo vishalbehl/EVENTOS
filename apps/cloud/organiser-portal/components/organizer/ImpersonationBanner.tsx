@@ -6,7 +6,7 @@ import { ShieldAlert, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export function ImpersonationBanner() {
-  const { originalAccessToken, impersonatedOrgName, impersonatedUserName, stopImpersonation } = useAuthStore();
+  const { accessToken, impersonationSessionId, impersonatedOrgName, impersonatedUserName, stopImpersonation } = useAuthStore();
   const router = useRouter();
   const [hydrated, setHydrated] = useState(false);
 
@@ -14,15 +14,12 @@ export function ImpersonationBanner() {
     setHydrated(true);
   }, []);
 
-  if (!hydrated || !originalAccessToken) return null;
+  if (!hydrated || !impersonationSessionId) return null;
 
-  const handleStop = () => {
-    localStorage.removeItem("eventos_original_token");
-    localStorage.removeItem("eventos_impersonating_org");
-    localStorage.removeItem("impersonated_user_name");
+  const handleStop = async () => {
+    if (accessToken) await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/auth/impersonation/handoff/end`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }).catch(() => undefined);
     stopImpersonation();
-    // Redirect back to Super Admin at port 3000
-    window.location.href = "http://localhost:3000/super-admin/organizations";
+    window.location.href = process.env.NEXT_PUBLIC_COMMAND_CENTER_URL || "http://localhost:3000/organizations";
   };
 
   return (

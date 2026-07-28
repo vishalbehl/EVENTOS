@@ -24,6 +24,7 @@ import { useModalStore } from "@/store/useModalStore";
 import { CreateRoomDialog } from "@/components/organizer/rooms/CreateRoomDialog";
 
 import { Portal } from "@/components/ui/portal";
+import { useOperationAccess } from "@/lib/capabilities";
 
 export default function RoomsPage() {
    const { eventId } = useParams();
@@ -31,14 +32,14 @@ export default function RoomsPage() {
    const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
    const [typeFilter, setTypeFilter] = useState("");
    const setToolbarActions = useFloatingToolbarStore((state) => state.setActions);
+   const roomAccess = useOperationAccess("venue.rooms.manage");
 
    useEffect(() => {
       setToolbarActions([
-         { label: "Configure Grid", icon: Grid3X3, onClick: () => setIsCreateDialogOpen(true), color: "bg-[var(--pri)]/10" },
-         { label: "New Environment", icon: Plus, onClick: () => setIsCreateDialogOpen(true) },
-         { label: "Technical Audit", icon: Activity, onClick: () => console.log("Audit") },
+         { label: "Configure Grid", icon: Grid3X3, onClick: () => roomAccess.enabled && setIsCreateDialogOpen(true), color: "bg-[var(--pri)]/10" },
+         { label: "New Environment", icon: Plus, onClick: () => roomAccess.enabled && setIsCreateDialogOpen(true) },
       ]);
-   }, [setToolbarActions]);
+   }, [setToolbarActions, roomAccess.enabled]);
 
    const { data: roomsConfig, isLoading: isConfigLoading } = useRooms(eventId as string || "");
    const { data: roomsAnalytics, isLoading: isAnalyticsLoading } = useRoomAnalytics(eventId as string || "");
@@ -83,6 +84,8 @@ export default function RoomsPage() {
                <div className="flex items-center gap-4">
                   <Button
                      onClick={() => setIsCreateDialogOpen(true)}
+                     disabled={roomAccess.loading || !roomAccess.enabled}
+                     title={roomAccess.enabled ? "Add room" : `Unavailable: ${(roomAccess.reason ?? "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
                      className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 hover-lift-3d"
                   >
                      <Plus className="mr-2 h-4 w-4" /> Add Room
@@ -220,7 +223,7 @@ export default function RoomsPage() {
          </div>
          <Portal>
             <CreateRoomDialog
-               isOpen={isCreateDialogOpen}
+               isOpen={isCreateDialogOpen && roomAccess.enabled}
                onClose={() => setIsCreateDialogOpen(false)}
             />
          </Portal>

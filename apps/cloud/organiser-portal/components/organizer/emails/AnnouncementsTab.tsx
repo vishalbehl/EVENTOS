@@ -11,8 +11,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/card";
 import { apiClient } from "@/lib/api-client";
+import { useOperationAccess } from "@/lib/capabilities";
 
 export default function AnnouncementsTab({ eventId, filterAudience }: { eventId: string; filterAudience?: "all" | "speakers" | "participants" }) {
+  const announcementReadAccess = useOperationAccess("announcements.read");
+  const announcementAccess = useOperationAccess("announcements.manage");
   const [announcementId, setAnnouncementId] = useState("");
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,7 +65,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
   };
 
   const fetchAnnouncements = async () => {
-    if (!eventId) return;
+    if (!eventId || !announcementReadAccess.enabled) return;
     setLoading(true);
     try {
       const data = await apiClient.get<any[]>(`/events/${eventId}/announcements`);
@@ -76,10 +79,16 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
 
   useEffect(() => {
     resetForm();
-    fetchAnnouncements();
-  }, [eventId]);
+    if (!announcementReadAccess.loading && announcementReadAccess.enabled) {
+      void fetchAnnouncements();
+    } else if (!announcementReadAccess.loading) {
+      setLoading(false);
+      setAnnouncements([]);
+    }
+  }, [eventId, announcementReadAccess.loading, announcementReadAccess.enabled]);
 
   const handleVerifyLink = async () => {
+    if (!announcementAccess.enabled) return;
     if (!linkUrl.trim()) return;
     setVerifyingLink(true);
     try {
@@ -108,6 +117,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
   };
 
   const handleFileUpload = async (file: File) => {
+    if (!announcementAccess.enabled) return;
     if (!file) return;
     setUploadingFile(true);
     const toastId = toast.loading(`Uploading ${file.name}...`);
@@ -117,7 +127,10 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
       fd.append("announcement_id", announcementId);
       
       const res = await apiClient.post<any>(`/events/${eventId}/announcements/upload`, fd, {
-        headers: { "Content-Type": "multipart/form-data" }
+        headers: {
+          "Content-Type": "multipart/form-data",
+          "Idempotency-Key": crypto.randomUUID(),
+        }
       });
       
       setAttachments(prev => [
@@ -156,6 +169,10 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
   };
 
   const handlePublish = async () => {
+    if (!announcementAccess.enabled) {
+      toast.error(`Announcement publishing unavailable: ${(announcementAccess.reason || "capability unavailable").replaceAll("_", " ").toLowerCase()}`);
+      return;
+    }
     if (!title.trim() || !body.trim()) {
       toast.error("Please provide both a title and message body.");
       return;
@@ -163,6 +180,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
     const toastId = toast.loading("Publishing announcement...");
     try {
       const payload = {
+        id: announcementId,
         title: title.trim(),
         body: body.trim(),
         audience,
@@ -173,7 +191,9 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
         attachments
       };
       
-      await apiClient.post(`/events/${eventId}/announcements`, payload);
+      await apiClient.post(`/events/${eventId}/announcements`, payload, {
+        headers: { "Idempotency-Key": `announcement-create-${announcementId}` },
+      });
       toast.success("Announcement published successfully!", { id: toastId });
       resetForm();
       await fetchAnnouncements();
@@ -183,10 +203,11 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
   };
 
   const handleDelete = async (id: string) => {
-    const toastId = toast.loading("Deleting announcement...");
+    if (!announcementAccess.enabled) return;
+    const toastId = toast.loading("Archiving announcement...");
     try {
       await apiClient.delete(`/events/${eventId}/announcements/${id}`);
-      toast.success("Announcement deleted successfully.", { id: toastId });
+      toast.success("Announcement archived and remains recoverable through Command Center.", { id: toastId });
       await fetchAnnouncements();
     } catch (err: any) {
       toast.error("Failed to delete: " + err.message, { id: toastId });
@@ -271,6 +292,18 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
       [id]: !prev[id]
     }));
   };
+
+  if (!announcementReadAccess.loading && !announcementReadAccess.enabled) {
+    return (
+      <Card className="mx-auto w-full max-w-3xl rounded-3xl border-amber-500/20 bg-amber-500/5 p-8 text-center">
+        <AlertTriangle className="mx-auto mb-3 h-7 w-7 text-amber-300" />
+        <h2 className="text-base font-bold text-[var(--text)]">Announcements are unavailable</h2>
+        <p className="mt-2 text-sm text-muted">
+          Access is blocked: {(announcementReadAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <div className="w-full max-w-7xl mx-auto flex flex-col flex-1 min-h-0 space-y-6 px-4 md:px-6 animate-in fade-in slide-in-from-bottom-4 duration-500 text-left">
@@ -471,6 +504,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
                 </span>
                 <input
                   type="file"
+                  disabled={announcementAccess.loading || !announcementAccess.enabled}
                   onChange={e => {
                     if (e.target.files && e.target.files[0]) {
                       handleFileUpload(e.target.files[0]);
@@ -482,6 +516,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
                 <button
                   type="button"
                   onClick={() => document.getElementById("ann-file-picker")?.click()}
+                  disabled={announcementAccess.loading || !announcementAccess.enabled}
                   className="mt-1 px-4 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-xl text-[8px] font-black uppercase tracking-widest text-[#E8EAFF]"
                 >
                   Choose File
@@ -500,7 +535,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
                 <button
                   type="button"
                   onClick={handleVerifyLink}
-                  disabled={verifyingLink || !linkUrl.trim()}
+                  disabled={verifyingLink || !linkUrl.trim() || announcementAccess.loading || !announcementAccess.enabled}
                   className="px-4 h-10 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 disabled:opacity-40 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all"
                 >
                   {verifyingLink ? <Loader2 className="h-3 w-3 animate-spin" /> : "Verify Link"}
@@ -542,7 +577,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
               <button
                 type="button"
                 onClick={handlePublish}
-                disabled={!title.trim() || !body.trim()}
+                disabled={!title.trim() || !body.trim() || announcementAccess.loading || !announcementAccess.enabled}
                 className="flex-1 inline-flex items-center justify-center gap-2 h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/25"
               >
                 Publish Announcement
@@ -628,6 +663,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
                           {/* Delete Action button */}
                           <button
                             type="button"
+                            disabled={announcementAccess.loading || !announcementAccess.enabled}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDelete(ann.id);

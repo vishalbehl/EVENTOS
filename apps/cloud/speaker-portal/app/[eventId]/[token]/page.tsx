@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { useDeadlineStatus } from "@/hooks/useDeadlineStatus";
 import { ImageCropper } from "@/components/ImageCropper";
 import { SpeakerPortalLayout } from "@/components/SpeakerPortalLayout";
+import { AbstractEditor } from "@/components/AbstractEditor";
 
 const countries = [
   // ... (countries array continues)
@@ -997,6 +998,14 @@ export default function SpeakerLandingPage() {
                                         </div>
                                       </div>
 
+                                      <AbstractEditor
+                                        eventId={eventId}
+                                        token={token}
+                                        talk={talk}
+                                        enabled={portal.abstract_submission_enabled}
+                                        denialReason={portal.abstract_submission_reason}
+                                      />
+
                                       {talk.upload_status === "rejected" && talk.rejection_reason && (
                                         <div className="mt-4 flex items-start gap-2.5 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 max-w-2xl text-left">
                                           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -1477,7 +1486,7 @@ export default function SpeakerLandingPage() {
                             <div className="glass-3d p-8 rounded-[2.5rem] space-y-6">
                               <h3 className="text-xl font-black uppercase tracking-wider text-[#E8EAFF]">Intake Mode 3: CV Text Parser</h3>
                               <p className="text-xs text-muted leading-relaxed">
-                                Upload your existing professional Curriculum Vitae (CV) or Resume as a PDF, DOCX, or PPTX document. EventX OS's AI parsing heuristics will analyze and extract your job title, university/company affiliation, and a formatted bio snippet directly, allowing you to review them immediately.
+                                Upload your existing professional Curriculum Vitae (CV) or Resume as a PDF, DOCX, or PPTX document. Event OS's AI parsing heuristics will analyze and extract your job title, university/company affiliation, and a formatted bio snippet directly, allowing you to review them immediately.
                               </p>
 
                               <label className="w-full h-44 rounded-[2rem] border-2 border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300">

@@ -1,5 +1,6 @@
 # backend/app/worker.py
 from celery import Celery
+from celery.schedules import crontab
 from app.config import settings
 import app.models
 
@@ -22,6 +23,21 @@ celery_app.conf.update(
             "task": "app.tasks.platform_tasks.flush_api_usage",
             "schedule": 300.0,  # every 5 minutes
         },
+          "reconcile-organizer-usage-nightly": {
+            "task": "app.tasks.organization_console_tasks.fanout_nightly_usage_reconciliation",
+            "schedule": crontab(hour=2, minute=15),
+          },
+          "expire-capability-controls-every-5-minutes": {
+              "task": "app.tasks.organization_console_tasks.fanout_capability_control_expiry",
+              # Keep scheduled grants, restrictions, flag overrides, and
+              # capacity reservations within the five-minute capability-cache
+              # freshness contract.
+              "schedule": crontab(minute="*/5"),
+          },
+        "compare-organizer-entitlements-nightly": {
+            "task": "app.tasks.organization_console_rollout_tasks.fanout_shadow_comparisons",
+            "schedule": crontab(hour=3, minute=15),
+        },
     },
     # The API publishes standalone processing tasks by name. Route those task
     # families away from the backend-only `celery` queue so the processing
@@ -39,6 +55,7 @@ celery_app.conf.update(
 
 # Autodiscover tasks in app.tasks package
 celery_app.autodiscover_tasks(["app.tasks"])
+celery_app.conf.imports = tuple(celery_app.conf.imports or ()) + ("app.tasks.organization_console_tasks", "app.tasks.organization_console_rollout_tasks")
 
 # ── Celery Worker Multi-Tenancy Signal Handlers ─────────────────
 import uuid

@@ -12,8 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
-import { apiGet, apiPatch } from "@/lib/api-client";
+import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { formatApiError } from "@/lib/utils";
+import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
+import { useSessions } from "@/hooks/useSessions";
 
 interface ParticipantRegistration {
   id: string;
@@ -43,6 +45,10 @@ interface ParticipantRegistration {
 
 export default function ReviewPage() {
   const { eventId } = useParams();
+  const reviewAccess = useOperationAccess("registration.approve");
+  const checkinAccess = useOperationAccess("registration.checkin");
+  const { data: sessions = [] } = useSessions(eventId as string);
+  const [checkinSessionId, setCheckinSessionId] = useState("");
   
   const [registrations, setRegistrations] = useState<ParticipantRegistration[]>([]);
   const [loading, setLoading] = useState(true);
@@ -209,6 +215,23 @@ export default function ReviewPage() {
     }
   };
 
+  const handleCheckin = async (registration: ParticipantRegistration, name: string) => {
+    if (!checkinAccess.enabled || !registration.participant_id || !checkinSessionId) {
+      toast.error(!checkinSessionId ? "Select a session before checking in." : "This registration has no linked participant record.");
+      return;
+    }
+    try {
+      await apiPost(
+        `/events/${eventId}/participants/${registration.participant_id}/checkin`,
+        { session_id: checkinSessionId },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+      );
+      toast.success(`${name || "Participant"} checked in.`);
+    } catch (err: any) {
+      toast.error(formatApiError(err, "Check-in failed."));
+    }
+  };
+
   const tabs = [
     { id: "submitted", label: "Review Queue", icon: ClipboardList, color: "text-amber-500", bg: "bg-amber-500/10" },
     { id: "waitlisted", label: "Waitlist", icon: Clock, color: "text-indigo-400", bg: "bg-indigo-500/10" },
@@ -230,6 +253,17 @@ export default function ReviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <select
+            aria-label="Check-in session"
+            value={checkinSessionId}
+            onChange={event => setCheckinSessionId(event.target.value)}
+            disabled={checkinAccess.loading || !checkinAccess.enabled}
+            title={checkinAccess.enabled ? "Session used for attendee check-in" : `Unavailable: ${(checkinAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
+            className="h-9 max-w-64 rounded-lg border border-white/10 bg-[var(--surf)] px-3 text-xs disabled:opacity-50"
+          >
+            <option value="">Select check-in session</option>
+            {sessions.map(session => <option key={session.id} value={session.id}>{session.name}</option>)}
+          </select>
           <Button 
             variant="outline" 
             size="sm"
@@ -463,6 +497,8 @@ export default function ReviewPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => handleWaitlist(reg.id, fullName)}
+                                  disabled={reviewAccess.loading || !reviewAccess.enabled}
+                                  title={!reviewAccess.enabled ? `Unavailable: ${(reviewAccess.reason || "capability unavailable").replaceAll("_", " ").toLowerCase()}` : undefined}
                                   className="text-indigo-400 hover:bg-indigo-500/10"
                                 >
                                   Waitlist
@@ -476,6 +512,8 @@ export default function ReviewPage() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => handlePromote(reg.id, fullName)}
+                                  disabled={reviewAccess.loading || !reviewAccess.enabled}
+                                  title={!reviewAccess.enabled ? `Unavailable: ${(reviewAccess.reason || "capability unavailable").replaceAll("_", " ").toLowerCase()}` : undefined}
                                   className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 glass-3d flex items-center gap-1"
                                 >
                                   <ArrowUpRight className="h-4 w-4" />
@@ -493,9 +531,20 @@ export default function ReviewPage() {
                             )}
 
                             {reg.registration_status === "approved" && (
-                              <div className="flex items-center gap-1 text-emerald-400 text-xs font-bold uppercase">
-                                <UserCheck className="h-4 w-4" /> Approved
-                              </div>
+                              <>
+                                <div className="flex items-center gap-1 text-emerald-400 text-xs font-bold uppercase">
+                                  <UserCheck className="h-4 w-4" /> Approved
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void handleCheckin(reg, fullName)}
+                                  disabled={checkinAccess.loading || !checkinAccess.enabled || !checkinSessionId || !reg.participant_id}
+                                  title={checkinAccess.enabled ? "Check in to selected session" : `Unavailable: ${(checkinAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
+                                >
+                                  Check in
+                                </Button>
+                              </>
                             )}
 
                             {reg.registration_status === "rejected" && (
@@ -588,16 +637,18 @@ export default function ReviewPage() {
               >
                 Cancel
               </Button>
-              <Button
-                onClick={submitReview}
-                className={
-                  modalAction.includes("approve")
-                    ? "bg-emerald-500 hover:bg-emerald-600 text-white font-bold"
-                    : "bg-rose-600 hover:bg-rose-700 text-white font-bold"
-                }
-              >
-                Confirm Action
-              </Button>
+              <CapabilityAction operation="registration.approve">
+                <Button
+                  onClick={submitReview}
+                  className={
+                    modalAction.includes("approve")
+                      ? "bg-emerald-500 hover:bg-emerald-600 text-white font-bold"
+                      : "bg-rose-600 hover:bg-rose-700 text-white font-bold"
+                  }
+                >
+                  Confirm Action
+                </Button>
+              </CapabilityAction>
             </div>
           </motion.div>
         </div>

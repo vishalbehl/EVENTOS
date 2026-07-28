@@ -25,7 +25,7 @@
 
   --text-primary: var(--text);
   --text-secondary: var(--muted);
-  --text-tertiary: color-mix(in srgb, var(--text) 55%, transparent);
+  --text-tertiary: color-mix(in srgb, var(--text) 68%, transparent);
   --text-disabled: color-mix(in srgb, var(--text) 30%, transparent);
   --text-inverse: var(--bg-base);
   --focus-ring: var(--ring);
@@ -107,7 +107,7 @@
   --bg-surface-hover: #1b1b1e;
   --border-default: #303034;
   --border-subtle: #202024;
-  --text-tertiary: #6f6f76;
+  --text-tertiary: #a1a1aa;
   --text-disabled: #505057;
   --brand-primary-muted: rgb(255 255 255 / 0.1);
   --status-info: #c4c4ca;
@@ -211,6 +211,11 @@
 
   button:disabled, input:disabled, select:disabled, textarea:disabled {
     cursor: not-allowed;
+  }
+
+  select option {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
   }
 
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),

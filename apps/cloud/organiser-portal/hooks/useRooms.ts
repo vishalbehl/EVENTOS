@@ -64,7 +64,7 @@ export function useCreateRoom() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ eventId, data }: { eventId: string, data: any }) => 
-      apiPost(`/events/${eventId}/rooms`, data),
+      apiPost(`/events/${eventId}/rooms`, data, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
     },

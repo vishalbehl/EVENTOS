@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.events.models.speaker import Speaker
 from app.modules.speakers.routers.portal import calculate_profile_completeness
 from app.modules.speakers.services import profile_parser
+from tests.conftest import activate_event_for_test
 
 
 def test_calculate_profile_completeness():
@@ -119,6 +120,7 @@ async def test_get_profile_template_endpoint(
     speaker.event.speaker_mode_enabled = True
     db.add(speaker.event)
     await db.commit()
+    await activate_event_for_test(db, speaker.event)
 
     # Request DOCX
     resp = await client.get(f"/api/v1/portal/profile/template?token={speaker.upload_token}&format=docx")
@@ -144,6 +146,7 @@ async def test_upload_profile_cv_endpoint(
     speaker.event.speaker_mode_enabled = True
     db.add(speaker.event)
     await db.commit()
+    await activate_event_for_test(db, speaker.event)
 
     # Mock PDF CV extraction
     mocker.patch(
@@ -172,6 +175,7 @@ async def test_upload_profile_photo_endpoint(
     speaker.event.speaker_mode_enabled = True
     db.add(speaker.event)
     await db.commit()
+    await activate_event_for_test(db, speaker.event)
 
     # Perform photo upload
     files = {"file": ("photo.png", b"\x89PNG dummy", "image/png")}
@@ -193,6 +197,7 @@ async def test_update_speaker_profile_and_completeness_endpoint(
     speaker.event.speaker_mode_enabled = True
     db.add(speaker.event)
     await db.commit()
+    await activate_event_for_test(db, speaker.event)
 
     # 1. Update speaker fields
     resp = await client.patch(

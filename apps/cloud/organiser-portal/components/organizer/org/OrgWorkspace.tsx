@@ -52,7 +52,7 @@ export function OrgSettingsPage() {
   if (!data) return <LoadingSurface />;
 
   const org = data.organization;
-  const save = async (patch: Partial<Organization>) => {
+  const save = async (patch: Partial<OrgMe["organization"]>) => {
     const result = await orgApi.updateMe(patch);
     setData({ ...data, organization: result.organization });
     toast.success("Organisation updated.");
@@ -94,7 +94,7 @@ export function OrgSettingsPage() {
       <Dialog open={upgradeOpen} onOpenChange={setUpgradeOpen}>
         <DialogContent className="border-default bg-[var(--surf)] text-[var(--text)]">
           <DialogHeader><DialogTitle>Upgrade Plan</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted">Contact us at hello@eventx.in to upgrade your workspace plan.</p>
+          <p className="text-sm text-muted">Contact us at hello@Event.in to upgrade your workspace plan.</p>
         </DialogContent>
       </Dialog>
     </>
@@ -120,7 +120,6 @@ export function PlatformAdminPage() {
   const load = async () => {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
-    if (filter !== "all" && filter !== "suspended") params.set("plan", filter);
     if (filter === "suspended") params.set("is_active", "false");
     const result = await orgApi.platformOrgs(`?${params.toString()}`);
     setOrgs(result.items);
@@ -164,7 +163,7 @@ export function PlatformAdminPage() {
               {orgs.map((org) => (
                 <tr key={org.id} className="border-t border-default">
                   <td className="p-4"><div className="font-black">{org.name}</div><div className="text-xs text-muted">{org.slug}</div></td>
-                  <td><PlanBadge plan={org.plan} /></td>
+                  <td><span className="text-xs text-muted">Managed in Command Center</span></td>
                   <td>{org.event_count || 0}</td>
                   <td>{org.member_count || 0}</td>
                   <td><Badge className={org.is_active ? "bg-emerald-500/20 text-emerald-300" : "bg-[var(--dan)]/20 text-[var(--dan)]"}>{org.is_active ? "Active" : "Suspended"}</Badge></td>
@@ -172,7 +171,6 @@ export function PlatformAdminPage() {
                   <td className="p-4 text-right">
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="outline" onClick={async () => setSelected(await orgApi.platformOrg(org.id))} className="rounded-xl border-default">Details</Button>
-                      <Button size="sm" variant="outline" onClick={() => setEdit(org)} className="rounded-xl border-default">Change Plan</Button>
                       <Button size="sm" onClick={() => impersonate(org)} className="rounded-xl bg-[var(--pri)]">Impersonate</Button>
                     </div>
                   </td>
@@ -205,20 +203,21 @@ export function PlatformAdminPage() {
   );
 }
 
-function ProfileTab({ org, onSave }: { org: Organization; onSave: (patch: Partial<Organization>) => void }) {
+function ProfileTab({ org, onSave }: { org: OrgMe["organization"]; onSave: (patch: Partial<OrgMe["organization"]>) => void }) {
   const [form, setForm] = useState(org);
   return <FormGrid><Field label="Organisation Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" /></Field><Field label="Slug"><Input value={form.slug} readOnly className="h-12 rounded-xl bg-white/5 border-default opacity-70" /><p className="text-xs text-muted mt-2">Contact support to change</p></Field><Field label="Billing Email"><Input value={form.billing_email || ""} onChange={(e) => setForm({ ...form, billing_email: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" /></Field><Field label="Country"><Select value={form.country} onValueChange={(country) => setForm({ ...form, country })}><SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger><SelectContent>{countries.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent></Select></Field><Field label="Timezone"><Select value={form.timezone} onValueChange={(timezone) => setForm({ ...form, timezone })}><SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger><SelectContent>{timezones.map((tz) => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}</SelectContent></Select></Field><Button onClick={() => onSave(form)} className="h-12 rounded-xl bg-[var(--pri)]"><Save className="mr-2 h-4 w-4" />Save Changes</Button></FormGrid>;
 }
 
-function BrandingTab({ org, onSave }: { org: Organization; onSave: (patch: Partial<Organization>) => void }) {
+function BrandingTab({ org, onSave }: { org: OrgMe["organization"]; onSave: (patch: Partial<OrgMe["organization"]>) => void }) {
   const [brand, setBrand] = useState({ logo_url: org.logo_url || "", primary_color: org.primary_color, secondary_color: org.secondary_color });
-  return <div className="grid gap-6 lg:grid-cols-[1fr_360px]"><FormGrid><BrandFields brand={brand} setBrand={setBrand} /><Button onClick={() => onSave(brand as Partial<Organization>)} className="h-12 rounded-xl bg-[var(--pri)]">Save Branding</Button></FormGrid><div className="rounded-2xl border border-default bg-white/[0.04] p-5"><div className="rounded-xl p-4" style={{ border: `1px solid ${brand.primary_color}` }}><div className="mb-4 h-10 w-10 rounded-xl" style={{ background: brand.primary_color }} /><h3 className="font-black">Live Preview</h3><p className="text-sm text-muted">Conference operations card</p><button className="mt-5 rounded-full px-4 py-2 text-xs font-black text-white" style={{ background: brand.primary_color }}>Primary Action</button><span className="ml-3 rounded-full px-3 py-2 text-xs font-black text-white" style={{ background: brand.secondary_color }}>Badge</span></div></div></div>;
+  return <div className="grid gap-6 lg:grid-cols-[1fr_360px]"><FormGrid><BrandFields brand={brand} setBrand={setBrand} /><Button onClick={() => onSave(brand as Partial<OrgMe["organization"]>)} className="h-12 rounded-xl bg-[var(--pri)]">Save Branding</Button></FormGrid><div className="rounded-2xl border border-default bg-white/[0.04] p-5"><div className="rounded-xl p-4" style={{ border: `1px solid ${brand.primary_color}` }}><div className="mb-4 h-10 w-10 rounded-xl" style={{ background: brand.primary_color }} /><h3 className="font-black">Live Preview</h3><p className="text-sm text-muted">Conference operations card</p><button className="mt-5 rounded-full px-4 py-2 text-xs font-black text-white" style={{ background: brand.primary_color }}>Primary Action</button><span className="ml-3 rounded-full px-3 py-2 text-xs font-black text-white" style={{ background: brand.secondary_color }}>Badge</span></div></div></div>;
 }
 
 function TeamTab({ members, currentUserId, data, onInvite, onChanged }: { members: OrgMember[]; currentUserId?: string; data: OrgMe; onInvite: () => void; onChanged: () => void }) {
   const remove = async (id: string) => { await orgApi.removeMember(id); onChanged(); };
   const used = members.filter((m) => m.is_active).length;
-  return <div className="space-y-5"><div className="flex items-center justify-between"><h3 className="text-xl font-black">{used} members</h3><Button onClick={onInvite} className="rounded-xl bg-[var(--pri)]"><Plus className="mr-2 h-4 w-4" />Invite Member</Button></div><div className="overflow-hidden rounded-2xl border border-default"><table className="w-full text-sm"><tbody>{members.map((m) => <tr key={m.id} className={cn("border-b border-default last:border-0", m.user_id === currentUserId && "bg-[var(--pri)]/10")}><td className="p-4 font-black">{m.name} {m.user_id === currentUserId && <Badge className="ml-2 bg-[var(--pri)]/20 text-[var(--pri)]">(you)</Badge>}</td><td>{m.email}</td><td className="capitalize">{m.org_role}</td><td><Badge className={m.accepted_at ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}>{m.accepted_at ? "Active" : "Pending"}</Badge></td><td>{m.accepted_at ? formatDistanceToNow(new Date(m.accepted_at), { addSuffix: true }) : "-"}</td><td className="p-4 text-right">{m.user_id !== currentUserId && data.org_role === "owner" && <Button size="sm" variant="outline" onClick={() => remove(m.id)} className="rounded-xl border-default text-[var(--dan)]"><Trash2 className="h-4 w-4" /></Button>}</td></tr>)}</tbody></table></div><UsageBar label={`${used} / ${data.plan_limits.users} team members`} value={used} max={data.plan_limits.users} /></div>;
+  const memberLimit = data.plan_limits.users;
+  return <div className="space-y-5"><div className="flex items-center justify-between"><h3 className="text-xl font-black">{used} members</h3><Button disabled={memberLimit == null} onClick={onInvite} className="rounded-xl bg-[var(--pri)]"><Plus className="mr-2 h-4 w-4" />Invite Member</Button></div><div className="overflow-hidden rounded-2xl border border-default"><table className="w-full text-sm"><tbody>{members.map((m) => <tr key={m.id} className={cn("border-b border-default last:border-0", m.user_id === currentUserId && "bg-[var(--pri)]/10")}><td className="p-4 font-black">{m.name} {m.user_id === currentUserId && <Badge className="ml-2 bg-[var(--pri)]/20 text-[var(--pri)]">(you)</Badge>}</td><td>{m.email}</td><td className="capitalize">{m.org_role}</td><td><Badge className={m.accepted_at ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}>{m.accepted_at ? "Active" : "Pending"}</Badge></td><td>{m.accepted_at ? formatDistanceToNow(new Date(m.accepted_at), { addSuffix: true }) : "-"}</td><td className="p-4 text-right">{m.user_id !== currentUserId && data.org_role === "owner" && <Button size="sm" variant="outline" onClick={() => remove(m.id)} className="rounded-xl border-default text-[var(--dan)]"><Trash2 className="h-4 w-4" /></Button>}</td></tr>)}</tbody></table></div>{memberLimit == null ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">Team allowance is unavailable. Invites are disabled until capability resolution recovers.</div> : <UsageBar label={`${used} / ${memberLimit} team members`} value={used} max={memberLimit} />}</div>;
 }
 
 function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void }) {
@@ -226,9 +225,7 @@ function PlanUsageTab({ data, onRefresh }: { data: OrgMe; onRefresh: () => void 
 }
 
 function PlatformEdit({ org, reason, setReason, onSaved }: { org: Organization; reason: string; setReason: (value: string) => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ plan: org.plan, max_events: org.max_events, max_users: org.max_users, max_storage_gb: org.max_storage_gb, is_active: org.is_active });
-  const save = async () => { await orgApi.platformUpdate(org.id, { ...form, suspension_reason: reason }); toast.success("Organisation updated."); onSaved(); };
-  return <div className="space-y-4"><Select value={form.plan} onValueChange={(plan: any) => setForm({ ...form, plan })}><SelectTrigger className="h-12 rounded-xl bg-white/5 border-default"><SelectValue /></SelectTrigger><SelectContent>{["trial", "starter", "pro", "enterprise"].map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select><div className="grid grid-cols-3 gap-3"><Input type="number" value={form.max_events} onChange={(e) => setForm({ ...form, max_events: Number(e.target.value) })} className="h-12 rounded-xl bg-white/5 border-default" /><Input type="number" value={form.max_users} onChange={(e) => setForm({ ...form, max_users: Number(e.target.value) })} className="h-12 rounded-xl bg-white/5 border-default" /><Input type="number" value={form.max_storage_gb} onChange={(e) => setForm({ ...form, max_storage_gb: Number(e.target.value) })} className="h-12 rounded-xl bg-white/5 border-default" /></div><Textarea placeholder="Suspension reason" value={reason} onChange={(e) => setReason(e.target.value)} className="rounded-xl bg-white/5 border-default" /><Button onClick={save} className="h-12 rounded-xl bg-[var(--pri)]">Save</Button></div>;
+  return <div className="space-y-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5"><h3 className="font-black">Commercial controls are unavailable in Organizer Portal</h3><p className="text-sm text-muted">Plan assignments, event limits, suspensions, grants, resets, and their authoritative values are governed and audited exclusively in Command Center.</p></div>;
 }
 
 function BrandFields({ brand, setBrand }: { brand: { logo_url: string; primary_color: string; secondary_color: string }; setBrand: (value: { logo_url: string; primary_color: string; secondary_color: string }) => void }) {

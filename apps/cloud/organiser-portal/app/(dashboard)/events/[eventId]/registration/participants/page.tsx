@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import * as LucideIcons from "lucide-react";
 import {
   CheckCircle, CheckSquare, Printer, RefreshCw, Search, Square, Trash2, XCircle,
-  Eye, X, Mail, Phone, Building, Briefcase, DollarSign, Calendar, Globe, Copy, User
+  Eye, X, Mail, Phone, Building, Briefcase, DollarSign, Calendar, Globe, Copy, User, QrCode
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import AddParticipantModal from "@/components/organizer/registration/AddParticipantModal";
+import { useOperationAccess } from "@/lib/capabilities";
 
 interface Participant {
   id: string;
@@ -35,6 +36,7 @@ interface Participant {
   source: string;
   registered_at: string;
   is_free?: boolean;
+  qr_code_url?: string | null;
 }
 
 interface PrintTemplate {
@@ -52,6 +54,14 @@ interface Role {
 
 export default function ParticipantsDirectory() {
   const { eventId } = useParams();
+  const readAccess = useOperationAccess("registration.read");
+  const registrationAccess = useOperationAccess("registration.manage");
+  const paymentAccess = useOperationAccess("registration.payments.manage");
+  const speakerAccess = useOperationAccess("speakers.manage");
+  const roleReadAccess = useOperationAccess("registration.ticket_types.read");
+  const badgeTemplateAccess = useOperationAccess("badges.templates.read");
+  const badgeExportAccess = useOperationAccess("badges.export");
+  const confirmationQrAccess = useOperationAccess("registration.confirmation_qr.manage");
 
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [templates, setTemplates] = useState<PrintTemplate[]>([]);
@@ -64,11 +74,64 @@ export default function ParticipantsDirectory() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedParticipantForDrawer, setSelectedParticipantForDrawer] = useState<Participant | null>(null);
+  const [issuingQrFor, setIssuingQrFor] = useState<string | null>(null);
+
+  const issueConfirmationQr = async (participant: Participant) => {
+    if (!confirmationQrAccess.enabled) return;
+    setIssuingQrFor(participant.id);
+    try {
+      let version = 0;
+      try {
+        const existing = await apiGet<{ version: number }>(
+          `/events/${eventId}/participants/${participant.id}/confirmation-qr`,
+        );
+        version = existing.version;
+      } catch (error: any) {
+        if (error?.status !== 404) throw error;
+      }
+      const issued = await apiPost<{ image_url: string; version: number }>(
+        `/events/${eventId}/participants/${participant.id}/confirmation-qr`,
+        {
+          reason:
+            version > 0
+              ? "Rotated from the participant registry"
+              : "Issued from the participant registry",
+          case_reference: null,
+        },
+        {
+          headers: {
+            "If-Match": version,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+        },
+      );
+      setParticipants((current) =>
+        current.map((item) =>
+          item.id === participant.id
+            ? { ...item, qr_code_url: issued.image_url }
+            : item,
+        ),
+      );
+      setSelectedParticipantForDrawer((current) =>
+        current?.id === participant.id
+          ? { ...current, qr_code_url: issued.image_url }
+          : current,
+      );
+      toast.success(version > 0 ? "Confirmation QR rotated" : "Confirmation QR issued");
+    } catch (error: any) {
+      toast.error(error?.message || "Confirmation QR could not be issued");
+    } finally {
+      setIssuingQrFor(null);
+    }
+  };
   
   const handleSyncFromSpeakers = async () => {
+    if (!registrationAccess.enabled || !speakerAccess.enabled) return;
     try {
       setSyncing(true);
-      const res = await apiPost<{ message: string }>(`/events/${eventId}/participants/fetch-from-speakers`);
+      const res = await apiPost<{ message: string }>(`/events/${eventId}/participants/fetch-from-speakers`, undefined, {
+        headers: { "Idempotency-Key": `speaker-participant-sync-${crypto.randomUUID()}` },
+      });
       toast.success(res.message || "Sync completed successfully.");
       fetchData(); // Refresh the table list
     } catch (err: any) {
@@ -97,6 +160,10 @@ export default function ParticipantsDirectory() {
   const roleByNameLower = useMemo(() => new Map(roles.map(role => [role.name.toLowerCase(), role])), [roles]);
 
   const fetchData = async () => {
+    if (!readAccess.enabled) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const queryParams = [];
@@ -105,11 +172,17 @@ export default function ParticipantsDirectory() {
       if (paidFilter !== "all") queryParams.push(`paid_status=${encodeURIComponent(paidFilter)}`);
 
       const url = `/events/${eventId}/participants${queryParams.length ? `?${queryParams.join("&")}` : ""}`;
-      const [list, templatesRes, rolesRes, eventRes] = await Promise.all([
+      const [list, eventRes] = await Promise.all([
         apiGet<Participant[]>(url),
-        apiGet<any[]>(`/events/${eventId}/print-templates`),
-        apiGet<Role[]>(`/events/${eventId}/registration/roles`),
         apiGet<any>(`/events/${eventId}`),
+      ]);
+      const [templatesRes, rolesRes] = await Promise.all([
+        badgeTemplateAccess.enabled
+          ? apiGet<any[]>(`/events/${eventId}/print-templates?template_type=badge`)
+          : Promise.resolve([]),
+        roleReadAccess.enabled
+          ? apiGet<Role[]>(`/events/${eventId}/registration/roles`)
+          : Promise.resolve([]),
       ]);
 
       setParticipants(list);
@@ -137,11 +210,17 @@ export default function ParticipantsDirectory() {
     try {
       setLoading(true);
       const url = `/events/${eventId}/participants`;
-      const [list, templatesRes, rolesRes, eventRes] = await Promise.all([
+      const [list, eventRes] = await Promise.all([
         apiGet<Participant[]>(url),
-        apiGet<any[]>(`/events/${eventId}/print-templates`),
-        apiGet<Role[]>(`/events/${eventId}/registration/roles`),
         apiGet<any>(`/events/${eventId}`),
+      ]);
+      const [templatesRes, rolesRes] = await Promise.all([
+        badgeTemplateAccess.enabled
+          ? apiGet<any[]>(`/events/${eventId}/print-templates?template_type=badge`)
+          : Promise.resolve([]),
+        roleReadAccess.enabled
+          ? apiGet<Role[]>(`/events/${eventId}/registration/roles`)
+          : Promise.resolve([]),
       ]);
       setParticipants(list);
       setRoles(rolesRes || []);
@@ -193,8 +272,8 @@ export default function ParticipantsDirectory() {
   };
 
   useEffect(() => {
-    if (eventId) fetchData();
-  }, [eventId, roleFilter, paidFilter]);
+    if (eventId && !readAccess.loading) fetchData();
+  }, [eventId, roleFilter, paidFilter, readAccess.enabled, badgeTemplateAccess.enabled, roleReadAccess.enabled]);
 
   const resolveTemplateForParticipant = (participant: Participant, designOverride?: any) => {
     const design = designOverride || badgeDesign;
@@ -224,6 +303,7 @@ export default function ParticipantsDirectory() {
   };
 
   const handleTogglePayment = async (participant: Participant) => {
+    if (!registrationAccess.enabled || !paymentAccess.enabled) return;
     try {
       const nextStatus = participant.paid_status === "Paid" ? "Unpaid" : "Paid";
       await apiPatch(`/events/${eventId}/participants/${participant.id}`, { paid_status: nextStatus });
@@ -235,10 +315,11 @@ export default function ParticipantsDirectory() {
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`Permanently delete participant "${name}"? Their registration number will become available again.`)) return;
+    if (!registrationAccess.enabled) return;
+    if (!window.confirm(`Archive participant "${name}"? The record remains recoverable through Command Center.`)) return;
     try {
       await apiDelete(`/events/${eventId}/participants/${id}`);
-      toast.success("Delegate registration removed.");
+      toast.success("Delegate registration archived.");
       fetchData();
     } catch (err: any) {
       toast.error(err.message || "Failed to remove delegate.");
@@ -246,11 +327,11 @@ export default function ParticipantsDirectory() {
   };
 
   const handleDeleteSelected = async () => {
-    if (selectedIds.size === 0) return;
-    if (!window.confirm(`Delete ${selectedIds.size} selected participant registrations? Their registration numbers will become available again.`)) return;
+    if (selectedIds.size === 0 || !registrationAccess.enabled) return;
+    if (!window.confirm(`Archive ${selectedIds.size} selected participant registrations? They remain recoverable through Command Center.`)) return;
     try {
       await apiPost(`/events/${eventId}/participants/bulk-delete`, Array.from(selectedIds));
-      toast.success("Selected participants deleted.");
+      toast.success("Selected participants archived.");
       setSelectedIds(new Set());
       fetchData();
     } catch (err: any) {
@@ -271,8 +352,23 @@ export default function ParticipantsDirectory() {
   };
 
   const printParticipants = async (list: Participant[]) => {
+    if (!badgeExportAccess.enabled || !badgeTemplateAccess.enabled) {
+      toast.error("Badge export is not available for this event or your role.");
+      return;
+    }
     if (list.length === 0) {
       toast.error("Select at least one participant to print.");
+      return;
+    }
+
+    try {
+      await apiPost(
+        `/events/${eventId}/badges/export-authorizations?participant_count=${list.length}`,
+        undefined,
+        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+      );
+    } catch (err: any) {
+      toast.error(err.message || "Badge export could not be authorized.");
       return;
     }
 
@@ -281,7 +377,7 @@ export default function ParticipantsDirectory() {
     try {
       const [freshEvent, freshTemplates] = await Promise.all([
         apiGet<any>(`/events/${eventId}`),
-        apiGet<any[]>(`/events/${eventId}/print-templates`)
+        apiGet<any[]>(`/events/${eventId}/print-templates?template_type=badge`)
       ]);
       printBadgeDesign = freshEvent?.registration_settings?.badge_design || {};
       setBadgeDesign(printBadgeDesign);
@@ -347,6 +443,18 @@ export default function ParticipantsDirectory() {
 
   const selectedParticipants = participants.filter(p => selectedIds.has(p.id));
 
+  if (!readAccess.loading && !readAccess.enabled) {
+    return (
+      <Card className="m-6 border-amber-500/25 bg-amber-500/5 p-8 text-center">
+        <LucideIcons.Lock className="mx-auto h-8 w-8 text-amber-400" />
+        <h1 className="mt-4 text-lg font-semibold text-[var(--text)]">Participant access locked</h1>
+        <p className="mt-2 text-sm text-muted">
+          Your role or this event contract does not allow participant records to be viewed.
+        </p>
+      </Card>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col space-y-6 min-h-0">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -364,7 +472,7 @@ export default function ParticipantsDirectory() {
           </Button>
           <Button
             onClick={handleSyncFromSpeakers}
-            disabled={syncing || loading}
+            disabled={syncing || loading || registrationAccess.loading || speakerAccess.loading || !registrationAccess.enabled || !speakerAccess.enabled}
             className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
           >
             {syncing ? <LucideIcons.Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
@@ -372,6 +480,7 @@ export default function ParticipantsDirectory() {
           </Button>
           <Button 
             onClick={() => setIsAddModalOpen(true)}
+            disabled={registrationAccess.loading || !registrationAccess.enabled}
             className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full hover-lift-3d flex items-center gap-1.5 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_20%,transparent)]"
           >
             <LucideIcons.UserPlus className="h-4 w-4" />
@@ -419,9 +528,9 @@ export default function ParticipantsDirectory() {
               <Printer className="h-4 w-4 mr-2" />
               Print Badge ({selectedIds.size})
             </Button>
-            <Button onClick={handleDeleteSelected} className="h-10 px-5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[10px] rounded-full border border-red-500/20">
+            <Button onClick={handleDeleteSelected} disabled={registrationAccess.loading || !registrationAccess.enabled} className="h-10 px-5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[10px] rounded-full border border-red-500/20">
               <Trash2 className="h-4 w-4 mr-2" />
-              Delete
+              Archive
             </Button>
           </div>
         </div>
@@ -477,7 +586,7 @@ export default function ParticipantsDirectory() {
                         Free
                       </span>
                     ) : (
-                      <button onClick={() => handleTogglePayment(p)} className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border transition-all ${p.paid_status === "Paid" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"}`}>
+                      <button disabled={paymentAccess.loading || registrationAccess.loading || !paymentAccess.enabled || !registrationAccess.enabled} onClick={() => handleTogglePayment(p)} className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border transition-all disabled:opacity-50 ${p.paid_status === "Paid" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"}`}>
                         {p.paid_status === "Paid" ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
                         {p.paid_status}
                       </button>
@@ -489,13 +598,30 @@ export default function ParticipantsDirectory() {
                       <Button onClick={() => handleOpenDrawer(p)} className="h-9 w-9 p-0 bg-white/5 hover:bg-white/10 text-muted hover:text-[var(--text)] rounded-full border border-default flex items-center justify-center hover-lift-3d shrink-0" title="View details">
                         <Eye className="h-4 w-4" />
                       </Button>
+                      <Button
+                        onClick={() => issueConfirmationQr(p)}
+                        disabled={
+                          confirmationQrAccess.loading ||
+                          !confirmationQrAccess.enabled ||
+                          issuingQrFor === p.id
+                        }
+                        className="h-9 px-3 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 font-black uppercase tracking-widest text-[9px] rounded-full border border-sky-500/20 flex items-center justify-center shrink-0 disabled:opacity-40"
+                        title={
+                          p.qr_code_url
+                            ? "Rotate registration confirmation QR"
+                            : "Issue registration confirmation QR"
+                        }
+                      >
+                        <QrCode className="mr-1.5 h-3.5 w-3.5" />
+                        {p.qr_code_url ? "Rotate QR" : "Issue QR"}
+                      </Button>
                       <Button onClick={() => printParticipants([p])} disabled={printing} className="h-9 min-w-[128px] px-4 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[9px] rounded-full border border-[var(--pri)]/30 flex items-center justify-center gap-1.5 hover-lift-3d shrink-0 whitespace-nowrap" title="Print badge">
                         <Printer className={`h-3.5 w-3.5 mr-1.5 ${printing ? "animate-bounce" : ""}`} />
                         Print Badge
                       </Button>
-                      <Button onClick={() => handleDelete(p.id, p.name)} className="h-9 px-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[9px] rounded-full border border-red-500/20 flex items-center justify-center hover-lift-3d shrink-0" title="Delete participant">
+                      <Button disabled={registrationAccess.loading || !registrationAccess.enabled} onClick={() => handleDelete(p.id, p.name)} className="h-9 px-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[9px] rounded-full border border-red-500/20 flex items-center justify-center hover-lift-3d shrink-0" title="Archive participant">
                         <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                        Delete
+                        Archive
                       </Button>
                     </div>
                   </td>
@@ -700,6 +826,31 @@ export default function ParticipantsDirectory() {
                         </button>
                       </div>
 
+                      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-xl bg-sky-500/10 flex items-center justify-center text-sky-400">
+                            <QrCode className="h-4 w-4" />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Confirmation QR</span>
+                            <span className="text-xs font-bold text-[var(--text)]">
+                              {selectedParticipantForDrawer.qr_code_url ? "Active" : "Not issued"}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => issueConfirmationQr(selectedParticipantForDrawer)}
+                          disabled={
+                            confirmationQrAccess.loading ||
+                            !confirmationQrAccess.enabled ||
+                            issuingQrFor === selectedParticipantForDrawer.id
+                          }
+                          className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider text-sky-400 disabled:opacity-40"
+                        >
+                          {selectedParticipantForDrawer.qr_code_url ? "Rotate" : "Issue"}
+                        </button>
+                      </div>
+
                       {/* Email */}
                       <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
                         <div className="flex items-center gap-3">
@@ -783,6 +934,7 @@ export default function ParticipantsDirectory() {
                         </div>
                         {!selectedParticipantForDrawer.is_free && (
                           <button
+                            disabled={paymentAccess.loading || registrationAccess.loading || !paymentAccess.enabled || !registrationAccess.enabled}
                             onClick={async () => {
                               const updated = { ...selectedParticipantForDrawer, paid_status: selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid" };
                               await handleTogglePayment(selectedParticipantForDrawer);
@@ -838,6 +990,7 @@ export default function ParticipantsDirectory() {
                   <>
                     <Button
                       onClick={handleSaveChanges}
+                      disabled={registrationAccess.loading || !registrationAccess.enabled}
                       className="w-full h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 flex items-center justify-center gap-1.5 hover-lift-3d"
                     >
                       Save Changes
@@ -865,10 +1018,11 @@ export default function ParticipantsDirectory() {
                         setSelectedParticipantForDrawer(null);
                         await handleDelete(participant.id, participant.name);
                       }}
+                      disabled={registrationAccess.loading || !registrationAccess.enabled}
                       className="w-full h-12 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[10px] rounded-full border border-red-500/20 flex items-center justify-center gap-1.5 hover-lift-3d"
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
-                      Delete Delegate
+                      Archive Delegate
                     </Button>
                   </>
                 )}

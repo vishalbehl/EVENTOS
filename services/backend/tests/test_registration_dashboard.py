@@ -11,6 +11,8 @@ from app.modules.registration.models.check_in import CheckIn
 from app.modules.events.models.session import Session
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.routers.participants import get_registration_analytics
+from app.modules.identity.models.user import User
+from tests.conftest import activate_event_for_test
 
 
 @pytest.mark.asyncio
@@ -18,7 +20,9 @@ async def test_get_registration_analytics_dashboard(
     db: AsyncSession,
     event: Event,
     session_obj: Session,
+    organizer: User,
 ):
+    await activate_event_for_test(db, event)
     # 0. Set event location to specify local country and seed roles
     event.location = "Mumbai, India"
     db.add(event)
@@ -101,7 +105,7 @@ async def test_get_registration_analytics_dashboard(
     await db.commit()
 
     # 4. Request analytics directly by calling route function
-    data = await get_registration_analytics(event=event, db=db)
+    data = await get_registration_analytics(event=event, current_user=organizer, db=db)
     
     # 5. Assert KPIs
     kpis = data["kpis"]
@@ -124,7 +128,7 @@ async def test_get_registration_analytics_dashboard(
 
 
 @pytest.mark.asyncio
-async def test_reset_registration_data_endpoint(
+async def test_reset_registration_data_requires_governed_lifecycle_workflow(
     client: AsyncClient,
     db: AsyncSession,
     event: Event,
@@ -151,15 +155,15 @@ async def test_reset_registration_data_endpoint(
     count_before = (await db.execute(select(func.count(Participant.id)).where(Participant.event_id == event.id))).scalar()
     assert count_before == 1
 
-    # 2. Call reset endpoint with organizer auth
+    # 2. Organizer Portal cannot permanently purge financial/audit history.
     headers = auth_headers(organizer)
     resp = await client.post(
         f"/events/{event.id}/registrations/reset-data",
         headers=headers
     )
-    assert resp.status_code == 200
-    assert "reset" in resp.json()["message"].lower()
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "GOVERNED_LIFECYCLE_REQUIRED"
 
-    # 3. Verify count is 0
+    # 3. The protected record remains intact.
     count_after = (await db.execute(select(func.count(Participant.id)).where(Participant.event_id == event.id))).scalar()
-    assert count_after == 0
+    assert count_after == 1

@@ -28,7 +28,7 @@ explicit test or staging URL:
 ```powershell
 powershell -ExecutionPolicy Bypass -File governance/phase0/evidence/run-local-security-scans.ps1 `
   -ApiTargetUrl http://localhost:8000 `
-  -ContainerImage eventx-backend:phase0
+  -ContainerImage Event-backend:phase0
 ```
 
 ## Evidence Rules

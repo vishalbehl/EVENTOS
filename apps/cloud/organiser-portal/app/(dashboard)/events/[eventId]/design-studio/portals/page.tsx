@@ -1,76 +1,69 @@
 "use client";
 
-import React from "react";
-import { useParams, useRouter } from "next/navigation";
-import { MonitorPlay, ArrowLeft, Sparkles, LayoutGrid, Palette, Sliders } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { useParams } from "next/navigation";
+import { Globe2, Palette } from "lucide-react";
+import PortalTab from "@/components/organizer/registration/settings/PortalTab";
+import ThemeTab from "@/components/organizer/registration/settings/ThemeTab";
 
-export default function PortalDesignerMockup() {
-  const { eventId } = useParams();
-  const router = useRouter();
+type StudioTab = "delivery" | "appearance";
+
+export default function PortalStudioPage() {
+  const params = useParams<{ eventId: string }>();
+  const eventId = String(params.eventId);
+  const [tab, setTab] = useState<StudioTab>("delivery");
 
   return (
-    <div className="flex flex-col h-full w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-[14px] overflow-hidden relative shadow-2xl p-8 justify-between">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
-            <MonitorPlay className="h-6 w-6 text-emerald-400" />
-          </div>
-          <div>
-            <h1 className="text-sm font-black uppercase tracking-[0.25em] text-zinc-100">Portal Studio</h1>
-            <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Registration portal designer</p>
-          </div>
-        </div>
-
-        <Button
-          onClick={() => router.push(`/events/${eventId}/dashboard`)}
-          variant="outline"
-          className="h-8 gap-2 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 text-zinc-300 text-xs font-bold uppercase tracking-wider rounded-xl"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to Dashboard
-        </Button>
-      </div>
-
-      {/* Main Preview */}
-      <div className="flex-grow flex flex-col items-center justify-center py-12 text-center max-w-xl mx-auto">
-        <div className="relative mb-6">
-          <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-emerald-600 to-indigo-600 opacity-20 blur-xl animate-pulse"></div>
-          <div className="relative p-6 bg-zinc-900/60 border border-zinc-800 rounded-2xl flex items-center justify-center">
-            <Sparkles className="h-10 w-10 text-emerald-400 animate-spin-slow" />
-          </div>
-        </div>
-
-        <h2 className="text-lg font-bold uppercase tracking-widest text-zinc-100 mb-2">Portal Designer Coming Soon</h2>
-        <p className="text-xs text-zinc-400 leading-relaxed mb-8">
-          Design high-conversion, branded event registration portals and speaker upload portals with a canvas website layout editor. Full drag-and-drop customization of panels, steps, and registration flow elements.
+    <main className="min-h-full space-y-5 p-4 sm:p-6">
+      <header className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+          Design Studio
         </p>
+        <h1 className="mt-1 text-2xl font-semibold text-[var(--foreground)]">
+          Registration portal
+        </h1>
+        <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
+          Manage the live registration endpoint, support details, edit window,
+          program material, portal copy, and entitled visual branding from one
+          production-backed workspace.
+        </p>
+      </header>
 
-        {/* Mockup Preview Boxes */}
-        <div className="grid grid-cols-3 gap-4 w-full text-left">
-          <div className="p-4 bg-zinc-900/30 border border-zinc-850 rounded-xl">
-            <LayoutGrid className="h-5 w-5 text-emerald-400 mb-2" />
-            <h3 className="text-[10px] font-bold uppercase tracking-wider mb-1">Layout Panels</h3>
-            <p className="text-[9px] text-zinc-500">Pick from modern layouts, multi-step wizards, or hero layouts.</p>
-          </div>
-          <div className="p-4 bg-zinc-900/30 border border-zinc-850 rounded-xl">
-            <Palette className="h-5 w-5 text-emerald-400 mb-2" />
-            <h3 className="text-[10px] font-bold uppercase tracking-wider mb-1">Theme Styles</h3>
-            <p className="text-[9px] text-zinc-500">Apply brand colors, custom stylesheets, and typography.</p>
-          </div>
-          <div className="p-4 bg-zinc-900/30 border border-zinc-850 rounded-xl">
-            <Sliders className="h-5 w-5 text-emerald-400 mb-2" />
-            <h3 className="text-[10px] font-bold uppercase tracking-wider mb-1">Upload Forms</h3>
-            <p className="text-[9px] text-zinc-500">Integrate dynamic custom registration and speaker upload fields.</p>
-          </div>
-        </div>
-      </div>
+      <nav
+        aria-label="Portal studio sections"
+        className="flex w-fit gap-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1"
+      >
+        <button
+          type="button"
+          onClick={() => setTab("delivery")}
+          aria-current={tab === "delivery" ? "page" : undefined}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            tab === "delivery"
+              ? "bg-[var(--pri)] text-white"
+              : "text-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          }`}
+        >
+          <Globe2 className="h-4 w-4" />
+          Delivery &amp; settings
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("appearance")}
+          aria-current={tab === "appearance" ? "page" : undefined}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            tab === "appearance"
+              ? "bg-[var(--pri)] text-white"
+              : "text-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          }`}
+        >
+          <Palette className="h-4 w-4" />
+          Appearance &amp; content
+        </button>
+      </nav>
 
-      {/* Footer Info */}
-      <div className="border-t border-zinc-900/80 pt-6 flex justify-between text-[9px] font-semibold text-zinc-500 uppercase tracking-widest">
-        <span>© Eventos portal delivery systems</span>
-        <span>Version 2.0 (Premium Upgrade Preview)</span>
-      </div>
-    </div>
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-6">
+        {tab === "delivery" ? <PortalTab eventId={eventId} /> : <ThemeTab eventId={eventId} />}
+      </section>
+    </main>
   );
 }

@@ -343,7 +343,7 @@ export function EntitlementCatalogDialog({
                         onClick={() => startNewFeature(group.category)}
                       >
                         <Plus className="mr-1.5 h-3.5 w-3.5" />
-                        Add feature
+                        Manage feature catalog
                       </Button>
                     </div>
 
@@ -374,11 +374,10 @@ export function EntitlementCatalogDialog({
                               event.stopPropagation()
                               await moveFeature(group.category, item.id, group.items)
                             }}
-                            className={`grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_88px_96px] items-start gap-3 px-4 py-3 transition ${
-                              selected
+                            className={`grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_88px_96px] items-start gap-3 px-4 py-3 transition ${selected
                                 ? "bg-[color-mix(in_oklab,var(--bg-surface-2)_76%,white_24%)] shadow-[inset_0_0_0_1px_var(--border-strong)]"
                                 : "hover:bg-[var(--bg-surface-2)]/40"
-                            }`}
+                              }`}
                           >
                             <div className="flex items-start gap-3">
                               <button

@@ -1,12 +1,12 @@
 "use client";
 
 import { Fragment, useState, useEffect, useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Users, Search, Filter, Mail, MoreHorizontal, CheckCircle2,
-  Clock, UserPlus, LayoutList, Columns, FileText, X,
-  ChevronDown, MapPin, Presentation, Phone, Trash2, Send, Calendar, Loader2, RefreshCw,
+  Users, Search, Filter, Mail, CheckCircle2,
+  Clock, UserPlus, FileText, X,
+  ChevronDown, MapPin, Presentation, Phone, Send, Calendar, Loader2, RefreshCw,
 } from "lucide-react";
 import { apiPost } from "@/lib/api-client";
 import { useSpeakers, SpeakerSummary } from "@/hooks/useSpeakers";
@@ -26,12 +26,14 @@ import { RegisterSpeakerDialog } from "@/components/organizer/speakers/RegisterS
 import { toast } from "sonner";
 import { cn, formatDateInTZ, formatTimeInTZ } from "@/lib/utils";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
+import { useOperationAccess } from "@/lib/capabilities";
 
 export default function SpeakersPage() {
   const { eventId } = useParams();
   const eventIdStr = eventId as string;
+  const router = useRouter();
+  const speakerSendAccess = useOperationAccess("communications.speaker.send");
 
-  const [view, setView] = useState<"table" | "kanban">("table");
   const [selectedSpeaker, setSelectedSpeaker] = useState<SpeakerSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
@@ -47,33 +49,6 @@ export default function SpeakersPage() {
   const [targetIds, setTargetIds] = useState<string[]>([]);
 
   const setToolbarActions = useFloatingToolbarStore((state) => state.setActions);
-
-  useEffect(() => {
-    if (selectedIds.length > 0) {
-      setToolbarActions([
-        {
-          label: `Email (${selectedIds.length})`,
-          icon: Send,
-          onClick: () => { setTargetIds(selectedIds); setEmailDialogOpen(true); },
-          color: "bg-[var(--pri)] text-[var(--text)]"
-        },
-        { label: "Delete", icon: Trash2, onClick: () => console.log("Delete"), color: "bg-[var(--dan)]/10 text-[var(--dan)]" },
-      ]);
-    } else {
-      setToolbarActions([
-        { label: "Register Speaker", icon: UserPlus, onClick: () => setRegisterDialogOpen(true), color: "bg-[var(--pri)]/10" },
-        {
-          label: "Global Invite", icon: Mail, onClick: () => {
-            if (uniqueSpeakers.length > 0) {
-              setTargetIds(uniqueSpeakers.map(s => s.id));
-              setEmailDialogOpen(true);
-            }
-          }
-        },
-        { label: "Export Roster", icon: FileText, onClick: () => console.log("Export") },
-      ]);
-    }
-  }, [selectedIds, setToolbarActions]);
 
   const [syncing, setSyncing] = useState(false);
 
@@ -138,6 +113,42 @@ export default function SpeakersPage() {
     });
   }, [speakers, posters, showIncompleteOnly]);
 
+  useEffect(() => {
+    if (selectedIds.length > 0) {
+      setToolbarActions([
+        {
+          label: `Email (${selectedIds.length})`,
+          icon: Send,
+          onClick: () => {
+            if (!speakerSendAccess.enabled) {
+              toast.error(`Speaker messaging is unavailable: ${(speakerSendAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+              return;
+            }
+            setTargetIds(selectedIds); setEmailDialogOpen(true);
+          },
+          color: "bg-[var(--pri)] text-[var(--text)]"
+        },
+      ]);
+    } else {
+      setToolbarActions([
+        { label: "Register Speaker", icon: UserPlus, onClick: () => setRegisterDialogOpen(true), color: "bg-[var(--pri)]/10" },
+        {
+          label: "Global Invite", icon: Mail, onClick: () => {
+            if (!speakerSendAccess.enabled) {
+              toast.error(`Speaker messaging is unavailable: ${(speakerSendAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+              return;
+            }
+            if (uniqueSpeakers.length > 0) {
+              setTargetIds(uniqueSpeakers.map(s => s.id));
+              setEmailDialogOpen(true);
+            }
+          }
+        },
+        { label: "Export Roster", icon: FileText, onClick: () => router.push(`/events/${eventIdStr}/speakers/export`) },
+      ]);
+    }
+  }, [eventIdStr, router, selectedIds, setToolbarActions, uniqueSpeakers, speakerSendAccess.enabled, speakerSendAccess.reason]);
+
   // LIVE STATS
   const stats = useMemo(() => {
     const totalTalks = uniqueSpeakers.reduce((acc, s) => acc + (s.talks_count || 0), 0);
@@ -187,6 +198,7 @@ export default function SpeakersPage() {
               >
                 <Button
                   onClick={() => { setTargetIds(selectedIds); setEmailDialogOpen(true); }}
+                  disabled={speakerSendAccess.loading || !speakerSendAccess.enabled}
                   className="h-12 px-8 bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-lg border-0 hover:scale-105 transition-all"
                 >
                   <Mail className="mr-2 h-4 w-4" /> Bulk Email ({selectedIds.length})
@@ -194,26 +206,6 @@ export default function SpeakersPage() {
               </motion.div>
             )}
           </AnimatePresence>
-          <div className="flex bg-[color-mix(in_srgb,var(--text)_5%,transparent)] rounded-full p-1 border border-default">
-            <button
-              onClick={() => setView("table")}
-              className={cn(
-                "p-2.5 rounded-full transition-all",
-                view === "table" ? "bg-[var(--pri)] text-[var(--text)] shadow-lg" : "text-muted hover:text-muted"
-              )}
-            >
-              <LayoutList className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setView("kanban")}
-              className={cn(
-                "p-2.5 rounded-full transition-all",
-                view === "kanban" ? "bg-[var(--pri)] text-[var(--text)] shadow-lg" : "text-muted hover:text-muted"
-              )}
-            >
-              <Columns className="h-4 w-4" />
-            </button>
-          </div>
           <Button
             onClick={handleSyncFromRegistration}
             disabled={syncing}
@@ -347,7 +339,6 @@ export default function SpeakersPage() {
 
       {/* Main Table View */}
       <AnimatePresence mode="wait">
-        {view === "table" ? (
           <motion.div
             key="table-view"
             initial={{ rotateX: -10, opacity: 0 }}
@@ -527,9 +518,6 @@ export default function SpeakersPage() {
                               >
                                 <Mail className="h-4 w-4" />
                               </button>
-                              <button className="h-9 w-9 rounded-xl glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--text)] transition-all">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </button>
                             </div>
                           </td>
                         </tr>
@@ -540,14 +528,6 @@ export default function SpeakersPage() {
               </table>
             </div>
           </motion.div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {/* Kanban placeholder */}
-            <div className="p-20 text-center col-span-full glass-3d rounded-3xl border-default text-muted font-black uppercase tracking-widest">
-              Board view coming soon
-            </div>
-          </div>
-        )}
       </AnimatePresence>
 
       {/* Global Modals */}

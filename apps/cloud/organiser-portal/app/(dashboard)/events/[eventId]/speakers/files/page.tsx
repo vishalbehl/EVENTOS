@@ -16,6 +16,7 @@ import { useSessions } from "@/hooks/useSessions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,8 @@ type FileReviewView = "dashboard" | "validation" | "upload";
 export default function FileMonitoringPage() {
   const { eventId } = useParams();
   const eventIdStr = eventId as string;
+  const uploadAccess = useOperationAccess("presentations.upload");
+  const versionAccess = useOperationAccess("presentations.versions.create");
 
   const [view, setView] = useState<FileReviewView>("dashboard");
   const [searchQuery, setSearchQuery] = useState("");
@@ -225,6 +228,10 @@ export default function FileMonitoringPage() {
       toast.error("Please select a session and speaker slot first.");
       return;
     }
+    if (currentUploadedFileForUploadForm && !versionAccess.enabled) {
+      toast.error(`Creating another presentation version is unavailable: ${(versionAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
 
     setUploading(true);
     setUploadProgress(10);
@@ -240,7 +247,9 @@ export default function FileMonitoringPage() {
       };
       
       setUploadProgress(30);
-      const presigned = await apiClient.post<any>(`/events/${eventIdStr}/files/upload-url`, payload);
+      const presigned = await apiClient.post<any>(`/events/${eventIdStr}/files/upload-url`, payload, {
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      });
       
       setUploadProgress(50);
       // 2. Put file to Cloudflare S3
@@ -783,7 +792,7 @@ export default function FileMonitoringPage() {
                           onChange={handleFileUpload}
                           className="hidden"
                           accept=".pptx,.ppt,.pdf,.mp4,.mov"
-                          disabled={!selectedSpeakerId || uploading}
+                          disabled={!selectedSpeakerId || uploading || uploadAccess.loading || !uploadAccess.enabled}
                         />
                       </label>
                       
@@ -956,7 +965,7 @@ export default function FileMonitoringPage() {
                             onChange={handleFileUpload}
                             className="hidden"
                             accept=".pptx,.ppt,.pdf,.mp4,.mov"
-                            disabled={uploading}
+                            disabled={uploading || uploadAccess.loading || !uploadAccess.enabled || versionAccess.loading || !versionAccess.enabled}
                           />
                         </label>
                       </div>
@@ -1152,20 +1161,24 @@ export default function FileMonitoringPage() {
                       {!showRejectForm ? (
                         <div className="flex items-center gap-2">
                           {activeAssignment.file.upload_status !== "approved" && (
+                            <CapabilityAction operation="presentations.validate">
                             <Button 
                               onClick={() => handleApprove(activeAssignment.file.id)}
                               className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wider py-2.5"
                             >
                               Approve Presentation
                             </Button>
+                            </CapabilityAction>
                           )}
                           {activeAssignment.file.upload_status !== "rejected" && (
+                            <CapabilityAction operation="presentations.validate">
                             <Button 
                               onClick={() => setShowRejectForm(true)}
                               className="flex-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black uppercase tracking-wider py-2.5"
                             >
                               Request Changes
                             </Button>
+                            </CapabilityAction>
                           )}
                         </div>
                       ) : (
@@ -1179,14 +1192,14 @@ export default function FileMonitoringPage() {
                             className="w-full rounded-xl bg-white/5 border-white/10 text-xs text-[var(--text)] focus:outline-none"
                           />
                           <div className="flex items-center justify-end gap-2">
-                            <Button 
+                          <CapabilityAction operation="presentations.validate"><Button 
                               variant="outline" 
                               size="sm" 
                               onClick={() => setShowRejectForm(false)}
                               className="rounded-xl bg-white/5 border-white/10 hover:bg-white/10 text-xs font-semibold"
                             >
                               Back
-                            </Button>
+                          </Button></CapabilityAction>
                             <Button 
                               size="sm" 
                               onClick={handleRejectSubmit}

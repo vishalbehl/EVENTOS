@@ -21,6 +21,20 @@ import { useAuthStore } from "@/store/use-auth-store";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { countries, timezones, slugify } from "@/components/organizer/org/org-api";
+import { apiClient } from "@/lib/api-client";
+import { useOrganizationOperationAccess } from "@/lib/capabilities";
+
+type DeveloperApiKey = {
+   id: string;
+   name: string;
+   prefix: string;
+   is_active: boolean;
+   expires_at?: string | null;
+   last_used_at?: string | null;
+   created_at: string;
+};
+
+type CreatedDeveloperApiKey = DeveloperApiKey & { plaintext_key: string };
 
 const DEFAULT_AVATARS = [
    "https://api.dicebear.com/7.x/lorelei/svg?seed=Felix",
@@ -45,6 +59,66 @@ function SettingsPageContent() {
    const [isSaving, setIsSaving] = useState(false);
    const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null);
    const [expandedApiKeyId, setExpandedApiKeyId] = useState<string | null>(null);
+   const developerAccess = useOrganizationOperationAccess("developer.api.use");
+   const webhookAccess = useOrganizationOperationAccess("developer.webhooks.manage");
+   const integrationAccess = useOrganizationOperationAccess("integrations.manage");
+   const [apiKeys, setApiKeys] = useState<DeveloperApiKey[]>([]);
+   const [apiKeysLoading, setApiKeysLoading] = useState(false);
+   const [newApiKeyName, setNewApiKeyName] = useState("");
+   const [createdApiKey, setCreatedApiKey] = useState<CreatedDeveloperApiKey | null>(null);
+
+   const loadApiKeys = async () => {
+      if (!developerAccess.enabled) {
+         setApiKeys([]);
+         return;
+      }
+      setApiKeysLoading(true);
+      try {
+         setApiKeys(await apiClient.get<DeveloperApiKey[]>("/developer/api-keys"));
+      } catch (error: any) {
+         toast.error(error.message || "Developer keys are unavailable.");
+      } finally {
+         setApiKeysLoading(false);
+      }
+   };
+
+   const createApiKey = async () => {
+      const name = newApiKeyName.trim();
+      if (!developerAccess.enabled || name.length < 2) return;
+      setApiKeysLoading(true);
+      try {
+         const created = await apiClient.post<CreatedDeveloperApiKey>(
+            "/developer/api-keys",
+            { name },
+            { headers: { "Idempotency-Key": crypto.randomUUID() } },
+         );
+         setCreatedApiKey(created);
+         setNewApiKeyName("");
+         await loadApiKeys();
+         toast.success("API key created. Copy the secret now; it will not be shown again.");
+      } catch (error: any) {
+         toast.error(error.message || "Failed to create API key.");
+      } finally {
+         setApiKeysLoading(false);
+      }
+   };
+
+   const revokeApiKey = async (keyId: string) => {
+      if (!developerAccess.enabled) return;
+      try {
+         await apiClient.delete(`/developer/api-keys/${keyId}`, {
+            headers: { "Idempotency-Key": crypto.randomUUID() },
+         });
+         await loadApiKeys();
+         toast.success("API key revoked.");
+      } catch (error: any) {
+         toast.error(error.message || "Failed to revoke API key.");
+      }
+   };
+
+   useEffect(() => {
+      if (activeTab === "api" && !developerAccess.loading) void loadApiKeys();
+   }, [activeTab, developerAccess.enabled]);
 
    const [systemTimezone, setSystemTimezone] = useState("Asia/Kolkata");
    const [isSavingSystem, setIsSavingSystem] = useState(false);
@@ -305,12 +379,12 @@ function SettingsPageContent() {
       { id: "organisation", label: "Organisation", icon: Building2 },
       { id: "security", label: "Security & Access", icon: Shield },
       { id: "notifications", label: "Notifications", icon: Bell },
+      { id: "api", label: "Developer Keys", icon: Key },
    ];
 
    const isSuperAdmin = user?.role?.toLowerCase().replace(/[\s_]/g, '') === 'superadmin';
 
    const adminTabs = isSuperAdmin ? [
-      { id: "api", label: "Developer Keys", icon: Key },
       { id: "orgs", label: "Organizations", icon: Building2 },
       { id: "system", label: "System Settings", icon: Globe },
    ] : [];
@@ -564,7 +638,7 @@ function SettingsPageContent() {
                                     </div>
                                  </div>
                                  <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-1 px-1">
-                                    Workspace URL: eventx.in/{orgData.slug || "your-slug"}
+                                    Workspace URL: Event.in/{orgData.slug || "your-slug"}
                                  </p>
                               </div>
                            </div>
@@ -671,27 +745,16 @@ function SettingsPageContent() {
                         className="space-y-10"
                      >
                         <h3 className="text-xl font-black text-[var(--text)] mb-2">Notification Preferences</h3>
-                        <div className="grid gap-4">
-                           {[
-                              { label: "New User Alerts", desc: "Notify when a new account is created", active: true },
-                              { label: "System Maintenance", desc: "Alerts about planned downtime", active: true },
-                              { label: "Account Activity", desc: "Notify on login from new devices", active: false },
-                           ].map((mod, i) => (
-                              <div key={i} className="p-6 rounded-3xl glass-3d border-default flex items-center justify-between group hover:bg-white/5 transition-all">
-                                 <div>
-                                    <p className="text-[13px] font-bold text-[var(--text)]">{mod.label}</p>
-                                    <p className="text-[10px] font-black text-muted uppercase tracking-widest mt-0.5">{mod.desc}</p>
-                                 </div>
-                                 <div className={cn("h-6 w-12 rounded-full p-1", mod.active ? "bg-[var(--pri)]" : "bg-default")}>
-                                    <div className={cn("h-4 w-4 bg-white rounded-full transition-all", mod.active ? "ml-6" : "ml-0")} />
-                                 </div>
-                              </div>
-                           ))}
+                        <div className="rounded-3xl border border-amber-500/20 bg-amber-500/5 p-6">
+                           <p className="text-sm font-semibold text-amber-200">Preference service unavailable</p>
+                           <p className="mt-2 text-sm text-muted">
+                              No user-scoped notification preference API is registered. Controls remain unavailable instead of displaying sample values that are not persisted.
+                           </p>
                         </div>
                      </motion.div>
                   )}
 
-                  {activeTab === "api" && isSuperAdmin && (
+                  {activeTab === "api" && (
                      <motion.div
                         key="api"
                         initial={{ opacity: 0, x: 20 }}
@@ -699,21 +762,63 @@ function SettingsPageContent() {
                         exit={{ opacity: 0, x: -20 }}
                         className="space-y-10"
                      >
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                            <div>
                               <h3 className="text-xl font-black text-[var(--text)] mb-2">Developer Access</h3>
                               <p className="text-[13px] text-muted font-medium">Manage API keys and developer integration endpoints.</p>
                            </div>
-                           <Button className="h-10 bg-[var(--pri)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest px-6">
-                              <Plus className="mr-2 h-4 w-4" /> Create API Key
-                           </Button>
+                           <div className="flex gap-2">
+                              <Input
+                                 value={newApiKeyName}
+                                 onChange={(event) => setNewApiKeyName(event.target.value)}
+                                 placeholder="Key name"
+                                 disabled={!developerAccess.enabled || apiKeysLoading}
+                                 className="h-10 w-56"
+                              />
+                              <Button onClick={() => void createApiKey()} disabled={!developerAccess.enabled || apiKeysLoading || newApiKeyName.trim().length < 2} className="h-10 bg-[var(--pri)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest px-6">
+                                 <Plus className="mr-2 h-4 w-4" /> Create API Key
+                              </Button>
+                           </div>
                         </div>
 
+                        {!developerAccess.loading && !developerAccess.enabled && (
+                           <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-6">
+                              <p className="font-semibold text-amber-200">Developer access is locked</p>
+                              <p className="mt-2 text-sm text-muted">
+                                 {(developerAccess.reason || "NOT_ENTITLED").replaceAll("_", " ")}. Request FEAT_API_ACCESS through the subscription workspace; this portal cannot grant itself access.
+                              </p>
+                           </div>
+                        )}
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                           <div className="rounded-2xl border border-default bg-white/[0.02] p-5">
+                              <div className="flex items-center justify-between gap-4">
+                                 <div><p className="font-semibold text-[var(--text)]">Event webhooks</p><p className="mt-1 text-xs text-muted">Webhook endpoints are scoped to an event and enforced by the canonical webhook entitlement.</p></div>
+                                 <Badge variant="outline">{webhookAccess.loading ? "CHECKING" : webhookAccess.enabled ? "ALLOWED" : "LOCKED"}</Badge>
+                              </div>
+                              {!webhookAccess.loading && !webhookAccess.enabled && <p className="mt-3 text-xs text-amber-200">{(webhookAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ")}</p>}
+                           </div>
+                           <div className="rounded-2xl border border-default bg-white/[0.02] p-5">
+                              <div className="flex items-center justify-between gap-4">
+                                 <div><p className="font-semibold text-[var(--text)]">Third-party integrations</p><p className="mt-1 text-xs text-muted">Connections can only be activated within the organization allowance; global provider definitions remain controlled by Command Center.</p></div>
+                                 <Badge variant="outline">{integrationAccess.loading ? "CHECKING" : integrationAccess.enabled ? "ALLOWED" : "LOCKED"}</Badge>
+                              </div>
+                              {!integrationAccess.loading && !integrationAccess.enabled && <p className="mt-3 text-xs text-amber-200">{(integrationAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ")}</p>}
+                           </div>
+                        </div>
+
+                        {createdApiKey && (
+                           <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
+                              <p className="font-semibold text-emerald-200">Copy this secret now</p>
+                              <code className="mt-3 block overflow-x-auto rounded-xl bg-black/30 p-4 text-sm text-emerald-100">{createdApiKey.plaintext_key}</code>
+                              <Button variant="outline" className="mt-3" onClick={() => { void navigator.clipboard.writeText(createdApiKey.plaintext_key); toast.success("API key copied."); }}>
+                                 Copy secret
+                              </Button>
+                           </div>
+                        )}
+
                         <div className="grid gap-4">
-                           {[
-                              { id: "key_1", name: "Main Website Integration", prefix: "ev_live_...", created: "2026-04-12", status: "Active" },
-                              { id: "key_2", name: "Mobile App Wrapper", prefix: "ev_live_...", created: "2026-05-01", status: "Active" },
-                           ].map((key) => (
+                           {apiKeys.map((key) => (
                               <div key={key.id} className="rounded-[2rem] overflow-hidden border border-default glass-3d">
                                  <div 
                                     className="p-6 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-all"
@@ -725,7 +830,7 @@ function SettingsPageContent() {
                                        </div>
                                        <div>
                                           <p className="text-[14px] font-black text-[var(--text)]">{key.name}</p>
-                                          <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-1">Created on {key.created}</p>
+                                          <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-1">Created {new Date(key.created_at).toLocaleString()}</p>
                                        </div>
                                     </div>
                                     <div className="flex items-center gap-4">
@@ -743,29 +848,25 @@ function SettingsPageContent() {
                                        >
                                           <div className="grid grid-cols-2 gap-8">
                                              <div className="space-y-4">
-                                                <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Permissions</h4>
-                                                <div className="flex flex-wrap gap-2">
-                                                   <Badge variant="outline" className="text-[8px] font-black border-default">READ_SESSIONS</Badge>
-                                                   <Badge variant="outline" className="text-[8px] font-black border-default">READ_SPEAKERS</Badge>
-                                                   <Badge variant="outline" className="text-[8px] font-black border-default">WRITE_ANALYTICS</Badge>
-                                                </div>
+                                                <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Credential status</h4>
+                                                <Badge variant="outline" className="text-[8px] font-black border-default">{key.is_active ? "ACTIVE" : "REVOKED"}</Badge>
                                              </div>
                                              <div className="space-y-4">
                                                 <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Security Settings</h4>
                                                 <div className="space-y-2">
                                                    <div className="flex items-center justify-between text-[11px] font-bold">
-                                                      <span className="text-muted">IP Restriction</span>
-                                                      <span>192.168.1.*</span>
+                                                      <span className="text-muted">Last used</span>
+                                                      <span>{key.last_used_at ? new Date(key.last_used_at).toLocaleString() : "Never"}</span>
                                                    </div>
                                                    <div className="flex items-center justify-between text-[11px] font-bold">
-                                                      <span className="text-muted">Rate Limit</span>
-                                                      <span>10,000 req/min</span>
+                                                      <span className="text-muted">Expires</span>
+                                                      <span>{key.expires_at ? new Date(key.expires_at).toLocaleString() : "No expiry"}</span>
                                                    </div>
                                                 </div>
                                              </div>
                                           </div>
                                           <div className="mt-8 pt-8 border-t border-default flex justify-end">
-                                             <Button variant="ghost" className="text-red-500 text-[10px] font-black uppercase tracking-widest hover:bg-red-500/10">
+                                             <Button onClick={() => void revokeApiKey(key.id)} disabled={!key.is_active || !developerAccess.enabled} variant="ghost" className="text-red-500 text-[10px] font-black uppercase tracking-widest hover:bg-red-500/10">
                                                 Revoke API Key
                                              </Button>
                                           </div>
@@ -774,6 +875,12 @@ function SettingsPageContent() {
                                  </AnimatePresence>
                               </div>
                            ))}
+                           {!apiKeysLoading && developerAccess.enabled && apiKeys.length === 0 && (
+                              <div className="rounded-2xl border border-default p-8 text-center text-sm text-muted">No API keys have been created for this organization.</div>
+                           )}
+                           {apiKeysLoading && (
+                              <div className="rounded-2xl border border-default p-8 text-center text-sm text-muted">Loading authoritative API key records…</div>
+                           )}
                         </div>
                      </motion.div>
                   )}
@@ -787,41 +894,25 @@ function SettingsPageContent() {
                         exit={{ opacity: 0, x: -20 }}
                         className="space-y-10"
                      >
-                        <div className="flex items-center justify-between">
+                        <div>
                            <div>
                               <h3 className="text-xl font-black text-[var(--text)] mb-2">Organization Management</h3>
-                              <p className="text-[13px] text-muted font-medium">Manage organizations, billing, and global settings.</p>
+                              <p className="text-[13px] text-muted font-medium">Cross-organization administration is available only in Command Center.</p>
                            </div>
-                           <Button className="h-10 bg-[var(--pri)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest px-6">
-                              <Plus className="mr-2 h-4 w-4" /> Add Organization
-                           </Button>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                           {[
-                              { label: "Active Events", val: "142", icon: Layers },
-                              { label: "Total Revenue", val: "$12,480", icon: BarChart3 },
-                              { label: "Organizations", val: "12", icon: Building2 },
-                           ].map((stat, i) => (
-                              <Card key={i} className="glass-3d border-default rounded-3xl p-6 bg-white/5">
-                                 <stat.icon className="h-5 w-5 text-[var(--pri)] mb-4" />
-                                 <p className="text-2xl font-black text-[var(--text)] tracking-tighter">{stat.val}</p>
-                                 <p className="text-[10px] font-black text-muted uppercase tracking-widest mt-1">{stat.label}</p>
-                              </Card>
-                           ))}
-                        </div>
+                        <Card className="rounded-3xl border border-amber-500/20 bg-amber-500/5 p-6">
+                           <p className="font-semibold text-amber-200">Cross-organization administration is intentionally separated.</p>
+                           <p className="mt-2 text-sm text-muted">Organization totals, revenue, subscriptions, users, storage, and lifecycle actions are authoritative in Command Center. Organizer Portal does not mirror or fabricate those records.</p>
+                        </Card>
 
                         <div className="space-y-6">
                            <div className="flex items-center justify-between px-1">
-                              <h4 className="text-[11px] font-black text-muted uppercase tracking-widest">Enterprise Organizations</h4>
-                              <Badge className="bg-green-500/10 text-green-500 border-0 text-[9px] font-black uppercase">Live Billing</Badge>
+                              <h4 className="text-[11px] font-black text-muted uppercase tracking-widest">Organization records</h4>
+                              <Badge className="bg-amber-500/10 text-amber-300 border-0 text-[9px] font-black uppercase">Command Center only</Badge>
                            </div>
                            <div className="grid gap-4">
-                              {[
-                                 { id: "org_1", name: "Global Med Conf", tier: "Platinum Tier", nodes: 24, billing: "$1,200/mo", status: "Active" },
-                                 { id: "org_2", name: "Tech Summit 2026", tier: "Growth Tier", nodes: 8, billing: "$450/mo", status: "Past Due" },
-                                 { id: "org_3", name: "BioTech Forum", tier: "Starter", nodes: 2, billing: "$150/mo", status: "Active" },
-                              ].map((org) => (
+                              {([] as Array<{ id: string; name: string; tier: string; nodes: number; billing: string; status: string }>).map((org) => (
                                  <div key={org.id} className="rounded-[2.5rem] overflow-hidden border border-default glass-3d">
                                     <div 
                                        className="p-6 flex items-center justify-between group cursor-pointer hover:bg-white/5 transition-all"
@@ -859,22 +950,19 @@ function SettingsPageContent() {
                                              <div className="grid grid-cols-3 gap-8">
                                                 <div className="space-y-4">
                                                    <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Subscription</h4>
-                                                   <p className="text-[14px] font-bold">Annual Platinum Plan</p>
-                                                   <p className="text-[11px] text-muted">Renewal Date: Jan 1, 2027</p>
+                                                   <p className="text-[14px] font-bold">Unavailable in Organizer Portal</p>
+                                                   <p className="text-[11px] text-muted">Use the authoritative event contract in Command Center.</p>
                                                 </div>
                                                 <div className="space-y-4">
                                                    <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Storage & Usage</h4>
                                                    <div className="h-2 w-full bg-default rounded-full overflow-hidden">
-                                                      <div className="h-full bg-[var(--pri)] w-[65%]" />
+                                                      <div className="h-full bg-[var(--pri)] w-0" />
                                                    </div>
-                                                   <p className="text-[11px] font-bold">650GB / 1TB Used</p>
+                                                   <p className="text-[11px] font-bold">Usage unavailable</p>
                                                 </div>
                                                 <div className="space-y-4">
-                                                   <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Quick Actions</h4>
-                                                   <div className="flex flex-col gap-2">
-                                                      <Button variant="outline" className="h-9 text-[9px] font-black uppercase tracking-widest rounded-xl border-default">View Invoices</Button>
-                                                      <Button variant="outline" className="h-9 text-[9px] font-black uppercase tracking-widest rounded-xl border-default">Manage Users</Button>
-                                                   </div>
+                                                   <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Administration</h4>
+                                                   <p className="text-[11px] text-muted">Invoices and cross-organization user controls are managed in Command Center.</p>
                                                 </div>
                                              </div>
                                           </motion.div>

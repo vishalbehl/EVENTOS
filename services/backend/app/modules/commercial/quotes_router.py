@@ -69,7 +69,7 @@ from app.modules.technology_services.models import ServiceRequest
 router = APIRouter(prefix="/service-requests", tags=["commercial-quotes"])
 public_router = APIRouter(prefix="/public/proposals", tags=["public-proposals"])
 
-PROPOSAL_SHARE_ISSUER = "eventx-os"
+PROPOSAL_SHARE_ISSUER = "Event-os"
 PROPOSAL_SHARE_AUDIENCE = "proposal-client"
 
 

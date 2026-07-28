@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { FileText, Landmark, Receipt, Wallet } from "lucide-react";
+import { AlertTriangle, Receipt } from "lucide-react";
 import { useBillingHistory } from "@/hooks/useBilling";
 import {
   EnterpriseEmptyState,
@@ -16,12 +16,17 @@ function getHistoryItems(history: any): Array<Record<string, any>> {
   return [];
 }
 
-function formatCurrency(amount: number) {
-  return `₹${amount.toLocaleString("en-IN")}`;
+function formatCurrency(amount: number, currency: string) {
+  try {
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString("en-IN")}`;
+  }
 }
 
 export default function BillingPage() {
-  const { data: billingHistory } = useBillingHistory();
+  const billingQuery = useBillingHistory();
+  const billingHistory = billingQuery.data;
 
   const metrics = useMemo(() => {
     const items = getHistoryItems(billingHistory);
@@ -48,39 +53,38 @@ export default function BillingPage() {
   }, [billingHistory]);
 
   const items = getHistoryItems(billingHistory);
+  const currency = String(items[0]?.currency || "INR");
 
   return (
-    <div className="space-y-6 pb-8">
-      <EnterprisePageIntro
-        title="Billing"
-        subtitle="View your invoices and payment history."
-      />
+    <div className="space-y-6 pb-8 pt-4">
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <EnterpriseStatCard
           label="Total Spent"
-          value={formatCurrency(metrics.totalSpent)}
+          value={billingQuery.isError ? "Unavailable" : formatCurrency(metrics.totalSpent, currency)}
           hint={metrics.totalSpent > 0 ? "Across your organizer account" : "No transactions yet"}
         />
         <EnterpriseStatCard
           label="Unpaid Amount"
-          value={formatCurrency(metrics.unpaidAmount)}
+          value={billingQuery.isError ? "Unavailable" : formatCurrency(metrics.unpaidAmount, currency)}
           hint={metrics.unpaidAmount > 0 ? "Outstanding invoices require action" : "No outstanding payments"}
         />
         <EnterpriseStatCard
           label="Invoices"
-          value={String(metrics.invoiceCount)}
+          value={billingQuery.isError ? "Unavailable" : String(metrics.invoiceCount)}
           hint={metrics.invoiceCount > 0 ? "Billing documents available" : "No invoices"}
         />
         <EnterpriseStatCard
           label="Payment Methods"
-          value={String(metrics.paymentMethods)}
+          value={billingQuery.isError ? "Unavailable" : String(metrics.paymentMethods)}
           hint={metrics.paymentMethods > 0 ? "Methods used in history" : "No payment methods"}
         />
       </div>
 
       <EnterprisePanel className="overflow-hidden">
-        {items.length === 0 ? (
+        {billingQuery.isError ? (
+          <div className="flex items-center gap-3 p-8 text-sm text-rose-200"><AlertTriangle className="h-5 w-5" />Billing history is unavailable. This is not being shown as a zero-balance account.</div>
+        ) : items.length === 0 ? (
           <EnterpriseEmptyState
             icon={Receipt}
             title="No billing history"
@@ -121,7 +125,7 @@ export default function BillingPage() {
                     {item.payment_method || item.method || "Online"}
                   </p>
                   <p className="text-right text-[14px] font-semibold text-slate-950">
-                    {formatCurrency(Number(item.amount_paid ?? item.amount ?? item.total ?? 0))}
+                    {formatCurrency(Number(item.amount_paid ?? item.amount ?? item.total ?? 0), String(item.currency || currency))}
                   </p>
                 </div>
               ))}
@@ -130,28 +134,8 @@ export default function BillingPage() {
         )}
       </EnterprisePanel>
 
-      <EnterprisePanel className="p-6">
-        <p className="text-center text-[12px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-          We accept
-        </p>
-        <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-          {[
-            { label: "Visa", icon: Wallet },
-            { label: "Mastercard", icon: Landmark },
-            { label: "UPI", icon: FileText },
-            { label: "Paytm", icon: Wallet },
-            { label: "Stripe", icon: Receipt },
-            { label: "Razorpay", icon: Landmark },
-          ].map((method) => (
-            <div
-              key={method.label}
-              className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] font-semibold text-slate-600"
-            >
-              <method.icon className="h-4 w-4 text-violet-500" />
-              {method.label}
-            </div>
-          ))}
-        </div>
+      <EnterprisePanel className="p-6 text-sm text-[var(--color-text-secondary)]">
+        Payment-provider availability is controlled by the Revenue and Business consoles. This page reports only methods present in authoritative invoice history.
       </EnterprisePanel>
     </div>
   );

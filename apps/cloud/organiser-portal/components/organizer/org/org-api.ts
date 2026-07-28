@@ -31,7 +31,6 @@ export type Organization = {
   date_format?: string;
   time_format?: string;
   currency?: string;
-  enabled_modules?: string[] | null;
   onboarding_step?: number;
   onboarding_draft?: Record<string, any> | null;
   created_at: string;
@@ -42,11 +41,20 @@ export type Organization = {
 };
 
 export type OrgMe = {
-  organization: Organization;
+  organization: Omit<Organization, "plan" | "plan_expires_at" | "max_events" | "max_users" | "max_storage_gb">;
   member_count: number;
   event_count: number;
   storage_used_gb: number;
-  plan_limits: { events: number; users: number; storage_gb: number };
+  plan_limits: { events: number | null; users: number | null; storage_gb: number | null };
+  commercial: {
+    availability: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
+    freshness_at: string;
+    source: string;
+    subscription_id: string | null;
+    subscription_status: string | null;
+    plan_id: string | null;
+    plan_name: string | null;
+  };
   org_role: OrgRole;
 };
 
@@ -68,7 +76,11 @@ export const orgApi = {
   me: () => apiClient.get<OrgMe>("/organisations/me"),
   updateMe: (data: Partial<Organization>) => apiClient.put<{ organization: Organization }>("/organisations/me", data),
   members: () => apiClient.get<OrgMember[]>("/organisations/me/members"),
-  invite: (email: string, org_role: OrgRole) => apiClient.post<{ message: string; invite_token?: string }>("/organisations/me/members/invite", { email, org_role }),
+  invite: (email: string, org_role: OrgRole) => apiClient.post<{ message: string; invite_token?: string }>(
+    "/organisations/me/members/invite",
+    { email, org_role },
+    { headers: { "Idempotency-Key": crypto.randomUUID() } },
+  ),
   updateMember: (id: string, org_role: OrgRole) => apiClient.put(`/organisations/me/members/${id}`, { org_role }),
   removeMember: (id: string) => apiClient.delete(`/organisations/me/members/${id}`),
   platformOrgs: (params = "") => apiClient.get<{ items: Organization[]; page: number; per_page: number }>(`/platform/organisations${params}`),
@@ -84,6 +96,8 @@ export const orgApi = {
   currentBillingPlan: () => apiClient.get<any>("/billing/plan"),
   activateEvent: (eventId: string, subscriptionId: string) =>
     apiClient.post<any>(`/billing/events/${eventId}/activate`, { subscription_id: subscriptionId }),
+  requestCommercialAccess: (data: Record<string, unknown>) =>
+    apiClient.post<any>("/organisations/me/request-commercial-access", data),
 };
 
 export const countries = [

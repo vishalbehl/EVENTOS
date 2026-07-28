@@ -1,6 +1,7 @@
 import hashlib
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from sqlalchemy import and_, or_, select
@@ -25,26 +26,18 @@ from app.modules.billing.models.subscription import (
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.platform_domain_tables import TenantLimit
+from app.modules.billing.capability_registry import (
+    CATALOG_LIMIT_KEYS,
+    FEATURE_DEFINITIONS,
+    LIMIT_DEFINITIONS,
+    PLATFORM_HARD_CEILINGS,
+)
+from app.modules.platform.models.organization_console import EntitlementOverrideRequest
 
 
 class EntitlementResolver:
     ACTIVE_SUBSCRIPTION_STATUSES = ("ACTIVE", "TRIAL")
     LIVE_ACTIVATION_STATUSES = ("PENDING", "ACTIVE", "SUSPENDED", "EXPIRED", "TRANSFER_PENDING")
-    DEFAULT_LIMITS = {
-        "max_event_team_members": 2,
-        "max_events": 1,
-        "max_users": 2,
-        "max_registrations": 150,
-        "max_speakers": 30,
-        "max_sessions": 25,
-        "max_rooms": 5,
-        "max_ticket_categories": 3,
-        "max_badge_templates": 3,
-        "max_certificate_templates": 3,
-        "max_emails_per_event": 450,
-        "storage_quota_mb": 10240,
-        "max_storage_gb": 10,
-    }
     EVENT_LIMIT_KEYS = (
         "max_event_team_members",
         "max_registrations",
@@ -56,6 +49,11 @@ class EntitlementResolver:
         "max_certificate_templates",
         "max_emails_per_event",
         "storage_quota_mb",
+        "max_sms_per_event",
+        "max_whatsapp_per_event",
+        "max_push_per_event",
+        "max_exports_per_event",
+        "max_devices_per_event",
     )
 
     @staticmethod
@@ -161,42 +159,104 @@ class EntitlementResolver:
 
     @staticmethod
     async def get_org_limit(db: AsyncSession, org_id: uuid.UUID, limit_key: str) -> Optional[int]:
-        org_stmt = select(Organization.slug).where(Organization.id == org_id)
-        org_slug = await db.scalar(org_stmt)
-        if org_slug == "eventxos":
-            return None if limit_key != "storage_quota_mb" else 999999999
-
-        actual_override_key = "max_storage_gb" if limit_key == "storage_quota_mb" else limit_key
+        if limit_key not in LIMIT_DEFINITIONS and limit_key != "max_storage_gb":
+            return None
+        canonical_limit_key = "storage_quota_mb" if limit_key == "max_storage_gb" else limit_key
+        actual_override_key = "max_storage_gb" if canonical_limit_key == "storage_quota_mb" else canonical_limit_key
         override_stmt = select(TenantLimit.limit_value).where(
             TenantLimit.organization_id == org_id,
             TenantLimit.limit_key == actual_override_key,
         )
         override_val = await db.scalar(override_stmt)
         if override_val is not None:
-            return override_val * 1024 if limit_key == "storage_quota_mb" else int(override_val)
+            return int(override_val) if limit_key == "max_storage_gb" else int(override_val) * 1024 if canonical_limit_key == "storage_quota_mb" else int(override_val)
 
         subs = await EntitlementResolver.get_active_subscriptions(db, org_id)
         plans = [sub.plan for sub in subs if sub.plan]
         if not plans:
-            if limit_key == "max_events":
-                return 1
-            if limit_key == "max_users":
-                return 2
-            return 0
+            return None
 
         values: List[Optional[int]] = []
+        ceilings: List[int] = []
+        catalogue_keys = [key for key, canonical in CATALOG_LIMIT_KEYS.items() if canonical == canonical_limit_key]
         for plan in plans:
-            if limit_key == "max_storage_gb":
-                values.append((plan.storage_quota_mb or 10240) // 1024)
+            typed = None
+            if catalogue_keys:
+                mapping = (await db.execute(
+                    select(PlanFeature.entitlement_value, PlanFeature.hard_ceiling)
+                    .join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id)
+                    .where(
+                        PlanFeature.plan_id == plan.id,
+                        PlanFeature.enabled.is_(True),
+                        FeatureCatalog.key.in_(catalogue_keys),
+                    )
+                    .limit(1)
+                )).first()
+                if mapping:
+                    raw, ceiling = mapping
+                    typed = raw.get("value") if isinstance(raw, dict) else raw
+                    ceiling_value = ceiling.get("value") if isinstance(ceiling, dict) else ceiling
+                    if isinstance(ceiling_value, (int, float)) and not isinstance(ceiling_value, bool):
+                        ceilings.append(int(ceiling_value))
+            if isinstance(typed, (int, float)) and not isinstance(typed, bool):
+                values.append(int(typed))
             else:
-                values.append(getattr(plan, limit_key, None))
+                # Active commercial enforcement must use a typed assignment.
+                # Legacy plan columns remain stored only for shadow comparison.
+                values.append(None)
         if not values:
             return None
         if any(value is None for value in values):
-            return None
-        if limit_key == "max_events":
-            return sum(int(value) for value in values if value is not None)
-        return max(int(value) for value in values if value is not None)
+            base_value: Optional[int] = None
+        elif canonical_limit_key == "max_events":
+            base_value = sum(int(value) for value in values if value is not None)
+        else:
+            base_value = max(int(value) for value in values if value is not None)
+
+        if catalogue_keys:
+            now = datetime.now(timezone.utc)
+            addon_rows = (await db.execute(
+                select(
+                    AddonFeature.entitlement_value,
+                    AddonFeature.operation,
+                    AddonFeature.stackable,
+                    AddonFeature.max_quantity,
+                    OrganizationAddon.quantity,
+                )
+                .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
+                .join(OrganizationAddon, OrganizationAddon.addon_id == AddonFeature.addon_id)
+                .where(
+                    OrganizationAddon.organization_id == org_id,
+                    OrganizationAddon.status == "ACTIVE",
+                    OrganizationAddon.event_id.is_(None),
+                    OrganizationAddon.activation_id.is_(None),
+                    or_(OrganizationAddon.expires_at.is_(None), OrganizationAddon.expires_at > now),
+                    FeatureCatalog.key.in_(catalogue_keys),
+                )
+            )).all()
+            for raw, operation, stackable, max_quantity, purchased_quantity in addon_rows:
+                requested = raw.get("value") if isinstance(raw, dict) else raw
+                if not isinstance(requested, (int, float)) or isinstance(requested, bool):
+                    continue
+                quantity = max(1, int(purchased_quantity or 1)) if stackable else 1
+                if max_quantity is not None:
+                    quantity = min(quantity, int(max_quantity))
+                requested = int(requested) * quantity
+                operation = (operation or "INCREMENT").upper()
+                if operation == "REPLACE":
+                    base_value = requested
+                elif operation == "DECREMENT":
+                    base_value = max(0, int(base_value or 0) - requested)
+                else:
+                    base_value = int(base_value or 0) + requested
+        platform_ceiling = PLATFORM_HARD_CEILINGS.get(canonical_limit_key)
+        if platform_ceiling is not None:
+            ceilings.append(platform_ceiling)
+        if base_value is not None and ceilings:
+            base_value = min(base_value, min(ceilings))
+        if base_value is not None and limit_key == "max_storage_gb":
+            return base_value // 1024
+        return base_value
 
     @staticmethod
     async def resolve_org_entitlements(
@@ -208,13 +268,18 @@ class EntitlementResolver:
             if not sub.plan_id:
                 continue
             stmt = (
-                select(FeatureCatalog.key, FeatureCatalog.scope_type)
+                select(FeatureCatalog.key, FeatureCatalog.scope_type, PlanFeature.value_type, PlanFeature.entitlement_value)
                 .join(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id)
                 .where(PlanFeature.plan_id == sub.plan_id, PlanFeature.enabled.is_(True))
             )
-            for key, scope_type in (await db.execute(stmt)).all():
+            for key, scope_type, value_type, raw_value in (await db.execute(stmt)).all():
+                if key in CATALOG_LIMIT_KEYS:
+                    continue
+                value = raw_value.get("value") if isinstance(raw_value, dict) else True
                 features[key] = {
-                    "enabled": True,
+                    "enabled": bool(value) if value_type == "BOOLEAN" else value not in {None, "", "DISABLED", "NONE"},
+                    "value": value,
+                    "value_type": value_type or "BOOLEAN",
                     "scope_type": scope_type,
                     "source_type": "PLAN",
                     "source_ref": str(sub.plan_id),
@@ -226,8 +291,9 @@ class EntitlementResolver:
                     "denial_reason": None,
                 }
 
+        now = datetime.now(timezone.utc)
         addon_stmt = (
-            select(FeatureCatalog.key, FeatureCatalog.scope_type, OrganizationAddon.id, OrganizationAddon.addon_id)
+            select(FeatureCatalog.key, FeatureCatalog.scope_type, OrganizationAddon.id, OrganizationAddon.addon_id, AddonFeature.value_type, AddonFeature.entitlement_value, AddonFeature.operation)
             .join(AddonFeature, AddonFeature.feature_id == FeatureCatalog.id)
             .join(OrganizationAddon, OrganizationAddon.addon_id == AddonFeature.addon_id)
             .where(
@@ -235,11 +301,20 @@ class EntitlementResolver:
                 OrganizationAddon.status == "ACTIVE",
                 OrganizationAddon.event_id.is_(None),
                 OrganizationAddon.activation_id.is_(None),
+                or_(OrganizationAddon.expires_at.is_(None), OrganizationAddon.expires_at > now),
             )
         )
-        for key, scope_type, addon_row_id, addon_id in (await db.execute(addon_stmt)).all():
+        for key, scope_type, addon_row_id, addon_id, value_type, raw_value, operation in (await db.execute(addon_stmt)).all():
+            if key in CATALOG_LIMIT_KEYS:
+                continue
+            requested = raw_value.get("value") if isinstance(raw_value, dict) else True
+            current = features.get(key, {}).get("value", features.get(key, {}).get("enabled", False))
+            operation = (operation or "UNLOCK").upper()
+            value = True if operation == "UNLOCK" else requested if operation == "REPLACE" else requested
             features[key] = {
-                "enabled": True,
+                "enabled": bool(value) if value_type == "BOOLEAN" else value not in {None, "", "DISABLED", "NONE"},
+                "value": value,
+                "value_type": value_type or "BOOLEAN",
                 "scope_type": scope_type,
                 "source_type": "ADDON",
                 "source_ref": str(addon_id),
@@ -274,17 +349,76 @@ class EntitlementResolver:
             key: {
                 "limit_value": await EntitlementResolver.get_org_limit(db, org_id, key),
                 "scope_type": "ORG_SCOPED" if key in ("max_events", "max_users") else "EVENT_SCOPED",
-                "source_type": "AGGREGATE_SUBSCRIPTIONS",
+                "source_type": "AGGREGATE_SUBSCRIPTIONS" if subs else "CONTRACT_REQUIRED",
                 "source_ref": str(org_id),
                 "subscription_id": None,
                 "plan_id": None,
                 "activation_id": None,
                 "grant_id": None,
                 "override_source": None,
-                "denial_reason": None,
+                "denial_reason": None if subs else "CONTRACT_REQUIRED",
             }
-            for key in ("max_events", "max_users", *EntitlementResolver.EVENT_LIMIT_KEYS)
+            for key in LIMIT_DEFINITIONS
         }
+
+        approved_overrides = (await db.scalars(select(EntitlementOverrideRequest).where(
+            EntitlementOverrideRequest.organization_id == org_id,
+            EntitlementOverrideRequest.event_id.is_(None),
+            EntitlementOverrideRequest.status == "APPROVED",
+            EntitlementOverrideRequest.effective_at <= now,
+            or_(EntitlementOverrideRequest.expires_at.is_(None), EntitlementOverrideRequest.expires_at > now),
+        ).order_by(EntitlementOverrideRequest.effective_at, EntitlementOverrideRequest.created_at))).all()
+        for override in approved_overrides:
+            key = override.entitlement_key
+            if key.startswith("usage.") or key == "event.contract":
+                continue
+            if key in limits:
+                current = limits[key]["limit_value"]
+                requested = override.requested_value.get("value", override.requested_value.get("quantity")) if isinstance(override.requested_value, dict) else override.requested_value
+                if override.operation == "INCREMENT":
+                    value = int(current or 0) + int(requested or 0)
+                elif override.operation == "DECREMENT":
+                    value = max(0, int(current or 0) - int(requested or 0))
+                elif override.operation == "RESET":
+                    value = await EntitlementResolver.get_org_limit(db, org_id, key)
+                else:
+                    value = requested
+                limits[key].update(limit_value=value, source_type="ORGANIZATION_OVERRIDE", source_ref=str(override.id))
+            else:
+                current = features.get(key, {}).get("value", features.get(key, {}).get("enabled", False))
+                if override.operation == "UNLOCK":
+                    value = True
+                elif override.operation == "RESTRICT":
+                    value = False
+                else:
+                    value = override.requested_value
+                features[key] = {
+                    **features.get(key, {}),
+                    "enabled": bool(value) if not isinstance(value, str) else value not in {"", "DISABLED", "NONE"},
+                    "value": value,
+                    "source_type": "ORGANIZATION_OVERRIDE",
+                    "source_ref": str(override.id),
+                    "override_source": str(override.id),
+                    "denial_reason": "Restricted by approved administrative control" if not value else None,
+                }
+
+        # Safety policy is evaluated after every commercial source, including
+        # approved grants. An administrative override can never raise it.
+        for key, item in limits.items():
+            ceiling = PLATFORM_HARD_CEILINGS.get(key)
+            value = item.get("limit_value")
+            if (
+                isinstance(ceiling, (int, float))
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value > ceiling
+            ):
+                item.update(
+                    limit_value=ceiling,
+                    ceiling_applied=True,
+                    hard_ceiling=ceiling,
+                    ceiling_source="HARD_PLATFORM_CEILING",
+                )
 
         if not explain:
             return {"features": {k: v for k, v in features.items() if v["enabled"]}, "limits": limits}
@@ -370,35 +504,59 @@ class EntitlementResolver:
 
         if plan:
             plan_feature_stmt = (
-                select(FeatureCatalog.key, FeatureCatalog.scope_type)
+                select(
+                    FeatureCatalog.key,
+                    FeatureCatalog.scope_type,
+                    PlanFeature.value_type,
+                    PlanFeature.entitlement_value,
+                )
                 .join(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id)
                 .where(PlanFeature.plan_id == plan.id, PlanFeature.enabled.is_(True))
             )
-            for key, scope_type in (await db.execute(plan_feature_stmt)).all():
+            for key, scope_type, value_type, raw_value in (await db.execute(plan_feature_stmt)).all():
+                value = raw_value.get("value") if isinstance(raw_value, dict) else raw_value
+                canonical_limit = CATALOG_LIMIT_KEYS.get(key)
+                if canonical_limit:
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        continue
+                    limits[canonical_limit] = {
+                        "limit_key": canonical_limit,
+                        "limit_value": int(value),
+                        "scope_type": scope_type,
+                        "source_type": "PLAN",
+                        "source_ref": str(plan.id),
+                        "override_source": None,
+                    }
+                    # Some catalogue entries are deliberately dual-purpose:
+                    # the positive allocation both enables the feature and
+                    # supplies its quantitative allowance. Preserve both
+                    # snapshot rows so operation gates and limit enforcement
+                    # resolve from the same immutable contract.
+                    if key in FEATURE_DEFINITIONS:
+                        enabled = value > 0
+                        features[key] = {
+                            "feature_key": key,
+                            "enabled": enabled,
+                            "scope_type": scope_type,
+                            "source_type": "PLAN",
+                            "source_ref": str(plan.id),
+                            "override_source": None,
+                            "denial_reason": None if enabled else "NOT_ENTITLED",
+                        }
+                    continue
+                enabled = (
+                    bool(value)
+                    if value_type == "BOOLEAN"
+                    else value not in {None, "", "DISABLED", "NONE"}
+                )
                 features[key] = {
                     "feature_key": key,
-                    "enabled": True,
+                    "enabled": enabled,
                     "scope_type": scope_type,
                     "source_type": "PLAN",
                     "source_ref": str(plan.id),
                     "override_source": None,
-                    "denial_reason": None,
-                }
-
-            for limit_key in EntitlementResolver.EVENT_LIMIT_KEYS:
-                if limit_key == "storage_quota_mb":
-                    limit_value = plan.storage_quota_mb
-                else:
-                    limit_value = getattr(plan, limit_key, None)
-                if limit_value is None:
-                    limit_value = EntitlementResolver.DEFAULT_LIMITS.get(limit_key)
-                limits[limit_key] = {
-                    "limit_key": limit_key,
-                    "limit_value": limit_value,
-                    "scope_type": "EVENT_SCOPED",
-                    "source_type": "PLAN",
-                    "source_ref": str(plan.id),
-                    "override_source": None,
+                    "denial_reason": None if enabled else "NOT_ENTITLED",
                 }
 
         addon_filters = [

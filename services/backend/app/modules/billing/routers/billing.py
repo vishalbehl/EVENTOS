@@ -36,22 +36,15 @@ async def get_billing_usage(user: ActiveUser, db: DB):
     max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
     max_registrations = await EntitlementResolver.get_limit(db, org_id, "max_registrations")
     storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
-    if not plan:
-        plan_name = "Basic"; max_events = max_events or 1; max_users = max_users or 2
-        max_registrations = 150; storage_quota_bytes = 10 * 1024 * 1024 * 1024; daily_limit = 10000
-    else:
-        plan_name = plan.name
-        max_events = max_events if max_events is not None else plan.max_events
-        max_users = max_users if max_users is not None else plan.max_users
-        max_registrations = max_registrations if max_registrations is not None else plan.max_registrations
-        storage_quota_bytes = (storage_quota_mb if storage_quota_mb is not None else plan.storage_quota_mb) * 1024 * 1024
-        override_res = await db.execute(select(RateLimit.requests_per_day).where(
-            RateLimit.organization_id == org_id).execution_options(skip_tenant_filter=True))
-        daily_limit = override_res.scalar()
-        if daily_limit is None:
-            plan_limit_res = await db.execute(select(RateLimit.requests_per_day).where(
-                RateLimit.plan_tier.ilike(plan_name)).execution_options(skip_tenant_filter=True))
-            daily_limit = plan_limit_res.scalar() or 10000
+    plan_name = plan.name if plan else None
+    storage_quota_bytes = storage_quota_mb * 1024 * 1024 if storage_quota_mb is not None else None
+    override_res = await db.execute(select(RateLimit.requests_per_day).where(
+        RateLimit.organization_id == org_id).execution_options(skip_tenant_filter=True))
+    daily_limit = override_res.scalar()
+    if daily_limit is None and plan_name:
+        plan_limit_res = await db.execute(select(RateLimit.requests_per_day).where(
+            RateLimit.plan_tier.ilike(plan_name)).execution_options(skip_tenant_filter=True))
+        daily_limit = plan_limit_res.scalar()
     events_used = await db.scalar(select(func.count(Event.id)).where(
         and_(Event.organization_id == org_id, Event.deleted_at == None))) or 0
     users_used = await db.scalar(select(func.count(User.id)).where(
@@ -63,11 +56,17 @@ async def get_billing_usage(user: ActiveUser, db: DB):
     usage_rec = await db.get(OrganizationUsage, org_id)
     storage_used_bytes = usage_rec.storage_used_bytes if usage_rec else 0
     api_calls_today = await redis_client.zcard(f"rl:{org_id}:day")
+    measured_limits = [max_events, max_users, max_registrations, storage_quota_mb, daily_limit]
+    availability = "AVAILABLE" if all(value is not None for value in measured_limits) else "PARTIAL" if any(value is not None for value in measured_limits) else "UNAVAILABLE"
     return {"plan_name": plan_name, "events_used": events_used, "events_max": max_events,
             "users_used": users_used, "users_max": max_users,
             "registrations_used": registrations_used, "registrations_max": max_registrations,
             "storage_used_bytes": storage_used_bytes, "storage_quota_bytes": storage_quota_bytes,
-            "api_calls_today": api_calls_today, "daily_limit": daily_limit}
+            "api_calls_today": api_calls_today, "daily_limit": daily_limit,
+            "availability": availability,
+            "freshness_at": datetime.now(timezone.utc),
+            "source": "CANONICAL_ENTITLEMENT_RESOLVER",
+            "denial_reason": "CONTRACT_REQUIRED" if not plan else None}
 
 
 @router.get("/plan", response_model=Dict[str, Any])
@@ -99,6 +98,10 @@ async def get_billing_plan(user: ActiveUser, db: DB):
     max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")
     max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
     max_registrations = await EntitlementResolver.get_limit(db, org_id, "max_registrations")
+    max_speakers = await EntitlementResolver.get_limit(db, org_id, "max_speakers")
+    max_sessions = await EntitlementResolver.get_limit(db, org_id, "max_sessions")
+    max_rooms = await EntitlementResolver.get_limit(db, org_id, "max_rooms")
+    max_ticket_categories = await EntitlementResolver.get_limit(db, org_id, "max_ticket_categories")
     storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
     return {
         "subscription_id": sub.id, "status": sub.status,
@@ -114,17 +117,19 @@ async def get_billing_plan(user: ActiveUser, db: DB):
         "plan": {"id": plan.id, "name": plan.name, "tagline": plan.tagline,
                  "description": plan.description, "billing_model": plan.billing_model,
                  "currency": plan.currency,
-                 "price_per_event_min": float(plan.price_per_event_min) if plan.price_per_event_min is not None else None,
-                 "price_per_event_max": float(plan.price_per_event_max) if plan.price_per_event_max is not None else None,
-                 "price_display": plan.price_display, "max_events": max_events if max_events is not None else plan.max_events,
-                 "max_users": max_users if max_users is not None else plan.max_users, "max_registrations": max_registrations if max_registrations is not None else plan.max_registrations,
-                 "max_speakers": plan.max_speakers, "max_sessions": plan.max_sessions,
-                 "max_rooms": plan.max_rooms, "max_ticket_categories": plan.max_ticket_categories,
-                 "storage_quota_mb": storage_quota_mb if storage_quota_mb is not None else plan.storage_quota_mb, "color_hex": plan.color_hex},
-        "usage": {"events": {"used": events_used, "max": max_events if max_events is not None else plan.max_events},
-                  "users": {"used": users_used, "max": max_users if max_users is not None else plan.max_users},
-                  "registrations": {"used": registrations_used, "max": max_registrations if max_registrations is not None else plan.max_registrations},
-                  "storage": {"used_mb": storage_used_mb, "max_mb": storage_quota_mb if storage_quota_mb is not None else plan.storage_quota_mb}}}
+                 "price_per_event": float(plan.price_per_event) if plan.price_per_event is not None else None,
+                 "price_display": plan.price_display, "max_events": max_events,
+                 "max_users": max_users, "max_registrations": max_registrations,
+                 "max_speakers": max_speakers, "max_sessions": max_sessions,
+                 "max_rooms": max_rooms, "max_ticket_categories": max_ticket_categories,
+                 "storage_quota_mb": storage_quota_mb, "color_hex": plan.color_hex},
+        "usage": {"events": {"used": events_used, "max": max_events},
+                  "users": {"used": users_used, "max": max_users},
+                  "registrations": {"used": registrations_used, "max": max_registrations},
+                  "storage": {"used_mb": storage_used_mb, "max_mb": storage_quota_mb}},
+        "availability": "AVAILABLE" if all(value is not None for value in (max_events, max_users, max_registrations, storage_quota_mb)) else "PARTIAL",
+        "freshness_at": datetime.now(timezone.utc),
+        "source": "CANONICAL_ENTITLEMENT_RESOLVER"}
 
 
 # ── Super Admin Commercial Endpoints ─────────────────────────
@@ -159,8 +164,7 @@ async def superadmin_get_plans(db: DB, _: User = Depends(require_super_admin)):
         result.append(CommercialPlanResponse(
             id=p.id, name=p.name, tagline=p.tagline, description=p.description,
             billing_model=p.billing_model, currency=p.currency,
-            price_per_event_min=float(p.price_per_event_min) if p.price_per_event_min else None,
-            price_per_event_max=float(p.price_per_event_max) if p.price_per_event_max else None,
+            price_per_event=float(p.price_per_event) if p.price_per_event else None,
             max_events=p.max_events, max_users=p.max_users,
             max_registrations=p.max_registrations, max_speakers=p.max_speakers,
             max_sessions=p.max_sessions, max_rooms=p.max_rooms,

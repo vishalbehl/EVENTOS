@@ -16,6 +16,7 @@ from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.print_template import PrintTemplate
+from app.modules.venue.models.room_device import RoomDevice
 
 
 class UsageService:
@@ -32,6 +33,7 @@ class UsageService:
         "max_ticket_categories": LIVE_COUNT,
         "max_badge_templates": LIVE_COUNT,
         "max_certificate_templates": LIVE_COUNT,
+        "max_devices_per_event": LIVE_COUNT,
         "max_emails_per_event": LEDGER,
         "storage_quota_mb": METER,
     }
@@ -54,7 +56,7 @@ class UsageService:
                 or 0
             )
         if metric_key == "max_rooms":
-            return int(await db.scalar(select(func.count(Room.id)).where(Room.event_id == event_id)) or 0)
+            return int(await db.scalar(select(func.count(Room.id)).where(Room.event_id == event_id, Room.is_active.is_(True))) or 0)
         if metric_key == "max_ticket_categories":
             return int(await db.scalar(select(func.count(ParticipantRole.id)).where(ParticipantRole.event_id == event_id)) or 0)
         if metric_key == "max_badge_templates":
@@ -87,13 +89,21 @@ class UsageService:
             )
         if metric_key == "storage_quota_mb":
             presentation_bytes = await db.scalar(
-                select(func.coalesce(func.sum(PresentationFile.file_size_bytes), 0)).where(PresentationFile.event_id == event_id)
+                select(func.coalesce(func.sum(PresentationFile.file_size_bytes), 0)).where(PresentationFile.event_id == event_id, PresentationFile.deleted_at.is_(None), PresentationFile.upload_status != "processing")
             )
             poster_bytes = await db.scalar(
                 select(func.coalesce(func.sum(Poster.file_size_bytes), 0)).where(Poster.event_id == event_id)
             )
             total_bytes = int(presentation_bytes or 0) + int(poster_bytes or 0)
             return total_bytes // (1024 * 1024)
+        if metric_key == "storage_bytes":
+            presentation_bytes = await db.scalar(
+                select(func.coalesce(func.sum(PresentationFile.file_size_bytes), 0)).where(PresentationFile.event_id == event_id, PresentationFile.deleted_at.is_(None), PresentationFile.upload_status != "processing")
+            )
+            poster_bytes = await db.scalar(
+                select(func.coalesce(func.sum(Poster.file_size_bytes), 0)).where(Poster.event_id == event_id)
+            )
+            return int(presentation_bytes or 0) + int(poster_bytes or 0)
         if metric_key == "max_event_team_members":
             event_nodes = (
                 select(distinct(UserAccessNode.user_id))
@@ -107,7 +117,48 @@ class UsageService:
                 )
             )
             return int(await db.scalar(select(func.count()).select_from(event_nodes.subquery())) or 0)
+        if metric_key == "max_devices_per_event":
+            return int(
+                await db.scalar(select(func.count(RoomDevice.id)).where(RoomDevice.event_id == event_id))
+                or 0
+            )
         return 0
+
+    @staticmethod
+    async def get_effective_event_metric(
+        db: AsyncSession,
+        event_id: uuid.UUID,
+        limit_key: str,
+    ) -> int:
+        """Return authoritative usage relative to the active reset epoch."""
+        from app.modules.billing.capability_registry import LIMIT_DEFINITIONS
+        from app.modules.platform.models.organization_console import UsageCounterEpoch
+
+        absolute = await UsageService.get_event_metric(db, event_id, limit_key)
+        definition = (
+            LIMIT_DEFINITIONS.get("storage_quota_mb")
+            if limit_key == "storage_bytes"
+            else LIMIT_DEFINITIONS.get(limit_key)
+        )
+        if not definition:
+            return absolute
+        metric_key = definition.get("metric_key", limit_key)
+        epoch = await db.scalar(
+            select(UsageCounterEpoch)
+            .where(
+                UsageCounterEpoch.event_id == event_id,
+                UsageCounterEpoch.metric_key == metric_key,
+                UsageCounterEpoch.closed_at.is_(None),
+            )
+            .order_by(UsageCounterEpoch.sequence.desc())
+            .limit(1)
+        )
+        if not epoch:
+            return absolute
+        baseline = int(epoch.baseline_value or 0)
+        if limit_key == "storage_quota_mb":
+            baseline //= 1024 * 1024
+        return max(0, absolute - baseline)
 
     @staticmethod
     async def get_event_usage_bundle(

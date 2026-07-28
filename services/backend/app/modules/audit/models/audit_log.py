@@ -1,5 +1,6 @@
 import uuid
 import hashlib
+import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
@@ -57,6 +58,7 @@ class AuditLog(Base):
     
     # ── Tamper Proofing ──────────────────────────────────
     row_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA-256 tamper-proof hash (indexed via __table_args__)
+    hash_version: Mapped[int] = mapped_column(default=2, server_default="2", nullable=False)
     is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false', nullable=False)
     
     # ── Operational ──────────────────────────────────────
@@ -104,5 +106,29 @@ def generate_row_hash(mapper, connection, target):
     action = target.action_type or ""
     timestamp = target.occurred_at.isoformat() if hasattr(target.occurred_at, "isoformat") else str(target.occurred_at)
 
-    payload = f"{schema_name}:{table_name}:{record_id}:{action}:{timestamp}"
-    target.row_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    target.hash_version = 2
+    target.row_hash = compute_audit_hash(target, version=2)
+
+
+def compute_audit_hash(target: AuditLog, version: int | None = None) -> str:
+    """Compute a stable integrity digest while retaining legacy verification."""
+    selected_version = version or target.hash_version or 1
+    timestamp = target.occurred_at.isoformat() if hasattr(target.occurred_at, "isoformat") else str(target.occurred_at)
+    if selected_version == 1:
+        payload = f"audit:logs:{target.resource_id or ''}:{target.action_type or ''}:{timestamp}"
+    else:
+        payload = json.dumps({
+            "actor_role": target.actor_role,
+            "actor_user_id": str(target.actor_user_id) if target.actor_user_id else None,
+            "change_diff": target.change_diff,
+            "impersonated_by": str(target.impersonated_by) if target.impersonated_by else None,
+            "is_sensitive": bool(target.is_sensitive),
+            "new_state": target.new_state,
+            "occurred_at": timestamp,
+            "old_state": target.old_state,
+            "organization_id": str(target.organization_id) if target.organization_id else None,
+            "resource_id": str(target.resource_id) if target.resource_id else None,
+            "resource_type": target.resource_type,
+            "action_type": target.action_type,
+        }, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.modules.events.models.event import Event
+from app.modules.identity.models.user import User
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.participant_registration import ParticipantRegistration
@@ -21,7 +22,7 @@ from app.modules.events.models.speaker import Speaker
 from tests.conftest import activate_event_for_test
 
 @pytest.mark.asyncio
-async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
+async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event, organizer: User):
     await activate_event_for_test(db, event)
     # 1. Seed ParticipantRoles
     role_del = ParticipantRole(
@@ -77,7 +78,7 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
         role="Delegate",
         paid_status="Unpaid"
     )
-    p_del = await create_participant(payload=del_create, event=event, db=db)
+    p_del = await create_participant(payload=del_create, event=event, idempotency_key=f"test-{uuid.uuid4()}", current_user=organizer, db=db)
     assert p_del.paid_status == "Paid"
     assert p_del.regno is not None
 
@@ -88,14 +89,14 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
         role="VIP",
         paid_status="Unpaid"
     )
-    p_vip = await create_participant(payload=vip_create, event=event, db=db)
+    p_vip = await create_participant(payload=vip_create, event=event, idempotency_key=f"test-{uuid.uuid4()}", current_user=organizer, db=db)
     assert p_vip.paid_status == "Unpaid"
     assert p_vip.regno is None
 
     # --- Test Case B: update_participant ---
     # Update VIP participant's role to Delegate (which is free). Should auto-assign 'Paid' status and generate regno.
     vip_update = ParticipantUpdate(role="Delegate")
-    p_vip_updated = await update_participant(participant_id=p_vip.id, payload=vip_update, event=event, db=db)
+    p_vip_updated = await update_participant(participant_id=p_vip.id, payload=vip_update, event=event, current_user=organizer, db=db)
     assert p_vip_updated.role == "Delegate"
     assert p_vip_updated.paid_status == "Paid"
     assert p_vip_updated.regno is not None
@@ -115,7 +116,7 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
             paid_status="Unpaid"
         )
     ]
-    inserted, waitlisted, merged = await insert_participants(db=db, event_id=event.id, payload=bulk_payload, default_source="bulk")
+    inserted, waitlisted, merged = await insert_participants(db=db, event_id=event.id, payload=bulk_payload, default_source="bulk", idempotency_key=f"test-{uuid.uuid4()}", actor_user_id=organizer.id)
     assert inserted == 2 # both fit in capacity
     
     # Retrieve VIP
@@ -146,7 +147,12 @@ async def test_free_pricing_auto_paid_status(db: AsyncSession, event: Event):
     db.add(speaker_model)
     await db.commit()
 
-    res = await fetch_participants_from_speakers(event=event, db=db)
+    res = await fetch_participants_from_speakers(
+        event=event,
+        idempotency_key=f"test-speaker-import-{uuid.uuid4()}",
+        current_user=organizer,
+        db=db,
+    )
     # Check that speaker participant created has Paid status since Speaker role price is unset
     q_spk = select(Participant).where(Participant.email == "speaker1@example.com")
     p_spk = (await db.execute(q_spk)).scalar_one()

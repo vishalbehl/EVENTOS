@@ -15,7 +15,6 @@ import {
   Lock,
   MapPin,
   Phone,
-  Shield,
   Sparkles,
 
   Upload,
@@ -105,14 +104,6 @@ const initialFormData = {
     registration_allowed: true,
     participants_list_allowed: true,
   },
-  feature_toggles: {
-    enable_whatsapp: false,
-    enable_posters: true,
-    enable_srr: true,
-    enable_signage: true,
-    enable_moderator: true,
-    enable_webhooks: false,
-  },
 };
 
 const availableFormats = ["pptx", "pdf", "mp4", "key", "zip", "png", "jpg"];
@@ -186,322 +177,6 @@ function formatCurrency(value: number | null | undefined, currency = "INR") {
   }
 }
 
-// ─── Payment Modal ────────────────────────────────────────────────────────────
-
-type PaymentMethod = "card" | "upi" | "bank";
-
-function PaymentModal({
-  open,
-  totalAmount,
-  planName,
-  addonNames,
-  billingName,
-  billingEmail,
-  billingPhone,
-  onClose,
-  onSuccess,
-}: {
-  open: boolean;
-  totalAmount: number;
-  planName: string;
-  addonNames: string[];
-  billingName: string;
-  billingEmail: string;
-  billingPhone: string;
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [method, setMethod] = useState<PaymentMethod>("card");
-  const [cardholder, setCardholder] = useState("");
-  const [cardNo, setCardNo] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvv, setCvv] = useState("");
-  const [gstNumber, setGstNumber] = useState("");
-  const [upiId, setUpiId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [succeeded, setSucceeded] = useState(false);
-
-  // Format card number with spaces
-  const handleCardNo = (val: string) => {
-    const digits = val.replace(/\D/g, "").slice(0, 16);
-    setCardNo(digits.replace(/(.{4})/g, "$1 ").trim());
-  };
-
-  const handleExpiry = (val: string) => {
-    const digits = val.replace(/\D/g, "").slice(0, 4);
-    if (digits.length > 2) setExpiry(`${digits.slice(0, 2)}/${digits.slice(2)}`);
-    else setExpiry(digits);
-  };
-
-  const handlePay = async () => {
-    // Validation
-    if (method === "card" && (!cardholder || !cardNo || !expiry || !cvv)) {
-      toast.error("Fill in all card details.");
-      return;
-    }
-    if (method === "upi" && !upiId) {
-      toast.error("Enter your UPI ID.");
-      return;
-    }
-
-    setLoading(true);
-    // Simulated gateway call — will be replaced with Razorpay/Stripe SDK
-    await new Promise((r) => setTimeout(r, 2200));
-    setLoading(false);
-    setSucceeded(true);
-  };
-
-  const handleDone = () => {
-    onSuccess();
-    onClose();
-  };
-
-  if (!open) return null;
-
-  const cardBrand =
-    cardNo.startsWith("4") ? "VISA" :
-    cardNo.startsWith("5") ? "MC" :
-    cardNo.startsWith("3") ? "AMEX" : null;
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/80 backdrop-blur-md"
-        onClick={succeeded ? undefined : onClose}
-      />
-
-      {/* Modal */}
-      <div className="relative w-full max-w-lg rounded-[28px] border border-white/[0.08] bg-[#111118] shadow-[0_40px_100px_rgba(0,0,0,0.8)] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-
-        {/* Success state */}
-        {succeeded ? (
-          <div className="p-10 flex flex-col items-center text-center gap-6">
-            <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#C2F542]/60 to-transparent absolute top-0 inset-x-0" />
-            <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-[rgba(194,245,66,0.4)] bg-[rgba(194,245,66,0.08)]">
-              <CheckCircle2 className="h-10 w-10 text-[#C2F542]" />
-            </div>
-            <div>
-              <h3 className="text-[24px] font-bold tracking-tight text-white">Payment Successful</h3>
-              <p className="mt-2 text-[14px] text-white/60">
-                Your plan <span className="text-white font-semibold">{planName}</span> has been activated.
-              </p>
-              <p className="mt-1 text-[13px] text-white/40">{formatCurrency(totalAmount)} charged</p>
-            </div>
-            <Button
-              onClick={handleDone}
-              className="h-12 rounded-xl px-8 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold text-[14px]"
-            >
-              Continue to Publish
-            </Button>
-          </div>
-        ) : (
-          <>
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-white/[0.06]">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40">Secure Checkout</p>
-                <h3 className="mt-0.5 text-[20px] font-bold text-white">{formatCurrency(totalAmount)}</h3>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 text-[11px] text-white/40">
-                  <Shield className="h-3.5 w-3.5" />
-                  256-bit SSL
-                </div>
-                <button
-                  onClick={onClose}
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition-colors"
-                >
-                  <X className="h-4 w-4 text-white/60" />
-                </button>
-              </div>
-            </div>
-
-            {/* Order summary */}
-            <div className="px-6 py-4 bg-white/[0.02] border-b border-white/[0.06]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Order Summary</p>
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-[13px]">
-                  <span className="text-white/70">{planName}</span>
-                  <span className="font-mono font-semibold text-white">Plan</span>
-                </div>
-                {addonNames.map((name) => (
-                  <div key={name} className="flex justify-between text-[12px]">
-                    <span className="text-white/50">+ {name}</span>
-                    <span className="text-white/50">Add-on</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="px-6 py-5 space-y-5">
-              {/* Payment method tabs */}
-              <div className="flex rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 gap-1">
-                {(["card", "upi", "bank"] as PaymentMethod[]).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMethod(m)}
-                    className={[
-                      "flex-1 rounded-lg py-2 text-[12px] font-semibold transition-all duration-150 capitalize",
-                      method === m
-                        ? "bg-white text-black shadow-sm"
-                        : "text-white/50 hover:text-white/80",
-                    ].join(" ")}
-                  >
-                    {m === "card" ? "Credit / Debit" : m === "upi" ? "UPI" : "Net Banking"}
-                  </button>
-                ))}
-              </div>
-
-              {/* Card form */}
-              {method === "card" && (
-                <div className="space-y-3">
-                  <PayField
-                    label="Cardholder Name"
-                    id="pay-cardholder"
-                    value={cardholder}
-                    onChange={setCardholder}
-                    placeholder="Name as on card"
-                    autoComplete="cc-name"
-                  />
-                  <div className="relative">
-                    <PayField
-                      label="Card Number"
-                      id="pay-card-no"
-                      value={cardNo}
-                      onChange={handleCardNo}
-                      placeholder="0000 0000 0000 0000"
-                      autoComplete="cc-number"
-                      inputMode="numeric"
-                    />
-                    {cardBrand && (
-                      <span className="absolute right-4 bottom-3.5 text-[10px] font-black tracking-widest text-white/40">
-                        {cardBrand}
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <PayField
-                      label="Expiry"
-                      id="pay-expiry"
-                      value={expiry}
-                      onChange={handleExpiry}
-                      placeholder="MM/YY"
-                      autoComplete="cc-exp"
-                      inputMode="numeric"
-                    />
-                    <PayField
-                      label="CVV"
-                      id="pay-cvv"
-                      value={cvv}
-                      onChange={(v) => setCvv(v.replace(/\D/g, "").slice(0, 4))}
-                      placeholder="•••"
-                      type="password"
-                      autoComplete="cc-csc"
-                      inputMode="numeric"
-                    />
-                  </div>
-                  <PayField
-                    label="GST Number (optional)"
-                    id="pay-gst"
-                    value={gstNumber}
-                    onChange={setGstNumber}
-                    placeholder="22AAAAA0000A1Z5"
-                  />
-                </div>
-              )}
-
-              {/* UPI form */}
-              {method === "upi" && (
-                <PayField
-                  label="UPI ID"
-                  id="pay-upi"
-                  value={upiId}
-                  onChange={setUpiId}
-                  placeholder="yourname@upi"
-                />
-              )}
-
-              {/* Net Banking placeholder */}
-              {method === "bank" && (
-                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 text-center">
-                  <p className="text-[13px] text-white/50">
-                    Net banking will redirect you to your bank's secure portal.
-                  </p>
-                  <p className="text-[11px] text-white/30 mt-1">Bank selection available after clicking Pay.</p>
-                </div>
-              )}
-
-              {/* Pay button */}
-              <button
-                type="button"
-                onClick={handlePay}
-                disabled={loading}
-                className="w-full h-13 rounded-xl bg-[#C2F542] text-black font-bold text-[15px] flex items-center justify-center gap-2.5 hover:bg-[#d4f75a] transition-colors disabled:opacity-60 py-3.5"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    Processing…
-                  </>
-                ) : (
-                  <>
-                    <Lock className="h-4 w-4" />
-                    Pay {formatCurrency(totalAmount)}
-                  </>
-                )}
-              </button>
-
-              <p className="text-center text-[10px] text-white/25">
-                Secured by 256-bit encryption · Ready for Razorpay / Stripe
-              </p>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PayField({
-  label,
-  id,
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-  autoComplete,
-  inputMode,
-}: {
-  label: string;
-  id: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-  autoComplete?: string;
-  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
-}) {
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
-        {label}
-      </label>
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        inputMode={inputMode}
-        className="w-full h-12 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 text-[14px] text-white placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[rgba(194,245,66,0.4)] focus:border-[rgba(194,245,66,0.3)] transition-all"
-      />
-    </div>
-  );
-}
-
 // ─── Review & Deploy Panel ────────────────────────────────────────────────────
 
 function ReviewInfoBlock({
@@ -559,9 +234,10 @@ function NewEventPageInner() {
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [calculating, setCalculating] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [commercialRequestId, setCommercialRequestId] = useState<string | null>(null);
   const [subscriptionActivated, setSubscriptionActivated] = useState(false);
   const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+  const [currentBillingPlan, setCurrentBillingPlan] = useState<Record<string, any> | null>(null);
   const [successEvent, setSuccessEvent] = useState<any | null>(null);
 
   // URL param pre-selection
@@ -614,12 +290,13 @@ function NewEventPageInner() {
                 normalizeComparisonValue(p.name) === normalizeComparisonValue(preselectedPlanId)
             ) ?? null;
         }
+        const billingPlan = billingResult.status === "fulfilled" ? billingResult.value : null;
         if (!matchedPlan) {
           matchedPlan =
             normalizedPlans.find(
               (plan) =>
                 normalizeComparisonValue(plan.name) ===
-                normalizeComparisonValue(meRes.organization.plan)
+                normalizeComparisonValue(String(billingPlan?.plan?.name ?? ""))
             ) ||
             normalizedPlans[0] ||
             null;
@@ -641,6 +318,7 @@ function NewEventPageInner() {
         setPlans(normalizedPlans);
         setAddons(normalizedAddons);
         setSelectedPlan(matchedPlan);
+        setCurrentBillingPlan(billingPlan);
         if (preAddonKeys.length > 0) setSelectedAddons(preAddonKeys);
         if (billingResult.status === "fulfilled") {
           setSubscriptionId(billingResult.value?.subscription_id ? String(billingResult.value.subscription_id) : null);
@@ -648,16 +326,7 @@ function NewEventPageInner() {
           setSubscriptionId(null);
         }
 
-        const isSuperOrg = meRes.organization?.slug === "eventxos";
-        const currentEventLimit = meRes.plan_limits?.events ?? 0;
-        const currentEventCount = meRes.event_count ?? 0;
-        const hasActivePlan = Boolean(meRes.organization?.is_active && currentEventLimit > 0);
-        const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
-
-        if (isSuperOrg || (hasActivePlan && remainingEvents > 0)) {
-          setStep(3);
-        }
-
+        const currentEventLimit = Number(billingPlan?.usage?.events?.max ?? meRes.plan_limits?.events ?? 0);
         setBillingName(meRes.organization.name || "");
         setBillingEmail(meRes.organization.billing_email || "");
         setFormData((current) => ({
@@ -693,10 +362,17 @@ function NewEventPageInner() {
       .finally(() => setCalculating(false));
   }, [selectedPlan, selectedAddons]);
 
-  const activePlanName = orgContext?.organization?.plan ?? "";
+  const activePlanName = String(
+    currentBillingPlan?.plan?.name ?? orgContext?.commercial?.plan_name ?? ""
+  );
   const currentEventCount = orgContext?.event_count ?? 0;
-  const currentEventLimit = orgContext?.plan_limits?.events ?? 0;
-  const hasActivePlan = Boolean(orgContext?.organization?.is_active && currentEventLimit > 0);
+  const billingStatus = String(currentBillingPlan?.status ?? "").toUpperCase();
+  const currentEventLimit = Number(currentBillingPlan?.usage?.events?.max ?? orgContext?.plan_limits?.events ?? 0);
+  const hasActiveSubscription = Boolean(
+    orgContext?.organization?.is_active &&
+    (["ACTIVE", "TRIAL"].includes(billingStatus) || Boolean(subscriptionId))
+  );
+  const hasActiveSlot = Boolean(hasActiveSubscription && currentEventLimit > currentEventCount);
   const normalizedActivePlan = normalizeComparisonValue(activePlanName);
   const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
   const selectedPlanEventLimit = selectedPlan?.maxEvents ?? currentEventLimit;
@@ -704,8 +380,9 @@ function NewEventPageInner() {
     ? normalizeComparisonValue(selectedPlan.name) === normalizedActivePlan
     : false;
   const selectedPlanUnlocksEvent = selectedPlanEventLimit > currentEventCount;
-  const requiresPurchase =
-    !hasActivePlan || !selectedPlanMatchesCurrent || selectedAddons.length > 0 || remainingEvents <= 0;
+  const requiresPurchase = hasActiveSubscription
+    ? false
+    : (!hasActiveSlot || selectedAddons.length > 0 || Boolean(selectedPlan && !selectedPlanMatchesCurrent && (selectedPlan.price ?? 0) > 0));
 
   const selectedAddonRecords = useMemo(
     () => addons.filter((addon) => selectedAddons.includes(addon.rawKey)),
@@ -719,14 +396,20 @@ function NewEventPageInner() {
     return base + addOnTotal;
   }, [priceDetails, selectedPlan, selectedAddonRecords]);
 
-  // ── Step meta (4 steps, no Limits step) ──────────────────────────────────
-  const stepMeta = [
-    { label: "Basics", description: "Identity & contacts" },
-    { label: "Venue & Schedule", description: "Location & dates" },
-    { label: "Choose Plan", description: "Workspace tier" },
-    { label: "Add-ons", description: "Optional modules" },
-    { label: "Review & Pay", description: "Deploy" },
-  ];
+  // ── Step meta (3 steps if active subscription exists, else 5 steps) ────────
+  const stepMeta = hasActiveSubscription
+    ? [
+        { label: "Basics", description: "Identity & contacts" },
+        { label: "Venue & Schedule", description: "Location & dates" },
+        { label: "Review & Deploy", description: "Deploy event" },
+      ]
+    : [
+        { label: "Basics", description: "Identity & contacts" },
+        { label: "Venue & Schedule", description: "Location & dates" },
+        { label: "Choose Plan", description: "Workspace tier" },
+        { label: "Add-ons", description: "Optional modules" },
+        { label: "Review & Pay", description: "Deploy" },
+      ];
 
   const canContinueBasics = Boolean(
     formData.name.trim() &&
@@ -796,28 +479,21 @@ function NewEventPageInner() {
     toast.success("Venue image removed.");
   };
 
-  const handlePaymentSuccess = async () => {
+  const handleCommercialAccessRequest = async () => {
     if (!selectedPlan) {
-      throw new Error("Select a plan before activating billing.");
+      throw new Error("Select a plan before requesting access.");
     }
 
-    const result = await orgApi.subscribe({
+    const result = await orgApi.requestCommercialAccess({
       plan_name: selectedPlan.name,
       addon_keys: selectedAddons,
-      is_custom: false,
-      custom_limits: null,
-      promo_code: null,
       billing_name: billingName,
       billing_email: billingEmail,
       billing_phone: billingPhone || formData.organizer_details.phone || "NA",
       gst_number: null,
+      reason: `Request access to ${selectedPlan.name} for a new event workspace`,
     });
-
-    const nextSubscriptionId = result?.subscription_id ? String(result.subscription_id) : null;
-    if (nextSubscriptionId) {
-      setSubscriptionId(nextSubscriptionId);
-    }
-    setSubscriptionActivated(true);
+    setCommercialRequestId(String(result.id));
     return result;
   };
 
@@ -827,7 +503,19 @@ function NewEventPageInner() {
       return;
     }
     if (requiresPurchase && !subscriptionActivated) {
-      setPaymentModalOpen(true);
+      if (commercialRequestId) {
+        toast.info("This plan request is waiting for Command Center approval.");
+        return;
+      }
+      setLoading(true);
+      try {
+        await handleCommercialAccessRequest();
+        toast.success("Plan request submitted for Command Center approval.");
+      } catch (error: any) {
+        toast.error(error?.message || "Failed to request the selected plan.");
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -844,6 +532,7 @@ function NewEventPageInner() {
       let resolvedSubscriptionId = subscriptionId;
       if (!resolvedSubscriptionId) {
         const currentPlan = await orgApi.currentBillingPlan();
+        setCurrentBillingPlan(currentPlan);
         resolvedSubscriptionId = currentPlan?.subscription_id ? String(currentPlan.subscription_id) : null;
         if (resolvedSubscriptionId) {
           setSubscriptionId(resolvedSubscriptionId);
@@ -874,17 +563,13 @@ function NewEventPageInner() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6 pb-10 max-w-4xl mx-auto w-full">
-      <EnterprisePageIntro
-        title="Create Event"
-        subtitle="Provision an enterprise-level conference with dedicated module access, billing plan, and real-time database settings."
-        action={
-          <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-xl">
-            <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
-            Exit Creator
-          </Button>
-        }
-      />
+    <div className="space-y-6 pb-10 max-w-4xl mx-auto w-full pt-4">
+      <div className="flex items-center justify-end">
+        <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-xl">
+          <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
+          Exit Creator
+        </Button>
+      </div>
 
       {/* Success Screen */}
       {successEvent ? (
@@ -1314,27 +999,14 @@ function NewEventPageInner() {
                           }
                         />
                       ))}
-                      {[
-                        { key: "enable_posters", label: "Poster Abstracts", desc: "Allow poster submissions and reviews." },
-                        { key: "enable_moderator", label: "Moderator Desk", desc: "Podium console for session moderators." },
-                        { key: "enable_signage", label: "Digital Signage", desc: "Sync schedules to digital signs at the venue." },
-                        { key: "enable_whatsapp", label: "WhatsApp Tickets", desc: "Dispatch tickets via WhatsApp." },
-                        { key: "enable_srr", label: "Smart Room Routing", desc: "Local sync for room presentation PCs." },
-                        { key: "enable_webhooks", label: "Developer Webhooks", desc: "Push events to custom API endpoints." },
-                      ].map(({ key, label, desc }) => (
-                        <ToggleRow
-                          key={key}
-                          label={label}
-                          description={desc}
-                          checked={(formData.feature_toggles as any)[key]}
-                          onCheckedChange={(checked) =>
-                            setFormData((c) => ({
-                              ...c,
-                              feature_toggles: { ...c.feature_toggles, [key]: checked },
-                            }))
-                          }
-                        />
-                      ))}
+                      <div className="rounded-xl border border-[var(--color-border)] bg-white/[0.02] p-4">
+                        <p className="text-[12px] font-semibold text-[var(--color-text-primary)]">
+                          Commercial capabilities are contract controlled
+                        </p>
+                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          Posters, WhatsApp, signage, room sync, and webhooks are applied from the approved event contract after activation. They cannot be enabled from event setup.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1406,8 +1078,55 @@ function NewEventPageInner() {
               </div>
             )}
 
-            {/* STEP 3 — ADD-ONS */}
-            {step === 3 && (
+            {/* STEP 2 — CHOOSE PLAN (Only if no active subscription) */}
+            {!hasActiveSubscription && step === 2 && (
+              <div className="space-y-6">
+                <SectionHeader
+                  title="Choose Plan"
+                  description="Select a core plan for this event workspace."
+                />
+
+                {plans.length > 0 ? (
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    {plans.map((plan, idx) => {
+                      const isSelected = selectedPlan?.name === plan.name;
+                      return (
+                        <CommercialPlanCard
+                          key={plan.id ?? plan.key ?? plan.name}
+                          plan={{
+                            id: String(plan.id ?? plan.key ?? plan.name),
+                            name: plan.name,
+                            tagline: plan.tagline,
+                            description: plan.description,
+                            priceLabel: formatCurrency(plan.price, plan.currency) + " / event",
+                            colorHex: "#6366F1",
+                            isPopular: plan.popular,
+                            isActive: true,
+                            highlights: [
+                              `${plan.maxUsers || "Unlimited"} team members`,
+                              `${plan.maxRegistrations || "Unlimited"} registrations`,
+                              `${plan.maxSpeakers || "Unlimited"} speakers`,
+                            ],
+                          }}
+                          index={idx}
+                          actionVariant={isSelected ? "current" : "choose"}
+                          isCurrentPlan={isSelected}
+                          onAction={() => {
+                            setSelectedPlan(plan);
+                            setSubscriptionActivated(false);
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-[var(--color-text-muted)] py-8 text-center">No plans available.</p>
+                )}
+              </div>
+            )}
+
+            {/* STEP 3 — ADD-ONS (Only if no active subscription) */}
+            {!hasActiveSubscription && step === 3 && (
               <div className="space-y-6">
                 <SectionHeader
                   title="Add-ons"
@@ -1463,12 +1182,12 @@ function NewEventPageInner() {
               </div>
             )}
 
-            {/* STEP 4 — REVIEW & DEPLOY */}
-            {step === 4 && (
+            {/* REVIEW & DEPLOY (Step 2 if active subscription exists, else Step 4) */}
+            {((hasActiveSubscription && step === 2) || (!hasActiveSubscription && step === 4)) && (
               <div className="space-y-6">
                 <SectionHeader
                   title="Review & Deploy"
-                  description="Verify all event details before publishing. Click 'Pay & Publish' to complete."
+                  description="Verify all event details before publishing. Click 'Publish Event' to complete."
                 />
 
                 <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -1514,66 +1233,23 @@ function NewEventPageInner() {
                       )}
                     </ReviewSection>
 
-                    {/* Billing / Plan */}
-                    <div className="rounded-2xl border border-[rgba(194,245,66,0.2)] bg-[rgba(194,245,66,0.04)] p-5 space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#C2F542]">Plan & Billing</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[14px] font-bold text-[var(--color-text-primary)]">
-                          {selectedPlan?.name ?? "No plan selected"}
-                        </span>
-                        <span className="font-mono text-[16px] font-bold text-[var(--color-text-primary)]">
-                          {formatCurrency(selectedPlan?.price)}
-                        </span>
-                      </div>
-                      {selectedAddonRecords.map((addon) => (
-                        <div key={addon.rawKey} className="flex items-center justify-between text-[13px]">
-                          <span className="text-[var(--color-text-secondary)]">+ {addon.name}</span>
-                          <span className="font-mono text-[var(--color-text-secondary)]">{formatCurrency(addon.price)}</span>
-                        </div>
-                      ))}
-                      <div className="border-t border-[rgba(194,245,66,0.15)] pt-3 flex items-center justify-between">
-                        <span className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                          {calculating ? "Calculating total…" : "Total Due"}
-                        </span>
-                        <span className="text-[20px] font-bold font-mono text-[#C2F542]">
-                          {formatCurrency(totalPrice)}
-                        </span>
+                    {/* Subscription status banner */}
+                    <div className="rounded-2xl border border-[rgba(194,245,66,0.16)] bg-[rgba(194,245,66,0.03)] p-4 flex items-center gap-3">
+                      <Zap className="h-5 w-5 text-[#C2F542] shrink-0" />
+                      <div>
+                        <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">
+                          {hasActiveSubscription ? `Active Subscription: ${activePlanName || "Pro Plan"}` : "Entitlement available"}
+                        </p>
+                        <p className="text-[11px] text-[var(--color-text-muted)]">
+                          {hasActiveSubscription
+                            ? "Your event will be created and activated automatically under your organization subscription."
+                            : "Your plan has unused slots. Click \"Publish\" to create the event without extra charges."}
+                        </p>
                       </div>
                     </div>
-
-                    {/* Subscription status */}
-                    {requiresPurchase ? (
-                      subscriptionActivated ? (
-                        <div className="rounded-2xl border border-[rgba(194,245,66,0.25)] bg-[rgba(194,245,66,0.06)] p-4 flex items-center gap-3">
-                          <CheckCircle2 className="h-5 w-5 text-[#C2F542] shrink-0" />
-                          <div>
-                            <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">Payment completed</p>
-                            <p className="text-[11px] text-[var(--color-text-muted)]">Plan activated. Click Publish to create the event.</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 flex items-center gap-3">
-                          <CreditCard className="h-5 w-5 text-[var(--color-text-muted)] shrink-0" />
-                          <div>
-                            <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">Payment required</p>
-                            <p className="text-[11px] text-[var(--color-text-muted)]">Click "Pay & Publish" to complete checkout and create the event.</p>
-                          </div>
-                        </div>
-                      )
-                    ) : (
-                      <div className="rounded-2xl border border-[rgba(194,245,66,0.16)] bg-[rgba(194,245,66,0.03)] p-4 flex items-center gap-3">
-                        <Zap className="h-5 w-5 text-[#C2F542] shrink-0" />
-                        <div>
-                          <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">Entitlement available</p>
-                          <p className="text-[11px] text-[var(--color-text-muted)]">
-                            Your plan has unused slots. Click "Publish" to create the event without extra charges.
-                          </p>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
-                  {/* Right — venue image */}
+                  {/* Right — venue image & modules */}
                   <div className="space-y-4">
                     <div className="sticky top-6">
                       <div className="rounded-2xl overflow-hidden border border-[var(--color-border)] aspect-[4/5] bg-[#0a0a0f]">
@@ -1599,12 +1275,6 @@ function NewEventPageInner() {
                         {[
                           { label: "Speaker Desk", on: formData.speaker_settings.enabled },
                           { label: "Registration", on: formData.registration_settings.enabled },
-                          { label: "Poster Abstracts", on: formData.feature_toggles.enable_posters },
-                          { label: "Moderator Desk", on: formData.feature_toggles.enable_moderator },
-                          { label: "Digital Signage", on: formData.feature_toggles.enable_signage },
-                          { label: "WhatsApp Tickets", on: formData.feature_toggles.enable_whatsapp },
-                          { label: "Smart Room Routing", on: formData.feature_toggles.enable_srr },
-                          { label: "Webhooks", on: formData.feature_toggles.enable_webhooks },
                         ].map(({ label, on }) => (
                           <div key={label} className="flex items-center justify-between text-[12px]">
                             <span className="text-[var(--color-text-secondary)]">{label}</span>
@@ -1625,7 +1295,7 @@ function NewEventPageInner() {
           <div className="sticky bottom-0 z-20">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-[var(--color-border)] bg-[#121214]/90 backdrop-blur-md px-6 py-4 shadow-xl">
               <div className="text-[12px] text-[var(--color-text-muted)]">
-                Step {step + 1} of 5
+                Step {step + 1} of {stepMeta.length}
               </div>
               <div className="flex items-center gap-3">
                 {step > 0 ? (
@@ -1651,23 +1321,23 @@ function NewEventPageInner() {
                 )}
                 {step === 1 && (
                   <Button disabled={!canContinueVenue} onClick={() => setStep(2)} className="rounded-xl">
-                    Continue to Plan
+                    {hasActiveSubscription ? "Review & Deploy" : "Continue to Plan"}
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
-                {step === 2 && (
+                {!hasActiveSubscription && step === 2 && (
                   <Button disabled={!canContinuePlan} onClick={() => setStep(3)} className="rounded-xl">
                     Continue to Add-ons
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
-                {step === 3 && (
+                {!hasActiveSubscription && step === 3 && (
                   <Button onClick={() => setStep(4)} className="rounded-xl">
                     Review & Deploy
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
-                {step === 4 && (
+                {((hasActiveSubscription && step === 2) || (!hasActiveSubscription && step === 4)) && (
                   <Button
                     disabled={loading}
                     onClick={handleCreateEvent}
@@ -1675,11 +1345,6 @@ function NewEventPageInner() {
                   >
                     {loading ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
-                    ) : requiresPurchase && !subscriptionActivated ? (
-                      <>
-                        <Lock className="h-4 w-4 mr-2" />
-                        Pay & Publish
-                      </>
                     ) : (
                       <>
                         <Zap className="h-4 w-4 mr-2" />
@@ -1694,27 +1359,6 @@ function NewEventPageInner() {
         </div>
       )}
 
-      {/* Payment Modal */}
-      <PaymentModal
-        open={paymentModalOpen}
-        totalAmount={totalPrice}
-        planName={selectedPlan?.name ?? ""}
-        addonNames={selectedAddonRecords.map((a) => a.name)}
-        billingName={billingName}
-        billingEmail={billingEmail}
-        billingPhone={billingPhone}
-        onClose={() => setPaymentModalOpen(false)}
-        onSuccess={async () => {
-          try {
-            await handlePaymentSuccess();
-            setPaymentModalOpen(false);
-            // After payment, auto-create the event
-            setTimeout(() => handleCreateEvent(), 200);
-          } catch (error: any) {
-            toast.error(error?.message || "Failed to activate the selected plan.");
-          }
-        }}
-      />
     </div>
   );
 }

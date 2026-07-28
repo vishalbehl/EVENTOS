@@ -109,6 +109,35 @@ class ParticipantResponse(BaseModel):
     updated_at: datetime
 
 
+class RegistrationConfirmationQRRequest(BaseModel):
+    reason: str = Field(min_length=5, max_length=1000)
+    case_reference: Optional[str] = Field(None, max_length=160)
+
+
+class RegistrationConfirmationQRResponse(BaseModel):
+    credential_id: uuid.UUID
+    participant_id: uuid.UUID
+    event_id: uuid.UUID
+    status: str
+    version: int
+    verification_url: str
+    image_url: str
+    issued_at: datetime
+    rotated_at: Optional[datetime] = None
+
+
+class PublicRegistrationConfirmationResponse(BaseModel):
+    valid: bool
+    credential_id: uuid.UUID
+    event_id: uuid.UUID
+    event_name: str
+    participant_name: str
+    registration_number: Optional[str] = None
+    approval_status: str
+    issued_at: datetime
+    freshness_at: datetime
+
+
 
 class CheckInCreate(BaseModel):
     session_id: uuid.UUID

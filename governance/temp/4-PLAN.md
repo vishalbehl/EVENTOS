@@ -1,4 +1,4 @@
-# EventX OS Enterprise Target-State Architecture and Production Standards Plan
+# Event OS Enterprise Target-State Architecture and Production Standards Plan
 
 ## Document Control
 
@@ -20,7 +20,7 @@ Require security and architecture review.
 
 This document separates immediate security closure, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
 
-EventX OS scales from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
+Event OS scales from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
 
 Responsible roles:
 
@@ -180,7 +180,7 @@ LIVE venue operation
 | Event access comes from activation snapshot | Resolver tests |
 | No latest-subscription entitlement fallback | Static and regression tests |
 | Venue systems never access cloud DB directly | Network policy |
-| Cardholder data never enters EventX OS | Payment and telemetry tests |
+| Cardholder data never enters Event OS | Payment and telemetry tests |
 | Unverified webhook cannot mutate domain state | Webhook tests |
 | Quarantined files cannot be consumed | File-state constraints |
 | Secrets and raw tokens never enter telemetry | Redaction tests |

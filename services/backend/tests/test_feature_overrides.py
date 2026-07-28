@@ -76,7 +76,7 @@ async def test_get_feature_overrides(client: AsyncClient, super_admin, organizat
     assert item["effective_value"] is False
 
 @pytest.mark.asyncio
-async def test_put_feature_overrides(client: AsyncClient, super_admin, organization: Organization, db: AsyncSession):
+async def test_legacy_feature_override_mutation_fails_closed(client: AsyncClient, super_admin, organization: Organization, db: AsyncSession):
     headers = auth_headers(super_admin)
     
     # 1. Create a dummy FeatureCatalog item
@@ -90,40 +90,23 @@ async def test_put_feature_overrides(client: AsyncClient, super_admin, organizat
     db.add(feature)
     await db.commit()
     
-    # Call PUT to enable override
-    payload = [
-        {"feature_id": str(feature.id), "override": True}
-    ]
+    # Legacy direct grants must fail closed. Commercial access changes now use
+    # the Organizer Console request + independent approval workflow.
+    payload = {
+        "overrides": [{"feature_id": str(feature.id), "override": True}],
+        "reason": "Attempt a direct commercial feature grant.",
+    }
     response = await client.put(f"/platform/organizations/{organization.id}/feature-overrides", json=payload, headers=headers)
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    
-    # Check DB override record
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "DUAL_APPROVAL_REQUIRED"
+
+    # No legacy override record may be created.
     stmt = select(OrganizationFeature).where(
         OrganizationFeature.organization_id == organization.id,
         OrganizationFeature.feature_id == feature.id
     )
     res = (await db.execute(stmt)).scalar_one_or_none()
-    assert res is not None
-    assert res.is_enabled is True
-    assert res.override_by == super_admin.id
-    assert res.override_at is not None
-    
-    # Call PUT with override: None (which removes override)
-    payload_remove = [
-        {"feature_id": str(feature.id), "override": None}
-    ]
-    response_remove = await client.put(f"/platform/organizations/{organization.id}/feature-overrides", json=payload_remove, headers=headers)
-    assert response_remove.status_code == 200
-    assert response_remove.json()["success"] is True
-    
-    # Verify override is deleted from DB
-    stmt_check = select(OrganizationFeature).where(
-        OrganizationFeature.organization_id == organization.id,
-        OrganizationFeature.feature_id == feature.id
-    )
-    res_check = (await db.execute(stmt_check)).scalar_one_or_none()
-    assert res_check is None
+    assert res is None
 
 @pytest.mark.asyncio
 async def test_feature_overrides_require_admin(client: AsyncClient, organizer, organization: Organization):

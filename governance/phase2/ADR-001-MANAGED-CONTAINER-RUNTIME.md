@@ -12,7 +12,7 @@ option that requires a new ADR when measured requirements justify Kubernetes.
 
 ## Context
 
-EventX OS is currently a modular FastAPI monolith with Celery worker paths and
+Event OS is currently a modular FastAPI monolith with Celery worker paths and
 multiple frontend applications. The repository does not yet contain a complete
 production topology, Terraform deployment, signed-image pipeline, canary, or
 tested rollback path. The current team size does not justify operating a

@@ -12,7 +12,7 @@ Snapshot:
 | Tenant runtime boundaries | `.\.venv\Scripts\python.exe -m pytest -q tests/test_tenant_runtime_boundaries.py` | 2026-07-11 | `12 passed` | Earlier Phase 1 verification |
 | Focused Phase 1 backend | `.\.venv\Scripts\python.exe -m pytest -q tests/test_rate_limiting_and_gating.py tests/test_tenant_runtime_boundaries.py tests/test_phase1_rls_foundation.py tests/test_phase3_developer.py` | 2026-07-11 | `34 passed` | Earlier Phase 1 verification |
 | Worker report/tenant | `..\backend\.venv\Scripts\python.exe -m pytest -q tests/test_report_tasks.py tests/test_tenant_boundaries.py` | 2026-07-11 | `10 passed` | Earlier Phase 1 verification |
-| Live RLS canary | `.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role eventx_runtime` | 2026-07-11 | Passed | Earlier Phase 1 verification |
+| Live RLS canary | `.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role Event_runtime` | 2026-07-11 | Passed | Earlier Phase 1 verification |
 | Alembic heads | `.\.venv\Scripts\alembic.exe heads` | 2026-07-11 | `phase1_exports_0550 (head)` | Current turn |
 | Alembic current | `.\.venv\Scripts\alembic.exe current` | 2026-07-11 | `phase1_exports_0550 (head)` | Current turn |
 | Runtime DDL static scan | `rg -n "ALTER TABLE\|create_all\\(\|drop_all\\(" services/backend/app services/workers services/venue-server/app -g "*.py"` | 2026-07-11 | No matches | Current turn |

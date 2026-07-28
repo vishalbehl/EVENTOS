@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import pytest
+import pytest_asyncio
 import uuid
 from openpyxl import Workbook
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,12 @@ from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def licensed_event(db: AsyncSession, event: Event):
+    await activate_event_for_test(db, event)
 
 
 def create_excel_bytes(headers: list[str], rows: list[list[any]]) -> bytes:
@@ -98,7 +104,7 @@ async def test_excel_import_success_and_validations(
 
     # Post file
     files = {"file": ("participants.xlsx", excel_data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-    headers_dict = auth_headers(organizer)
+    headers_dict = {**auth_headers(organizer), "Idempotency-Key": f"excel-{uuid.uuid4()}"}
 
     response = await client.post(
         f"/events/{event.id}/participants/import-excel",
@@ -192,7 +198,7 @@ async def test_excel_import_disabled_category(
 
     excel_data = create_excel_bytes(headers, rows)
     files = {"file": ("participants.xlsx", excel_data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-    headers_dict = auth_headers(organizer)
+    headers_dict = {**auth_headers(organizer), "Idempotency-Key": f"excel-{uuid.uuid4()}"}
 
     response = await client.post(
         f"/events/{event.id}/participants/import-excel",

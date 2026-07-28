@@ -10,7 +10,7 @@ const dmSans = DM_Sans({
 });
 
 export const metadata = {
-  title: "Registration Portal | EventX OS",
+  title: "Registration Portal | Event OS",
   description: "Secure, premium public registration portal for events.",
 };
 

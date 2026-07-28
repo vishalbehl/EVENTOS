@@ -26,6 +26,7 @@ import { CalendarView } from "@/components/organizer/sessions/CalendarView";
 import { TimelineView } from "@/components/organizer/sessions/TimelineView";
 import { Portal } from "@/components/ui/portal";
 import { SESSION_TYPE_CATEGORIES } from "@/types/models";
+import { useOperationAccess } from "@/lib/capabilities";
 
 type ViewMode = "list" | "calendar" | "timeline";
 
@@ -56,11 +57,17 @@ export default function SessionsPage() {
   const { data: rooms } = useRooms(eventIdStr);
   const { data: speakers } = useSpeakers(eventIdStr);
   const { data: event } = useEvent(eventIdStr);
+  const sessionAccess = useOperationAccess("sessions.manage");
+  const exportAccess = useOperationAccess("exports.create");
   const eventTimezone = event?.timezone || "UTC";
 
   const handleExportDocx = async () => {
+    if (!exportAccess.enabled) return;
     try {
-      const response = await apiClient.get<Blob>(`/events/${eventIdStr}/sessions/export`, { responseType: "blob" });
+      const response = await apiClient.post<Blob>(`/events/${eventIdStr}/sessions/export`, undefined, {
+        responseType: "blob",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      });
       const blob = new Blob([response], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -77,10 +84,10 @@ export default function SessionsPage() {
 
   useEffect(() => {
     setToolbarActions([
-      { label: "Add Session", icon: Plus, onClick: () => setCreateOpen(true), color: "bg-[var(--pri)]/10" },
+      { label: "Add Session", icon: Plus, onClick: () => sessionAccess.enabled && setCreateOpen(true), color: "bg-[var(--pri)]/10" },
       { label: "Export DOCX", icon: Download, onClick: handleExportDocx },
     ]);
-  }, [setToolbarActions, eventIdStr]);
+  }, [setToolbarActions, eventIdStr, sessionAccess.enabled, exportAccess.enabled]);
 
   const uniqueDates = useMemo(() => {
     if (!sessions) return [];
@@ -172,15 +179,34 @@ export default function SessionsPage() {
           </div>
 
           <Button
+            variant="outline"
+            disabled={exportAccess.loading || !exportAccess.enabled}
+            title={exportAccess.enabled ? "Export agenda" : `Unavailable: ${(exportAccess.reason ?? "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
+            onClick={handleExportDocx}
+            className="h-12 rounded-full border-default px-5 text-[10px] font-black uppercase tracking-widest"
+          >
+            <Download className="mr-2 h-4 w-4" /> Export DOCX
+          </Button>
+
+          <a href={`/events/${eventIdStr}/sessions/builder`}>
+            <Button
+              className="h-12 px-6 bg-gradient-to-r from-[var(--pri)] to-indigo-600 hover:from-[var(--sec)] hover:to-indigo-700 text-white font-black uppercase tracking-widest text-[11px] rounded-full shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 hover-lift-3d"
+            >
+              <GanttChart className="mr-2 h-4 w-4" /> Visual Builder
+            </Button>
+          </a>
+
+          <Button
             onClick={() => setCreateOpen(true)}
-            className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 hover-lift-3d"
+            disabled={sessionAccess.loading || !sessionAccess.enabled}
+            title={sessionAccess.enabled ? "Create session" : `Unavailable: ${(sessionAccess.reason ?? "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
+            className="h-12 px-8 bg-surface hover:bg-surface/80 border border-default text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full hover-lift-3d"
           >
             <Plus className="mr-2 h-4 w-4" /> New Session
           </Button>
         </div>
       </header>
 
-      {/* Metrics Bar */}
       <section className="flex-shrink-0 grid grid-cols-4 gap-6">
         {stats.map(s => (
           <div
@@ -376,6 +402,8 @@ export default function SessionsPage() {
                                   deleteSession.mutate(session.id);
                                 }
                               }}
+                              disabled={sessionAccess.loading || !sessionAccess.enabled}
+                              title={sessionAccess.enabled ? "Delete session" : `Unavailable: ${(sessionAccess.reason ?? "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -438,7 +466,7 @@ export default function SessionsPage() {
           eventId={eventIdStr}
         />
         <CreateSessionDialog
-          isOpen={createOpen}
+          isOpen={createOpen && sessionAccess.enabled}
           onClose={() => setCreateOpen(false)}
           eventId={eventIdStr}
         />

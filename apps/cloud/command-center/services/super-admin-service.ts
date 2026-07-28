@@ -1,5 +1,5 @@
 /**
- * Super Admin Service — EventX OS Control Plane
+ * Super Admin Service — Event OS Control Plane
  * All typed API calls for the Super Admin Console.
  * Uses existing apiClient from lib/api-client.ts
  */
@@ -147,8 +147,6 @@ export interface SubscriptionPlan {
   description?: string;
   billing_model: string;
   currency: string;
-  price_per_event_min?: number;
-  price_per_event_max?: number;
   price_per_event?: number;
   price_display: string;
   max_events: number;
@@ -169,6 +167,10 @@ export interface SubscriptionPlan {
   stripe_product_id?: string;
   stripe_price_id?: string;
   is_active: boolean;
+  version?: number;
+  lifecycle_status?: "DRAFT" | "REVIEW" | "PUBLISHED" | "RETIRED";
+  effective_at?: string | null;
+  retired_at?: string | null;
   created_at: string;
   subscribers_count?: number;
   mrr?: number;
@@ -198,6 +200,25 @@ export interface FeatureCatalogItem {
   category_order: number;
   feature_order: number;
   is_active: boolean;
+  value_type?: "BOOLEAN" | "LIMIT" | "TIER" | "ENUM" | string;
+  scope_type?: string;
+  enforcement_mode?: "HARD" | "SOFT_WARNING" | "METERED_OVERAGE";
+  default_value?: any;
+  allowed_values?: string[];
+  unit?: string;
+  period?: string;
+  version?: number;
+  portal_routes?: string[];
+  backend_operations?: string[];
+  required_permissions?: string[];
+  metric_key?: string | null;
+  dependencies?: string[];
+  conflicts?: string[];
+  owner_console?: string;
+  owner_team?: string | null;
+  risk_level?: string;
+  lifecycle_status?: string;
+  replacement_key?: string | null;
 }
 
 export interface FeatureCatalogPayload {
@@ -224,12 +245,20 @@ export interface Addon {
   final_price?: number;
   billing_unit?: string;
   price_unit?: string;
+  scope_type?: "ORGANIZATION" | "EVENT";
+  consumption_model?: "NON_CONSUMABLE" | "QUOTA" | "METERED";
+  unit_type?: string | null;
   available_for_plans: string[];
   is_optional_for_plan?: string;
   included_in_plan?: string;
   is_active: boolean;
+  version?: number;
+  lifecycle_status?: "DRAFT" | "REVIEW" | "PUBLISHED" | "RETIRED";
+  effective_at?: string | null;
+  retired_at?: string | null;
   created_at: string;
   feature_ids?: string[];
+  feature_assignments?: AddonFeatureAssignment[];
   features_spec?: { category: string; feature: string; value: string; price?: number }[];
   hardware_spec?: { item_id: string; quantity: number; days: number }[];
   staff_spec?: { role_id: string; quantity: number; days: number }[];
@@ -693,11 +722,15 @@ export const adminApi = {
   getSubscriptionPlans: () =>
     apiClient.get<SubscriptionPlan[]>("/platform/subscription-plans"),
 
-  createPlan: (data: Partial<SubscriptionPlan>) =>
-    apiClient.post<any>("/platform/subscription-plans", data),
+  createPlan: (data: Partial<SubscriptionPlan>, reason: string, idempotencyKey: string) =>
+    apiClient.post<any>("/platform/subscription-plans", data, {
+      headers: { "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+    }),
 
-  updatePlan: (id: string, data: Partial<SubscriptionPlan>) =>
-    apiClient.patch<any>(`/platform/subscription-plans/${id}`, data),
+  updatePlan: (id: string, data: Partial<SubscriptionPlan>, version: number, reason: string, idempotencyKey: string) =>
+    apiClient.patch<any>(`/platform/subscription-plans/${id}`, data, {
+      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+    }),
 
   getFeaturesCatalog: () =>
     apiClient.get<FeatureCatalogItem[]>("/platform/features"),
@@ -708,14 +741,20 @@ export const adminApi = {
   getAddons: () =>
     apiClient.get<Addon[]>("/platform/addons"),
 
-  createAddon: (data: any) =>
-    apiClient.post<any>("/platform/addons", data),
+  createAddon: (data: any, reason: string, idempotencyKey: string) =>
+    apiClient.post<any>("/platform/addons", data, {
+      headers: { "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+    }),
 
-  patchAddon: (addonId: string, data: any) =>
-    apiClient.patch<any>(`/platform/addons/${addonId}`, data),
+  patchAddon: (addonId: string, data: any, version: number, reason: string, idempotencyKey: string) =>
+    apiClient.patch<any>(`/platform/addons/${addonId}`, data, {
+      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+    }),
 
-  deleteAddon: (addonId: string, reason: string) =>
-    apiClient.delete(`/platform/addons/${addonId}`, { data: { reason } }),
+  deleteAddon: (addonId: string, version: number, reason: string, idempotencyKey: string) =>
+    apiClient.delete(`/platform/addons/${addonId}`, {
+      headers: { "If-Match": String(version), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+    }),
 
   getPlanFeatures: (planId: string) =>
     apiClient.get<string[]>(`/platform/subscription-plans/${planId}/features`),
@@ -865,7 +904,7 @@ export const adminApi = {
     apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}`, { data: { reason } }),
 
   assignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, permissions: Record<string, boolean>, reason: string) =>
-    apiClient.put(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { permissions, reason }),
+    apiClient.put(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { permissions, reason }, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
 
   unassignOrganizationMemberEvent: (orgId: string, memberId: string, eventId: string, reason: string) =>
     apiClient.delete(`/platform/organisations/${orgId}/members/${memberId}/events/${eventId}`, { data: { reason } }),
@@ -1040,7 +1079,8 @@ export const useAddons = () =>
 export const useCreateAddon = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => adminApi.createAddon(data),
+    mutationFn: ({ data, reason, idempotencyKey = crypto.randomUUID() }: { data: any; reason: string; idempotencyKey?: string }) =>
+      adminApi.createAddon(data, reason, idempotencyKey),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: adminKeys.addons });
     },
@@ -1050,10 +1090,11 @@ export const useCreateAddon = () => {
 export const useUpdateAddon = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ addonId, data }: { addonId: string; data: any }) =>
-      adminApi.patchAddon(addonId, data),
-    onSuccess: () => {
+    mutationFn: ({ addonId, data, version, reason, idempotencyKey = crypto.randomUUID() }: { addonId: string; data: any; version: number; reason: string; idempotencyKey?: string }) =>
+      adminApi.patchAddon(addonId, data, version, reason, idempotencyKey),
+    onSuccess: (_, { addonId }) => {
       queryClient.invalidateQueries({ queryKey: adminKeys.addons });
+      queryClient.invalidateQueries({ queryKey: adminKeys.addonVersions(addonId) });
     },
   });
 };
@@ -1061,9 +1102,12 @@ export const useUpdateAddon = () => {
 export const useDeleteAddon = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ addonId, reason }: { addonId: string; reason: string }) =>
-      adminApi.deleteAddon(addonId, reason),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.addons }),
+    mutationFn: ({ addonId, version, reason, idempotencyKey = crypto.randomUUID() }: { addonId: string; version: number; reason: string; idempotencyKey?: string }) =>
+      adminApi.deleteAddon(addonId, version, reason, idempotencyKey),
+    onSuccess: (_, { addonId }) => {
+      queryClient.invalidateQueries({ queryKey: adminKeys.addons });
+      queryClient.invalidateQueries({ queryKey: adminKeys.addonVersions(addonId) });
+    },
   });
 };
 
@@ -1128,6 +1172,81 @@ export const usePlanFeatures = (planId: string) =>
     enabled: !!planId,
   });
 
+export interface TypedFeatureAssignment {
+  feature_key: string;
+  name?: string;
+  value_type: "BOOLEAN" | "LIMIT" | "TIER" | "ENUM" | string;
+  value: any;
+  scope_type?: string;
+  enforcement_mode?: "HARD" | "SOFT_WARNING" | "METERED_OVERAGE";
+  hard_ceiling?: number | null;
+  allowed_values?: string[];
+  unit?: string;
+  period?: string;
+}
+
+export interface PlanTemplateVersion {
+  id: string;
+  version: number;
+  lifecycle_status: string;
+  change_type: string;
+  snapshot: { template?: Record<string, unknown>; assignments?: TypedFeatureAssignment[] };
+  reason: string;
+  actor_user_id?: string | null;
+  created_at: string;
+}
+
+export type AddonTemplateVersion = PlanTemplateVersion;
+
+export const usePlanTemplateVersions = (planId: string) =>
+  useQuery({
+    queryKey: adminKeys.planVersions(planId),
+    queryFn: () => apiClient.get<{ items: PlanTemplateVersion[]; next_cursor?: string | null }>(`/platform/subscription-plans/${planId}/versions`),
+    enabled: Boolean(planId),
+  });
+
+export const useAddonTemplateVersions = (addonId: string) =>
+  useQuery({
+    queryKey: adminKeys.addonVersions(addonId),
+    queryFn: () => apiClient.get<{ items: AddonTemplateVersion[]; next_cursor?: string | null }>(`/platform/addons/${addonId}/versions`),
+    enabled: Boolean(addonId),
+  });
+
+export interface AddonFeatureAssignment extends TypedFeatureAssignment {
+  operation: "REPLACE" | "INCREMENT" | "DECREMENT" | "UNLOCK";
+  validity_days?: number | null;
+  stackable?: boolean;
+  max_quantity?: number | null;
+}
+
+export const useTypedPlanFeatures = (planId: string) =>
+  useQuery({
+    queryKey: adminKeys.typedPlanFeatures(planId),
+    queryFn: async () => {
+      const res = await apiClient.get<{ items: TypedFeatureAssignment[] }>(`/platform/subscription-plans/${planId}/feature-assignments`);
+      return res || { items: [] };
+    },
+    enabled: !!planId,
+  });
+
+export const useUpdateTypedPlanFeatures = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ planId, planVersion, reason, idempotencyKey = crypto.randomUUID(), assignments }: { planId: string; planVersion: number; reason: string; idempotencyKey?: string; assignments: TypedFeatureAssignment[] }) => {
+      const feature_keys = assignments.map((a) => a.feature_key);
+      return await apiClient.put(`/platform/subscription-plans/${planId}/features`, { feature_keys, assignments }, {
+        headers: { "If-Match": String(planVersion), "Idempotency-Key": idempotencyKey, "X-Admin-Reason": reason },
+      });
+    },
+    onSuccess: (_, { planId }) => {
+      queryClient.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
+      queryClient.invalidateQueries({ queryKey: adminKeys.featureMatrix });
+      queryClient.invalidateQueries({ queryKey: adminKeys.planFeatures(planId) });
+      queryClient.invalidateQueries({ queryKey: adminKeys.typedPlanFeatures(planId) });
+    },
+  });
+};
+
 export const useAdminSubscriptions = (params?: { skip?: number; limit?: number; status?: string; plan_id?: string }) =>
   useQuery({
     queryKey: adminKeys.subscriptions(params),
@@ -1158,7 +1277,7 @@ export const useGlobalUsers = (
 
 export const useOrganizationDossier = (id: string) =>
   useQuery({
-    queryKey: [...adminKeys.orgDetail(id), "dossier"],
+    queryKey: adminKeys.orgDossier(id),
     queryFn: () => adminApi.getOrgDossier(id),
     enabled: !!id,
   });
@@ -1302,7 +1421,8 @@ export const useOverrideFeature = (orgId: string) => {
 export const useCreatePlan = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Partial<SubscriptionPlan>) => adminApi.createPlan(data),
+    mutationFn: ({ data, reason, idempotencyKey = crypto.randomUUID() }: { data: Partial<SubscriptionPlan>; reason: string; idempotencyKey?: string }) =>
+      adminApi.createPlan(data, reason, idempotencyKey),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
       qc.invalidateQueries({ queryKey: adminKeys.featureMatrix });
@@ -1313,8 +1433,8 @@ export const useCreatePlan = () => {
 export const useUpdatePlan = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: string } & Partial<SubscriptionPlan>) =>
-      adminApi.updatePlan(id, data),
+    mutationFn: ({ id, version, reason, idempotencyKey = crypto.randomUUID(), data }: { id: string; version: number; reason: string; idempotencyKey?: string; data: Partial<SubscriptionPlan> }) =>
+      adminApi.updatePlan(id, data, version, reason, idempotencyKey),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminKeys.subscriptionPlans });
       qc.invalidateQueries({ queryKey: adminKeys.featureMatrix });
@@ -2298,13 +2418,23 @@ export const useSaveFeatureOverrides = () =>
 
 
 // Helper functions — add at bottom of service file
-export const formatINR = (value: number | undefined | null): string => {
-  if (value === undefined || value === null || isNaN(value)) return "₹0"
-  if (value >= 10_000_000) return `₹${(value/10_000_000).toFixed(2)}Cr`
-  if (value >= 100_000) return `₹${(value/100_000).toFixed(2)}L`
-  if (value >= 1_000) return `₹${(value/1_000).toFixed(1)}K`
-  return `₹${value.toFixed(0)}`
-}
+export const formatExactINR = (value: number | undefined | null): string => {
+  if (value === undefined || value === null || isNaN(value)) return "₹0";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(value);
+};
+
+export const formatINR = (value: number | undefined | null, exact = true): string => {
+  if (value === undefined || value === null || isNaN(value)) return "₹0";
+  if (exact) return formatExactINR(value);
+  if (value >= 10_000_000) return `₹${(value / 10_000_000).toFixed(2)}Cr`;
+  if (value >= 100_000) return `₹${(value / 100_000).toFixed(2)}L`;
+  if (value >= 1_000) return `₹${(value / 1_000).toFixed(1)}K`;
+  return `₹${value.toFixed(0)}`;
+};
 
 export const formatMRR = (value: number | undefined | null): string => {
   if (value === undefined || value === null || isNaN(value)) return "₹0"

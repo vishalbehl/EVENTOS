@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,8 @@ from app.modules.analytics.services.analytics_service import (
     build_main_event_dashboard_data,
 )
 from app.worker import celery_app
+from app.core.dependencies.feature_gate import enforce_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
 router = APIRouter(prefix="/events/{event_id}/analytics", tags=["analytics"])
 global_router = APIRouter(prefix="/analytics", tags=["global_analytics"])
@@ -228,10 +230,30 @@ async def per_room_breakdown(
 async def request_analytics_export(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
     db: AsyncSession = Depends(get_db),
     format: str = Query("xlsx", pattern="^xlsx$"),
 ) -> dict:
     """Queue a tenant-scoped analytics export and return its durable record."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "exports.create",
+        user_id=current_user.id,
+    )
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_exports_per_event",
+        quantity=1,
+        unit="export",
+        idempotency_key=f"analytics-export:{idempotency_key}",
+        metadata={"format": format, "domain": "analytics"},
+    )
     await TenantContextGuard.apply(db, event.organization_id)
     export = DataExport(
         organization_id=event.organization_id,
@@ -261,6 +283,13 @@ async def request_analytics_export(
         ),
         db,
     )
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.analytics.export",
+        actor_user_id=current_user.id,
+    )
+    await db.commit()
     celery_app.send_task(
         "workers.tasks.report_tasks.generate_event_summary_report",
         kwargs={
@@ -285,6 +314,9 @@ async def get_analytics_export(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "exports.create", user_id=current_user.id
+    )
     await TenantContextGuard.apply(db, event.organization_id)
     result = await db.execute(
         select(DataExport).where(
@@ -316,6 +348,9 @@ async def download_analytics_export(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "exports.create", user_id=current_user.id
+    )
     await TenantContextGuard.apply(db, event.organization_id)
     result = await db.execute(
         select(DataExport).where(
@@ -357,6 +392,7 @@ async def download_analytics_export(
         ),
         db,
     )
+    await db.commit()
     return {
         "download_url": download_url,
         "expires_in": min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),

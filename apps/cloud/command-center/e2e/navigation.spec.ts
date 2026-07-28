@@ -7,7 +7,7 @@ test.describe("Command Center shell & layout", () => {
     await page.goto("/");
 
     // Verify main app layout and metadata
-    await expect(page).toHaveTitle(/EventX OS/);
+    await expect(page).toHaveTitle(/Event OS/);
     
     // Viewport responsiveness checks
     await page.setViewportSize({ width: 375, height: 667 }); // mobile

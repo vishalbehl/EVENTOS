@@ -13,10 +13,11 @@ from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.schemas.common import MessageResponse
 from app.services.credential_cipher import cipher
+from app.core.dependencies.feature_gate import require_event_feature, require_event_operation
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/events/{event_id}/payments", tags=["payments"])
+router = APIRouter(prefix="/events/{event_id}/payments", tags=["payments"], dependencies=[require_event_feature("FEAT_PAYMENT_GATEWAY")])
 
 
 # ── Pydantic Request/Response schemas ─────────────────────────────────────
@@ -168,7 +169,11 @@ async def get_payment_config(event: CurrentEvent):
 
 # ── POST /config — write gateway settings ─────────────────────────────────
 
-@router.post("/config", response_model=MessageResponse)
+@router.post(
+    "/config",
+    response_model=MessageResponse,
+    dependencies=[require_event_operation("registration.payments.manage")],
+)
 async def update_payment_config(
     payload: PaymentConfigUpdateRequest,
     event: CurrentEvent,
@@ -255,7 +260,11 @@ async def list_promo_codes(
     return list(result.scalars().all())
 
 
-@router.post("/promos", response_model=PromoCodeResponse)
+@router.post(
+    "/promos",
+    response_model=PromoCodeResponse,
+    dependencies=[require_event_operation("registration.coupons.manage")],
+)
 async def create_promo_code(
     payload: PromoCodeCreate,
     event: CurrentEvent,
@@ -294,7 +303,11 @@ async def create_promo_code(
     return promo
 
 
-@router.patch("/promos/{promo_id}", response_model=PromoCodeResponse)
+@router.patch(
+    "/promos/{promo_id}",
+    response_model=PromoCodeResponse,
+    dependencies=[require_event_operation("registration.coupons.manage")],
+)
 async def update_promo_code(
     promo_id: uuid.UUID,
     payload: PromoCodeUpdate,
@@ -320,7 +333,11 @@ async def update_promo_code(
     return promo
 
 
-@router.delete("/promos/{promo_id}", response_model=MessageResponse)
+@router.delete(
+    "/promos/{promo_id}",
+    response_model=MessageResponse,
+    dependencies=[require_event_operation("registration.coupons.manage")],
+)
 async def delete_promo_code(
     promo_id: uuid.UUID,
     event: CurrentEvent,

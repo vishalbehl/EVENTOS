@@ -23,7 +23,7 @@ from app.modules.billing.services.activation_service import ActivationService
 from app.modules.billing.services.limit_guard import LimitGuard
 from app.modules.events.models.event import Event
 from scripts.backfill_event_activations import backfill
-from tests.conftest import auth_headers
+from tests.conftest import assign_typed_plan_limits, auth_headers
 
 
 # ── 1. EventActivation Model & Uniqueness ───────────────────────
@@ -151,7 +151,7 @@ async def test_entitlement_resolver_base_plan_features(db, organization):
 # ── 4. Entitlement Resolver addon features scoping ──────────────
 
 @pytest.mark.asyncio
-async def test_entitlement_resolver_addon_features_scoping(db, organization, event):
+async def test_entitlement_resolver_addon_features_scoping(db, organization, event, organizer):
     # Setup base plan & subscription
     plan = SubscriptionPlan(name="Plan Gamma")
     db.add(plan)
@@ -197,7 +197,7 @@ async def test_entitlement_resolver_addon_features_scoping(db, organization, eve
         grant_id=None,
         activation_policy="SNAPSHOT_REFRESHABLE",
         idempotency_key=f"addon-activation-{uuid.uuid4()}",
-        actor_id=None,
+        actor_id=organizer.id,
     )
 
     # Activation-scoped changes become effective only through an explicit snapshot refresh.
@@ -209,7 +209,7 @@ async def test_entitlement_resolver_addon_features_scoping(db, organization, eve
         activation_id=activation.id,
         organization_id=organization.id,
         idempotency_key=f"addon-refresh-{uuid.uuid4()}",
-        actor_id=None,
+        actor_id=organizer.id,
     )
 
     # Verify Org-scoped is active generally
@@ -259,6 +259,12 @@ async def test_entitlement_resolver_limits_and_priority(db, organization):
     plan = SubscriptionPlan(name="Plan Epsilon", max_events=2, storage_quota_mb=10240)
     db.add(plan)
     await db.flush()
+    await assign_typed_plan_limits(
+        db,
+        plan,
+        max_events=2,
+        storage_quota_mb=10240,
+    )
     db.add(OrganizationSubscription(organization_id=organization.id, plan_id=plan.id, status="ACTIVE"))
     await db.flush()
 
@@ -285,6 +291,7 @@ async def test_limit_guard_delegation(db, organization):
     plan = SubscriptionPlan(name="Plan Zeta", max_events=1)
     db.add(plan)
     await db.flush()
+    await assign_typed_plan_limits(db, plan, max_events=1)
     db.add(OrganizationSubscription(organization_id=organization.id, plan_id=plan.id, status="ACTIVE"))
     await db.flush()
 

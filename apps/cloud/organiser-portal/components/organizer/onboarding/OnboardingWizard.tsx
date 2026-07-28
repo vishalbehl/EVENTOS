@@ -10,7 +10,7 @@ import {
   Shield, Layers, Globe, Clock, DollarSign, Layout, Users,
   Zap, Award, Smartphone, BarChart3, HelpCircle as SupportIcon, Lock,
   Upload, Image as ImageIcon, Ticket, Mic, FileText, CheckSquare, Monitor, AlertCircle, PackagePlus,
-  Eye, Info, Star, Bookmark, MapPin, Calendar, Hash
+  Eye, Info, Star, Bookmark, MapPin, Calendar, Hash, Minus
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import { useAuthStore } from "@/store/use-auth-store";
 import { cn } from "@/lib/utils";
 import { CommercialPlanCard, CommercialAddonCard } from "@/components/organizer/platform/CommercialCards";
 import { CommercialDetailsDialog } from "@/components/organizer/platform/CommercialDetailsDialog";
+import logoImage from "../../../../../../public/logo/1.png";
 
 // Module catalog definitions
 const MODULE_CATALOG = [
@@ -68,7 +69,9 @@ export function OnboardingWizard() {
   const [saving, setSaving] = useState(false);
 
   // DB API Plans & Addons
+  const [currentBillingPlan, setCurrentBillingPlan] = useState<any>(null);
   const [dbPlans, setDbPlans] = useState<any[]>([]);
+  const [billingCatalogueUnavailable, setBillingCatalogueUnavailable] = useState(false);
   const [dbAddons, setDbAddons] = useState<any[]>([]);
   const [loadingDbBilling, setLoadingDbBilling] = useState(true);
 
@@ -129,6 +132,7 @@ export function OnboardingWizard() {
     rooms: "5",
   });
   const [skippedEvent, setSkippedEvent] = useState(false);
+  const [skippedTeam, setSkippedTeam] = useState(false);
 
   // Step 7: Selected Modules State
   const [selectedModules, setSelectedModules] = useState<string[]>(
@@ -150,14 +154,10 @@ export function OnboardingWizard() {
 
   // Normalizing dbPlans for Official CommercialPlanCard
   const commercialPlans = useMemo(() => {
-    const rawList = asArray(dbPlans).length > 0 ? asArray(dbPlans) : [
-      { id: "starter", name: "Starter Tier", tagline: "Essential event operations", price: 9999, max_events: 5, max_users: 5, max_registrations: 2500, max_speakers: 50, max_sessions: 30, max_rooms: 5, storage_quota_mb: 10240 },
-      { id: "pro", name: "Professional Tier", tagline: "Best for growing conferences", is_popular: true, price: 24999, max_events: 20, max_users: 25, max_registrations: 10000, max_speakers: 150, max_sessions: 100, max_rooms: 15, storage_quota_mb: 51200 },
-      { id: "enterprise", name: "Enterprise Tier", tagline: "For scale and custom compliance", price: 79999, max_events: "Unlimited", max_users: "Unlimited", max_registrations: "Unlimited", max_speakers: "Unlimited", max_sessions: "Unlimited", max_rooms: "Unlimited", storage_quota_mb: 204800 },
-    ];
+    const rawList = asArray(dbPlans);
 
     return rawList.map((plan, i) => {
-      const price = plan.price ?? plan.price_monthly ?? plan.amount ?? plan.price_per_event_min;
+      const price = plan.price ?? plan.price_monthly ?? plan.amount ?? plan.price_per_event;
       return {
         id: String(plan.id ?? plan.code ?? plan.key ?? `plan-${i}`),
         name: String(plan.name ?? "Standard Tier"),
@@ -169,12 +169,12 @@ export function OnboardingWizard() {
         isActive: plan.is_active !== false,
         subscribersLabel: plan.subscribers_count ? `${plan.subscribers_count} subscribers` : "Workspace ready",
         highlights: [
-          `${plan.max_users ?? 5} team members`,
-          `${plan.max_registrations ?? 2500} registrations`,
-          `${plan.max_speakers ?? 120} speakers`,
-          `${plan.max_sessions ?? 50} sessions`,
-          `${plan.max_rooms ?? 15} parallel rooms`,
-          `${plan.storage_quota_mb ? Math.round(plan.storage_quota_mb / 1024) : 10} GB storage`,
+          plan.max_users == null || plan.max_users === -1 ? "Unlimited team members" : `${plan.max_users} team members`,
+          plan.max_registrations == null || plan.max_registrations === -1 ? "Unlimited registrations" : `${plan.max_registrations} registrations`,
+          plan.max_speakers == null || plan.max_speakers === -1 ? "Unlimited speakers" : `${plan.max_speakers} speakers`,
+          plan.max_sessions == null || plan.max_sessions === -1 ? "Unlimited sessions" : `${plan.max_sessions} sessions`,
+          plan.max_rooms == null || plan.max_rooms === -1 ? "Unlimited parallel rooms" : `${plan.max_rooms} parallel rooms`,
+          plan.storage_quota_mb == null || plan.storage_quota_mb === -1 ? "Unlimited storage" : `${Math.round(plan.storage_quota_mb / 1024)} GB storage`,
         ],
         tierIndex: i,
         raw: plan,
@@ -184,12 +184,7 @@ export function OnboardingWizard() {
 
   // Normalizing dbAddons for Official CommercialAddonCard
   const commercialAddons = useMemo(() => {
-    const rawList = asArray(dbAddons).length > 0 ? asArray(dbAddons) : [
-      { id: "extra_events", name: "Extra Events Quota", description: "+5 Additional active concurrent event workspaces", price_monthly: 4999, addon_type: "PLAN", billing_unit: "PER_EVENT" },
-      { id: "extra_storage", name: "Storage Boost (100GB)", description: "+100 GB Dedicated cloud storage for presentations and media", price_monthly: 2999, addon_type: "PLAN", billing_unit: "PER_EVENT" },
-      { id: "dedicated_support", name: "24/7 Dedicated Concierge", description: "Priority SLA phone, chat & live site setup concierge", price_monthly: 9999, addon_type: "PLAN", billing_unit: "PER_EVENT" },
-      { id: "rfid_badging", name: "Custom RFID Badging Station", description: "On-site badge printing kiosks & RFID check-in hardware", price_monthly: 14999, addon_type: "VENUE", billing_unit: "PER_EVENT", hardware_spec: [{ quantity: 4 }], staff_spec: [{ quantity: 2 }] },
-    ];
+    const rawList = asArray(dbAddons);
 
     return rawList.map((addon) => {
       const price = addon.final_price ?? addon.price_monthly ?? addon.price ?? addon.price_inr;
@@ -281,24 +276,21 @@ export function OnboardingWizard() {
       });
 
     setLoadingDbBilling(true);
-    Promise.all([
-      orgApi.plans().catch(() => []),
-      orgApi.addons().catch(() => []),
-    ])
-      .then(([plansRes, addonsRes]) => {
-        const rawP = plansRes && plansRes.length > 0 ? plansRes : [
-          { id: "starter", name: "Starter Tier", tagline: "Essential event operations", price_monthly: 9999, max_events: 5, max_users: 5, storage_quota_mb: 10240 },
-          { id: "pro", name: "Professional Tier", tagline: "Best for growing conferences", is_popular: true, price_monthly: 24999, max_events: 20, max_users: 25, storage_quota_mb: 51200 },
-          { id: "enterprise", name: "Enterprise Tier", tagline: "For scale and custom compliance", price_monthly: 79999, max_events: "Unlimited", max_users: "Unlimited", storage_quota_mb: 204800 },
-        ];
-        const rawA = addonsRes && addonsRes.length > 0 ? addonsRes : [
-          { id: "extra_events", name: "Extra Events Quota", description: "+5 Additional active events", price_monthly: 4999, category: "CAPACITY" },
-          { id: "extra_storage", name: "Storage Boost (100GB)", description: "+100 GB Dedicated cloud assets", price_monthly: 2999, category: "STORAGE" },
-          { id: "dedicated_support", name: "24/7 Dedicated Concierge", description: "Priority SLA phone & chat support", price_monthly: 9999, category: "SUPPORT" },
-        ];
+    Promise.all([orgApi.plans(), orgApi.addons(), orgApi.currentBillingPlan().catch(() => null)])
+      .then(([plansRes, addonsRes, billingRes]) => {
+        const rawP = plansRes ?? [];
+        const rawA = addonsRes ?? [];
+        setBillingCatalogueUnavailable(false);
         setDbPlans(rawP);
         setDbAddons(rawA);
-        setSelectedPlanId(String(rawP[0].id || rawP[0].code || "starter"));
+        setCurrentBillingPlan(billingRes);
+        setSelectedPlanId(rawP[0] ? String(rawP[0].id || rawP[0].code) : null);
+      })
+      .catch(() => {
+        setBillingCatalogueUnavailable(true);
+        setDbPlans([]);
+        setDbAddons([]);
+        setCurrentBillingPlan(null);
       })
       .finally(() => setLoadingDbBilling(false));
   }, [router, searchParams]);
@@ -356,8 +348,7 @@ export function OnboardingWizard() {
         date_format: workspaceConfig.date_format,
         time_format: workspaceConfig.time_format,
         currency: workspaceConfig.currency,
-        enabled_modules: selectedModules,
-        onboarding_step: advance ? Math.min(9, stepIndex + 1) : stepIndex,
+        onboarding_step: advance ? Math.min(maxStepIndex, stepIndex + 1) : stepIndex,
       };
 
       const res = await orgApi.updateMe(payload as any);
@@ -366,7 +357,7 @@ export function OnboardingWizard() {
       }
 
       if (advance) {
-        setStep((prev) => Math.min(9, prev + 1));
+        setStep((prev) => Math.min(maxStepIndex, prev + 1));
         toast.success("Step saved & advancing to next step.");
       } else {
         toast.success("Draft saved successfully.");
@@ -387,18 +378,52 @@ export function OnboardingWizard() {
     );
   }
 
-  const steps = [
-    { title: "Welcome", subtitle: "Get started" },
-    { title: "Organisation", subtitle: "Basic information" },
-    { title: "Profile", subtitle: "Tell us about you" },
-    { title: "Workspace", subtitle: "Configure workspace" },
-    { title: "Team", subtitle: "Invite your team" },
-    { title: "First Event", subtitle: "Create first event" },
-    { title: "Modules", subtitle: "Choose features" },
-    { title: "Choose Plan", subtitle: "Select plan" },
-    { title: "Add-Ons", subtitle: "Enhance capacity" },
-    { title: "Review", subtitle: "Final launch" },
-  ];
+  const hasActivePlan = Boolean(
+    data?.organization?.is_active &&
+    (["ACTIVE", "TRIAL"].includes(String(currentBillingPlan?.status ?? "").toUpperCase()) || Boolean(currentBillingPlan?.subscription_id))
+  );
+
+  const maxStepIndex = hasActivePlan ? 6 : 8;
+
+  const steps = useMemo(() => {
+    if (hasActivePlan) {
+      return [
+        { title: "Welcome", subtitle: "Get started" },
+        { title: "Organisation", subtitle: "Basic information" },
+        { title: "Profile", subtitle: "Tell us about you" },
+        { title: "Workspace", subtitle: "Configure workspace" },
+        { title: "Team", subtitle: "Invite your team" },
+        { title: "First Event", subtitle: "Create first event" },
+        { title: "Review", subtitle: "Final launch" },
+      ];
+    }
+    return [
+      { title: "Welcome", subtitle: "Get started" },
+      { title: "Organisation", subtitle: "Basic information" },
+      { title: "Profile", subtitle: "Tell us about you" },
+      { title: "Workspace", subtitle: "Configure workspace" },
+      { title: "Team", subtitle: "Invite your team" },
+      { title: "Choose Plan", subtitle: "Select plan" },
+      { title: "Add-Ons", subtitle: "Enhance capacity" },
+      { title: "First Event", subtitle: "Create first event" },
+      { title: "Review", subtitle: "Final launch" },
+    ];
+  }, [hasActivePlan]);
+
+  const isStepSkipped = (idx: number) => {
+    if (hasActivePlan) {
+      return (
+        (idx === 4 && skippedTeam) ||
+        (idx === 5 && (skippedEvent || !eventData.name))
+      );
+    }
+    return (
+      (idx === 4 && skippedTeam) ||
+      (idx === 5 && skippedPlan) ||
+      (idx === 6 && skippedPlan) ||
+      (idx === 7 && (skippedEvent || !eventData.name))
+    );
+  };
 
   const handleAddTeamMember = async () => {
     if (!newMember.email) return;
@@ -440,9 +465,9 @@ export function OnboardingWizard() {
         location: eventData.city ? `${eventData.venue ? eventData.venue + ", " : ""}${eventData.city}` : eventData.venue,
         country: eventData.country,
         currency: eventData.currency || "INR",
-      });
+      }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
       setSkippedEvent(false);
-      handleSaveStep(5, true);
+      handleSaveStep(hasActivePlan ? 5 : 7, true);
     } catch (error: any) {
       toast.error(error.message || "Could not create event.");
       setSaving(false);
@@ -509,9 +534,9 @@ export function OnboardingWizard() {
 
   const finishOnboarding = async () => {
     try {
-      await orgApi.updateMe({ onboarding_completed: true, onboarding_step: 9 } as Partial<Organization>);
-      const profile = await apiClient.get<any>("/auth/me");
-      useAuthStore.getState().updateUser(profile);
+      await orgApi.updateMe({ onboarding_completed: true, onboarding_step: maxStepIndex } as Partial<Organization>);
+      const profile = await apiClient.get<any>("/auth/me").catch(() => ({}));
+      useAuthStore.getState().updateUser({ ...profile, onboarding_completed: true });
       toast.success("Workspace launched! Redirecting to dashboard...");
       setTimeout(() => {
         router.replace("/dashboard");
@@ -526,15 +551,22 @@ export function OnboardingWizard() {
       {/* Top Header Bar */}
       <header className="h-16 border-b border-white/[0.08] px-6 flex items-center justify-between bg-[#08080a]/80 backdrop-blur-xl shrink-0 z-50">
         <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded-xl bg-[#e0ff00] flex items-center justify-center shadow-[0_0_20px_rgba(224,255,0,0.3)]">
-            <Zap className="h-5 w-5 text-black stroke-[3]" />
+          <img
+            src={logoImage.src}
+            alt="EVENTOS Logo"
+            className="h-8 w-auto object-contain filter drop-shadow-[0_2px_8px_rgba(224,255,0,0.3)]"
+          />
+          <div className="flex flex-col">
+            <span className="text-xs font-black tracking-widest uppercase text-white flex items-center gap-1.5 leading-tight">
+              EVENTOS
+            </span>
+            <span className="text-[9px] font-bold uppercase tracking-wider text-[#e0ff00] leading-none">
+              ORGANIZER PORTAL PRO WORKSPACE
+            </span>
           </div>
-          <span className="text-sm font-black tracking-widest uppercase text-white flex items-center gap-1.5">
-            EVENTX <span className="text-[#e0ff00]">OS</span>
-          </span>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-[10px] font-black uppercase tracking-widest text-[#8b8b95]">Step {step + 1} of 10</span>
+          <span className="text-[10px] font-black uppercase tracking-widest text-[#8b8b95]">Step {step + 1} of {steps.length}</span>
           <button
             onClick={() => {
               if (window.confirm("Exit workspace setup? Progress is saved as draft.")) router.push("/login");
@@ -551,6 +583,7 @@ export function OnboardingWizard() {
         {steps.map((s, idx) => {
           const isDone = idx < step;
           const isCurrent = idx === step;
+          const isSkipped = isDone && isStepSkipped(idx);
           return (
             <button
               key={s.title}
@@ -560,12 +593,20 @@ export function OnboardingWizard() {
                 "px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 shrink-0 transition-all",
                 isCurrent
                   ? "bg-[#e0ff00] text-black border-[#e0ff00]"
-                  : isDone
-                    ? "bg-white/5 border-white/10 text-emerald-400"
-                    : "bg-transparent border-transparent text-white/30 cursor-not-allowed"
+                  : isSkipped
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400 border-dashed"
+                    : isDone
+                      ? "bg-white/5 border-white/10 text-emerald-400"
+                      : "bg-transparent border-transparent text-white/30 cursor-not-allowed"
               )}
             >
-              <span>{idx + 1}.</span>
+              {isSkipped ? (
+                <Minus className="h-3 w-3 stroke-[3]" />
+              ) : isDone ? (
+                <Check className="h-3 w-3 stroke-[3]" />
+              ) : (
+                <span>{idx + 1}.</span>
+              )}
               <span>{s.title}</span>
             </button>
           );
@@ -580,6 +621,7 @@ export function OnboardingWizard() {
             {steps.map((s, idx) => {
               const isDone = idx < step;
               const isCurrent = idx === step;
+              const isSkipped = isDone && isStepSkipped(idx);
               return (
                 <button
                   key={s.title}
@@ -589,29 +631,41 @@ export function OnboardingWizard() {
                     "w-full rounded-xl p-2 text-left transition-all duration-300 flex items-center gap-2.5 border relative overflow-hidden group",
                     isCurrent
                       ? "bg-[#e0ff00]/10 border-[#e0ff00]/40 shadow-[0_0_20px_rgba(224,255,0,0.08)]"
-                      : isDone
-                        ? "bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.06]"
-                        : "bg-transparent border-transparent opacity-40 cursor-not-allowed"
+                      : isSkipped
+                        ? "bg-amber-500/[0.04] border-amber-500/30 border-dashed hover:bg-amber-500/[0.08]"
+                        : isDone
+                          ? "bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.06]"
+                          : "bg-transparent border-transparent opacity-40 cursor-not-allowed"
                   )}
                 >
                   {isCurrent && <div className="absolute left-0 inset-y-0 w-1 bg-[#e0ff00] rounded-r-full" />}
                   <div
                     className={cn(
                       "h-6 w-6 rounded-lg flex items-center justify-center text-[10px] font-black shrink-0 transition-all",
-                      isDone
-                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                        : isCurrent
-                          ? "bg-[#e0ff00] text-black shadow-md shadow-[#e0ff00]/20"
-                          : "bg-white/10 text-white/60"
+                      isSkipped
+                        ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                        : isDone
+                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                          : isCurrent
+                            ? "bg-[#e0ff00] text-black shadow-md shadow-[#e0ff00]/20"
+                            : "bg-white/10 text-white/60"
                     )}
                   >
-                    {isDone ? <Check className="h-3 w-3 stroke-[3]" /> : idx + 1}
+                    {isSkipped ? (
+                      <Minus className="h-3 w-3 stroke-[3]" />
+                    ) : isDone ? (
+                      <Check className="h-3 w-3 stroke-[3]" />
+                    ) : (
+                      idx + 1
+                    )}
                   </div>
                   <div className="flex flex-col min-w-0">
-                    <span className={cn("text-[11px] font-black tracking-tight truncate", isCurrent ? "text-white" : "text-white/80")}>
+                    <span className={cn("text-[11px] font-black tracking-tight truncate", isCurrent ? "text-white" : isSkipped ? "text-amber-300/90" : "text-white/80")}>
                       {s.title}
                     </span>
-                    <span className="text-[9px] text-white/40 font-medium truncate">{s.subtitle}</span>
+                    <span className={cn("text-[9px] truncate font-semibold", isSkipped ? "text-amber-400/80 uppercase font-black tracking-wider" : "text-white/40")}>
+                      {isSkipped ? "Skipped" : s.subtitle}
+                    </span>
                   </div>
                 </button>
               );
@@ -709,7 +763,7 @@ export function OnboardingWizard() {
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-wider text-[#8b8b95]">Workspace URL Slug *</label>
                       <div className="relative flex items-center">
-                        <span className="absolute left-4 text-xs font-bold text-white/40">eventx.in/</span>
+                        <span className="absolute left-4 text-xs font-bold text-white/40">Event.in/</span>
                         <Input
                           value={orgIdentity.slug}
                           onChange={(e) => setOrgIdentity({ ...orgIdentity, slug: slugify(e.target.value) })}
@@ -809,7 +863,7 @@ export function OnboardingWizard() {
                   />
                   <div className="w-full rounded-2xl border border-white/10 bg-[#0c0c0e] p-4 space-y-1.5 text-xs text-center">
                     <div className="text-white font-bold">{orgIdentity.name || "Your Organisation Name"}</div>
-                    <div className="text-emerald-400 font-mono text-[10px]">eventx.in/{orgIdentity.slug || "your-slug"}</div>
+                    <div className="text-emerald-400 font-mono text-[10px]">Event.in/{orgIdentity.slug || "your-slug"}</div>
                   </div>
                 </div>
               </motion.div>
@@ -1149,10 +1203,24 @@ export function OnboardingWizard() {
                       <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
                     </Button>
                     <div className="flex items-center gap-3">
-                      <Button variant="ghost" onClick={() => handleSaveStep(4, true)} className="h-12 text-xs font-bold text-white/50 hover:text-white">
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setSkippedTeam(true);
+                          handleSaveStep(4, true);
+                        }}
+                        className="h-12 text-xs font-bold text-white/50 hover:text-white"
+                      >
                         Skip for now →
                       </Button>
-                      <Button onClick={() => handleSaveStep(4, true)} disabled={saving} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                      <Button
+                        onClick={() => {
+                          setSkippedTeam(false);
+                          handleSaveStep(4, true);
+                        }}
+                        disabled={saving}
+                        className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2"
+                      >
                         Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" />
                       </Button>
                     </div>
@@ -1166,16 +1234,137 @@ export function OnboardingWizard() {
                     className="w-full h-auto max-h-[320px] object-contain rounded-3xl border-0 shadow-none bg-transparent"
                   />
                   <div className="w-full space-y-2 text-xs text-white/70 font-medium text-center">
-                    <div className="flex items-center justify-center gap-2"><Check className="h-3.5 w-3.5 text-emerald-400 stroke-[3]" /> Invite team members anytime</div>
+                      <div className="flex items-center justify-center gap-2"><Check className="h-3.5 w-3.5 text-emerald-400 stroke-[3]" /> Invite team members anytime</div>
                     <div className="flex items-center justify-center gap-2"><Check className="h-3.5 w-3.5 text-emerald-400 stroke-[3]" /> Assign RBAC permissions</div>
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* STEP 6: CREATE YOUR FIRST EVENT */}
-            {step === 5 && (
-              <motion.div key="step5" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="grid lg:grid-cols-[1fr_420px] gap-10 items-start">
+            {/* STEP 5: CHOOSE PLAN (Only if no active plan) */}
+            {!hasActivePlan && step === 5 && (
+              <motion.div key="step5" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h2 className="text-2xl font-black text-white tracking-tight">Choose Your Subscription Plan</h2>
+                    <p className="text-xs text-[#8b8b95] font-medium">Select a core workspace plan matching your event portfolio scale.</p>
+                  </div>
+                </div>
+
+                {loadingDbBilling ? (
+                  <div className="grid md:grid-cols-3 gap-6 py-12">
+                    {[1, 2, 3].map((i) => <div key={i} className="h-96 rounded-3xl bg-white/5 animate-pulse" />)}
+                  </div>
+                ) : billingCatalogueUnavailable ? (
+                  <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-8 text-center">
+                    <h4 className="text-sm font-bold text-white">Plan catalogue unavailable</h4>
+                    <p className="mt-2 text-xs text-white/60">No default plan has been substituted. Retry after the authoritative commercial service is available.</p>
+                  </div>
+                ) : commercialPlans.length === 0 ? (
+                  <div className="rounded-2xl border border-white/10 bg-[#0c0c0e] p-8 text-center">
+                    <h4 className="text-sm font-bold text-white">No published plans</h4>
+                    <p className="mt-2 text-xs text-white/50">A plan must be published from Command Center before it can be selected.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    {commercialPlans.map((plan) => {
+                      const isSelected = selectedPlanId === plan.id;
+                      return (
+                        <CommercialPlanCard
+                          key={plan.id}
+                          plan={plan}
+                          index={plan.tierIndex}
+                          actionVariant={isSelected && !skippedPlan ? "current" : "choose"}
+                          isCurrentPlan={isSelected && !skippedPlan}
+                          onAction={() => {
+                            setSelectedPlanId(plan.id);
+                            setSkippedPlan(false);
+                          }}
+                          secondaryLabel="Details"
+                          onSecondaryAction={() => handleOpenPlanDetails(plan.id)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center pt-4 border-t border-white/10">
+                  <Button variant="outline" onClick={() => handleSaveStep(5, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
+                    <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
+                  </Button>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setSkippedPlan(true);
+                        handleSaveStep(5, false);
+                        setStep(8);
+                      }}
+                      className="h-12 text-xs font-bold text-white/50 hover:text-white"
+                    >
+                      Skip for now (Start Free Trial) →
+                    </Button>
+                    <Button onClick={() => handleSaveStep(5, true)} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                      Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" />
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* STEP 6: ADD-ONS SELECTION (Only if no active plan) */}
+            {!hasActivePlan && step === 6 && (
+              <motion.div key="step6" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="space-y-6">
+                <div className="space-y-1">
+                  <h2 className="text-2xl font-black text-white tracking-tight">Select Workspace Add-Ons</h2>
+                  <p className="text-xs text-[#8b8b95] font-medium">Enhance your workspace capacity with commercial plan extensions.</p>
+                </div>
+
+                {loadingDbBilling ? (
+                  <div className="grid md:grid-cols-3 gap-5 py-8">
+                    {[1, 2, 3].map((i) => <div key={i} className="h-80 rounded-3xl bg-white/5 animate-pulse" />)}
+                  </div>
+                ) : billingCatalogueUnavailable ? (
+                  <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-8 text-center"><h4 className="text-sm font-bold text-white">Add-on catalogue unavailable</h4><p className="mt-2 text-xs text-white/60">No fabricated add-ons have been substituted.</p></div>
+                ) : commercialAddons.length === 0 ? (
+                  <div className="rounded-2xl border border-white/10 bg-[#0c0c0e] p-8 text-center space-y-2">
+                    <PackagePlus className="h-8 w-8 text-white/30 mx-auto" />
+                    <h4 className="text-sm font-bold text-white">No active add-ons catalog</h4>
+                    <p className="text-xs text-white/50">Standard plan entitlements active.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    {commercialAddons.map((addon) => (
+                      <CommercialAddonCard
+                        key={addon.id}
+                        addon={addon}
+                        selected={selectedAddonIds.includes(addon.id)}
+                        onAction={() => toggleAddon(addon.id)}
+                        onDetails={() => handleOpenAddonDetails(addon.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center pt-4 border-t border-white/10">
+                  <Button variant="outline" onClick={() => handleSaveStep(6, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
+                    <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
+                  </Button>
+                  <div className="flex items-center gap-3">
+                    <Button variant="ghost" onClick={() => handleSaveStep(6, true)} className="h-12 text-xs font-bold text-white/50 hover:text-white">
+                      Skip for now →
+                    </Button>
+                    <Button onClick={() => handleSaveStep(6, true)} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                      Review & Confirm <ChevronRight className="h-4 w-4 stroke-[3]" />
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* CREATE YOUR FIRST EVENT (Step 5 if active plan exists, else Step 7) */}
+            {((hasActivePlan && step === 5) || (!hasActivePlan && step === 7)) && (
+              <motion.div key="step7" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="grid lg:grid-cols-[1fr_420px] gap-10 items-start">
                 <div className="space-y-6">
                   <div className="space-y-1">
                     <h2 className="text-2xl font-black text-white tracking-tight">Create Your First Event</h2>
@@ -1274,7 +1463,7 @@ export function OnboardingWizard() {
                   </div>
 
                   <div className="flex justify-between items-center pt-4">
-                    <Button variant="outline" onClick={() => handleSaveStep(5, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
+                    <Button variant="outline" onClick={() => handleSaveStep(hasActivePlan ? 5 : 7, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
                       <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
                     </Button>
                     <div className="flex items-center gap-3">
@@ -1282,7 +1471,7 @@ export function OnboardingWizard() {
                         variant="ghost"
                         onClick={() => {
                           setSkippedEvent(true);
-                          handleSaveStep(5, true);
+                          handleSaveStep(hasActivePlan ? 5 : 7, true);
                         }}
                         className="h-12 text-xs font-bold text-white/50 hover:text-white"
                       >
@@ -1303,7 +1492,7 @@ export function OnboardingWizard() {
                   />
                   <div className="w-full rounded-2xl border border-white/10 bg-[#0c0c0e] p-4 space-y-3">
                     <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                      <span className="text-xs font-bold text-white">{eventData.name || "Your Event Name"}</span>
+                      <span className="text-xs font-bold text-[#e0ff00]">{eventData.name || "Your Event Name"}</span>
                       <span className="text-[9px] font-black uppercase bg-[#e0ff00]/10 text-[#e0ff00] px-2 py-0.5 rounded-full border border-[#e0ff00]/20">
                         {eventData.short_code || "CODE"}
                       </span>
@@ -1318,189 +1507,9 @@ export function OnboardingWizard() {
               </motion.div>
             )}
 
-            {/* STEP 7: CHOOSE YOUR MODULES */}
-            {step === 6 && (
-              <motion.div key="step6" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="grid lg:grid-cols-[1fr_360px] gap-10 items-start">
-                <div className="space-y-6">
-                  <div className="space-y-1">
-                    <h2 className="text-2xl font-black text-white tracking-tight">Choose Your Modules</h2>
-                    <p className="text-xs text-[#8b8b95] font-medium">Select the features you want to enable in your workspace.</p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e0ff00]/30 bg-[#e0ff00]/5 p-4 flex items-center gap-3">
-                    <AlertCircle className="h-5 w-5 text-[#e0ff00] shrink-0" />
-                    <p className="text-xs text-white/80 font-semibold leading-relaxed">
-                      All selected modules and features can be enabled, disabled, or configured anytime later from your Workspace Settings.
-                    </p>
-                  </div>
-
-                  <div className="grid md:grid-cols-3 gap-4">
-                    {MODULE_CATALOG.map((m) => {
-                      const isChecked = selectedModules.includes(m.id);
-                      return (
-                        <div
-                          key={m.id}
-                          onClick={() => toggleModule(m.id)}
-                          className={cn(
-                            "rounded-2xl border p-4 cursor-pointer transition-all flex flex-col justify-between space-y-3 group relative",
-                            isChecked ? "bg-[#e0ff00]/10 border-[#e0ff00]" : "bg-[#0c0c0e] border-white/10 hover:bg-white/5"
-                          )}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div className="h-9 w-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-                              <m.icon className={cn("h-4 w-4", isChecked ? "text-[#e0ff00]" : "text-white/40")} />
-                            </div>
-                            <div className={cn("h-5 w-5 rounded-md border flex items-center justify-center transition-all", isChecked ? "bg-[#e0ff00] border-[#e0ff00] text-black" : "border-white/20 bg-white/5")}>
-                              {isChecked && <Check className="h-3.5 w-3.5 stroke-[3]" />}
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <h4 className="text-xs font-bold text-white">{m.title}</h4>
-                            <p className="text-[10px] text-white/50 leading-relaxed">{m.desc}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex justify-between items-center pt-4">
-                    <Button variant="outline" onClick={() => handleSaveStep(6, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
-                      <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
-                    </Button>
-                    <div className="flex items-center gap-3">
-                      <Button variant="ghost" onClick={() => handleSaveStep(6, true)} className="h-12 text-xs font-bold text-white/50 hover:text-white">
-                        Skip for now →
-                      </Button>
-                      <Button onClick={() => handleSaveStep(6, true)} disabled={saving} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" /></>}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-[#0c0c0e] p-6 space-y-6 sticky top-24 shadow-2xl">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-[#e0ff00]">Your Selection</h4>
-                  <div className="flex items-center justify-center py-6">
-                    <div className="h-32 w-32 rounded-full border-4 border-[#e0ff00] border-t-white/10 flex flex-col items-center justify-center shadow-[0_0_30px_rgba(224,255,0,0.15)]">
-                      <span className="text-2xl font-black text-white">{selectedModules.length}</span>
-                      <span className="text-[9px] font-bold uppercase tracking-widest text-white/50">Modules</span>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* STEP 8: CHOOSE PLAN - OFFICIAL ENTERPRISE COMMERCIAL PLAN CARDS */}
-            {step === 7 && (
-              <motion.div key="step7" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="space-y-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <h2 className="text-2xl font-black text-white tracking-tight">Choose Your Subscription Plan</h2>
-                    <p className="text-xs text-[#8b8b95] font-medium">Select a core workspace plan matching your event portfolio scale.</p>
-                  </div>
-                </div>
-
-                {loadingDbBilling ? (
-                  <div className="grid md:grid-cols-3 gap-6 py-12">
-                    {[1, 2, 3].map((i) => <div key={i} className="h-96 rounded-3xl bg-white/5 animate-pulse" />)}
-                  </div>
-                ) : (
-                  <div className="grid gap-6 xl:grid-cols-3">
-                    {commercialPlans.map((plan) => {
-                      const isSelected = selectedPlanId === plan.id;
-                      return (
-                        <CommercialPlanCard
-                          key={plan.id}
-                          plan={plan}
-                          index={plan.tierIndex}
-                          actionVariant={isSelected && !skippedPlan ? "current" : "choose"}
-                          isCurrentPlan={isSelected && !skippedPlan}
-                          onAction={() => {
-                            setSelectedPlanId(plan.id);
-                            setSkippedPlan(false);
-                          }}
-                          secondaryLabel="Details"
-                          onSecondaryAction={() => handleOpenPlanDetails(plan.id)}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-
-                <div className="flex justify-between items-center pt-4 border-t border-white/10">
-                  <Button variant="outline" onClick={() => handleSaveStep(7, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
-                    <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
-                  </Button>
-                  <div className="flex items-center gap-3">
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setSkippedPlan(true);
-                        handleSaveStep(7, true);
-                      }}
-                      className="h-12 text-xs font-bold text-white/50 hover:text-white"
-                    >
-                      Skip for now (Start Free Trial) →
-                    </Button>
-                    <Button onClick={() => handleSaveStep(7, true)} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
-                      Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" />
-                    </Button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* STEP 9: ADD-ONS SELECTION - OFFICIAL ENTERPRISE COMMERCIAL ADD-ON CARDS */}
-            {step === 8 && (
+            {/* WORKSPACE SUMMARY REVIEW & TERMS CONFIRMATION (Step 6 if active plan exists, else Step 8) */}
+            {((hasActivePlan && step === 6) || (!hasActivePlan && step === 8)) && (
               <motion.div key="step8" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="space-y-6">
-                <div className="space-y-1">
-                  <h2 className="text-2xl font-black text-white tracking-tight">Select Workspace Add-Ons</h2>
-                  <p className="text-xs text-[#8b8b95] font-medium">Enhance your workspace capacity with commercial plan extensions.</p>
-                </div>
-
-                {loadingDbBilling ? (
-                  <div className="grid md:grid-cols-3 gap-5 py-8">
-                    {[1, 2, 3].map((i) => <div key={i} className="h-80 rounded-3xl bg-white/5 animate-pulse" />)}
-                  </div>
-                ) : commercialAddons.length === 0 ? (
-                  <div className="rounded-2xl border border-white/10 bg-[#0c0c0e] p-8 text-center space-y-2">
-                    <PackagePlus className="h-8 w-8 text-white/30 mx-auto" />
-                    <h4 className="text-sm font-bold text-white">No active add-ons catalog</h4>
-                    <p className="text-xs text-white/50">Standard plan entitlements active.</p>
-                  </div>
-                ) : (
-                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {commercialAddons.map((addon) => (
-                      <CommercialAddonCard
-                        key={addon.id}
-                        addon={addon}
-                        selected={selectedAddonIds.includes(addon.id)}
-                        onAction={() => toggleAddon(addon.id)}
-                        onDetails={() => handleOpenAddonDetails(addon.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex justify-between items-center pt-4 border-t border-white/10">
-                  <Button variant="outline" onClick={() => handleSaveStep(8, false)} disabled={saving} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold flex items-center gap-1.5">
-                    <Bookmark className="h-3.5 w-3.5 text-[#e0ff00]" /> Save as Draft
-                  </Button>
-                  <div className="flex items-center gap-3">
-                    <Button variant="ghost" onClick={() => handleSaveStep(8, true)} className="h-12 text-xs font-bold text-white/50 hover:text-white">
-                      Skip for now →
-                    </Button>
-                    <Button onClick={() => handleSaveStep(8, true)} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
-                      Review & Confirm <ChevronRight className="h-4 w-4 stroke-[3]" />
-                    </Button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* STEP 10: WORKSPACE SUMMARY REVIEW & TERMS CONFIRMATION */}
-            {step === 9 && (
-              <motion.div key="step9" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} className="space-y-6">
                 <div className="space-y-1">
                   <h2 className="text-2xl font-black text-white tracking-tight">Review & Launch Workspace</h2>
                   <p className="text-xs text-[#8b8b95] font-medium">Please review all workspace configurations before launching.</p>
@@ -1511,7 +1520,7 @@ export function OnboardingWizard() {
                     <h4 className="text-xs font-black uppercase tracking-wider text-[#e0ff00]">1. Organisation Details</h4>
                     <div className="space-y-2 text-xs text-white/70 font-medium">
                       <div className="flex justify-between"><span>Name:</span><span className="text-white font-bold">{orgIdentity.name}</span></div>
-                      <div className="flex justify-between"><span>Slug:</span><span className="text-emerald-400 font-mono">eventx.in/{orgIdentity.slug}</span></div>
+                      <div className="flex justify-between"><span>Slug:</span><span className="text-emerald-400 font-mono">Event.in/{orgIdentity.slug}</span></div>
                       <div className="flex justify-between"><span>Type:</span><span className="text-white capitalize">{orgIdentity.organization_type.replace('_', ' ')}</span></div>
                       <div className="flex justify-between"><span>Country:</span><span className="text-white">{orgIdentity.country}</span></div>
                       <div className="flex justify-between"><span>Timezone:</span><span className="text-white">{orgIdentity.timezone}</span></div>
@@ -1540,15 +1549,21 @@ export function OnboardingWizard() {
                           <div className="flex justify-between"><span>Delegates / Speakers:</span><span className="text-white">{eventData.delegates} Attendees / {eventData.speakers} Speakers</span></div>
                         </>
                       )}
-                      <div className="flex justify-between border-t border-white/10 pt-2"><span>Enabled Modules:</span><span className="text-white font-bold">{selectedModules.length} Modules</span></div>
                     </div>
                   </div>
 
                   <div className="rounded-3xl border border-white/10 bg-[#0c0c0e] p-6 space-y-4">
                     <h4 className="text-xs font-black uppercase tracking-wider text-[#e0ff00]">4. Plan & Billing</h4>
                     <div className="space-y-2 text-xs text-white/70 font-medium">
-                      <div className="flex justify-between"><span>Selected Plan:</span><span className="text-white font-bold">{skippedPlan ? "Free Trial" : (currentSelectedPlanObj?.name || "Selected Plan")}</span></div>
-                      <div className="flex justify-between"><span>Selected Add-Ons:</span><span className="text-white font-bold">{selectedAddonIds.length} Add-Ons</span></div>
+                      <div className="flex justify-between">
+                        <span>Subscription Status:</span>
+                        <span className="text-emerald-400 font-bold">
+                          {hasActivePlan ? `Active Subscription (${currentBillingPlan?.plan?.name || "Pro Plan"})` : (skippedPlan ? "Free Trial" : (currentSelectedPlanObj?.name || "Selected Plan"))}
+                        </span>
+                      </div>
+                      {!hasActivePlan && (
+                        <div className="flex justify-between"><span>Selected Add-Ons:</span><span className="text-white font-bold">{selectedAddonIds.length} Add-Ons</span></div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1562,12 +1577,12 @@ export function OnboardingWizard() {
                     className="h-5 w-5 rounded border-white/20 bg-white/5 text-[#e0ff00] focus:ring-0 cursor-pointer"
                   />
                   <label htmlFor="termsCheck" className="text-xs text-white/80 font-medium cursor-pointer">
-                    I agree to the <span className="text-[#e0ff00] underline">Terms of Service</span>, <span className="text-[#e0ff00] underline">Privacy Policy</span>, and Master Subscription Agreement for EVENTX OS.
+                    I agree to the <span className="text-[#e0ff00] underline">Terms of Service</span>, <span className="text-[#e0ff00] underline">Privacy Policy</span>, and Master Subscription Agreement for Event OS.
                   </label>
                 </div>
 
                 <div className="flex justify-between items-center pt-4 border-t border-white/10">
-                  <Button variant="outline" onClick={() => setStep(8)} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold">Back</Button>
+                  <Button variant="outline" onClick={() => setStep(skippedPlan ? 5 : 7)} className="h-12 rounded-xl border-white/10 bg-white/5 text-xs font-bold">Back</Button>
                   <Button
                     onClick={handleFinalizeWorkspace}
                     disabled={!termsAgreed || saving}
@@ -1603,15 +1618,17 @@ export function OnboardingWizard() {
               </div>
 
               <div className="space-y-2">
-                <h3 className="text-xl font-black text-white">Payment Authorized & Completed</h3>
+                <h3 className="text-xl font-black text-white">
+                  {skippedPlan ? "Workspace Created" : "Workspace Ready"}
+                </h3>
                 <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wider">
-                  Workspace Tenant Entitlements Provisioned
+                  {skippedPlan ? "Workspace Initialized (Free Trial Active)" : "Payment Authorized & Workspace Provisioned"}
                 </p>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left text-xs text-white/70 space-y-2">
                 <div className="flex justify-between"><span>Tenant Name:</span><span className="text-white font-bold">{orgIdentity.name}</span></div>
-                <div className="flex justify-between"><span>Workspace URL:</span><span className="text-emerald-400 font-mono">eventx.in/{orgIdentity.slug}</span></div>
+                <div className="flex justify-between"><span>Workspace URL:</span><span className="text-emerald-400 font-mono">Event.in/{orgIdentity.slug}</span></div>
                 <div className="flex justify-between"><span>Status:</span><span className="text-emerald-400 font-bold">Active & Provisioned</span></div>
               </div>
 

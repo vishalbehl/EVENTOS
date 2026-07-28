@@ -16,7 +16,7 @@ describe("app-wide design system adoption", () => {
     const pages = filesUnder(resolve(appRoot, "(command-center)")).filter((path) => path.endsWith("page.tsx"));
     const failures = pages.filter((path) => {
       const source = readFileSync(path, "utf8");
-      return !/PageWrapper|PageContainer|UnavailableRouteState|ProposalForm|QuoteForm|export\s*\{\s*default\s*\}/.test(source);
+      return !/PageWrapper|PageContainer|UnavailableRouteState|ProposalForm|QuoteForm|redirect\s*\(|export\s*\{\s*default\s*\}/.test(source);
     });
     expect(failures).toEqual([]);
   });

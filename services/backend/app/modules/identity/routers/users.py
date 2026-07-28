@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,7 @@ from app.modules.identity.services.mfa_service import (
 )
 from app.core.encryption import encrypt
 from app.config import settings
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -63,6 +64,7 @@ async def list_users(
 async def create_user(
     payload: UserCreate,
     current_user: OrganizerOrAbove,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """Create a new user with a specific role and organization."""
@@ -89,10 +91,18 @@ async def create_user(
     # Organizers always create users within their own org; only super_admin can specify a different org
     org_id = payload.organization_id if current_user.role == "super_admin" else current_user.organization_id
 
-    # Check user limit
+    reservation = None
     if org_id:
-        from app.modules.billing.services.limit_guard import LimitGuard
-        await LimitGuard.check_users(db, org_id)
+        reservation = await UsageReservationService.reserve(
+            db,
+            organization_id=org_id,
+            event_id=None,
+            limit_key="max_users",
+            quantity=1,
+            unit="user",
+            idempotency_key=f"user-create:{idempotency_key}",
+            metadata={"email": payload.email, "role": payload.role},
+        )
 
     user = User(
         email=payload.email,
@@ -106,6 +116,14 @@ async def create_user(
         avatar_url=payload.avatar_url,
     )
     db.add(user)
+    await db.flush()
+    if reservation is not None:
+        await UsageReservationService.consume(
+            db,
+            reservation.id,
+            source="organizer_portal.users.create",
+            actor_user_id=current_user.id,
+        )
     await db.commit()
     await db.refresh(user)
     
@@ -248,7 +266,7 @@ async def delete_user(
     
     # Preserve the user identifier for immutable audit attribution while removing
     # authentication capability and personal profile data.
-    deleted_marker = f"deleted-{user.id}@invalid.eventx.local"
+    deleted_marker = f"deleted-{user.id}@invalid.Event.local"
     user.email = deleted_marker
     user.first_name = "Deleted"
     user.last_name = "User"
@@ -347,6 +365,7 @@ async def toggle_2fa() -> None:
 async def create_assignment(
     payload: AssignmentCreate,
     current_user: OrganizerOrAbove,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ) -> UserAssignmentSchema:
     """Assign a user to an event with specific permissions."""
@@ -361,12 +380,20 @@ async def create_assignment(
 
     from app.modules.rbac.models.rbac import UserAccessNode
     from app.modules.events.models.event import Event
-    from app.modules.billing.services.limit_guard import LimitGuard
 
     event = await db.scalar(select(Event).where(Event.id == payload.event_id))
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
-    await LimitGuard.check_event_team_members(db, event.organization_id, event.id)
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_event_team_members",
+        quantity=1,
+        unit="member",
+        idempotency_key=f"event-assignment:{idempotency_key}",
+        metadata={"user_id": str(payload.user_id)},
+    )
 
     assignment = UserEventAssignment(
         user_id=payload.user_id,
@@ -396,6 +423,14 @@ async def create_assignment(
         except (ValueError, TypeError):
             # If node_id is not a valid UUID, we skip it
             pass
+
+    await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.event_assignments.create",
+        actor_user_id=current_user.id,
+    )
 
     try:
         await db.commit()

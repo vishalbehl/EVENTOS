@@ -1,4 +1,4 @@
-# EventX OS Architecture Baseline v1.0
+# Event OS Architecture Baseline v1.0
 
 Status: FROZEN
 

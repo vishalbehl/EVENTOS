@@ -5,7 +5,7 @@ import { GlobalModal } from "@/components/organizer/modals/GlobalModal";
 import { ImpersonationBanner } from "@/components/organizer/ImpersonationBanner";
 
 export const metadata: Metadata = {
-  title: "EventX OS | Organiser Portal",
+  title: "Event OS | Organiser Portal",
   description: "Enterprise event management platform for professional organizers.",
 };
 

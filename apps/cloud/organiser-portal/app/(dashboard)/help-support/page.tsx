@@ -8,12 +8,7 @@ import {
 
 export default function HelpSupportPage() {
   return (
-    <div className="space-y-6 pb-8">
-      <EnterprisePageIntro
-        title="Help & Support"
-        subtitle="Get documentation, operational guidance, and implementation support for your organizer workspace."
-      />
-
+    <div className="space-y-6 pb-8 pt-4">
       <div className="grid gap-4 lg:grid-cols-3">
         {[
           {

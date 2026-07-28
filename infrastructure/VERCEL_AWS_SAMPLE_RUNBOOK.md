@@ -129,8 +129,8 @@ identity. Record deletion and successful MFA login as deployment evidence.
 ## Database roles
 
 - RDS manages the master credential; it is used only by the bootstrap task.
-- `eventx_migration_login` owns migration execution and inherits the migration group.
-- `eventx_runtime_login` is non-superuser, cannot bypass RLS, and is used by API/workers.
+- `Event_migration_login` owns migration execution and inherits the migration group.
+- `Event_runtime_login` is non-superuser, cannot bypass RLS, and is used by API/workers.
 - API and worker tasks never receive the RDS master or deployment secret.
 - The bootstrap task is run before and after Alembic so new schemas receive runtime grants.
 

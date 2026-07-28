@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  GanttChart,
   Globe,
   Home,
   LayoutTemplate,
@@ -42,6 +43,8 @@ import {
   Award,
   Download,
   TrendingUp,
+  Lock,
+  Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/useUIStore";
@@ -51,12 +54,15 @@ import { useEvent } from "@/hooks/useEvents";
 import { useCurrentPlan } from "@/hooks/useBilling";
 import { PERMISSIONS, type PermissionCode } from "@/lib/permissions";
 import logoIcon from "../../../../../../public/logo/logo-icon.png";
+import logoImage from "../../../../../../public/logo/1.png";
+import { capabilityForPath, useEventCapabilities, useFeatureAccess } from "@/lib/capabilities";
 
 type NavItem = {
   label: string;
   href?: string;
   icon: any;
   permission?: PermissionCode;
+  featureKey?: string;
   subItems?: NavItem[];
 };
 
@@ -150,6 +156,7 @@ export function Sidebar() {
       icon: User,
       subItems: [
         { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/speakers/dashboard` },
+        { label: "Abstracts", icon: FileText, href: `/events/${eventId}/speakers/abstracts`, permission: PERMISSIONS.SPEAKERS_VIEW },
         { label: "Speaker Directory", icon: Users, href: `/events/${eventId}/speakers/list`, permission: PERMISSIONS.SPEAKERS_VIEW },
         { label: "File Review", icon: FileVideo, href: `/events/${eventId}/speakers/files`, permission: PERMISSIONS.FILES_VIEW },
         { label: "ePoster", icon: MonitorPlay, href: `/events/${eventId}/speakers/eposters`, permission: PERMISSIONS.POSTERS_VIEW },
@@ -162,6 +169,7 @@ export function Sidebar() {
       icon: Calendar,
       subItems: [
         { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/sessions/dashboard` },
+        { label: "Session Builder", icon: GanttChart, href: `/events/${eventId}/sessions/builder`, permission: PERMISSIONS.SESSIONS_VIEW },
         { label: "Agenda", icon: Calendar, href: `/events/${eventId}/sessions/agenda`, permission: PERMISSIONS.SESSIONS_VIEW },
         { label: "Rooms & Devices", icon: MapPin, href: `/events/${eventId}/sessions/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
       ],
@@ -185,6 +193,13 @@ export function Sidebar() {
         { label: "Certificate Designer", icon: Award, href: `/events/${eventId}/design-studio/certificates` },
         { label: "Email Designer", icon: Mail, href: `/events/${eventId}/design-studio/emails` },
         { label: "Portal Designer", icon: MonitorPlay, href: `/events/${eventId}/design-studio/portals` },
+      ],
+    },
+    {
+      label: "Developer",
+      icon: Webhook,
+      subItems: [
+        { label: "Webhooks & Integrations", icon: Webhook, href: `/events/${eventId}/developer` },
       ],
     },
   ];
@@ -244,49 +259,49 @@ export function Sidebar() {
       <div className="relative flex h-full flex-col px-3 py-5">
         <div className={cn("mb-6 flex items-center", isCollapsed ? "justify-center" : "justify-between px-1")}>
           {!isCollapsed ? (
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="hex-icon-shell flex h-10 w-10 items-center justify-center">
-                <img
-                  src={logoIcon.src}
-                  alt="Logo"
-                  className="h-5 w-5 object-contain"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
+            <>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center shrink-0">
+                  <img
+                    src={logoImage.src}
+                    alt="EVENTOS Logo"
+                    className="h-8 w-auto object-contain filter drop-shadow-[0_2px_8px_rgba(224,255,0,0.3)]"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-[15px] font-black tracking-widest uppercase text-[var(--color-text-primary)]">
+                    EVENTOS
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-[18px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                  EventX OS
-                </p>
-                <p className="text-[11px] text-[var(--color-text-muted)]">Organizer workspace</p>
-              </div>
-            </div>
-          ) : (
-            <div className="hex-icon-shell flex h-10 w-10 items-center justify-center">
-              <img
-                src={logoIcon.src}
-                alt="Logo"
-                className="h-5 w-5 object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                }}
-              />
-            </div>
-          )}
 
-          <button
-            onClick={toggleSidebar}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full border transition-all",
-              isPlatformWorkspace
-                ? "border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
-                : "border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)]"
-            )}
-            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </button>
+              <button
+                onClick={toggleSidebar}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full border transition-all",
+                  isPlatformWorkspace
+                    ? "border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)]"
+                )}
+                title="Collapse sidebar"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={toggleSidebar}
+              className="group relative flex h-10 w-10 items-center justify-center rounded-xl transition-all hover:bg-[var(--color-surface-3)]"
+              title="Expand sidebar"
+            >
+              <img
+                src={logoImage.src}
+                alt="EVENTOS Logo"
+                className="h-8 w-auto object-contain filter drop-shadow-[0_2px_8px_rgba(224,255,0,0.3)] group-hover:opacity-0 transition-opacity"
+              />
+              <ChevronRight className="absolute h-5 w-5 text-[#e0ff00] opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+          )}
         </div>
 
         <div className="flex-1 space-y-1 overflow-y-auto no-scrollbar">
@@ -500,10 +515,13 @@ function SidebarLeaf({
   isSubItem?: boolean;
 }) {
   const setMobileOpen = useUIStore((state) => state.setMobileOpen);
+  const { data: capabilities } = useEventCapabilities();
+  const eventId = route.href?.match(/\/events\/([^/]+)/)?.[1];
+  const access = useFeatureAccess(route.featureKey ?? capabilityForPath(capabilities?.features, route.href ?? "", eventId));
   const isActive = pathname === route.href || Boolean(route.href && pathname.startsWith(`${route.href}/`));
 
   return (
-    <Link href={route.href || "#"} onClick={() => setMobileOpen(false)} className="block">
+    <Link href={route.href || "#"} onClick={() => setMobileOpen(false)} className="block" aria-label={access.enabled ? route.label : `${route.label}, locked`}>
       <div
         className={cn(
           "group relative flex items-center rounded-xl transition-all",
@@ -525,6 +543,9 @@ function SidebarLeaf({
           <span className={cn(isSubItem ? "text-[12px] font-medium" : "text-[13px] font-medium")}>
             {route.label}
           </span>
+        ) : null}
+        {!access.enabled && !access.loading ? (
+          <Lock className={cn("h-3 w-3 text-amber-400", isCollapsed ? "absolute -right-0.5 top-1" : "ml-auto")} aria-hidden="true" />
         ) : null}
       </div>
     </Link>

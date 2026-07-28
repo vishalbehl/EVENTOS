@@ -36,12 +36,15 @@ class BrandingSettings(BaseModel):
 # ── Request schemas ─────────────────────────────────────────
 
 class EventCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str = Field(min_length=2, max_length=255)
     short_code: str = Field(
         min_length=2, max_length=20,
         pattern=r"^[A-Z0-9-]+$",
         description="Uppercase alphanumeric, used in upload URLs e.g. AMS26"
     )
+    status: Optional[str] = Field("draft", max_length=50)
     location: Optional[str] = Field(None, max_length=255)
     venue_name: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
@@ -69,15 +72,6 @@ class EventCreate(BaseModel):
         "notes": "",
         "map_coords": "",
     })
-    licensing_details: dict = Field(default_factory=lambda: {
-        "plan_name": "",
-        "price": 0,
-        "addons": [],
-        "activated_at": None,
-        "expires_at": None,
-        "status": "inactive",
-    })
-
     # Nested JSONB settings
     speaker_settings: SpeakerSettings = Field(default_factory=SpeakerSettings)
     registration_settings: RegistrationSettings = Field(default_factory=RegistrationSettings)
@@ -102,6 +96,8 @@ class EventCreate(BaseModel):
 
 
 class EventUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     short_code: Optional[str] = Field(
         None,
@@ -121,38 +117,27 @@ class EventUpdate(BaseModel):
     upload_deadline: Optional[datetime] = None
     max_file_size_mb: Optional[int] = Field(None, ge=1, le=2048)
     allowed_formats: Optional[List[str]] = None
-    status: Optional[str] = Field(
-        None,
-        pattern="^(draft|active|completed|archived)$"
-    )
     currency: Optional[str] = None
-    feature_toggles: Optional[dict] = None
+    status: Optional[str] = Field(None, max_length=50)
 
     tagline: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
     map_link: Optional[str] = Field(None, max_length=1024)
     venue_images: Optional[List[str]] = None
     venue_details: Optional[dict] = None
-    licensing_details: Optional[dict] = None
 
-    # Nested JSONB settings (partial updates — None means "don't touch")
     speaker_settings: Optional[SpeakerSettings] = None
     registration_settings: Optional[RegistrationSettings] = None
     branding_settings: Optional[BrandingSettings] = None
 
-    @model_validator(mode="after")
-    def validate_modes(self) -> "EventUpdate":
-        if (
-            self.speaker_settings is not None
-            and self.registration_settings is not None
-            and not self.speaker_settings.enabled
-            and not self.registration_settings.enabled
-        ):
-            raise ValueError("At least one mode (Speaker or Registration) must be enabled.")
-        return self
 
+class ApplyPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
 
-# ── Response schemas ────────────────────────────────────────
+    plan_id: Optional[str] = None
+    plan_name: Optional[str] = None
+    addon_keys: Optional[List[str]] = Field(default_factory=list)
+
 
 class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -166,37 +151,35 @@ class EventResponse(BaseModel):
     country: Optional[str] = None
     state: Optional[str] = None
     organizer_name: Optional[str] = None
-    organizer_details: dict = Field(default_factory=dict)
+    organizer_details: dict
     start_date: date
     end_date: date
     timezone: str
     upload_deadline: Optional[datetime] = None
     max_file_size_mb: int
     allowed_formats: List[str]
-    status: str
-    feature_toggles: dict = Field(default_factory=dict)
     currency: str
+    status: str
+    is_active: bool = True
 
     tagline: Optional[str] = None
     description: Optional[str] = None
-    map_link: Optional[str] = None
-    venue_images: List[str] = Field(default_factory=list)
-    venue_details: dict = Field(default_factory=dict)
-    licensing_details: dict = Field(default_factory=dict)
+    map_link: Optional[str] = Field(None, max_length=1024)
+    venue_images: List[str]
+    venue_details: dict
 
-    speaker_settings: dict = Field(default_factory=dict)
-    registration_settings: dict = Field(default_factory=dict)
-    branding_settings: dict = Field(default_factory=dict)
-    created_by: Optional[uuid.UUID] = None
+    speaker_settings: dict
+    registration_settings: dict
+    branding_settings: dict
     created_at: datetime
     updated_at: datetime
 
 
 class EventSummary(BaseModel):
-    """Lightweight event card for list views."""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    organization_id: uuid.UUID
     name: str
     short_code: str
     location: Optional[str] = None
@@ -204,18 +187,15 @@ class EventSummary(BaseModel):
     country: Optional[str] = None
     state: Optional[str] = None
     organizer_name: Optional[str] = None
-    organizer_details: dict = Field(default_factory=dict)
     start_date: date
     end_date: date
+    timezone: str
+    upload_deadline: Optional[datetime] = None
+    max_file_size_mb: int
+    allowed_formats: List[str]
+    currency: str
     status: str
+    is_active: bool = True
+    created_at: datetime
+    updated_at: datetime
 
-    tagline: Optional[str] = None
-    description: Optional[str] = None
-    map_link: Optional[str] = None
-    venue_images: List[str] = Field(default_factory=list)
-    venue_details: dict = Field(default_factory=dict)
-    licensing_details: dict = Field(default_factory=dict)
-
-    branding_settings: dict = Field(default_factory=dict)
-    speaker_settings: dict = Field(default_factory=dict)
-    registration_settings: dict = Field(default_factory=dict)

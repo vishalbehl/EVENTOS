@@ -9,7 +9,7 @@ Status: CURRENT DATABASE EVIDENCE AVAILABLE, CLEAN-BASELINE REPLAY STILL RECOMME
 | Upgrade head | `.\.venv\Scripts\alembic.exe upgrade head` | 2026-07-11 | Passed in earlier Phase 1 run | `governance/phase1/PHASE1_EXIT_EVIDENCE.md` |
 | Runtime DDL scan | `rg -n "ALTER TABLE\|create_all\\(\|drop_all\\(" services/backend/app services/workers services/venue-server/app -g "*.py"` | 2026-07-11 | No matches | Console evidence |
 | Tenant-header trust scan | `rg -n "X-Organization-ID\|X-Org-ID\|x-organization\|x-org-id\|organization_id.*headers\|headers.*organization" services/backend/app -g "*.py"` | 2026-07-11 | No matches | Console evidence |
-| RLS canary | `.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role eventx_runtime` | 2026-07-11 | Passed in earlier Phase 1 run | `governance/phase1/PHASE1_EXIT_EVIDENCE.md` |
+| RLS canary | `.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role Event_runtime` | 2026-07-11 | Passed in earlier Phase 1 run | `governance/phase1/PHASE1_EXIT_EVIDENCE.md` |
 
 ## Closure Requirement
 

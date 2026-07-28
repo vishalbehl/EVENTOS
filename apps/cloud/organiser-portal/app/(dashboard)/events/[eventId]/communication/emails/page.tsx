@@ -14,7 +14,7 @@ import TemplateEditor from "@/components/organizer/emails/templates/TemplateEdit
 import LogsTable from "@/components/organizer/emails/logs/LogsTable";
 
 type SectionType = "speaker" | "participant" | "templates";
-type InnerTabType = "dashboard" | "inbox" | "sent" | "campaigns";
+type InnerTabType = "dashboard" | "sent" | "campaigns";
 
 export default function UnifiedEmailPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
   const params = use(paramsPromise);
@@ -72,12 +72,6 @@ export default function UnifiedEmailPage({ params: paramsPromise }: { params: Pr
     switch (activeTab) {
       case "dashboard":
         return <CampaignDashboard eventId={eventId} campaigns={campaigns} targetType={isParticipant ? "participant" : "speaker"} />;
-      case "inbox":
-        return (
-          <div className="p-12 text-center text-[var(--muted)] font-black uppercase tracking-widest border border-white/5 bg-white/5 rounded-[2rem]">
-            Inbox (Coming Soon)
-          </div>
-        );
       case "sent":
         return <LogsTable eventId={eventId} targetType={isParticipant ? "participant" : "speaker"} />;
       case "campaigns":
@@ -151,10 +145,10 @@ export default function UnifiedEmailPage({ params: paramsPromise }: { params: Pr
           </div>
         </div>
 
-        {/* Inner Navigation Tabs (for Dashboard, Inbox, Sent, Campaigns) */}
+        {/* Inner Navigation Tabs */}
         {section !== "templates" && (
           <div className="flex items-center gap-2 mb-6 bg-white/[0.02] border border-white/5 p-1 rounded-xl w-fit">
-            {(["dashboard", "inbox", "sent", "campaigns"] as InnerTabType[]).map((tab) => (
+            {(["dashboard", "sent", "campaigns"] as InnerTabType[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => {

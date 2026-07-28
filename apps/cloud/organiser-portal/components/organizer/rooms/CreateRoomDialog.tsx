@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useCreateRoom } from "@/hooks/useRooms";
 import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
+import { CapabilityAction } from "@/lib/capabilities";
 
 interface CreateRoomDialogProps {
   isOpen: boolean;
@@ -218,7 +219,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
               <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
                 Cancel
               </Button>
-              <Button
+              <CapabilityAction operation="venue.rooms.manage"><Button
                 disabled={createRoom.isPending}
                 form="create-room-form"
                 type="submit"
@@ -226,7 +227,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
               >
                 {createRoom.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                 Register Room
-              </Button>
+              </Button></CapabilityAction>
             </div>
           </motion.div>
         </div>

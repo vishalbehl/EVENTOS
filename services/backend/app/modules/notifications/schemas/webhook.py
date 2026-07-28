@@ -71,6 +71,7 @@ class WebhookResponse(BaseModel):
     total_deliveries: int
     total_failures: int
     created_at: datetime
+    version: int
     # NOTE: secret is never returned — security guarantee
 
     model_config = {"from_attributes": True}

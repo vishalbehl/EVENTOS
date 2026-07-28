@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -17,6 +18,7 @@ from app.modules.billing.services.activation_service import ActivationService
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
+from app.modules.platform.models.organization_console import EntitlementOverrideRequest
 from tests.conftest import auth_headers
 
 
@@ -76,6 +78,43 @@ def mutation_headers(user: User, key: str) -> dict[str, str]:
     }
 
 
+async def create_approved_change(
+    db: AsyncSession,
+    organization: Organization,
+    requester: User,
+    *,
+    entitlement_key: str,
+    requested_value: dict,
+) -> EntitlementOverrideRequest:
+    approver = User(
+        organization_id=organization.id,
+        email=f"billing-approver-{uuid.uuid4().hex[:10]}@test.com",
+        password_hash="not-used",
+        first_name="Billing",
+        last_name="Approver",
+        role="super_admin",
+        is_active=True,
+    )
+    db.add(approver)
+    await db.flush()
+    approval = EntitlementOverrideRequest(
+        organization_id=organization.id,
+        entitlement_key=entitlement_key,
+        operation="REPLACE",
+        requested_value=requested_value,
+        reason="Approve the exact governed billing lifecycle change.",
+        case_reference="BILL-2048",
+        status="APPROVED",
+        requested_by=requester.id,
+        approved_by=approver.id,
+        decided_at=datetime.now(timezone.utc),
+        idempotency_key=f"billing-approval-{uuid.uuid4()}",
+    )
+    db.add(approval)
+    await db.commit()
+    return approval
+
+
 @pytest.mark.asyncio
 async def test_subscription_status_is_versioned_idempotent_and_preserves_activation_continuity(
     client: AsyncClient,
@@ -106,7 +145,19 @@ async def test_subscription_status_is_versioned_idempotent_and_preserves_activat
     )
     await db.commit()
     key = f"suspend-{uuid.uuid4()}"
+    suspend_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.subscription.status",
+        requested_value={
+            "resource_id": str(subscription.id),
+            "version": 1,
+            "status": "SUSPENDED",
+        },
+    )
     payload = {
+        "approved_request_id": str(suspend_approval.id),
         "version": 1,
         "status": "SUSPENDED",
         "reason": "Suspending commercial growth while preserving live continuity",
@@ -144,9 +195,21 @@ async def test_subscription_status_is_versioned_idempotent_and_preserves_activat
         assert financial is not None
         assert financial.details["reason"] == payload["reason"]
 
+    grant_activation_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.entitlement_grant.status",
+        requested_value={
+            "resource_id": str(activation.grant_id),
+            "version": 2,
+            "status": "ACTIVE",
+        },
+    )
     grant_activate = await client.post(
         f"/superadmin/billing-admin/entitlements/{activation.grant_id}/status?organization_id={organization.id}",
         json={
+            "approved_request_id": str(grant_activation_approval.id),
             "version": 2,
             "status": "ACTIVE",
             "reason": "Testing parent subscription state enforcement",
@@ -156,9 +219,21 @@ async def test_subscription_status_is_versioned_idempotent_and_preserves_activat
     assert grant_activate.status_code == 409
     assert grant_activate.json()["detail"]["code"] == "SUBSCRIPTION_NOT_ACTIVE"
 
+    resume_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.subscription.status",
+        requested_value={
+            "resource_id": str(subscription.id),
+            "version": 2,
+            "status": "ACTIVE",
+        },
+    )
     resumed = await client.post(
         url,
         json={
+            "approved_request_id": str(resume_approval.id),
             "version": 2,
             "status": "ACTIVE",
             "reason": "Restoring approved commercial subscription access",
@@ -190,7 +265,7 @@ async def test_grant_issue_and_capacity_use_tenant_and_ledger_truth(
     await db.commit()
 
     issue_key = f"issue-pack-{uuid.uuid4()}"
-    issue_payload = {
+    approved_issue_value = {
         "subscription_id": str(subscription.id),
         "grant_type": "EVENT_PACK",
         "scope_type": "EVENT",
@@ -200,9 +275,40 @@ async def test_grant_issue_and_capacity_use_tenant_and_ledger_truth(
         "source_ref": str(plan.id),
         "quantity_total": 5,
         "metadata_json": {"contract": "PACK-5"},
+    }
+    issue_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.entitlement_grant.issue",
+        requested_value=approved_issue_value,
+    )
+    issue_payload = {
+        **approved_issue_value,
+        "approved_request_id": str(issue_approval.id),
         "reason": "Issuing approved five event commercial pack",
     }
     issue_url = f"/superadmin/billing-admin/entitlements?organization_id={organization.id}"
+    missing_approval = await client.post(
+        issue_url,
+        json={key: value for key, value in issue_payload.items() if key != "approved_request_id"},
+        headers=mutation_headers(super_admin, f"issue-without-approval-{uuid.uuid4()}"),
+    )
+    assert missing_approval.status_code == 422
+    mismatched_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.entitlement_grant.issue",
+        requested_value={**approved_issue_value, "quantity_total": 6},
+    )
+    mismatch = await client.post(
+        issue_url,
+        json={**issue_payload, "approved_request_id": str(mismatched_approval.id)},
+        headers=mutation_headers(super_admin, f"issue-mismatch-{uuid.uuid4()}"),
+    )
+    assert mismatch.status_code == 409
+    assert mismatch.json()["detail"]["code"] == "APPROVED_CHANGE_MISMATCH"
     issued = await client.post(issue_url, json=issue_payload, headers=mutation_headers(super_admin, issue_key))
     assert issued.status_code == 201, issued.text
     grant = issued.json()
@@ -212,6 +318,15 @@ async def test_grant_issue_and_capacity_use_tenant_and_ledger_truth(
     replay = await client.post(issue_url, json=issue_payload, headers=mutation_headers(super_admin, issue_key))
     assert replay.status_code == 201
     assert replay.json()["id"] == grant["id"]
+    reused_approval = await client.post(
+        issue_url,
+        json=issue_payload,
+        headers=mutation_headers(super_admin, f"issue-reuse-{uuid.uuid4()}"),
+    )
+    assert reused_approval.status_code == 409
+    assert reused_approval.json()["detail"]["code"] == "APPROVED_CHANGE_REQUEST_REQUIRED"
+    await db.refresh(issue_approval)
+    assert issue_approval.status == "APPLIED"
 
     consumption = GrantConsumption(
         grant_id=uuid.UUID(grant["id"]),
@@ -224,17 +339,39 @@ async def test_grant_issue_and_capacity_use_tenant_and_ledger_truth(
     await db.commit()
 
     capacity_url = f"/superadmin/billing-admin/entitlements/{grant['id']}/capacity?organization_id={organization.id}"
+    below_usage_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.entitlement_grant.capacity",
+        requested_value={
+            "resource_id": grant["id"],
+            "version": 1,
+            "quantity_total": 2,
+        },
+    )
     below_usage = await client.patch(
         capacity_url,
-        json={"version": 1, "quantity_total": 2, "reason": "Testing authoritative ledger capacity protection"},
+        json={"approved_request_id": str(below_usage_approval.id), "version": 1, "quantity_total": 2, "reason": "Testing authoritative ledger capacity protection"},
         headers=mutation_headers(super_admin, f"capacity-low-{uuid.uuid4()}"),
     )
     assert below_usage.status_code == 409
     assert below_usage.json()["detail"]["code"] == "GRANT_CAPACITY_BELOW_USAGE"
 
+    expanded_approval = await create_approved_change(
+        db,
+        organization,
+        super_admin,
+        entitlement_key="billing.entitlement_grant.capacity",
+        requested_value={
+            "resource_id": grant["id"],
+            "version": 1,
+            "quantity_total": 8,
+        },
+    )
     expanded = await client.patch(
         capacity_url,
-        json={"version": 1, "quantity_total": 8, "reason": "Expanding approved event pack capacity safely"},
+        json={"approved_request_id": str(expanded_approval.id), "version": 1, "quantity_total": 8, "reason": "Expanding approved event pack capacity safely"},
         headers=mutation_headers(super_admin, f"capacity-expand-{uuid.uuid4()}"),
     )
     assert expanded.status_code == 200, expanded.text
@@ -249,7 +386,11 @@ async def test_grant_issue_and_capacity_use_tenant_and_ledger_truth(
     await db.commit()
     cross_tenant = await client.post(
         issue_url,
-        json={**issue_payload, "subscription_id": str(other_subscription.id)},
+        json={
+            **issue_payload,
+            "approved_request_id": str(uuid.uuid4()),
+            "subscription_id": str(other_subscription.id),
+        },
         headers=mutation_headers(super_admin, f"cross-tenant-grant-{uuid.uuid4()}"),
     )
     assert cross_tenant.status_code == 404

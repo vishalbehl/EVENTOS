@@ -192,7 +192,7 @@ export default function MarginRulesPage() {
           <DialogHeader className="sticky top-0 z-10 border-b border-border bg-[var(--bg-surface)] px-6 py-5 text-left">
             <DialogTitle className="text-primary font-bold">{isEditing ? "Modify Margin Rule Set" : "Create Margin Rule Set"}</DialogTitle>
             <DialogDescription className="text-secondary text-xs">
-              Define the percentage-based rules for calculating final pricing totals in EventX quoting flows.
+              Define the percentage-based rules for calculating final pricing totals in Event quoting flows.
             </DialogDescription>
           </DialogHeader>
 

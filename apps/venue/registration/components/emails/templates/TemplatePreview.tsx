@@ -148,7 +148,7 @@ export default function TemplatePreview({
                                 <div className="space-y-1 text-[11px] md:text-xs text-zinc-500 font-sans">
                                     <div>
                                         <span className="font-semibold text-zinc-400 w-16 inline-block">From:</span>
-                                        <span className="text-zinc-700">EventX OS Ecosystem &lt;noreply@eventos.io&gt;</span>
+                                        <span className="text-zinc-700">Event OS Ecosystem &lt;noreply@eventos.io&gt;</span>
                                     </div>
                                     <div>
                                         <span className="font-semibold text-zinc-400 w-16 inline-block">To:</span>

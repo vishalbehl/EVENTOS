@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { Portal } from "@/components/ui/portal";
 import { CountryStateEntry, fetchCountryStates, getAllowedCountries, getStatesForCountry } from "@/lib/country-states";
+import { CapabilityAction } from "@/lib/capabilities";
 
 interface FormField {
   id: string;
@@ -264,14 +265,16 @@ export default function RegistrationFormBuilder() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button 
-            onClick={handleSaveConfig} 
-            disabled={loading || saving} 
-            className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full border-0 hover-lift-3d shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_35%,transparent)]"
-          >
-            <Save className="h-4 w-4 mr-2" />
-            {saving ? "Saving..." : "Save Layout"}
-          </Button>
+          <CapabilityAction operation="registration.forms.manage">
+            <Button 
+              onClick={handleSaveConfig} 
+              disabled={loading || saving} 
+              className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full border-0 hover-lift-3d shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_35%,transparent)]"
+            >
+              <Save className="h-4 w-4 mr-2" />
+              {saving ? "Saving..." : "Save Layout"}
+            </Button>
+          </CapabilityAction>
         </div>
       </div>
 

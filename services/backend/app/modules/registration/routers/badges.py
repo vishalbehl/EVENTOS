@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import uuid
+import csv
+import io
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +24,154 @@ from app.modules.registration.schemas.badge import (
     BadgeHistoryResponse,
     BadgePrintJobResponse,
 )
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_feature
+from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
-router = APIRouter(prefix="/events/{event_id}/badges", tags=["badges"])
+router = APIRouter(prefix="/events/{event_id}/badges", tags=["badges"], dependencies=[require_event_feature("FEAT_QR_BADGE")])
+
+
+@router.post("/export-authorizations", status_code=status.HTTP_201_CREATED)
+async def authorize_badge_export(
+    event: CurrentEvent,
+    current_user: AdminOrAbove,
+    participant_count: int = Query(..., ge=1, le=10000),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Authorize and meter a client-side PDF badge compilation."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "badges.export",
+        user_id=current_user.id,
+    )
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_exports_per_event",
+        quantity=1,
+        unit="export",
+        idempotency_key=f"badge-pdf-export:{idempotency_key}",
+        metadata={"participant_count": participant_count, "export_type": "badge_pdf"},
+    )
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.badges.pdf_export",
+        actor_user_id=current_user.id,
+    )
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type="BADGE_EXPORT_AUTHORIZED",
+            resource_type="event",
+            resource_id=event.id,
+            actor_user_id=current_user.id,
+            organization_id=event.organization_id,
+            actor_role=current_user.role,
+            new_state={"participant_count": participant_count},
+        ),
+        db,
+    )
+    await db.commit()
+    return {
+        "authorized": True,
+        "reservation_id": str(reservation.id),
+        "participant_count": participant_count,
+    }
+
+
+@router.post("/export")
+async def export_badge_manifest(
+    event: CurrentEvent,
+    current_user: AdminOrAbove,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Export an event-scoped badge manifest under the bulk-export gate."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "badges.export",
+        user_id=current_user.id,
+    )
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_exports_per_event",
+        quantity=1,
+        unit="export",
+        idempotency_key=f"badge-export:{idempotency_key}",
+        metadata={"export_type": "badge_manifest"},
+    )
+    rows = (
+        await db.execute(
+            select(Badge, Participant)
+            .join(Participant, Participant.id == Badge.participant_id)
+            .where(Participant.event_id == event.id)
+            .order_by(Participant.regno, Badge.created_at)
+        )
+    ).all()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "badge_id",
+            "registration_number",
+            "participant_name",
+            "participant_email",
+            "badge_code",
+            "barcode",
+            "status",
+            "issued_at",
+        ]
+    )
+    for badge, participant in rows:
+        writer.writerow(
+            [
+                badge.id,
+                participant.regno,
+                participant.name,
+                participant.email,
+                badge.badge_code,
+                badge.barcode,
+                badge.status,
+                badge.issued_at.isoformat() if badge.issued_at else "",
+            ]
+        )
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.badges.export",
+        actor_user_id=current_user.id,
+    )
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type="BADGE_EXPORT_REQUESTED",
+            resource_type="event",
+            resource_id=event.id,
+            actor_user_id=current_user.id,
+            organization_id=event.organization_id,
+            actor_role=getattr(current_user, "role", None),
+            new_state={"record_count": len(rows), "format": "csv"},
+        ),
+        db,
+    )
+    await db.commit()
+    filename = f"{event.name.replace(' ', '_')[:40]}_badges.csv"
+    return StreamingResponse(
+        iter([output.getvalue().encode("utf-8-sig")]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/generate", response_model=BadgeResponse, status_code=status.HTTP_201_CREATED)

@@ -375,25 +375,25 @@
   ],
   "roles": [
     {
-      "rolname": "eventx_audit_export",
+      "rolname": "Event_audit_export",
       "rolsuper": false,
       "rolbypassrls": false,
       "rolcanlogin": false
     },
     {
-      "rolname": "eventx_migration",
+      "rolname": "Event_migration",
       "rolsuper": false,
       "rolbypassrls": true,
       "rolcanlogin": false
     },
     {
-      "rolname": "eventx_operational",
+      "rolname": "Event_operational",
       "rolsuper": false,
       "rolbypassrls": false,
       "rolcanlogin": false
     },
     {
-      "rolname": "eventx_runtime",
+      "rolname": "Event_runtime",
       "rolsuper": false,
       "rolbypassrls": false,
       "rolcanlogin": false

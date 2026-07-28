@@ -292,11 +292,7 @@ export default function VenueOperationsPage() {
   };
 
   return (
-    <div className="space-y-6 pb-8">
-      <EnterprisePageIntro
-        title="Venue Operations"
-        subtitle="Recommend venue templates, attach venue services, and raise a service request from the organizer portal using the same commercial logic used in command center."
-      />
+    <div className="space-y-6 pb-8 pt-4">
 
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <EnterprisePanel className="p-6">

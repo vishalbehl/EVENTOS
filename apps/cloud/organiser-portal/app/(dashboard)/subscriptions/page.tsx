@@ -15,10 +15,16 @@ import {
   Zap,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAddons, useCurrentPlan, usePlans } from "@/hooks/useBilling";
+import { useEvents } from "@/hooks/useEvents";
+import { apiPost } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { orgApi } from "@/components/organizer/org/org-api";
 import { CommercialDetailsDialog } from "@/components/organizer/platform/CommercialDetailsDialog";
+import { PlanActivationTargetModal } from "@/components/organizer/billing/PlanActivationTargetModal";
 import {
   EnterpriseEmptyState,
   EnterprisePageIntro,
@@ -72,164 +78,102 @@ function formatDate(dateStr: string | null | undefined) {
 // ─── Active Plan Status Panel ───────────────────────────────────────────────
 
 function ActivePlanPanel({ currentPlan }: { currentPlan: Record<string, any> | null }) {
-  // /billing/plan shape:
-  // { subscription_id, status, trial_ends_at, current_period_end, cancel_at_period_end,
-  //   plan: { id, name, tagline, description, price_per_event_min, max_events, max_users, ... },
-  //   usage: { events: { used, max }, users: { used, max }, ... } }
   const plan = currentPlan?.plan ?? null;
   const usage = currentPlan?.usage ?? null;
 
-  const planName = plan?.name ?? "Unknown Plan";
   const status = String(currentPlan?.status ?? "").toUpperCase();
+  const isTrial = status === "TRIAL" || currentPlan?.status_reason === "PUBLIC_DEMO_SIGNUP" || status !== "ACTIVE";
+  const planName = plan?.name ?? (isTrial ? "Free Trial" : "Unknown Plan");
   const expiresAt = currentPlan?.current_period_end ?? currentPlan?.trial_ends_at ?? null;
-  const price = plan?.price_per_event_min ?? plan?.price_per_event_max ?? null;
-  const tagline = plan?.tagline ?? plan?.description ?? null;
+  const price = plan?.price_per_event ?? null;
+  const tagline = isTrial
+    ? "Active evaluation environment. Select a commercial plan below to unlock custom themes, certificate generation, and expanded event capacity."
+    : (plan?.tagline ?? plan?.description ?? null);
 
   const eventsUsed = usage?.events?.used ?? 0;
   const eventsMax = usage?.events?.max ?? plan?.max_events ?? 0;
   const usagePercent = eventsMax > 0 ? Math.min((eventsUsed / eventsMax) * 100, 100) : 0;
+  const isActive = status === "ACTIVE";
 
-  const isActive = status === "ACTIVE" || status === "TRIAL";
-
-  // Features from plan highlights — backend returns plan.name-level data, build from limits
   const highlights: string[] = [
-    plan?.max_users ? `${plan.max_users} team members` : null,
-    plan?.max_registrations ? `${plan.max_registrations} registrations` : null,
-    plan?.max_speakers ? `${plan.max_speakers} speakers` : null,
-    plan?.max_sessions ? `${plan.max_sessions} sessions` : null,
-    plan?.storage_quota_mb ? `${Math.round(plan.storage_quota_mb / 1024)} GB storage` : null,
+    plan?.max_users !== undefined && plan?.max_users !== null ? `${plan.max_users} Team Member` : null,
+    plan?.max_registrations !== undefined && plan?.max_registrations !== null ? `${plan.max_registrations} Registrations` : null,
+    plan?.max_speakers !== undefined && plan?.max_speakers !== null ? `${plan.max_speakers} Speakers` : null,
+    plan?.max_sessions !== undefined && plan?.max_sessions !== null ? `${plan.max_sessions} Sessions` : null,
+    plan?.max_rooms !== undefined && plan?.max_rooms !== null ? `${plan.max_rooms} Room` : null,
+    plan?.storage_quota_mb !== undefined && plan?.storage_quota_mb !== null ? `${plan.storage_quota_mb >= 1024 ? Math.round(plan.storage_quota_mb / 1024) + " GB" : plan.storage_quota_mb + " MB"} Storage` : null,
   ].filter(Boolean) as string[];
 
-  if (!currentPlan) {
-    return (
-      <EnterprisePanel className="p-8">
-        <div className="flex flex-col md:flex-row md:items-center gap-6">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-white/[0.03] border border-white/[0.06]">
-            <CreditCard className="h-9 w-9 text-[var(--color-text-muted)]" />
-          </div>
-          <div>
-            <p className="text-[22px] font-bold tracking-[-0.03em] text-[var(--color-text-primary)]">
-              No active subscription
-            </p>
-            <p className="mt-2 max-w-xl text-[14px] leading-6 text-[var(--color-text-secondary)]">
-              Choose a workspace plan below to get started. You'll be able to create events, manage speakers, and activate modules.
-            </p>
-          </div>
-        </div>
-      </EnterprisePanel>
-    );
-  }
+  if (!currentPlan) return null;
 
   return (
-    <EnterprisePanel className="overflow-hidden p-0">
-      {/* Top accent line */}
-      <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#C2F542]/60 to-transparent" />
+    <EnterprisePanel className="overflow-hidden p-0 border border-white/10 bg-[#0d0d12]/90 shadow-2xl">
+      {/* Top subtle accent bar */}
+      <div className="h-0.5 w-full bg-gradient-to-r from-amber-500/0 via-amber-400/80 to-amber-500/0" />
 
       <div className="p-6 md:p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
-          {/* Left — Plan identity */}
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          {/* Left — Identity */}
           <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[rgba(194,245,66,0.25)] bg-[rgba(194,245,66,0.08)]">
-                <Zap className="h-5 w-5 text-[#C2F542]" />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                  Current Plan
-                </p>
-                <h2 className="text-[22px] font-bold tracking-[-0.03em] text-[var(--color-text-primary)] leading-tight">
-                  {planName}
-                </h2>
-              </div>
-              <span
-                className={[
-                  "ml-auto rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.15em]",
-                  isActive
-                    ? "border border-[rgba(194,245,66,0.3)] bg-[rgba(194,245,66,0.1)] text-[#C2F542]"
-                    : "border border-white/10 bg-white/5 text-white/50",
-                ].join(" ")}
-              >
-                {isActive ? "Active" : "Inactive"}
+            <div className="flex items-center gap-3 mb-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.15em] text-amber-400">
+                <Sparkles className="h-3 w-3 text-amber-400" />
+                {isTrial ? "Evaluation Workspace" : "Active Subscription"}
               </span>
-            </div>
-
-            {/* Tagline + Date + price row */}
-            {tagline && (
-              <p className="text-[13px] text-[var(--color-text-secondary)] mb-4 leading-relaxed">{tagline}</p>
-            )}
-            <div className="flex flex-wrap gap-5 mb-6">
               {expiresAt && (
-                <div className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-[var(--color-text-muted)]" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Renews / Expires</p>
-                    <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">{formatDate(expiresAt)}</p>
-                  </div>
-                </div>
+                <span className="text-[11px] font-mono text-[var(--color-text-muted)]">
+                  Expires {formatDate(expiresAt)}
+                </span>
               )}
-              {price !== null && (
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-[var(--color-text-muted)]" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">From</p>
-                    <p className="text-[13px] font-bold font-mono text-[var(--color-text-primary)]">{formatCurrency(price)} / event</p>
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-[var(--color-text-muted)]" />
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Status</p>
-                  <p className="text-[13px] font-semibold text-[var(--color-text-primary)] capitalize">{status}</p>
-                </div>
-              </div>
             </div>
 
-            {/* Features pills */}
-            {highlights.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {highlights.map((f) => (
-                  <span
-                    key={f}
-                    className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-[var(--color-text-secondary)]"
-                  >
-                    <Check className="h-3 w-3 text-[#C2F542]" />
-                    {f}
-                  </span>
-                ))}
-              </div>
+            <h2 className="text-[24px] font-extrabold tracking-[-0.03em] text-[var(--color-text-primary)]">
+              {planName}
+            </h2>
+
+            {tagline && (
+              <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
+                {tagline}
+              </p>
             )}
+
+            {/* Capacity Pills */}
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              {highlights.map((item) => (
+                <span
+                  key={item}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-primary)] backdrop-blur-sm"
+                >
+                  <Check className="h-3 w-3 text-amber-400 shrink-0" />
+                  {item}
+                </span>
+              ))}
+            </div>
           </div>
 
-          {/* Right — Usage stats */}
-          <div className="shrink-0 w-full lg:w-[260px] space-y-4">
-            <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Event Usage</p>
-                <span className="text-[11px] font-mono font-semibold text-[var(--color-text-primary)]">
-                  {eventsUsed} / {eventsMax > 0 ? eventsMax : "∞"}
+          {/* Right — Usage Box */}
+          <div className="shrink-0 w-full lg:w-[280px]">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 backdrop-blur-md">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                  Event Quota
+                </p>
+                <span className="text-[12px] font-mono font-bold text-[var(--color-text-primary)]">
+                  {eventsUsed} / {isTrial ? 1 : eventsMax > 0 ? eventsMax : "∞"}
                 </span>
               </div>
-              {eventsMax > 0 && (
-                <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#C2F542] to-[#8ecf2f] transition-all duration-700"
-                    style={{ width: `${usagePercent}%` }}
-                  />
-                </div>
-              )}
-              <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
-                {eventsMax > 0 ? `${Math.max(eventsMax - eventsUsed, 0)} slots remaining` : "Unlimited events"}
-              </p>
-            </div>
 
-            <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-[#C2F542]" />
-                <p className="text-[12px] font-semibold text-[var(--color-text-primary)]">Plan is active</p>
+              <div className="h-1.5 w-full rounded-full bg-white/[0.06] overflow-hidden mb-3">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-700"
+                  style={{ width: `${isTrial ? Math.min((eventsUsed / 1) * 100, 100) : usagePercent}%` }}
+                />
               </div>
-              <p className="mt-1 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                All modules provisioned and available for event creation.
+
+              <p className="text-[11px] text-[var(--color-text-muted)] leading-normal">
+                {isTrial
+                  ? "1 evaluation event available. Upgrade below to remove limits."
+                  : `${Math.max(eventsMax - eventsUsed, 0)} slots remaining`}
               </p>
             </div>
           </div>
@@ -309,15 +253,18 @@ function StickySummaryBar({
 
 export default function SubscriptionsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { data: currentPlan } = useCurrentPlan();
   const { data: plansData } = usePlans();
   const { data: addonsData } = useAddons();
+  const { data: userEvents } = useEvents();
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailType, setDetailType] = useState<"plan" | "addon" | null>(null);
   const [detailData, setDetailData] = useState<any | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
+  const [targetModalOpen, setTargetModalOpen] = useState(false);
 
   const handleOpenPlanDetails = async (planId: string) => {
     try {
@@ -342,18 +289,22 @@ export default function SubscriptionsPage() {
   };
 
   const currentPlanRecord = currentPlan as Record<string, any> | null | undefined;
-  const activePlanName: string = (currentPlanRecord?.plan_name ?? currentPlanRecord?.name ?? "").toLowerCase();
+  const currentStatus = String(currentPlanRecord?.status ?? "").toUpperCase();
+  const isTrialMode = currentStatus === "TRIAL" || currentPlanRecord?.status_reason === "PUBLIC_DEMO_SIGNUP" || currentStatus !== "ACTIVE";
+  const activePlanName: string = isTrialMode ? "" : (currentPlanRecord?.plan?.name ?? currentPlanRecord?.plan_name ?? currentPlanRecord?.name ?? "").toLowerCase();
 
   const plans = useMemo(
     () =>
-      asArray<Record<string, any>>(plansData).map((plan) => ({
+      asArray<Record<string, any>>(plansData)
+        .filter((plan) => String(plan.name || "").toLowerCase() !== "free trial")
+        .map((plan) => ({
         id: String(plan.id ?? plan.key ?? plan.name),
         name: String(plan.name ?? "Plan"),
         tagline: plan.tagline || plan.description || undefined,
         description: plan.description || undefined,
-        price: toNumber(plan.price ?? plan.amount ?? plan.price_inr ?? plan.price_per_event ?? plan.price_per_event_min),
+        price: toNumber(plan.price ?? plan.amount ?? plan.price_inr ?? plan.price_per_event),
         priceLabel: (() => {
-          const price = toNumber(plan.price ?? plan.amount ?? plan.price_inr ?? plan.price_per_event ?? plan.price_per_event_min);
+          const price = toNumber(plan.price ?? plan.amount ?? plan.price_inr ?? plan.price_per_event);
           if (price !== null) return `${formatCurrency(price, String(plan.currency || "INR"))} / event`;
           return "Custom Pricing";
         })(),
@@ -430,11 +381,39 @@ export default function SubscriptionsPage() {
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const selectedAddonItems = planAddons.filter((a) => selectedAddonIds.includes(a.id));
 
-  const handleProceed = () => {
+  const handleCreateNewEvent = () => {
     const params = new URLSearchParams();
     if (selectedPlanId) params.set("plan", selectedPlanId);
     if (selectedAddonIds.length > 0) params.set("addons", selectedAddonIds.join(","));
     router.push(`/events/new${params.toString() ? `?${params.toString()}` : ""}`);
+  };
+
+  const handleProceed = () => {
+    if (userEvents && userEvents.length > 0) {
+      setTargetModalOpen(true);
+    } else {
+      handleCreateNewEvent();
+    }
+  };
+
+  const handleApplyToCurrentEvent = async (eventId: string) => {
+    try {
+      await apiPost(`/events/${eventId}/apply-plan`, {
+        plan_id: selectedPlanId,
+        plan_name: selectedPlan?.name,
+        addon_keys: selectedAddonIds,
+      });
+      toast.success("Plan entitlements applied successfully to event!");
+      queryClient.invalidateQueries({ queryKey: ["events"] });
+      queryClient.invalidateQueries({ queryKey: ["event", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["billing"] });
+      queryClient.invalidateQueries({ queryKey: ["organization-capabilities"] });
+      queryClient.invalidateQueries({ queryKey: ["event-capabilities"] });
+      queryClient.invalidateQueries({ queryKey: ["me-permissions"] });
+      router.push(`/events/${eventId}/dashboard`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to apply plan to event");
+    }
   };
 
   const handlePlanAction = (plan: (typeof plans)[0]) => {
@@ -450,24 +429,13 @@ export default function SubscriptionsPage() {
   };
 
   return (
-    <div className="space-y-8 pb-32">
-      <EnterprisePageIntro
-        title="Subscriptions"
-        subtitle="EventX OS uses per-event subscriptions. Choose a core plan, then activate commercial add-ons only where you need more capability."
-      />
-
-      {/* Active Plan Status */}
+    <div className="space-y-8 pb-32 pt-4">
       <ActivePlanPanel currentPlan={currentPlanRecord ?? null} />
 
       {/* How it works */}
       <EnterpriseStepRail
         title="How per-event subscription works"
         steps={[
-          {
-            title: "Create event",
-            description: "Set up the event workspace and operational scope first.",
-            icon: Sparkles,
-          },
           {
             title: "Choose plan",
             description: "Select the core plan that matches your team and attendee scale.",
@@ -477,6 +445,11 @@ export default function SubscriptionsPage() {
             title: "Add plan extensions",
             description: "Activate optional add-ons for extra capabilities and coverage.",
             icon: Package,
+          },
+          {
+            title: "Create event",
+            description: "Set up the event workspace and operational scope with active entitlements.",
+            icon: Sparkles,
           },
           {
             title: "Activate",
@@ -580,6 +553,16 @@ export default function SubscriptionsPage() {
         onOpenChange={setDetailOpen}
         type={detailType}
         data={detailData}
+      />
+
+      <PlanActivationTargetModal
+        open={targetModalOpen}
+        onOpenChange={setTargetModalOpen}
+        selectedPlan={selectedPlan}
+        selectedAddonNames={selectedAddonItems.map((a) => a.name)}
+        events={userEvents || []}
+        onApplyToCurrentEvent={handleApplyToCurrentEvent}
+        onCreateNewEvent={handleCreateNewEvent}
       />
     </div>
   );

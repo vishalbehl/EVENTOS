@@ -4,14 +4,31 @@ from fastapi import Depends, HTTPException, Path, status
 
 from app.dependencies import ActiveUser, CurrentEvent, DB
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
-from app.modules.billing.services.limit_guard import LimitGuard
+from app.modules.billing.services.capability_service import CapabilityService
+from app.modules.billing.capability_registry import OPERATION_PERMISSIONS, feature_for_operation
+from app.modules.identity.models.user import User
+from app.modules.rbac.services.permission_service import get_user_permissions
 
 
 class EntitlementRequiredException(HTTPException):
-    def __init__(self, feature: str):
+    def __init__(
+        self,
+        feature: str,
+        reason_code: str = "NOT_ENTITLED",
+        *,
+        organization_id: uuid.UUID | None = None,
+        event_id: uuid.UUID | None = None,
+        actor_user_id: uuid.UUID | None = None,
+        operation: str | None = None,
+    ):
+        self.organization_id = organization_id
+        self.event_id = event_id
+        self.actor_user_id = actor_user_id
+        self.operation = operation
         super().__init__(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
+                "code": reason_code,
                 "error": "ERR_ENTITLEMENT_REQUIRED",
                 "feature": feature,
                 "upgrade_url": "/billing/upgrade",
@@ -27,19 +44,144 @@ def _is_platform_bypass(user) -> bool:
     )
 
 
+async def _enforce_actor_permission(
+    db,
+    user_id: uuid.UUID | None,
+    operation: str,
+    *,
+    event_id: uuid.UUID | None = None,
+) -> None:
+    permission = OPERATION_PERMISSIONS[operation]
+    if permission is None or user_id is None:
+        return
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "PERMISSION_DENIED", "permission": permission},
+        )
+    if _is_platform_bypass(user) or user.role in {"admin", "organiser", "organizer"}:
+        return
+    permissions = await get_user_permissions(db, user_id, event_id)
+    if "*" not in permissions and permission not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "PERMISSION_DENIED", "permission": permission},
+        )
+
+
 def require_org_feature(feature_key: str):
     async def dependency(user: ActiveUser, db: DB):
-        if _is_platform_bypass(user):
-            return user
         org_id = user.organization_id
         if not org_id:
             raise EntitlementRequiredException(feature_key)
-        has_access = await EntitlementResolver.has_feature(db, org_id, feature_key)
-        if not has_access:
-            raise EntitlementRequiredException(feature_key)
+        await enforce_org_feature(db, org_id, feature_key, user_id=user.id)
         return user
 
     return Depends(dependency)
+
+
+def require_org_operation(operation: str):
+    feature_key = feature_for_operation(operation)
+
+    async def dependency(user: ActiveUser, db: DB):
+        org_id = user.organization_id
+        if not org_id:
+            raise EntitlementRequiredException(feature_key)
+        await _enforce_actor_permission(db, user.id, operation)
+        await enforce_org_feature(db, org_id, feature_key, user_id=user.id)
+        return user
+
+    return Depends(dependency)
+
+
+async def enforce_org_feature(db, organization_id: uuid.UUID, feature_key: str, *, user_id: uuid.UUID | None = None):
+    """Authoritative organization capability gate for services and admin flows."""
+    try:
+        result = await CapabilityService.resolve_organization(db, organization_id, user_id=user_id)
+    except Exception as exc:
+        raise EntitlementRequiredException(
+            feature_key,
+            "RESOLUTION_UNAVAILABLE",
+            organization_id=organization_id,
+            actor_user_id=user_id,
+        ) from exc
+    feature = result["features"].get(feature_key)
+    if not feature or not feature["enabled"]:
+        raise EntitlementRequiredException(
+            feature_key,
+            feature.get("reason_code", "NOT_ENTITLED") if feature else "NOT_ENTITLED",
+            organization_id=organization_id,
+            actor_user_id=user_id,
+        )
+    return feature
+
+
+async def enforce_org_operation(
+    db,
+    organization_id: uuid.UUID,
+    operation: str,
+    *,
+    user_id: uuid.UUID | None = None,
+):
+    await _enforce_actor_permission(db, user_id, operation)
+    feature_key = feature_for_operation(operation)
+    try:
+        return await enforce_org_feature(
+            db,
+            organization_id,
+            feature_key,
+            user_id=user_id,
+        )
+    except EntitlementRequiredException as exc:
+        exc.operation = operation
+        raise
+
+
+async def resolve_org_operation(
+    db,
+    organization_id: uuid.UUID,
+    operation: str,
+    *,
+    user_id: uuid.UUID | None = None,
+):
+    """Resolve an organization operation without granting access on failure.
+
+    This is for policy selectors such as SLA tiering where the enclosing base
+    workflow remains available but premium behavior must fail closed.
+    """
+    feature_key = feature_for_operation(operation)
+    try:
+        result = await CapabilityService.resolve_organization(
+            db, organization_id, user_id=user_id
+        )
+    except Exception:
+        from app.modules.billing.services.capability_diagnostics_service import CapabilityDiagnosticsService
+        await CapabilityDiagnosticsService.record_isolated(
+            event_type="RESOLUTION_FAILURE",
+            source="feature_gate.resolve_org_operation",
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            severity="ERROR",
+            reason_code="RESOLUTION_UNAVAILABLE",
+            capability_key=feature_key,
+            operation_key=operation,
+        )
+        return {
+            "key": feature_key,
+            "enabled": False,
+            "value": False,
+            "reason_code": "RESOLUTION_UNAVAILABLE",
+        }
+    return result["features"].get(
+        feature_key,
+        {
+            "key": feature_key,
+            "enabled": False,
+            "value": False,
+            "reason_code": "NOT_ENTITLED",
+        },
+    )
 
 
 async def require_event_activation(event: CurrentEvent, user: ActiveUser, db: DB):
@@ -56,29 +198,76 @@ async def require_event_activation(event: CurrentEvent, user: ActiveUser, db: DB
 
 def require_event_feature(feature_key: str):
     async def dependency(event: CurrentEvent, user: ActiveUser, db: DB):
-        if _is_platform_bypass(user):
-            return event
-        has_access = await EntitlementResolver.has_feature(db, event.organization_id, feature_key, event_id=event.id)
-        if not has_access:
-            raise EntitlementRequiredException(feature_key)
+        # Platform actors retain administrative APIs, but organizer-domain
+        # operations always enforce the selected event's actual capability.
+        await enforce_event_feature(db, event.organization_id, event.id, feature_key, user_id=user.id)
         return event
 
     return Depends(dependency)
 
 
-def require_event_limit_headroom(limit_key: str):
+def require_event_operation(operation: str):
+    feature_key = feature_for_operation(operation)
+
     async def dependency(event: CurrentEvent, user: ActiveUser, db: DB):
-        if _is_platform_bypass(user):
-            return event
-        if limit_key == "max_event_team_members":
-            await LimitGuard.check_event_team_members(db, event.organization_id, event.id)
-        elif limit_key == "max_badge_templates":
-            await LimitGuard.check_badge_templates(db, event.organization_id, event.id)
-        elif limit_key == "max_certificate_templates":
-            await LimitGuard.check_certificate_templates(db, event.organization_id, event.id)
+        await _enforce_actor_permission(db, user.id, operation, event_id=event.id)
+        await enforce_event_feature(db, event.organization_id, event.id, feature_key, user_id=user.id)
         return event
 
     return Depends(dependency)
+
+
+async def enforce_event_operation(
+    db,
+    organization_id: uuid.UUID,
+    event_id: uuid.UUID,
+    operation: str,
+    *,
+    user_id: uuid.UUID | None = None,
+):
+    await _enforce_actor_permission(db, user_id, operation, event_id=event_id)
+    return await enforce_event_feature(
+        db,
+        organization_id,
+        event_id,
+        feature_for_operation(operation),
+        user_id=user_id,
+        operation=operation,
+    )
+
+
+async def enforce_event_feature(
+    db,
+    organization_id: uuid.UUID,
+    event_id: uuid.UUID,
+    feature_key: str,
+    *,
+    user_id: uuid.UUID | None = None,
+    operation: str | None = None,
+):
+    """Authoritative operation gate usable by authenticated and public flows."""
+    try:
+        result = await CapabilityService.resolve_event(db, organization_id, event_id, user_id=user_id)
+    except Exception as exc:
+        raise EntitlementRequiredException(
+            feature_key,
+            "RESOLUTION_UNAVAILABLE",
+            organization_id=organization_id,
+            event_id=event_id,
+            actor_user_id=user_id,
+            operation=operation,
+        ) from exc
+    feature = result["features"].get(feature_key)
+    if not feature or not feature["enabled"]:
+        raise EntitlementRequiredException(
+            feature_key,
+            feature.get("reason_code", "NOT_ENTITLED") if feature else "NOT_ENTITLED",
+            organization_id=organization_id,
+            event_id=event_id,
+            actor_user_id=user_id,
+            operation=operation,
+        )
+    return feature
 
 
 def require_feature(feature_key: str):

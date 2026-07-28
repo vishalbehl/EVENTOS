@@ -5,11 +5,11 @@ import csv
 import io
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update, delete, or_, func, nullslast
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,21 +30,268 @@ from app.modules.speakers.schemas.speaker import SpeakerSummary
 from app.services import email_service, upload_service
 from app.modules.analytics.services.analytics_service import get_event_email_analytics
 from app.config import settings
+from app.core.dependencies.feature_gate import enforce_event_feature, enforce_event_operation, require_event_feature, require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.communications.models.channel_delivery import (
+    CommunicationDelivery,
+    CommunicationDeliveryBatch,
+)
+from app.modules.notifications.services.channel_delivery_service import (
+    ChannelDeliveryService,
+    batch_response,
+)
+from app.modules.notifications.tasks.channel_delivery_tasks import (
+    dispatch_communication_batch,
+)
+from app.modules.platform.models.organization_console import (
+    OrganizationNotificationChannelConfig,
+)
 
 router = APIRouter(prefix="/events/{event_id}/notifications", tags=["notifications"])
+
+
+class ProviderDeliveryRequest(BaseModel):
+    recipients: List[str] = Field(min_length=1, max_length=200)
+    title: Optional[str] = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=4096)
+    data: dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field(min_length=5, max_length=1000)
+    case_reference: Optional[str] = Field(default=None, max_length=160)
+
+
+@router.get("/provider-status")
+async def provider_channel_status(
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the selected organization's non-secret provider readiness."""
+    rows = (
+        await db.scalars(
+            select(OrganizationNotificationChannelConfig)
+            .where(
+                OrganizationNotificationChannelConfig.organization_id
+                == event.organization_id,
+                OrganizationNotificationChannelConfig.channel.in_(
+                    ["SMS", "WHATSAPP", "PUSH"]
+                ),
+                OrganizationNotificationChannelConfig.deleted_at.is_(None),
+            )
+            .order_by(OrganizationNotificationChannelConfig.channel)
+        )
+    ).all()
+    by_channel = {row.channel: row for row in rows}
+    return {
+        "event_id": event.id,
+        "organization_id": event.organization_id,
+        "channels": {
+            channel: {
+                "configured": channel in by_channel,
+                "provider": by_channel[channel].provider
+                if channel in by_channel
+                else None,
+                "state": by_channel[channel].state
+                if channel in by_channel
+                else "UNAVAILABLE",
+                "verified_at": by_channel[channel].last_verified_at
+                if channel in by_channel
+                else None,
+                "available": bool(
+                    channel in by_channel
+                    and by_channel[channel].state == "ACTIVE"
+                    and by_channel[channel].last_verified_at
+                ),
+            }
+            for channel in ("SMS", "WHATSAPP", "PUSH")
+        },
+        "freshness_at": datetime.now(timezone.utc),
+    }
+
+
+@router.post(
+    "/channels/{channel}/deliveries",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_provider_delivery(
+    channel: Literal["SMS", "WHATSAPP", "PUSH"],
+    payload: ProviderDeliveryRequest,
+    event: CurrentEvent,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """provider_delivery_mutations: queue a quota-reserved provider batch."""
+    if channel == "SMS":
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.sms.send",
+            user_id=actor.id,
+        )
+    elif channel == "WHATSAPP":
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.whatsapp.send",
+            user_id=actor.id,
+        )
+    else:
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.push.send",
+            user_id=actor.id,
+        )
+    batch, replayed = await ChannelDeliveryService.create_batch(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        channel=channel,
+        recipients=payload.recipients,
+        title=payload.title,
+        body=payload.body,
+        data=payload.data,
+        reason=payload.reason,
+        case_reference=payload.case_reference,
+        idempotency_key=idempotency_key,
+        actor_user_id=actor.id,
+    )
+    if not replayed:
+        await AuditService.write_log_sync(
+            AuditContext(
+                action_type=f"{channel}_DELIVERY_BATCH_QUEUED",
+                resource_type="communication_delivery_batch",
+                resource_id=batch.id,
+                actor_user_id=actor.id,
+                organization_id=event.organization_id,
+                actor_role=getattr(actor, "role", None),
+                new_state={
+                    "event_id": str(event.id),
+                    "channel": channel,
+                    "provider": batch.provider,
+                    "requested_count": batch.requested_count,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                    "idempotency_key": idempotency_key,
+                },
+                is_sensitive=True,
+            ),
+            db,
+        )
+        await db.commit()
+    deliveries = (
+        await db.scalars(
+            select(CommunicationDelivery).where(
+                CommunicationDelivery.batch_id == batch.id,
+                CommunicationDelivery.organization_id
+                == event.organization_id,
+                CommunicationDelivery.event_id == event.id,
+            )
+        )
+    ).all()
+    if batch.status in {"QUEUED", "RETRY_PENDING"}:
+        try:
+            dispatch_communication_batch.delay(
+                str(batch.id), str(event.organization_id)
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "DELIVERY_QUEUE_UNAVAILABLE",
+                    "batch_id": str(batch.id),
+                },
+            ) from exc
+    return {**batch_response(batch, list(deliveries)), "replayed": replayed}
+
+
+@router.get("/channels/{channel}/deliveries")
+async def list_provider_deliveries(
+    channel: Literal["SMS", "WHATSAPP", "PUSH"],
+    event: CurrentEvent,
+    cursor: Optional[uuid.UUID] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if channel == "SMS":
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.sms.send",
+            user_id=actor.id,
+        )
+    elif channel == "WHATSAPP":
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.whatsapp.send",
+            user_id=actor.id,
+        )
+    else:
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.push.send",
+            user_id=actor.id,
+        )
+    query = (
+        select(CommunicationDeliveryBatch)
+        .where(
+            CommunicationDeliveryBatch.organization_id
+            == event.organization_id,
+            CommunicationDeliveryBatch.event_id == event.id,
+            CommunicationDeliveryBatch.channel == channel,
+        )
+        .order_by(CommunicationDeliveryBatch.created_at.desc())
+        .limit(limit + 1)
+    )
+    if cursor:
+        cursor_time = await db.scalar(
+            select(CommunicationDeliveryBatch.created_at).where(
+                CommunicationDeliveryBatch.id == cursor,
+                CommunicationDeliveryBatch.organization_id
+                == event.organization_id,
+                CommunicationDeliveryBatch.event_id == event.id,
+            )
+        )
+        if cursor_time is None:
+            raise HTTPException(status_code=404, detail="Cursor not found.")
+        query = query.where(
+            CommunicationDeliveryBatch.created_at < cursor_time
+        )
+    rows = (await db.scalars(query)).all()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    return {
+        "items": [batch_response(row) for row in page],
+        "next_cursor": page[-1].id if has_more and page else None,
+    }
 
 
 @router.post("/test-template", response_model=MessageResponse)
 async def test_template(
     event: CurrentEvent,
     data: TestTemplateRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Send a test email using a template and dummy data."""
+    await enforce_event_operation(db, event.organization_id, event.id, "communications.email.send", user_id=actor.id)
     result = await db.execute(
         select(EmailTemplate).where(
             EmailTemplate.id == data.template_id,
-            or_(EmailTemplate.event_id == event.id, EmailTemplate.event_id.is_(None))
+            or_(EmailTemplate.event_id == event.id, EmailTemplate.event_id.is_(None)),
+            EmailTemplate.deleted_at.is_(None),
         )
     )
     template = result.scalar_one_or_none()
@@ -107,17 +354,27 @@ async def test_template(
             rejection_reason="The slide aspect ratio must be 16:9, and embedded videos must be in MP4 format."
         )
     
-    await send_email(
-        to_email=data.to_email,
-        subject=f"[TEST] {render_template(template.subject, variables)}",
-        html_body=render_template(template.body_html, variables),
-        event_id=event.id
-    )
+    reservation = await UsageReservationService.reserve(db, organization_id=event.organization_id, event_id=event.id, limit_key="max_emails_per_event", quantity=1, unit="recipient", idempotency_key=f"test-email:{idempotency_key}", metadata={"recipient": data.to_email})
+    try:
+        await send_email(
+            to_email=data.to_email,
+            subject=f"[TEST] {render_template(template.subject, variables)}",
+            html_body=render_template(template.body_html, variables),
+            event_id=event.id,
+            db=db,
+        )
+        await UsageReservationService.consume(db, reservation.id, source="communications.test_email", actor_user_id=actor.id)
+        await db.commit()
+    except Exception:
+        if reservation.status == "RESERVED":
+            await UsageReservationService.release(db, reservation.id)
+            await db.commit()
+        raise
     
     return MessageResponse(message=f"Test email dispatched to {data.to_email}")
 
 
-@router.get("/templates", response_model=List[EmailTemplateResponse])
+@router.get("/templates", response_model=List[EmailTemplateResponse], dependencies=[require_event_operation("communications.email.read")])
 async def list_templates(
     event: CurrentEvent,
     target_type: str = "speaker",
@@ -128,7 +385,8 @@ async def list_templates(
         select(EmailTemplate)
         .where(
             or_(EmailTemplate.event_id == event.id, EmailTemplate.event_id.is_(None)),
-            EmailTemplate.target_type == target_type
+            EmailTemplate.target_type == target_type,
+            EmailTemplate.deleted_at.is_(None),
         )
         .order_by(EmailTemplate.created_at.desc())
     )
@@ -158,7 +416,7 @@ async def list_templates(
     return [EmailTemplateResponse.model_validate(t) for t in filtered_templates]
 
 
-@router.get("/analytics")
+@router.get("/analytics", dependencies=[require_event_operation("communications.email.read")])
 async def get_analytics(
     event: CurrentEvent,
     target_type: str = "speaker",
@@ -168,7 +426,7 @@ async def get_analytics(
     return await get_event_email_analytics(db, event.id, target_type=target_type)
 
 
-@router.get("/logs", response_model=PaginatedEmailLogResponse)
+@router.get("/logs", response_model=PaginatedEmailLogResponse, dependencies=[require_event_operation("communications.email.read")])
 async def get_email_logs(
     event: CurrentEvent,
     campaign_id: Optional[uuid.UUID] = None,
@@ -184,13 +442,13 @@ async def get_email_logs(
         query = (
             select(EmailLog)
             .join(Participant, EmailLog.participant_id == Participant.id)
-            .where(Participant.event_id == event.id)
+            .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
         )
     else:
         query = (
             select(EmailLog)
             .join(Speaker, EmailLog.speaker_id == Speaker.id)
-            .where(Speaker.event_id == event.id)
+            .where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
         )
 
     if campaign_id:
@@ -220,29 +478,67 @@ async def get_email_logs(
     }
 
 
-@router.get("/logs/download")
+@router.get(
+    "/logs/download",
+    dependencies=[
+        require_event_operation("communications.email.read"),
+        require_event_operation("exports.create"),
+    ],
+)
 async def download_logs(
-    event: CurrentEvent, 
+    event: CurrentEvent,
     target_type: str = "speaker",
-    db: AsyncSession = Depends(get_db)
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Memory-efficient CSV export of delivery logs."""
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_exports_per_event",
+        quantity=1,
+        unit="export",
+        idempotency_key=f"email-log-export:{idempotency_key}",
+        metadata={"target_type": target_type, "domain": "communications"},
+    )
     if target_type == "participant":
         from app.modules.registration.models.participant import Participant
         query = (
             select(EmailLog)
             .join(Participant, EmailLog.participant_id == Participant.id)
-            .where(Participant.event_id == event.id)
+            .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
             .order_by(EmailLog.sent_at.desc())
         )
     else:
         query = (
             select(EmailLog)
             .join(Speaker, EmailLog.speaker_id == Speaker.id)
-            .where(Speaker.event_id == event.id)
+            .where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
             .order_by(EmailLog.sent_at.desc())
         )
     result = await db.execute(query)
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type="EMAIL_LOG_EXPORT_ACCESSED",
+            resource_type="event",
+            resource_id=event.id,
+            actor_user_id=actor.id,
+            organization_id=event.organization_id,
+            actor_role=getattr(actor, "role", None),
+            new_state={"event_id": str(event.id), "target_type": target_type, "format": "csv"},
+            is_sensitive=True,
+        ),
+        db,
+    )
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.communications.email_log_export",
+        actor_user_id=actor.id,
+    )
+    await db.commit()
 
     def generate_csv():
         output = io.StringIO()
@@ -281,7 +577,9 @@ async def track_open(
     db: AsyncSession = Depends(get_db)
 ):
     """Tracking pixel endpoint to record email opens."""
-    result = await db.execute(select(EmailLog).where(EmailLog.id == log_id))
+    result = await db.execute(
+        select(EmailLog).where(EmailLog.id == log_id, EmailLog.event_id == event_id)
+    )
     log = result.scalar_one_or_none()
 
     if log and not log.opened_at:
@@ -293,7 +591,12 @@ async def track_open(
     return Response(content=pixel_data, media_type="image/png")
 
 
-@router.post("/templates", response_model=EmailTemplateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/templates",
+    response_model=EmailTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
 async def create_template(
     event: CurrentEvent,
     data: EmailTemplateCreate,
@@ -309,17 +612,23 @@ async def create_template(
     return EmailTemplateResponse.model_validate(template)
 
 
-@router.patch("/templates/{template_id}", response_model=EmailTemplateResponse)
+@router.patch(
+    "/templates/{template_id}",
+    response_model=EmailTemplateResponse,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
 async def update_template(
     template_id: uuid.UUID,
     event: CurrentEvent,
     data: EmailTemplateUpdate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
         select(EmailTemplate).where(
             EmailTemplate.id == template_id,
-            or_(EmailTemplate.event_id == event.id, EmailTemplate.event_id.is_(None))
+            or_(EmailTemplate.event_id == event.id, EmailTemplate.event_id.is_(None)),
+            EmailTemplate.deleted_at.is_(None),
         )
     )
     template = result.scalar_one_or_none()
@@ -372,21 +681,28 @@ async def update_template(
     return EmailTemplateResponse.model_validate(template)
 
 
-@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
 async def delete_template(
     template_id: uuid.UUID,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
         select(EmailTemplate).where(
             EmailTemplate.id == template_id,
-            EmailTemplate.event_id == event.id
+            EmailTemplate.event_id == event.id,
+            EmailTemplate.deleted_at.is_(None),
         )
     )
     template = result.scalar_one_or_none()
     if template:
-        await db.delete(template)
+        template.deleted_at = datetime.now(timezone.utc)
+        template.deleted_by = current_user.id
         await db.commit()
     return None
 
@@ -396,7 +712,10 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
     
     if campaign.target_type == "participant":
         from app.modules.registration.models.participant import Participant
-        query = select(func.count(Participant.id)).where(Participant.event_id == campaign.event_id)
+        query = select(func.count(Participant.id)).where(
+            Participant.event_id == campaign.event_id,
+            Participant.deleted_at.is_(None),
+        )
         if campaign.recipient_filter == "paid":
             query = query.where(Participant.paid_status == "Paid")
         elif campaign.recipient_filter == "unpaid":
@@ -417,7 +736,10 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
     from app.modules.presentations.models.poster import Poster
     from app.modules.events.models.session_speaker import SessionSpeaker
     
-    query = select(func.count(Speaker.id)).where(Speaker.event_id == campaign.event_id)
+    query = select(func.count(Speaker.id)).where(
+        Speaker.event_id == campaign.event_id,
+        Speaker.deleted_at.is_(None),
+    )
     
     if campaign.recipient_filter == "pending_upload" or campaign.recipient_filter == "pending":
         query = query.where(Speaker.upload_status == "pending")
@@ -459,7 +781,7 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
     return res.scalar_one()
 
 
-@router.get("/campaigns", response_model=List[CampaignResponse])
+@router.get("/campaigns", response_model=List[CampaignResponse], dependencies=[require_event_operation("communications.email.read")])
 async def list_campaigns(
     event: CurrentEvent,
     target_type: str = "speaker",
@@ -468,7 +790,8 @@ async def list_campaigns(
 ):
     q = select(EmailCampaign).where(
         EmailCampaign.event_id == event.id,
-        EmailCampaign.target_type == target_type
+        EmailCampaign.target_type == target_type,
+        EmailCampaign.deleted_at.is_(None),
     )
 
     # Restricted roles only see their own campaigns or those targeting their assigned nodes
@@ -493,13 +816,39 @@ async def list_campaigns(
     return campaigns
 
 
-@router.post("/campaigns", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/campaigns",
+    response_model=CampaignResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
 async def create_campaign(
     event: CurrentEvent,
     data: CampaignCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_CAMPAIGN_MGMT", user_id=current_user.id)
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == data.template_id,
+            or_(
+                EmailTemplate.event_id == event.id,
+                EmailTemplate.event_id.is_(None),
+            ),
+            EmailTemplate.deleted_at.is_(None),
+        )
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail="Email template not found for this event.")
+    if data.scheduled_at is not None or template.template_type in {"reminder", "deadline"}:
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "communications.reminders.manage",
+            user_id=current_user.id,
+        )
     # Enforce restrictions for non-admin roles
     if current_user.role not in ["super_admin", "admin", "organiser"]:
         if data.recipient_filter not in ["specific_session", "specific_room"]:
@@ -532,6 +881,7 @@ async def create_campaign(
             recipient_count_result = await db.execute(
                 select(func.count(Participant.id)).where(
                     Participant.event_id == event.id,
+                    Participant.deleted_at.is_(None),
                     Participant.id.in_(data.speaker_ids)
                 )
             )
@@ -543,6 +893,7 @@ async def create_campaign(
             recipient_count_result = await db.execute(
                 select(func.count(Speaker.id)).where(
                     Speaker.event_id == event.id,
+                    Speaker.deleted_at.is_(None),
                     Speaker.id.in_(data.speaker_ids)
                 )
             )
@@ -563,19 +914,28 @@ async def create_campaign(
     return CampaignResponse.model_validate(campaign)
 
 
-@router.post("/campaigns/{campaign_id}/send", response_model=MessageResponse)
+@router.post(
+    "/campaigns/{campaign_id}/send",
+    response_model=MessageResponse,
+    dependencies=[
+        require_event_operation("communications.campaign.manage"),
+        require_event_operation("communications.bulk_email.send"),
+    ],
+)
 async def send_campaign_trigger(
     campaign_id: uuid.UUID,
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger the celery task for an email campaign."""
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL")
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
     
     result = await db.execute(
         select(EmailCampaign).where(
             EmailCampaign.id == campaign_id,
-            EmailCampaign.event_id == event.id
+            EmailCampaign.event_id == event.id,
+            EmailCampaign.deleted_at.is_(None),
         )
     )
     campaign = result.scalar_one_or_none()
@@ -594,7 +954,11 @@ async def send_campaign_trigger(
     return MessageResponse(message="Campaign dispatch initiated.")
 
 
-@router.delete("/campaigns/{campaign_id}", response_model=MessageResponse)
+@router.delete(
+    "/campaigns/{campaign_id}",
+    response_model=MessageResponse,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
 async def delete_campaign(
     campaign_id: uuid.UUID,
     event: CurrentEvent,
@@ -605,7 +969,8 @@ async def delete_campaign(
     result = await db.execute(
         select(EmailCampaign).where(
             EmailCampaign.id == campaign_id,
-            EmailCampaign.event_id == event.id
+            EmailCampaign.event_id == event.id,
+            EmailCampaign.deleted_at.is_(None),
         )
     )
     campaign = result.scalar_one_or_none()
@@ -616,12 +981,13 @@ async def delete_campaign(
         if campaign.created_by != current_user.id:
             raise HTTPException(status_code=403, detail="You do not have permission to delete this campaign.")
             
-    await db.delete(campaign)
+    campaign.deleted_at = datetime.now(timezone.utc)
+    campaign.deleted_by = current_user.id
     await db.commit()
-    return MessageResponse(message="Campaign deleted successfully.")
+    return MessageResponse(message="Campaign archived and remains recoverable.")
 
 
-@router.get("/recipients")
+@router.get("/recipients", dependencies=[require_event_operation("communications.email.read")])
 async def get_recipients(
     event: CurrentEvent,
     filter: str = Query("all"),
@@ -634,7 +1000,10 @@ async def get_recipients(
     """
     if target_type == "participant":
         from app.modules.registration.models.participant import Participant
-        query = select(Participant).where(Participant.event_id == event.id)
+        query = select(Participant).where(
+            Participant.event_id == event.id,
+            Participant.deleted_at.is_(None),
+        )
 
         if filter == "paid":
             query = query.where(Participant.paid_status == "Paid")
@@ -667,7 +1036,10 @@ async def get_recipients(
     from sqlalchemy.orm import selectinload
     from app.modules.presentations.models.poster import Poster
 
-    query = select(Speaker).where(Speaker.event_id == event.id)
+    query = select(Speaker).where(
+        Speaker.event_id == event.id,
+        Speaker.deleted_at.is_(None),
+    )
 
     if filter == "pending_upload" or filter == "pending":
         query = query.where(Speaker.upload_status == "pending")
@@ -704,7 +1076,15 @@ async def get_recipients(
     return summaries
 
 
-@router.post("/campaigns/send-to-speakers", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/campaigns/send-to-speakers",
+    response_model=CampaignResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[
+        require_event_operation("communications.campaign.manage"),
+        require_event_operation("communications.bulk_email.send"),
+    ],
+)
 async def send_to_speakers(
     event: CurrentEvent,
     data: SendToSpeakersRequest,
@@ -716,6 +1096,7 @@ async def send_to_speakers(
     Used by the speaker-row mail button and the bulk-email dialog in the Command Center.
     """
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL", user_id=current_user.id)
 
     # Validate template exists
     tpl_result = await db.execute(
@@ -732,6 +1113,7 @@ async def send_to_speakers(
     speaker_count_result = await db.execute(
         select(func.count(Speaker.id)).where(
             Speaker.event_id == event.id,
+            Speaker.deleted_at.is_(None),
             Speaker.id.in_(data.recipient_ids)
         )
     )
@@ -772,7 +1154,14 @@ class AutoInviteResponse(BaseModel):
     message: str
 
 
-@router.post("/campaigns/auto-invite", response_model=AutoInviteResponse)
+@router.post(
+    "/campaigns/auto-invite",
+    response_model=AutoInviteResponse,
+    dependencies=[
+        require_event_operation("communications.campaign.manage"),
+        require_event_operation("communications.bulk_email.send"),
+    ],
+)
 async def auto_invite_speakers(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
@@ -786,16 +1175,21 @@ async def auto_invite_speakers(
     - Returns total/pending speaker counts so the frontend can show accurate messaging.
     """
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL", user_id=current_user.id)
 
     # ── 1. Count speakers ────────────────────────────────
     total_result = await db.execute(
-        select(func.count(Speaker.id)).where(Speaker.event_id == event.id)
+        select(func.count(Speaker.id)).where(
+            Speaker.event_id == event.id,
+            Speaker.deleted_at.is_(None),
+        )
     )
     total_speakers: int = total_result.scalar_one()
 
     pending_result = await db.execute(
         select(func.count(Speaker.id)).where(
             Speaker.event_id == event.id,
+            Speaker.deleted_at.is_(None),
             Speaker.upload_status == "pending"
         )
     )
@@ -868,7 +1262,14 @@ async def auto_invite_speakers(
     )
 
 
-@router.post("/campaigns/{campaign_id}/resend-failed", response_model=MessageResponse)
+@router.post(
+    "/campaigns/{campaign_id}/resend-failed",
+    response_model=MessageResponse,
+    dependencies=[
+        require_event_operation("communications.campaign.manage"),
+        require_event_operation("communications.bulk_email.send"),
+    ],
+)
 async def resend_failed_emails(
     campaign_id: uuid.UUID,
     event: CurrentEvent,
@@ -876,6 +1277,7 @@ async def resend_failed_emails(
 ) -> MessageResponse:
     """Reset 'failed' logs for a campaign and re-trigger the background task."""
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
+    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_BULK_EMAIL")
     
     await db.execute(
         update(EmailLog)
@@ -895,13 +1297,14 @@ class SendSingleEmailRequest(BaseModel):
     template: str
     link: str
 
-email_router = APIRouter(prefix="/events/{event_id}/emails", tags=["emails"])
+email_router = APIRouter(prefix="/events/{event_id}/emails", tags=["emails"], dependencies=[require_event_feature("FEAT_EMAIL_NOTIFICATIONS")])
 
 @email_router.post("/send-single", response_model=MessageResponse)
 async def send_single_email(
     event_id: uuid.UUID,
     payload: SendSingleEmailRequest,
     event: CurrentEvent,
+    idempotency_key: str = Header(min_length=16, max_length=120, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -911,6 +1314,7 @@ async def send_single_email(
     speaker_res = await db.execute(
         select(Speaker).where(
             Speaker.event_id == event_id,
+            Speaker.deleted_at.is_(None),
             func.lower(Speaker.email) == str(payload.recipient).lower()
         )
     )
@@ -965,15 +1369,24 @@ async def send_single_email(
     inlined_html, text_fallback = render_with_css(body_html, variables)
 
     # 4. Dispatch email
-    await send_email(
-        to_email=payload.recipient,
-        subject=rendered_subject,
-        html_body=inlined_html,
-        text_body=text_fallback,
-        speaker_id=speaker.id,
-        event_id=event_id,
-        db=db,
-    )
+    reservation = await UsageReservationService.reserve(db, organization_id=event.organization_id, event_id=event.id, limit_key="max_emails_per_event", quantity=1, unit="recipient", idempotency_key=f"single-email:{idempotency_key}", metadata={"recipient": str(payload.recipient)})
+    try:
+        await send_email(
+            to_email=payload.recipient,
+            subject=rendered_subject,
+            html_body=inlined_html,
+            text_body=text_fallback,
+            speaker_id=speaker.id,
+            event_id=event_id,
+            db=db,
+        )
+        await UsageReservationService.consume(db, reservation.id, source="communications.single_email")
+        await db.commit()
+    except Exception:
+        if reservation.status == "RESERVED":
+            await UsageReservationService.release(db, reservation.id)
+            await db.commit()
+        raise
 
     return MessageResponse(message="Email dispatched successfully.")
 

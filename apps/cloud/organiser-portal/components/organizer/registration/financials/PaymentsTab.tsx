@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
+import { useOperationAccess } from '@/lib/capabilities'
 
 interface Transaction {
   id: string
@@ -24,6 +25,7 @@ interface Transaction {
 }
 
 export default function PaymentsTab({ eventId }: { eventId: string }) {
+  const paymentAccess = useOperationAccess('registration.payments.manage')
   const [paymentEnabled, setPaymentEnabled] = useState(false)
   const [activeGateway, setActiveGateway] = useState('simulated')
   const [autoApprovePaid, setAutoApprovePaid] = useState(true)
@@ -146,6 +148,8 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
             <button
               type="button"
               onClick={() => setPaymentEnabled(!paymentEnabled)}
+              disabled={paymentAccess.loading || !paymentAccess.enabled}
+              title={!paymentAccess.enabled ? `Unavailable: ${(paymentAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
               className={`h-6 w-11 rounded-full p-1 transition-colors duration-300 focus:outline-none ${
                 paymentEnabled ? 'bg-[var(--pri)]' : 'bg-white/10'
               }`}
@@ -181,6 +185,8 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                 <button
                   type="button"
                   onClick={() => setAutoApprovePaid(!autoApprovePaid)}
+                  disabled={paymentAccess.loading || !paymentAccess.enabled}
+                  title={!paymentAccess.enabled ? `Unavailable: ${(paymentAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
                   className={`h-6 w-11 rounded-full p-1 transition-colors duration-300 focus:outline-none ${
                     autoApprovePaid ? 'bg-[var(--pri)]' : 'bg-white/10'
                   }`}
@@ -198,7 +204,8 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
           <div className="pt-4 border-t border-white/5 shrink-0 mt-4">
             <button
               onClick={handleSaveConfig}
-              disabled={saving}
+              disabled={saving || paymentAccess.loading || !paymentAccess.enabled}
+              title={!paymentAccess.enabled ? `Unavailable: ${(paymentAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
               className="flex items-center justify-center gap-2.5 w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/20 cursor-pointer"
             >
               <Save className="h-4 w-4" />

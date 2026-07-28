@@ -34,7 +34,9 @@ export function useEvent(eventId: string) {
 export function useCreateEvent() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => apiPost<EventResponse>("/events", data),
+    mutationFn: (data: any) => apiPost<EventResponse>("/events", data, {
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["events"] });
     },

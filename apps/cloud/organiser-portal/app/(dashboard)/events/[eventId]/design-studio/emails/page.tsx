@@ -1,76 +1,9 @@
 "use client";
 
-import React from "react";
-import { useParams, useRouter } from "next/navigation";
-import { Mail, ArrowLeft, Sparkles, LayoutGrid, Palette, Sliders } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useParams } from "next/navigation";
+import TemplateEditor from "@/components/organizer/emails/templates/TemplateEditor";
 
-export default function EmailDesignerMockup() {
-  const { eventId } = useParams();
-  const router = useRouter();
-
-  return (
-    <div className="flex flex-col h-full w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-[14px] overflow-hidden relative shadow-2xl p-8 justify-between">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-blue-500/10 rounded-xl border border-blue-500/20">
-            <Mail className="h-6 w-6 text-blue-400" />
-          </div>
-          <div>
-            <h1 className="text-sm font-black uppercase tracking-[0.25em] text-zinc-100">Email Studio</h1>
-            <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Drag-and-drop HTML email designer</p>
-          </div>
-        </div>
-
-        <Button
-          onClick={() => router.push(`/events/${eventId}/dashboard`)}
-          variant="outline"
-          className="h-8 gap-2 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 text-zinc-300 text-xs font-bold uppercase tracking-wider rounded-xl"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to Dashboard
-        </Button>
-      </div>
-
-      {/* Main Preview */}
-      <div className="flex-grow flex flex-col items-center justify-center py-12 text-center max-w-xl mx-auto">
-        <div className="relative mb-6">
-          <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 opacity-20 blur-xl animate-pulse"></div>
-          <div className="relative p-6 bg-zinc-900/60 border border-zinc-800 rounded-2xl flex items-center justify-center">
-            <Sparkles className="h-10 w-10 text-blue-400 animate-spin-slow" />
-          </div>
-        </div>
-
-        <h2 className="text-lg font-bold uppercase tracking-widest text-zinc-100 mb-2">Email Designer Coming Soon</h2>
-        <p className="text-xs text-zinc-400 leading-relaxed mb-8">
-          Design high-conversion newsletters, dynamic registration confirmations, and speaker updates with an intuitive drag-and-drop newsletter builder. Fully compatible with major email clients.
-        </p>
-
-        {/* Mockup Preview Boxes */}
-        <div className="grid grid-cols-3 gap-4 w-full text-left">
-          <div className="p-4 bg-zinc-900/30 border border-zinc-850 rounded-xl">
-            <LayoutGrid className="h-5 w-5 text-blue-400 mb-2" />
-            <h3 className="text-[10px] font-bold uppercase tracking-wider mb-1">Layout Blocks</h3>
-            <p className="text-[9px] text-zinc-500">Drag headers, text blocks, and button links easily.</p>
-          </div>
-          <div className="p-4 bg-zinc-900/30 border border-zinc-850 rounded-xl">
-            <Palette className="h-5 w-5 text-blue-400 mb-2" />
-            <h3 className="text-[10px] font-bold uppercase tracking-wider mb-1">Brand Assets</h3>
-            <p className="text-[9px] text-zinc-500">Inject event logos, colors, and banner imagery.</p>
-          </div>
-          <div className="p-4 bg-zinc-900/30 border border-zinc-850 rounded-xl">
-            <Sliders className="h-5 w-5 text-blue-400 mb-2" />
-            <h3 className="text-[10px] font-bold uppercase tracking-wider mb-1">Variables</h3>
-            <p className="text-[9px] text-zinc-500">Personalize emails with name and ticket tokens.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer Info */}
-      <div className="border-t border-zinc-900/80 pt-6 flex justify-between text-[9px] font-semibold text-zinc-500 uppercase tracking-widest">
-        <span>© Eventos email delivery systems</span>
-        <span>Version 2.0 (Premium Upgrade Preview)</span>
-      </div>
-    </div>
-  );
+export default function EmailDesignerPage() {
+  const params = useParams<{ eventId: string }>();
+  return <TemplateEditor eventId={String(params.eventId)} />;
 }

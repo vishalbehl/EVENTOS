@@ -29,6 +29,7 @@ from app.modules.billing.schemas.billing_admin import (
     SubscriptionStatusUpdate,
 )
 from app.modules.platform.models.organization import Organization
+from app.modules.platform.models.organization_console import EntitlementOverrideRequest
 from app.modules.platform.support_access import PlatformSupportScope
 
 
@@ -54,6 +55,12 @@ def _snapshot(record: Any, fields: tuple[str, ...]) -> dict[str, Any]:
 
 
 class BillingAdminLifecycleService:
+    APPROVAL_KEYS = {
+        "subscription_status": "billing.subscription.status",
+        "grant_issue": "billing.entitlement_grant.issue",
+        "grant_capacity": "billing.entitlement_grant.capacity",
+        "grant_status": "billing.entitlement_grant.status",
+    }
     SUBSCRIPTION_TRANSITIONS = {
         "TRIAL": {"ACTIVE", "SUSPENDED", "CANCELLED", "EXPIRED"},
         "ACTIVE": {"SUSPENDED", "GRACE_PERIOD", "CANCELLED", "EXPIRED"},
@@ -121,6 +128,62 @@ class BillingAdminLifecycleService:
         db.add(operation)
         await db.flush()
         return operation, False
+
+    @staticmethod
+    async def _consume_approved_change(
+        db: AsyncSession,
+        *,
+        organization_id: uuid.UUID,
+        approved_request_id: uuid.UUID,
+        entitlement_key: str,
+        requested_value: dict[str, Any],
+    ) -> EntitlementOverrideRequest:
+        """Consume one independently approved, payload-specific change request.
+
+        Idempotent replays return before this helper is called. Any request
+        made with a different idempotency key sees the APPLIED status and
+        cannot execute the same commercial authority twice.
+        """
+        approval = await db.scalar(
+            select(EntitlementOverrideRequest)
+            .where(
+                EntitlementOverrideRequest.id == approved_request_id,
+                EntitlementOverrideRequest.organization_id == organization_id,
+            )
+            .with_for_update()
+        )
+        if approval is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "APPROVED_CHANGE_REQUEST_REQUIRED",
+                    "message": "A tenant-scoped independently approved change request is required.",
+                },
+            )
+        if (
+            approval.status != "APPROVED"
+            or approval.operation != "REPLACE"
+            or approval.entitlement_key != entitlement_key
+            or approval.requested_by == approval.approved_by
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "APPROVED_CHANGE_REQUEST_REQUIRED",
+                    "message": "The supplied request is not an active independently approved change.",
+                },
+            )
+        if BillingAdminLifecycleService._fingerprint(approval.requested_value) != BillingAdminLifecycleService._fingerprint(requested_value):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "APPROVED_CHANGE_MISMATCH",
+                    "message": "The approved resource and values do not match this mutation.",
+                },
+            )
+        approval.status = "APPLIED"
+        approval.version += 1
+        return approval
 
     @staticmethod
     async def _ensure_organization(db: AsyncSession, organization_id: uuid.UUID) -> None:
@@ -219,6 +282,17 @@ class BillingAdminLifecycleService:
             subscription = await BillingAdminLifecycleService._load(db, OrganizationSubscription, scope.organization_id, subscription_id, lock=True)
             BillingAdminLifecycleService._assert_version(subscription, payload.version)
             BillingAdminLifecycleService._assert_transition(subscription.status, payload.status, BillingAdminLifecycleService.SUBSCRIPTION_TRANSITIONS)
+            approval = await BillingAdminLifecycleService._consume_approved_change(
+                db,
+                organization_id=scope.organization_id,
+                approved_request_id=payload.approved_request_id,
+                entitlement_key=BillingAdminLifecycleService.APPROVAL_KEYS["subscription_status"],
+                requested_value={
+                    "resource_id": str(subscription.id),
+                    "version": payload.version,
+                    "status": payload.status,
+                },
+            )
             old_state = _snapshot(subscription, ("id", "status", "version", "cancel_at_period_end"))
             now = datetime.now(timezone.utc)
             subscription.status = payload.status
@@ -275,7 +349,10 @@ class BillingAdminLifecycleService:
             await BillingAdminLifecycleService._audit(
                 db, scope, subscription, action="SUBSCRIPTION_STATUS_CHANGED", entity_type="SUBSCRIPTION",
                 reason=payload.reason, old_state=old_state,
-                new_state=_snapshot(subscription, ("id", "status", "version", "status_changed_at")),
+                new_state={
+                    **_snapshot(subscription, ("id", "status", "version", "status_changed_at")),
+                    "approved_request_id": str(approval.id),
+                },
             )
             await db.commit()
             await db.refresh(subscription)
@@ -299,11 +376,23 @@ class BillingAdminLifecycleService:
                 subscription = await BillingAdminLifecycleService._load(db, OrganizationSubscription, scope.organization_id, payload.subscription_id)
             if payload.source_type == "PLAN" and subscription is None:
                 raise HTTPException(status_code=422, detail={"code": "SUBSCRIPTION_REQUIRED", "message": "PLAN grants require a tenant-owned subscription."})
+            approved_values = payload.model_dump(
+                mode="json",
+                exclude={"reason", "approved_request_id"},
+                exclude_none=True,
+            )
+            approval = await BillingAdminLifecycleService._consume_approved_change(
+                db,
+                organization_id=scope.organization_id,
+                approved_request_id=payload.approved_request_id,
+                entitlement_key=BillingAdminLifecycleService.APPROVAL_KEYS["grant_issue"],
+                requested_value=approved_values,
+            )
             now = datetime.now(timezone.utc)
             grant_status = "PENDING" if payload.valid_from and payload.valid_from > now else "ACTIVE"
             if subscription and subscription.status not in {"ACTIVE", "TRIAL"}:
                 grant_status = "PENDING"
-            values = payload.model_dump(exclude={"reason"})
+            values = payload.model_dump(exclude={"reason", "approved_request_id"})
             grant = EntitlementGrant(
                 organization_id=scope.organization_id,
                 status=grant_status,
@@ -322,7 +411,10 @@ class BillingAdminLifecycleService:
             await BillingAdminLifecycleService._audit(
                 db, scope, grant, action="ENTITLEMENT_GRANT_ISSUED", entity_type="ENTITLEMENT_GRANT",
                 reason=payload.reason, old_state=None,
-                new_state=_snapshot(grant, ("id", "subscription_id", "grant_type", "scope_type", "consumption_model", "unit_type", "status", "quantity_total", "version")),
+                new_state={
+                    **_snapshot(grant, ("id", "subscription_id", "grant_type", "scope_type", "consumption_model", "unit_type", "status", "quantity_total", "version")),
+                    "approved_request_id": str(approval.id),
+                },
             )
             await db.commit()
             await db.refresh(grant)
@@ -354,6 +446,17 @@ class BillingAdminLifecycleService:
                 raise HTTPException(status_code=409, detail={"code": "GRANT_CAPACITY_BELOW_USAGE", "message": "Capacity cannot be lower than authoritative allocated usage.", "allocated": allocated})
             if grant.consumption_model == "SINGLE_USE" and payload.quantity_total != 1:
                 raise HTTPException(status_code=409, detail={"code": "INVALID_GRANT_CAPACITY", "message": "SINGLE_USE grant capacity must remain 1."})
+            approval = await BillingAdminLifecycleService._consume_approved_change(
+                db,
+                organization_id=scope.organization_id,
+                approved_request_id=payload.approved_request_id,
+                entitlement_key=BillingAdminLifecycleService.APPROVAL_KEYS["grant_capacity"],
+                requested_value={
+                    "resource_id": str(grant.id),
+                    "version": payload.version,
+                    "quantity_total": payload.quantity_total,
+                },
+            )
             old_state = _snapshot(grant, ("id", "quantity_total", "version"))
             grant.quantity_total = payload.quantity_total
             grant.version += 1
@@ -364,7 +467,10 @@ class BillingAdminLifecycleService:
             await BillingAdminLifecycleService._audit(
                 db, scope, grant, action="ENTITLEMENT_GRANT_CAPACITY_CHANGED", entity_type="ENTITLEMENT_GRANT",
                 reason=payload.reason, old_state=old_state,
-                new_state=_snapshot(grant, ("id", "quantity_total", "version")),
+                new_state={
+                    **_snapshot(grant, ("id", "quantity_total", "version")),
+                    "approved_request_id": str(approval.id),
+                },
             )
             await db.commit()
             await db.refresh(grant)
@@ -395,6 +501,17 @@ class BillingAdminLifecycleService:
                         status_code=409,
                         detail={"code": "SUBSCRIPTION_NOT_ACTIVE", "message": "Activate the parent subscription before activating this grant."},
                     )
+            approval = await BillingAdminLifecycleService._consume_approved_change(
+                db,
+                organization_id=scope.organization_id,
+                approved_request_id=payload.approved_request_id,
+                entitlement_key=BillingAdminLifecycleService.APPROVAL_KEYS["grant_status"],
+                requested_value={
+                    "resource_id": str(grant.id),
+                    "version": payload.version,
+                    "status": payload.status,
+                },
+            )
             old_state = _snapshot(grant, ("id", "status", "version"))
             now = datetime.now(timezone.utc)
             grant.status = payload.status
@@ -425,7 +542,10 @@ class BillingAdminLifecycleService:
             await BillingAdminLifecycleService._audit(
                 db, scope, grant, action="ENTITLEMENT_GRANT_STATUS_CHANGED", entity_type="ENTITLEMENT_GRANT",
                 reason=payload.reason, old_state=old_state,
-                new_state=_snapshot(grant, ("id", "status", "version", "status_changed_at")),
+                new_state={
+                    **_snapshot(grant, ("id", "status", "version", "status_changed_at")),
+                    "approved_request_id": str(approval.id),
+                },
             )
             await db.commit()
             await db.refresh(grant)

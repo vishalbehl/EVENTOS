@@ -14,6 +14,8 @@ class Track(Base):
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    display_color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 class Agenda(Base):
     __tablename__ = "agendas"

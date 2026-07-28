@@ -89,7 +89,8 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`,
+          'Idempotency-Key': crypto.randomUUID()
         },
         body: JSON.stringify({
           email: formData.email,
@@ -116,7 +117,8 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+            'Authorization': `Bearer ${useAuthStore.getState().accessToken}`,
+            'Idempotency-Key': crypto.randomUUID()
           },
           body: JSON.stringify({
             user_id: newUser.id,

@@ -112,40 +112,26 @@ export function Header() {
           <Menu className="h-5 w-5" />
         </button>
 
-        {!isPlatformWorkspace ? (
-          <div className="flex min-w-0 items-center gap-3">
-            <div
-              className="hidden sm:flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-              style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)" }}
-            >
-              <Box className="h-4 w-4 text-[var(--color-primary-mid)]" />
-            </div>
-            <div className="flex items-center gap-1.5 overflow-hidden">
-              {breadcrumbs.map((crumb, index) => (
-                <div key={crumb.href} className="flex items-center gap-1.5 whitespace-nowrap">
-                  {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />}
-                  <Link
-                    href={crumb.href}
-                    className={cn(
-                      "text-[10px] font-black uppercase tracking-widest transition-colors truncate",
-                      index === breadcrumbs.length - 1
-                        ? "text-[var(--color-text-primary)]"
-                        : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
-                    )}
-                  >
-                    {crumb.label}
-                  </Link>
-                </div>
-              ))}
-            </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex items-center gap-1.5 overflow-hidden">
+            {breadcrumbs.map((crumb, index) => (
+              <div key={crumb.href} className="flex items-center gap-1.5 whitespace-nowrap">
+                {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />}
+                <Link
+                  href={crumb.href}
+                  className={cn(
+                    "text-[10px] font-black uppercase tracking-widest transition-colors truncate",
+                    index === breadcrumbs.length - 1
+                      ? "text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
+                  )}
+                >
+                  {crumb.label}
+                </Link>
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="min-w-0">
-            <h1 className="truncate text-xl md:text-[28px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-              {pageTitle}
-            </h1>
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Centered Search Command Bar */}

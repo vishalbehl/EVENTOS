@@ -206,7 +206,7 @@ returns a record with the expected `subscription_id`, `organization_id`, and `st
 >
 > I’ve finished the code-side fix for multi-subscription event slots. Before I touch live data, I’m checking the dev database shape so I can tell whether “start fresh” looks like one org reset or a full shared wipe.
 >
-> I inspected the local DB so we’re not guessing anymore: there are only two orgs, `eventxos` and `meity`, and only `meity` has event data right now. I’m pulling the exact row counts for the `meity` event footprint so I can give you a precise reset target instead of a blind wipe.
+> I inspected the local DB so we’re not guessing anymore: there are only two orgs, `Eventos` and `meity`, and only `meity` has event data right now. I’m pulling the exact row counts for the `meity` event footprint so I can give you a precise reset target instead of a blind wipe.
 >
 > I’ve identified the current test footprint exactly: `meity` has one draft event (`WORLD TECH CONGRESS` / `WTC26`), 6 cloned email templates, 14 seeded roles, and 1 active subscription row. I’m applying the schema migration now so the multiple-subscription fix is actually live in the database before we do any reset.
 >
@@ -1260,7 +1260,7 @@ Two product decisions still materially change the enforcement design, and they a
 >
 > Does the event immediately stop working? Does only billing-sensitive functionality stop? Does the event enter read-only mode? Does a live event continue operating?
 >
-> This is especially important for EventX OS because abruptly disabling a live event due to a billing status change could create serious operational problems.
+> This is especially important for Event OS because abruptly disabling a live event due to a billing status change could create serious operational problems.
 >
 > I recommend a policy such as:
 >
@@ -3828,7 +3828,7 @@ One important limit: I could not run the backend test suite in this environment 
 >
 > ## Summary
 >
-> Transform EventX OS incrementally into an AWS-hosted, enterprise multi-tenant cloud platform supporting:
+> Transform Event OS incrementally into an AWS-hosted, enterprise multi-tenant cloud platform supporting:
 >
 > - One million monthly active users and up to 100,000 concurrent users.
 > - 99.95% availability, RPO of 5 minutes, and RTO of 30 minutes.
@@ -3952,7 +3952,7 @@ One important limit: I could not run the backend test suite in this environment 
 > - Implement GDPR and India DPDP workflows for consent, purpose, legal basis, data access, correction, portability, deletion, retention, and breach notification.
 > - Store regional data only in India and prevent unsupported cross-region replication or third-party transfer.
 > - Maintain a subprocessor register, DPAs, transfer assessments, privacy notices, records of processing, and deletion verification.
-> - Keep card data outside EventX OS by using hosted/tokenized payment pages; verify webhook signatures and maintain PCI SAQ-A scope documentation.
+> - Keep card data outside Event OS by using hosted/tokenized payment pages; verify webhook signatures and maintain PCI SAQ-A scope documentation.
 > - Complete internal audit, management review, corrective actions, evidence sampling, and independent penetration testing before certification assessment.
 >
 > ## CI/CD and Infrastructure Controls
@@ -4004,13 +4004,13 @@ One important limit: I could not run the backend test suite in this environment 
 
 The implementation boundary is now stable: cloud platform first, with venue components isolated as a later certified release; shared PostgreSQL with mandatory RLS plus a dedicated-database enterprise tier; and an incremental modular-monolith refactor with selective service extraction. I’m doing one final dependency and operations pass to make the milestones, compatibility rules, and release gates concrete enough for another engineering team to execute without architectural guesswork.
 
-> Review and refactor the existing “Enterprise Production, Scale, Accessibility, and Compliance Plan” for EventX OS. Do not discard the existing architecture, rewrite the plan from scratch, or remove its long-term goals. Preserve the strong target-state direction, including enterprise multi-tenancy, PostgreSQL RLS, snapshot-first event subscription enforcement, deterministic entitlement snapshots, durable asynchronous processing, transactional outbox, idempotency, workload-separated workers, private object storage, observability, accessibility, infrastructure as code, disaster recovery, and compliance readiness. However, restructure the document so it clearly separates long-term target architecture from immediate implementation work and is realistically executable by a solo developer or very small engineering team.
+> Review and refactor the existing “Enterprise Production, Scale, Accessibility, and Compliance Plan” for Event OS. Do not discard the existing architecture, rewrite the plan from scratch, or remove its long-term goals. Preserve the strong target-state direction, including enterprise multi-tenancy, PostgreSQL RLS, snapshot-first event subscription enforcement, deterministic entitlement snapshots, durable asynchronous processing, transactional outbox, idempotency, workload-separated workers, private object storage, observability, accessibility, infrastructure as code, disaster recovery, and compliance readiness. However, restructure the document so it clearly separates long-term target architecture from immediate implementation work and is realistically executable by a solo developer or very small engineering team.
 >
-> The revised document must be organized into four primary layers: “Current-State Baseline,” “Enterprise Target-State Architecture,” “Platform Engineering Standards,” and “Trigger-Driven Implementation Roadmap.” The Target-State Architecture should describe where EventX OS is intended to go at maturity, while the Implementation Roadmap should clearly identify what must be done now, what comes next, and what is activated only when customer demand, scale, contractual requirements, or measured technical bottlenecks justify it. Do not treat all target-state technologies and compliance frameworks as immediate implementation requirements.
+> The revised document must be organized into four primary layers: “Current-State Baseline,” “Enterprise Target-State Architecture,” “Platform Engineering Standards,” and “Trigger-Driven Implementation Roadmap.” The Target-State Architecture should describe where Event OS is intended to go at maturity, while the Implementation Roadmap should clearly identify what must be done now, what comes next, and what is activated only when customer demand, scale, contractual requirements, or measured technical bottlenecks justify it. Do not treat all target-state technologies and compliance frameworks as immediate implementation requirements.
 >
 > First, add a new opening section called “Current-State Baseline and Known Blocking Findings.” This section must explicitly describe the actual current platform state before presenting the future architecture. Include the current hosting model, current approximate traffic and concurrency if known, current number and maturity of production applications, current backend and worker maturity, current database and migration status, current authentication model, current tenant isolation model, current observability level, and current deployment process. If exact information is not known, mark it as “Requires Baseline Measurement” rather than inventing values. Explicitly list all known confirmed security and production findings as named Phase 0 blockers rather than hiding them inside generic security language. These must include rotation of any previously exposed encryption or application secrets, validation that exposed historical credentials are no longer usable, enforcement of JWT authentication and authorization on all Socket.IO and WebSocket connection and room-join paths, MFA enforcement for privileged accounts where MFA exists in schema or design but is not currently enforced, removal of runtime ALTER TABLE operations and startup DDL that bypass Alembic, repair and validation of the complete Alembic migration graph, consolidation of duplicated authentication and authorization checks across modules, removal of unsafe trust in client-provided tenant headers, removal of silent exception swallowing and unsafe production fallbacks, and execution of a formal security scan and threat model after the baseline becomes reproducible.
 >
-> Reclassify the existing document itself as the “Enterprise Target-State Architecture and Production Standards Plan.” Clearly state that goals such as one million monthly active users, 100,000 concurrent users, multi-region disaster recovery, advanced enterprise identity, cell architecture, dedicated tenant databases, OpenSearch, EKS, and extensive compliance automation are target-state capabilities, not immediate build requirements. Add an explicit principle that EventX OS will scale from measured demand and contractual requirements rather than pre-building every component of the final architecture.
+> Reclassify the existing document itself as the “Enterprise Target-State Architecture and Production Standards Plan.” Clearly state that goals such as one million monthly active users, 100,000 concurrent users, multi-region disaster recovery, advanced enterprise identity, cell architecture, dedicated tenant databases, OpenSearch, EKS, and extensive compliance automation are target-state capabilities, not immediate build requirements. Add an explicit principle that Event OS will scale from measured demand and contractual requirements rather than pre-building every component of the final architecture.
 >
 > Replace calendar-driven infrastructure expansion with trigger-driven architecture decisions. For every major infrastructure capability, define an adoption trigger. EKS must not be mandatory by default. Replace the current direct commitment to EKS with an Architecture Decision Record gate comparing ECS Fargate and EKS based on workload count, operational complexity, Kubernetes expertise, scaling characteristics, WebSocket behavior, specialized media-processing requirements, deployment frequency, and team size. ECS Fargate should be considered the default initial managed container runtime for a small team unless measured complexity or operational requirements justify Kubernetes. Preserve EKS as a valid target-state option.
 >
@@ -4046,7 +4046,7 @@ The implementation boundary is now stable: cloud platform first, with venue comp
 >
 > Refactor identity modernization into a trigger-driven program. Immediate work should enforce the existing authentication architecture correctly, including MFA for privileged accounts, secure refresh-token behavior, key rotation, WebSocket authentication, service identities, authorization centralization, session revocation, and audit logging. Do not require immediate migration to Cognito, SAML federation, or SCIM unless customer requirements justify it. Preserve OIDC/SAML federation, passkeys, enterprise SSO, SCIM provisioning, domain discovery, account linking, and identity broker migration as future enterprise capabilities activated by customer contracts or procurement requirements. Before any identity migration, require a dedicated migration design covering existing user IDs, password strategy, account linking, duplicate emails, tenant membership mapping, refresh-token invalidation, MFA migration, recovery processes, break-glass accounts, and audit continuity.
 >
-> Refactor the compliance section into three categories: Legal and Regulatory Requirements, Payment Scope Requirements, and Assurance Frameworks. Treat DPDP and GDPR as legal compliance programs where applicable, not as certifications. Treat PCI SAQ-A as a payment architecture and validation scope that depends on keeping card data outside EventX OS through approved hosted or tokenized payment flows. Treat ISO 27001 and SOC 2 as assurance programs whose sequencing must be driven by actual customer procurement requirements. Do not commit to pursuing ISO 27001 and SOC 2 simultaneously unless a commercial requirement justifies it. Require a customer and RFP evidence review before selecting the first assurance framework. The plan should ask which compliance evidence is actually preventing deals from closing and prioritize accordingly.
+> Refactor the compliance section into three categories: Legal and Regulatory Requirements, Payment Scope Requirements, and Assurance Frameworks. Treat DPDP and GDPR as legal compliance programs where applicable, not as certifications. Treat PCI SAQ-A as a payment architecture and validation scope that depends on keeping card data outside Event OS through approved hosted or tokenized payment flows. Treat ISO 27001 and SOC 2 as assurance programs whose sequencing must be driven by actual customer procurement requirements. Do not commit to pursuing ISO 27001 and SOC 2 simultaneously unless a commercial requirement justifies it. Require a customer and RFP evidence review before selecting the first assurance framework. The plan should ask which compliance evidence is actually preventing deals from closing and prioritize accordingly.
 >
 > Preserve privacy-by-design requirements immediately even when regulatory enforcement is phased. Consent provenance, purpose limitation, data inventory, retention, deletion propagation, processor inventory, breach workflows, rights-request workflows, and evidence collection should be designed early because they are expensive to retrofit after large amounts of participant data exist.
 >
@@ -4076,19 +4076,19 @@ The implementation boundary is now stable: cloud platform first, with venue comp
 >
 > Finally, rewrite the Mandatory Release Gates so they are phase-specific instead of requiring hyperscale, full DR, full accessibility certification, all compliance evidence, and every enterprise capability before the first production release. Create separate gates for Phase 0 Security Baseline, Phase 1 Tenant Isolation and Licensing, Phase 2 Production Cloud, Phase 3 Operational Maturity, Phase 4 Enterprise Readiness, and Phase 5 Hyperscale Validation. Every phase must have measurable exit criteria, evidence artifacts, named owners or responsible roles, dependencies, and rollback or remediation requirements.
 >
-> The final revised plan must remain technically detailed, but it should distinguish clearly between: what EventX OS must fix immediately, what it needs for a secure first production deployment, what it needs for reliable SaaS operations, what is customer-driven enterprise capability, and what belongs only to future hyperscale architecture. Preserve all valuable architectural ideas from the original plan, but remove the assumption that they must all be implemented together. The final result should function simultaneously as a credible enterprise north-star architecture and a realistic, trigger-driven execution roadmap for the current stage of EventX OS.
+> The final revised plan must remain technically detailed, but it should distinguish clearly between: what Event OS must fix immediately, what it needs for a secure first production deployment, what it needs for reliable SaaS operations, what is customer-driven enterprise capability, and what belongs only to future hyperscale architecture. Preserve all valuable architectural ideas from the original plan, but remove the assumption that they must all be implemented together. The final result should function simultaneously as a credible enterprise north-star architecture and a realistic, trigger-driven execution roadmap for the current stage of Event OS.
 
 <details><summary>1 previous message</summary>
 
 > Plan
 >
-> # EventX OS Enterprise Target-State Architecture and Production Standards Plan
+> # Event OS Enterprise Target-State Architecture and Production Standards Plan
 >
 > ## Purpose
 >
-> This plan preserves the long-term EventX OS architecture while separating immediate production work from capabilities activated by measured scale, customer contracts, regulatory obligations, or demonstrated technical bottlenecks.
+> This plan preserves the long-term Event OS architecture while separating immediate production work from capabilities activated by measured scale, customer contracts, regulatory obligations, or demonstrated technical bottlenecks.
 >
-> EventX OS will scale from evidence. It will not pre-build Kubernetes, OpenSearch, multi-cell routing, dedicated databases, advanced identity federation, or hyperscale infrastructure before those capabilities are justified.
+> Event OS will scale from evidence. It will not pre-build Kubernetes, OpenSearch, multi-cell routing, dedicated databases, advanced identity federation, or hyperscale infrastructure before those capabilities are justified.
 >
 > Responsible roles used in this plan:
 >
@@ -4937,7 +4937,7 @@ I’m preserving the original north-star architecture but moving it out of the c
 > | Runtime role cannot bypass RLS                | Migration test               |
 > | Event access comes from activation snapshot   | Resolver test                |
 > | Venue clients cannot access database directly | Network architecture         |
-> | Card data never enters EventX                 | Payment architecture test    |
+> | Card data never enters Event                 | Payment architecture test    |
 > | Quarantined file cannot be consumed           | File-state test              |
 > | Tenant cache keys require tenant namespace    | Cache wrapper test           |
 >
@@ -4965,13 +4965,13 @@ I’m preserving the original north-star architecture but moving it out of the c
 > | File safety             | File processing state                             |
 > | Tenant routing          | Tenant directory, when introduced                 |
 >
-> This is particularly important because EventX has many interacting systems.
+> This is particularly important because Event has many interacting systems.
 >
 > The plan already does this very well for subscription enforcement, but not yet for the rest of the platform.
 >
 > ## 4. Add an event lifecycle model
 >
-> The plan is strong on subscription activation lifecycle, but EventX itself is an event-operating platform. I think the architecture needs an explicit event lifecycle.
+> The plan is strong on subscription activation lifecycle, but Event itself is an event-operating platform. I think the architecture needs an explicit event lifecycle.
 >
 > Something like:
 >
@@ -5010,7 +5010,7 @@ I’m preserving the original north-star architecture but moving it out of the c
 >
 > For example, changing a room assignment during `DRAFT` is different from changing it while `LIVE`.
 >
-> Because EventX spans pre-event, live-event, and post-event operations, this lifecycle should become a platform-level concept.
+> Because Event spans pre-event, live-event, and post-event operations, this lifecycle should become a platform-level concept.
 >
 > ## 5. Add an explicit authorization decision pipeline
 >
@@ -5104,7 +5104,7 @@ I’m preserving the original north-star architecture but moving it out of the c
 >
 > Webhooks appear indirectly through payment and provider workflows, but I would add a dedicated standard.
 >
-> EventX will likely receive webhooks from:
+> Event will likely receive webhooks from:
 >
 > ```text
 > Payment providers
@@ -5402,7 +5402,7 @@ I’m preserving the original north-star architecture but moving it out of the c
 >
 > ## Final verdict
 >
-> This is the first version of the broader EventX production plan that I would be comfortable using as the actual governing architecture document.
+> This is the first version of the broader Event production plan that I would be comfortable using as the actual governing architecture document.
 >
 > The most important improvement is that it no longer assumes that the final enterprise architecture must be built immediately. The current document clearly separates present risks, production foundations, customer-triggered enterprise capabilities, and scale-triggered infrastructure.
 >
@@ -5414,13 +5414,13 @@ I’m preserving the original north-star architecture but moving it out of the c
 
 > Plan
 >
-> # EventX OS Enterprise Target-State Architecture and Production Standards Plan
+> # Event OS Enterprise Target-State Architecture and Production Standards Plan
 >
 > ## Document Status
 >
-> This is the architecture freeze candidate for EventX OS. It preserves the long-term enterprise direction while separating immediate security work, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
+> This is the architecture freeze candidate for Event OS. It preserves the long-term enterprise direction while separating immediate security work, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
 >
-> EventX OS will scale from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
+> Event OS will scale from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
 >
 > Responsible roles:
 >
@@ -5546,7 +5546,7 @@ I’m preserving the original north-star architecture but moving it out of the c
 > | No latest-subscription or pooled entitlement fallback | Static search and resolver tests |
 > | Venue systems never access cloud DB directly | Network architecture and infrastructure policy |
 > | Machine identities carry explicit tenant/event scope | Service-identity validation tests |
-> | Cardholder data never enters EventX OS | Payment architecture and telemetry tests |
+> | Cardholder data never enters Event OS | Payment architecture and telemetry tests |
 > | Unverified webhooks cannot change domain state | Signature/replay/idempotency tests |
 > | Quarantined files cannot be consumed | File-state constraints and service tests |
 > | Only `READY` files enter operational workflows | File lifecycle guard |
@@ -6252,7 +6252,7 @@ I’m applying these as the final freeze changes, not reopening the core archite
 > Explicit anti-overengineering boundaries
 > ```
 >
-> That is the right structure for EventX OS.
+> That is the right structure for Event OS.
 >
 > The most valuable section may actually be the new invariant registry. Rules such as no tenant query without verified context, no pooled connection tenant state, no cross-tenant cache key, no entitlement fallback to latest subscription, no direct venue-to-database access, and no unverified webhook mutation give implementation agents concrete boundaries instead of vague architecture principles.
 >
@@ -6522,7 +6522,7 @@ I’m applying these as the final freeze changes, not reopening the core archite
 > - measured database size
 > ```
 >
-> For the likely initial EventX scale, ordinary managed PostgreSQL may be sufficient. The ADR should prevent “Aurora because enterprise architecture” reasoning.
+> For the likely initial Event scale, ordinary managed PostgreSQL may be sufficient. The ADR should prevent “Aurora because enterprise architecture” reasoning.
 >
 > ## Change 9: Add one more ADR
 >
@@ -6608,7 +6608,7 @@ I’m applying these as the final freeze changes, not reopening the core archite
 
 > Plan
 >
-> # EventX OS Enterprise Target-State Architecture and Production Standards Plan
+> # Event OS Enterprise Target-State Architecture and Production Standards Plan
 >
 > ## Document Control
 >
@@ -6630,7 +6630,7 @@ I’m applying these as the final freeze changes, not reopening the core archite
 >
 > This document separates immediate security closure, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
 >
-> EventX OS scales from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
+> Event OS scales from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
 >
 > Responsible roles:
 >
@@ -6790,7 +6790,7 @@ I’m applying these as the final freeze changes, not reopening the core archite
 > | Event access comes from activation snapshot | Resolver tests |
 > | No latest-subscription entitlement fallback | Static and regression tests |
 > | Venue systems never access cloud DB directly | Network policy |
-> | Cardholder data never enters EventX OS | Payment and telemetry tests |
+> | Cardholder data never enters Event OS | Payment and telemetry tests |
 > | Unverified webhook cannot mutate domain state | Webhook tests |
 > | Quarantined files cannot be consumed | File-state constraints |
 > | Secrets and raw tokens never enter telemetry | Redaction tests |
@@ -7335,7 +7335,7 @@ I’m applying these as the final freeze changes, not reopening the core archite
 I’m treating these ten corrections as the final freeze pass. I’ll preserve the four-layer document, add the missing security and distributed-systems precision, mark it `ARCHITECTURE BASELINE v1.0`, and leave Phase 0 repository execution planning as the next separate artifact rather than extending the north-star architecture again.
 
 > PLEASE IMPLEMENT THIS PLAN:
-> # EventX OS Enterprise Target-State Architecture and Production Standards Plan
+> # Event OS Enterprise Target-State Architecture and Production Standards Plan
 >
 > ## Document Control
 >
@@ -7357,7 +7357,7 @@ I’m treating these ten corrections as the final freeze pass. I’ll preserve t
 >
 > This document separates immediate security closure, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
 >
-> EventX OS scales from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
+> Event OS scales from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
 >
 > Responsible roles:
 >
@@ -7517,7 +7517,7 @@ I’m treating these ten corrections as the final freeze pass. I’ll preserve t
 > | Event access comes from activation snapshot | Resolver tests |
 > | No latest-subscription entitlement fallback | Static and regression tests |
 > | Venue systems never access cloud DB directly | Network policy |
-> | Cardholder data never enters EventX OS | Payment and telemetry tests |
+> | Cardholder data never enters Event OS | Payment and telemetry tests |
 > | Unverified webhook cannot mutate domain state | Webhook tests |
 > | Quarantined files cannot be consumed | File-state constraints |
 > | Secrets and raw tokens never enter telemetry | Redaction tests |
@@ -8407,13 +8407,13 @@ Implemented the next Phase 1 tenant-isolation slice.
 
 Verification: 27 focused tenant, realtime, licensing, and RLS tests pass. All 8 canary tables have RLS enabled, policies and indexes present, and zero null ownership rows. Alembic is at the single head `phase1_tenant_rls_0200`.
 
-The next activation step is provisioning a non-owner `eventx_runtime` login through infrastructure/secrets, running canary traffic under that role, and only then considering forced RLS.
+The next activation step is provisioning a non-owner `Event_runtime` login through infrastructure/secrets, running canary traffic under that role, and only then considering forced RLS.
 
 > next step
 
 <details><summary>17 previous messages</summary>
 
-> The next gate is to prove the policies under a real non-owner role, not just inspect their definitions. I’ll provision the credential-free `eventx_runtime` group locally, add a reusable canary verifier that uses `SET ROLE`, and test no-context, Organization A, Organization B, and write-denial behavior before expanding RLS to more tables.
+> The next gate is to prove the policies under a real non-owner role, not just inspect their definitions. I’ll provision the credential-free `Event_runtime` group locally, add a reusable canary verifier that uses `SET ROLE`, and test no-context, Organization A, Organization B, and write-denial behavior before expanding RLS to more tables.
 >
 > Development has no persistent events, which is good for a non-destructive canary. I’ll verify enforcement using temporary organization and billing-operation rows inside one transaction that is always rolled back: the runtime role must see only its tenant, cannot update the other tenant, cannot insert with the wrong owner, and sees nothing with no tenant context.
 >
@@ -8455,7 +8455,7 @@ The next activation step is provisioning a non-owner `eventx_runtime` login thro
 >
 > The opt-in live gate and foundation suite pass together: 5 tests. Only the PowerShell residue-check one-liner had a quoting error after pytest completed; I’m rerunning that read-only check with a heredoc, then I’ll finish with compilation, policy audit, and role evidence.
 >
-> The rollback guarantee is confirmed with zero residual canary organizations, and `eventx_runtime` is `NOLOGIN`, non-superuser, and non-bypass. I’m adding one final live assertion that the production startup database-security gate succeeds after switching to this role, closing the gap between policy behavior and application startup behavior.
+> The rollback guarantee is confirmed with zero residual canary organizations, and `Event_runtime` is `NOLOGIN`, non-superuser, and non-bypass. I’m adding one final live assertion that the production startup database-security gate succeeds after switching to this role, closing the gap between policy behavior and application startup behavior.
 >
 > <details><summary>Edited a file</summary>
 >
@@ -8471,16 +8471,16 @@ The next activation step is provisioning a non-owner `eventx_runtime` login thro
 >
 > </details>
 >
-> Both live gates now pass: the rollback-only tenant enforcement canary and the application startup-role validator under `eventx_runtime`. I’m completing the slice with rerunnable provisioning, compilation, migration-head, policy audit, and residue verification, then the following step will be expanding RLS beyond these eight direct-owner canaries to event-derived child tables.
+> Both live gates now pass: the rollback-only tenant enforcement canary and the application startup-role validator under `Event_runtime`. I’m completing the slice with rerunnable provisioning, compilation, migration-head, policy audit, and residue verification, then the following step will be expanding RLS beyond these eight direct-owner canaries to event-derived child tables.
 </details>
 
 Completed the non-owner RLS enforcement gate.
 
 - Provisioned rerunnable credential-free database role groups.
-- `eventx_runtime` is `NOLOGIN`, non-superuser, and cannot bypass RLS.
+- `Event_runtime` is `NOLOGIN`, non-superuser, and cannot bypass RLS.
 - Added rollback-only live tenant canary verification.
 - Confirmed no-context denial, Org A/B isolation, cross-tenant update filtering, and wrong-owner insert rejection.
-- Confirmed the application startup security gate accepts `eventx_runtime`.
+- Confirmed the application startup security gate accepts `Event_runtime`.
 - Live and foundation RLS tests pass.
 - All 8 canary policies remain enabled with indexes, zero null owners, and no residual canary data.
 - Alembic remains at `phase1_tenant_rls_0200`.
@@ -8517,7 +8517,7 @@ The next step is extending RLS to event-derived child tables such as registratio
 >
 > </details>
 >
-> The migration applied cleanly at `phase1_event_rls_0300`, and all six registry/migration/context tests pass. I’m auditing the 27-table live state now; then I’ll extend the rollback-only canary with temporary events and rooms to prove the event-root `EXISTS` policies under `eventx_runtime`, including cross-event writes.
+> The migration applied cleanly at `phase1_event_rls_0300`, and all six registry/migration/context tests pass. I’m auditing the 27-table live state now; then I’ll extend the rollback-only canary with temporary events and rooms to prove the event-root `EXISTS` policies under `Event_runtime`, including cross-event writes.
 >
 > The live audit is fully clean: 8 direct and 19 event-root tables all have RLS, policies, indexes, and zero null ownership rows. I’m expanding the live verifier now so the same runtime role must isolate temporary rooms through their parent events, proving both root-policy composition and write checks rather than relying only on catalog inspection.
 >
@@ -8622,7 +8622,7 @@ Completed:
 - Snapshot-first runtime entitlement resolution.
 - TenantContextGuard with transaction-local context.
 - Connection-reuse leakage tests.
-- Safe non-owner `eventx_runtime` database role.
+- Safe non-owner `Event_runtime` database role.
 - Production startup rejection for superuser or `BYPASSRLS` roles.
 - RLS on 8 direct tenant tables.
 - RLS on 19 event-derived tables.
@@ -8635,7 +8635,7 @@ Still required:
 - Mixed-scope and nullable-ownership table policies.
 - Worker, job, export, cache, storage, and venue-sync isolation.
 - RLS coverage for remaining tenant-owned tables.
-- Canary deployment using an actual production login inheriting `eventx_runtime`.
+- Canary deployment using an actual production login inheriting `Event_runtime`.
 - Policy-denial telemetry and operational alerts.
 - Final forced-RLS decision and rollout.
 - Backup restoration evidence and broader audit-store integrity.
@@ -8703,7 +8703,7 @@ The immediate next milestone is to finish **Phase 1 tenant isolation**, not begi
 >
 > </details>
 >
-> The live verifier now includes mixed-scope billing rows and a deliberately invalid Org A invoice referencing Org B’s event. I’m running it under `eventx_runtime`; success requires tenant-specific reads, filtered cross-tenant updates, and rejection of the inconsistent cross-tenant reference.
+> The live verifier now includes mixed-scope billing rows and a deliberately invalid Org A invoice referencing Org B’s event. I’m running it under `Event_runtime`; success requires tenant-specific reads, filtered cross-tenant updates, and rejection of the inconsistent cross-tenant reference.
 >
 > The mixed-scope canary passes every assertion, including rejection of an invoice whose organization and event ownership disagree. I’m now running billing, licensing, RBAC/security, templates, and live RLS regressions together, then I’ll record which mixed tables remain intentionally blocked and why.
 >
@@ -9057,7 +9057,7 @@ Organization
     └── Hardware supplied by Company B
 ```
 
-EventX only needs records necessary to operate and audit the event, not a permanent inventory of every vendor printer.
+Event only needs records necessary to operate and audit the event, not a permanent inventory of every vendor printer.
 
 A better model is:
 
@@ -9180,7 +9180,7 @@ The existing model confirms your concern: `/events/{event_id}/printers` currentl
 >
 > The migration is now applied at a single current head. I’m validating the corrected RLS registry and the registration/print flows next; this will confirm both database isolation and the event-level checks added around endpoint selection.
 >
-> The required-scope migration and RLS audit are clean, and the focused suite passes 43 tests with 2 expected skips. I’m extending the live canary to exercise printer rows directly, so this new boundary is verified against the actual `eventx_runtime` role instead of only through model and API tests.
+> The required-scope migration and RLS audit are clean, and the focused suite passes 43 tests with 2 expected skips. I’m extending the live canary to exercise printer rows directly, so this new boundary is verified against the actual `Event_runtime` role instead of only through model and API tests.
 >
 > <details><summary>Edited a file</summary>
 >
@@ -10019,11 +10019,11 @@ Phase 1 boundary work is now effectively closed for currently enabled runtime pa
 >
 > <details><summary>Ran a command</summary>
 >
-> - Ran `.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role eventx_runtime`
+> - Ran `.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role Event_runtime`
 >
 > </details>
 >
-> The live RLS canary passed against `eventx_runtime`, including export, search, printer, invoice, event-child, and operation-request checks. I’m adding a concise Phase 1 exit evidence file so we have a durable record of what was proven and what is intentionally deferred.
+> The live RLS canary passed against `Event_runtime`, including export, search, printer, invoice, event-child, and operation-request checks. I’m adding a concise Phase 1 exit evidence file so we have a durable record of what was proven and what is intentionally deferred.
 >
 > <details><summary>Created a file</summary>
 >
@@ -10044,7 +10044,7 @@ Phase 1 boundary work is now effectively closed for currently enabled runtime pa
 
 Completed the next step: **Phase 1 exit-gate evidence and validation**.
 
-I added [PHASE1_EXIT_EVIDENCE.md](./governance/phase1/PHASE1_EXIT_EVIDENCE.md), ran the live RLS canary against `eventx_runtime`, confirmed Alembic is at `phase1_exports_0550`, and documented the controls now proven for the enabled runtime paths.
+I added [PHASE1_EXIT_EVIDENCE.md](./governance/phase1/PHASE1_EXIT_EVIDENCE.md), ran the live RLS canary against `Event_runtime`, confirmed Alembic is at `phase1_exports_0550`, and documented the controls now proven for the enabled runtime paths.
 
 Verified:
 - Live RLS canary passed and rolled back.
@@ -10486,7 +10486,7 @@ How to make it “real” now: fill the inventories from the repo, run the secur
 >
 > </details>
 >
-> I included your venue outsourcing model properly: we do not need to track every rented hardware asset inside EventX, but we do need records for any vendor/device identity that connects to the cloud, because that is the security and audit boundary.
+> I included your venue outsourcing model properly: we do not need to track every rented hardware asset inside Event, but we do need records for any vendor/device identity that connects to the cloud, because that is the security and audit boundary.
 >
 > <details><summary>Created 3 files</summary>
 >

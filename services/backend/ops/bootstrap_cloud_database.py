@@ -17,8 +17,8 @@ import psycopg2
 from psycopg2 import sql
 
 
-RUNTIME_LOGIN = "eventx_runtime_login"
-MIGRATION_LOGIN = "eventx_migration_login"
+RUNTIME_LOGIN = "Event_runtime_login"
+MIGRATION_LOGIN = "Event_migration_login"
 
 
 def required(name: str) -> str:
@@ -105,8 +105,8 @@ def main() -> None:
                 "provision_database_role_groups.sql"
             ).read_text(encoding="utf-8")
             cursor.execute(role_sql)
-            upsert_login(cursor, RUNTIME_LOGIN, runtime_password, "eventx_runtime")
-            upsert_login(cursor, MIGRATION_LOGIN, migration_password, "eventx_migration")
+            upsert_login(cursor, RUNTIME_LOGIN, runtime_password, "Event_runtime")
+            upsert_login(cursor, MIGRATION_LOGIN, migration_password, "Event_migration")
 
             cursor.execute(
                 sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(

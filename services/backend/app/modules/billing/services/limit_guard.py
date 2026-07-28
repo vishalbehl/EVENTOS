@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
+from app.modules.billing.services.event_entitlement_service import EventEntitlementService
 from app.modules.billing.services.usage_service import UsageService
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
@@ -43,12 +44,14 @@ class LimitGuard:
 
     @staticmethod
     async def _check_event_limit(db: AsyncSession, org_id: UUID, event_id: UUID, limit_key: str, label: str) -> None:
-        from app.modules.platform.models.organization import Organization
-        org_slug = await db.scalar(select(Organization.slug).where(Organization.id == org_id))
-        if org_slug == "eventxos":
-            return
+        # Serialize every finite event-resource creation on the stable event
+        # row. The caller keeps this lock until its mutation commits, so two
+        # concurrent requests cannot both observe the same remaining slot.
+        event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == org_id).with_for_update())
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
 
-        resolved = await EntitlementResolver.resolve_event_entitlements(db, org_id, event_id, explain=True)
+        resolved = await EventEntitlementService.resolve(db, org_id, event_id, explain=True)
         if not resolved["limits"]:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -57,7 +60,7 @@ class LimitGuard:
         limit = resolved["limits"].get(limit_key)
         if not limit or limit["limit_value"] is None:
             return
-        used = await UsageService.get_event_metric(db, event_id, limit_key)
+        used = await UsageService.get_effective_event_metric(db, event_id, limit_key)
         if used >= int(limit["limit_value"]):
             activation = resolved.get("activation")
             plan_name = activation.subscription.plan.name if activation and activation.subscription and activation.subscription.plan else "Unknown"
@@ -107,16 +110,12 @@ class LimitGuard:
 
     @staticmethod
     async def check_event_email_headroom(db: AsyncSession, org_id: UUID, event_id: UUID, additional: int = 1):
-        from app.modules.platform.models.organization import Organization
-        org_slug = await db.scalar(select(Organization.slug).where(Organization.id == org_id))
-        if org_slug == "eventxos":
-            return
-
-        resolved = await EntitlementResolver.resolve_event_entitlements(db, org_id, event_id, explain=True)
+        await db.scalar(select(Event.id).where(Event.id == event_id, Event.organization_id == org_id).with_for_update())
+        resolved = await EventEntitlementService.resolve(db, org_id, event_id, explain=True)
         limit = resolved["limits"].get("max_emails_per_event")
         if not limit or limit["limit_value"] is None:
             return
-        used = await UsageService.get_event_metric(db, event_id, "max_emails_per_event")
+        used = await UsageService.get_effective_event_metric(db, event_id, "max_emails_per_event")
         allowed = int(limit["limit_value"])
         if used + additional > allowed:
             activation = resolved.get("activation")
@@ -134,7 +133,25 @@ class LimitGuard:
             )
 
     @staticmethod
+    async def check_storage_headroom(db: AsyncSession, org_id: UUID, event_id: UUID, additional_bytes: int):
+        await db.scalar(select(Event.id).where(Event.id == event_id, Event.organization_id == org_id).with_for_update())
+        resolved = await EventEntitlementService.resolve(db, org_id, event_id, explain=True)
+        if not resolved["availability"]["available"]:
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail={"code": "EVENT_NOT_ACTIVATED", "detail": "This event has no immutable entitlement snapshot."})
+        limit = resolved["limits"].get("storage_quota_mb")
+        if not limit or limit.get("limit_value") is None:
+            return
+        used_bytes = await UsageService.get_effective_event_metric(db, event_id, "storage_bytes")
+        allowed_bytes = int(limit["limit_value"]) * 1024 * 1024
+        if used_bytes + additional_bytes > allowed_bytes:
+            activation = resolved.get("activation")
+            plan_name = activation.subscription.plan.name if activation and activation.subscription and activation.subscription.plan else "Unknown"
+            await LimitGuard._raise_limit(limit_key="storage_quota_mb", activation_id=str(activation.id) if activation else None, grant_id=str(activation.grant_id) if activation and activation.grant_id else None, grant_consumption_id=str(activation.grant_consumption_id) if activation and activation.grant_consumption_id else None, plan_name=plan_name, allowed=allowed_bytes, used=used_bytes, source_type=limit.get("source_type"), reason=f"Storage allowance of {limit['limit_value']} MB would be exceeded by this upload.")
+
+    @staticmethod
     async def check_users(db: AsyncSession, org_id: UUID):
+        from app.modules.platform.models.organization import Organization
+        await db.scalar(select(Organization.id).where(Organization.id == org_id).with_for_update())
         limit = await EntitlementResolver.get_org_limit(db, org_id, "max_users")
         if limit is None:
             return
@@ -157,6 +174,8 @@ class LimitGuard:
 
     @staticmethod
     async def check_events(db: AsyncSession, org_id: UUID):
+        from app.modules.platform.models.organization import Organization
+        await db.scalar(select(Organization.id).where(Organization.id == org_id).with_for_update())
         max_events = await EntitlementResolver.get_org_limit(db, org_id, "max_events")
         if max_events is None:
             return

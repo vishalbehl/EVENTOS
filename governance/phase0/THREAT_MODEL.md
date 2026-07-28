@@ -66,7 +66,7 @@ Out of initial closure scope unless explicitly added:
 | TM-007 | Client supplies tenant header to switch organization | Server-derived tenant context only | Static scan found no tenant-header trust patterns | Evidence available |
 | TM-008 | Webhook replay mutates payment/communication state | Signature, timestamp, dedupe | Provider inventory only | Open |
 | TM-009 | Secrets leak into logs/traces/errors | Redaction and telemetry policy | Static scan found print/debug candidates | Open |
-| TM-010 | Runtime role bypasses RLS | DB role test and startup gate | Phase 1 live RLS canary with `eventx_runtime` passed | Evidence available |
+| TM-010 | Runtime role bypasses RLS | DB role test and startup gate | Phase 1 live RLS canary with `Event_runtime` passed | Evidence available |
 
 ## Priority Threats
 

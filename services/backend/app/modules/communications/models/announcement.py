@@ -66,10 +66,18 @@ class Announcement(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Relationships
     event: Mapped["Event"] = relationship("Event", back_populates="announcements")
-    creator: Mapped[Optional["User"]] = relationship("User")
+    creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
 
     def __repr__(self) -> str:
         return f"<Announcement id={self.id} title={self.title} audience={self.audience}>"

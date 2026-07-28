@@ -1,6 +1,7 @@
 # tests/test_webhooks.py
 from __future__ import annotations
 
+import uuid
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +10,22 @@ from app.modules.events.models.event import Event
 from app.modules.platform.models.organization import Organization
 from app.modules.identity.models.user import User
 from app.modules.integrations.models.webhook import Webhook
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
 
 
 BASE = "/events/{event_id}/webhooks"
+
+
+def governed_headers(user: User, *, version: int | None = None) -> dict:
+    headers = {**auth_headers(user), "Idempotency-Key": str(uuid.uuid4())}
+    if version is not None:
+        headers["If-Match"] = str(version)
+    return headers
+
+
+@pytest.fixture(autouse=True)
+async def licensed_event(db: AsyncSession, event: Event) -> None:
+    await activate_event_for_test(db, event)
 
 
 class TestWebhookCRUD:
@@ -27,7 +40,7 @@ class TestWebhookCRUD:
                 "description": "Test hook",
                 "secret": "mysupersecret",
             },
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         assert resp.status_code == 201
         data = resp.json()
@@ -47,7 +60,7 @@ class TestWebhookCRUD:
                 "url": "https://example.com/hook",
                 "subscribed_events": ["invalid.event"],
             },
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         assert resp.status_code == 422
 
@@ -60,7 +73,7 @@ class TestWebhookCRUD:
                 "url": "not-a-url",
                 "subscribed_events": ["file.approved"],
             },
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         assert resp.status_code == 422
 
@@ -73,7 +86,7 @@ class TestWebhookCRUD:
                 "url": "https://example.com/hook",
                 "subscribed_events": [],
             },
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         assert resp.status_code == 422
 
@@ -82,7 +95,7 @@ class TestWebhookCRUD:
     ):
         resp = await client.get(
             BASE.format(event_id=event.id),
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         assert resp.status_code == 200
         assert resp.json() == []
@@ -93,7 +106,7 @@ class TestWebhookCRUD:
         await client.post(
             BASE.format(event_id=event.id),
             json={"url": "https://hook1.com", "subscribed_events": ["file.uploaded"]},
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         resp = await client.get(
             BASE.format(event_id=event.id), headers=auth_headers(organizer)
@@ -109,7 +122,7 @@ class TestWebhookCRUD:
         create_resp = await client.post(
             BASE.format(event_id=event.id),
             json={"url": "https://hook2.com", "subscribed_events": ["file.approved"]},
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         hook_id = create_resp.json()["id"]
         get_resp = await client.get(
@@ -135,13 +148,14 @@ class TestWebhookCRUD:
         create = await client.post(
             BASE.format(event_id=event.id),
             json={"url": "https://hook3.com", "subscribed_events": ["file.approved"]},
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         hook_id = create.json()["id"]
+        hook_version = create.json()["version"]
         patch = await client.patch(
             f"{BASE.format(event_id=event.id)}/{hook_id}",
             json={"status": "paused"},
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer, version=hook_version),
         )
         assert patch.status_code == 200
         assert patch.json()["status"] == "paused"
@@ -152,12 +166,13 @@ class TestWebhookCRUD:
         create = await client.post(
             BASE.format(event_id=event.id),
             json={"url": "https://hook4.com", "subscribed_events": ["import.completed"]},
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer),
         )
         hook_id = create.json()["id"]
+        hook_version = create.json()["version"]
         delete = await client.delete(
             f"{BASE.format(event_id=event.id)}/{hook_id}",
-            headers=auth_headers(organizer),
+            headers=governed_headers(organizer, version=hook_version),
         )
         assert delete.status_code == 200
         # Confirm it's gone
@@ -171,9 +186,9 @@ class TestWebhookCRUD:
         self, client: AsyncClient, event: Event, organizer: User
     ):
         payload = {"url": "https://unique.com/hook", "subscribed_events": ["file.approved"]}
-        r1 = await client.post(BASE.format(event_id=event.id), json=payload, headers=auth_headers(organizer))
+        r1 = await client.post(BASE.format(event_id=event.id), json=payload, headers=governed_headers(organizer))
         assert r1.status_code == 201
-        r2 = await client.post(BASE.format(event_id=event.id), json=payload, headers=auth_headers(organizer))
+        r2 = await client.post(BASE.format(event_id=event.id), json=payload, headers=governed_headers(organizer))
         assert r2.status_code == 409
 
     async def test_unauthenticated_request_rejected(

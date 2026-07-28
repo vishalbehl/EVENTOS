@@ -323,7 +323,7 @@ export function SpeakerPortalLayout({
 
             {/* Column 2: Event Info */}
             <div className="space-y-3">
-              <span className="font-black uppercase tracking-wider text-[#E8EAFF] text-xs block">{eventName || "EventX  OS Portal"}</span>
+              <span className="font-black uppercase tracking-wider text-[#E8EAFF] text-xs block">{eventName || "Event  OS Portal"}</span>
               <p className="leading-relaxed text-[11px] text-muted/80">
                 Secure, premium speaker portal. Manage your assigned sessions, presentation files, digital badge, and profile details in real-time.
               </p>

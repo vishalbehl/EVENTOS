@@ -2,28 +2,34 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, UploadFile, File
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status, UploadFile, File
 from loguru import logger
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import func, select, delete, and_
+from sqlalchemy import func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import get_db, get_current_event, CurrentEvent
+from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
+from app.modules.identity.models.user import User
 from app.modules.registration.models.participant import Participant
-from app.modules.registration.models.check_in import CheckIn
+from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
+from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.session import Session
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import (
     ParticipantCreate, ParticipantUpdate, ParticipantResponse,
-    CheckInCreate, CheckInResponse, ExcelImportResponse, SkippedImportRow
+    CheckInCreate, CheckInResponse, ExcelImportResponse, SkippedImportRow,
+    PublicRegistrationConfirmationResponse,
+    RegistrationConfirmationQRRequest,
+    RegistrationConfirmationQRResponse,
 )
 from app.schemas.common import MessageResponse
 from app.modules.registration.services.portal_service import (
@@ -31,8 +37,28 @@ from app.modules.registration.services.portal_service import (
     normalize_phone,
     phone_numbers_match,
 )
+from app.core.dependencies.feature_gate import (
+    enforce_event_feature,
+    enforce_event_operation,
+)
+from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
+from app.modules.registration.services.confirmation_qr_service import (
+    ConfirmationQRCredentialError,
+    build_confirmation_image_url,
+    build_confirmation_token,
+    build_confirmation_verification_url,
+    parse_and_verify_confirmation_token,
+    RegistrationConfirmationQRService,
+)
+from app.modules.registration.services.qr_service import generate_qr_code
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
 router = APIRouter(prefix="/events/{event_id}/participants", tags=["participants"])
+public_confirmation_router = APIRouter(
+    prefix="/public/registration-confirmations",
+    tags=["public-registration-confirmations"],
+)
 
 
 def get_role_prefix(role: str) -> str:
@@ -187,6 +213,8 @@ async def insert_participants(
     event_id: uuid.UUID,
     payload: List[ParticipantCreate],
     default_source: str,
+    idempotency_key: str,
+    actor_user_id: uuid.UUID,
 ) -> tuple[int, int, int]:
     from sqlalchemy import select, func
     from app.modules.events.models.capacity_rule import CapacityRule
@@ -197,7 +225,7 @@ async def insert_participants(
     merged_count = 0
 
     # 1. Fetch existing participants for this event to run in-memory duplication and merge checks
-    existing_stmt = select(Participant).where(Participant.event_id == event_id)
+    existing_stmt = select(Participant).where(Participant.event_id == event_id, Participant.deleted_at.is_(None))
     existing_res = await db.execute(existing_stmt)
     existing_participants = list(existing_res.scalars().all())
 
@@ -290,8 +318,29 @@ async def insert_participants(
     if payment_enabled:
         active_prices = await get_active_prices_for_event(db, event_obj)
 
-    for item in to_insert_new:
-        if slots_remaining > 0:
+    for row_index, item in enumerate(to_insert_new):
+        reservation = None
+        can_activate = slots_remaining > 0
+        if can_activate:
+            try:
+                reservation = await UsageReservationService.reserve(
+                    db,
+                    organization_id=event_obj.organization_id,
+                    event_id=event_id,
+                    limit_key="max_registrations",
+                    quantity=1,
+                    unit="registration",
+                    idempotency_key=f"participant-import:{idempotency_key}:{row_index}",
+                    metadata={"source": default_source, "row_index": row_index},
+                )
+            except HTTPException as exc:
+                if exc.status_code == status.HTTP_402_PAYMENT_REQUIRED and isinstance(exc.detail, dict) and exc.detail.get("code") == "QUOTA_EXHAUSTED":
+                    can_activate = False
+                    slots_remaining = 0
+                else:
+                    raise
+
+        if can_activate and reservation is not None:
             # Fits in capacity -> Add directly as approved Participant
             role = item.role or "Delegate"
             if role not in role_state:
@@ -337,6 +386,13 @@ async def insert_participants(
                 custom_fields=item.custom_fields or {},
             )
             db.add(p)
+            await db.flush()
+            await UsageReservationService.consume(
+                db,
+                reservation.id,
+                source=f"registration.{default_source}",
+                actor_user_id=actor_user_id,
+            )
             inserted_count += 1
             slots_remaining -= 1
         else:
@@ -388,8 +444,10 @@ async def list_participants(
     paid_status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(250, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[ParticipantResponse]:
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.read", user_id=current_user.id)
     from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
@@ -400,7 +458,7 @@ async def list_participants(
     if payment_enabled:
         active_prices = await get_active_prices_for_event(db, event_obj)
 
-    q = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id)
+    q = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
     
     if search:
         search_term = f"%{search}%"
@@ -453,11 +511,13 @@ async def list_participants(
 @router.get("/stats")
 async def get_registration_stats(
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    total_q = select(func.count(Participant.id)).where(Participant.event_id == event.id)
-    paid_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.paid_status == "Paid")
-    unpaid_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.paid_status == "Unpaid")
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id)
+    total_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
+    paid_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None), Participant.paid_status == "Paid")
+    unpaid_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None), Participant.paid_status == "Unpaid")
     
     # Session check-in stats
     checkins_q = select(func.count(CheckIn.id)).where(CheckIn.event_id == event.id)
@@ -470,7 +530,7 @@ async def get_registration_stats(
         )
         .select_from(Participant)
         .outerjoin(ParticipantRole, ParticipantRole.id == Participant.role_id)
-        .where(Participant.event_id == event.id)
+        .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
         .group_by(ParticipantRole.name)
     )
 
@@ -495,6 +555,8 @@ async def get_registration_stats(
 async def create_participant(
     payload: ParticipantCreate,
     event: CurrentEvent,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
     from app.modules.events.models.event import Event
@@ -522,9 +584,7 @@ async def create_participant(
             resp.is_free = not payment_enabled or (active_prices.get(merged_participant.role, 0.0) <= 0.0)
             return resp
 
-    # Check registration limit
-    from app.modules.billing.services.limit_guard import LimitGuard
-    await LimitGuard.check_registrations(db, event.organization_id, event.id)
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
 
     role_price = active_prices.get(payload.role, 0.0) if payment_enabled else 0.0
 
@@ -553,6 +613,17 @@ async def create_participant(
         role_obj = await get_role_by_name(db, event.id, payload.role)
         role_id = role_obj.id if role_obj else None
 
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_registrations",
+        quantity=1,
+        unit="registration",
+        idempotency_key=f"participant-create:{idempotency_key}",
+        metadata={"email": payload.email, "source": payload.source},
+    )
+
     participant = Participant(
         event_id=event.id,
         regno=regno,
@@ -570,6 +641,13 @@ async def create_participant(
         custom_fields=payload.custom_fields or {},
     )
     db.add(participant)
+    await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="registration.participant_create",
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     res = await db.execute(
         select(Participant)
@@ -583,13 +661,241 @@ async def create_participant(
     return resp
 
 
+def _confirmation_qr_response(
+    credential: RegistrationConfirmationQR,
+) -> RegistrationConfirmationQRResponse:
+    token = build_confirmation_token(
+        credential.id,
+        credential.credential_version,
+    )
+    return RegistrationConfirmationQRResponse(
+        credential_id=credential.id,
+        participant_id=credential.participant_id,
+        event_id=credential.event_id,
+        status=credential.status,
+        version=credential.credential_version,
+        verification_url=build_confirmation_verification_url(token),
+        image_url=build_confirmation_image_url(token),
+        issued_at=credential.issued_at,
+        rotated_at=credential.rotated_at,
+    )
+
+
+@router.post(
+    "/{participant_id}/confirmation-qr",
+    response_model=RegistrationConfirmationQRResponse,
+)
+async def registration_confirmation_qr(
+    participant_id: uuid.UUID,
+    payload: RegistrationConfirmationQRRequest,
+    event: CurrentEvent,
+    expected_version: int = Header(..., alias="If-Match", ge=0),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RegistrationConfirmationQRResponse:
+    """Issue or rotate a participant's feature-gated confirmation QR."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.confirmation_qr.manage",
+        user_id=current_user.id,
+    )
+    participant = await db.scalar(
+        select(Participant).where(
+            Participant.id == participant_id,
+            Participant.event_id == event.id,
+            Participant.deleted_at.is_(None),
+        )
+    )
+    if participant is None:
+        raise HTTPException(status_code=404, detail="Participant not found.")
+
+    issuance = await RegistrationConfirmationQRService.issue_or_rotate(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        participant=participant,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
+        actor_user_id=current_user.id,
+    )
+    credential = issuance.credential
+    if issuance.replayed:
+        return _confirmation_qr_response(credential)
+    old_state = issuance.old_state
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type=(
+                "REGISTRATION_CONFIRMATION_QR_ROTATED"
+                if old_state
+                else "REGISTRATION_CONFIRMATION_QR_ISSUED"
+            ),
+            resource_type="registration_confirmation_qr",
+            resource_id=credential.id,
+            actor_user_id=current_user.id,
+            organization_id=event.organization_id,
+            actor_role=getattr(current_user, "role", None),
+            old_state=old_state,
+            new_state={
+                "event_id": str(event.id),
+                "participant_id": str(participant.id),
+                "version": credential.credential_version,
+                "reason": payload.reason,
+                "case_reference": payload.case_reference,
+                "idempotency_key": idempotency_key,
+            },
+        ),
+        db,
+    )
+    await db.commit()
+    await db.refresh(credential)
+    return _confirmation_qr_response(credential)
+
+
+@router.get(
+    "/{participant_id}/confirmation-qr",
+    response_model=RegistrationConfirmationQRResponse,
+)
+async def get_registration_confirmation_qr(
+    participant_id: uuid.UUID,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RegistrationConfirmationQRResponse:
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.confirmation_qr.manage",
+        user_id=current_user.id,
+    )
+    credential = await db.scalar(
+        select(RegistrationConfirmationQR)
+        .join(
+            Participant,
+            Participant.id == RegistrationConfirmationQR.participant_id,
+        )
+        .where(
+            RegistrationConfirmationQR.participant_id == participant_id,
+            RegistrationConfirmationQR.event_id == event.id,
+            Participant.event_id == event.id,
+            Participant.deleted_at.is_(None),
+        )
+    )
+    if credential is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Registration confirmation QR has not been issued.",
+        )
+    return _confirmation_qr_response(credential)
+
+
+async def _resolve_public_confirmation(
+    token: str,
+    db: AsyncSession,
+) -> tuple[RegistrationConfirmationQR, Participant, Any]:
+    try:
+        credential_id, version = parse_and_verify_confirmation_token(token)
+    except ConfirmationQRCredentialError as exc:
+        raise HTTPException(status_code=404, detail="Confirmation not found.") from exc
+    row = (
+        await db.execute(
+            select(RegistrationConfirmationQR, Participant)
+            .join(
+                Participant,
+                Participant.id == RegistrationConfirmationQR.participant_id,
+            )
+            .where(
+                RegistrationConfirmationQR.id == credential_id,
+                RegistrationConfirmationQR.credential_version == version,
+                RegistrationConfirmationQR.status == "ACTIVE",
+                RegistrationConfirmationQR.revoked_at.is_(None),
+                Participant.deleted_at.is_(None),
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Confirmation not found.")
+    credential, participant = row
+    from app.modules.events.models.event import Event
+
+    event_obj = await db.scalar(
+        select(Event).where(
+            Event.id == credential.event_id,
+            Event.organization_id == credential.organization_id,
+            Event.deleted_at.is_(None),
+        )
+    )
+    if event_obj is None:
+        raise HTTPException(status_code=404, detail="Confirmation not found.")
+    await enforce_event_feature(
+        db,
+        credential.organization_id,
+        credential.event_id,
+        "FEAT_QR_CONFIRMATION",
+    )
+    return credential, participant, event_obj
+
+
+@public_confirmation_router.get(
+    "/{token}",
+    response_model=PublicRegistrationConfirmationResponse,
+)
+async def verify_registration_confirmation(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> PublicRegistrationConfirmationResponse:
+    credential, participant, event_obj = await _resolve_public_confirmation(
+        token, db
+    )
+    return PublicRegistrationConfirmationResponse(
+        valid=True,
+        credential_id=credential.id,
+        event_id=event_obj.id,
+        event_name=event_obj.name,
+        participant_name=participant.name,
+        registration_number=participant.regno,
+        approval_status=participant.approval_status,
+        issued_at=credential.issued_at,
+        freshness_at=datetime.now(timezone.utc),
+    )
+
+
+@public_confirmation_router.get("/{token}/image")
+async def render_registration_confirmation_qr(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    await _resolve_public_confirmation(token, db)
+    image = generate_qr_code(
+        build_confirmation_verification_url(token),
+        box_size=10,
+        border=4,
+    )
+    return Response(
+        content=image,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": 'inline; filename="registration-confirmation.png"',
+        },
+    )
+
+
 @router.post("/bulk", response_model=MessageResponse)
 async def bulk_upload_participants(
     payload: List[ParticipantCreate],
     event: CurrentEvent,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "bulk_upload")
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.import", user_id=current_user.id)
+    inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "bulk_upload", idempotency_key, current_user.id)
     return MessageResponse(
         message=f"Import complete: {inserted} active participants imported, {waitlisted} waitlisted, {merged} merged."
     )
@@ -599,19 +905,23 @@ async def bulk_upload_participants(
 async def bulk_delete_participants(
     participant_ids: List[uuid.UUID],
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     if not participant_ids:
         raise HTTPException(status_code=400, detail="No participants selected.")
-
-    result = await db.execute(
-        delete(Participant)
-        .where(Participant.event_id == event.id, Participant.id.in_(participant_ids))
-        .returning(Participant.id)
-    )
-    deleted_count = len(result.scalars().all())
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
+    rows = (await db.scalars(select(Participant).where(
+        Participant.event_id == event.id,
+        Participant.id.in_(participant_ids),
+        Participant.deleted_at.is_(None),
+    ).with_for_update())).all()
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        row.deleted_at = now
+        row.deleted_by = current_user.id
     await db.commit()
-    return MessageResponse(message=f"Deleted {deleted_count} participant registrations.")
+    return MessageResponse(message=f"Archived {len(rows)} participant registrations. They remain recoverable through Command Center.")
 
 
 @router.get("/import-template")
@@ -672,8 +982,11 @@ async def download_import_template(
 async def import_participants_excel(
     event: CurrentEvent,
     file: UploadFile = File(...),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ExcelImportResponse:
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.import", user_id=current_user.id)
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Only .xlsx Excel files are accepted.")
 
@@ -714,7 +1027,7 @@ async def import_participants_excel(
         }
 
         # 2. Fetch existing registered emails and participants for name+phone matching
-        existing_stmt = select(Participant).where(Participant.event_id == event.id)
+        existing_stmt = select(Participant).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
         existing_res = await db.execute(existing_stmt)
         existing_participants = list(existing_res.scalars().all())
 
@@ -859,7 +1172,7 @@ async def import_participants_excel(
                 if match_found:
                     registered_emails.add(raw_email)
 
-        inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "excel_import")
+        inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "excel_import", idempotency_key, current_user.id)
         skipped = len(skipped_details)
 
         return ExcelImportResponse(
@@ -881,8 +1194,11 @@ async def import_participants_excel(
 async def import_participants_csv(
     event: CurrentEvent,
     file: UploadFile = File(...),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.import", user_id=current_user.id)
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
     
@@ -934,11 +1250,13 @@ async def import_participants_csv(
                 source=source,
             ))
 
-        inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "csv_import")
+        inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "csv_import", idempotency_key, current_user.id)
         return MessageResponse(
             message=f"Import complete: {inserted} active participants imported, {waitlisted} waitlisted, {merged} merged."
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error importing CSV: {e}")
         raise HTTPException(status_code=422, detail=f"Failed to process CSV file: {str(e)}")
@@ -949,9 +1267,13 @@ async def update_participant(
     participant_id: uuid.UUID,
     payload: ParticipantUpdate,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
-    q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id)
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
+    if "paid_status" in payload.model_fields_set:
+        await enforce_event_operation(db, event.organization_id, event.id, "registration.payments.manage", user_id=current_user.id)
+    q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id, Participant.deleted_at.is_(None))
     result = await db.execute(q)
     p = result.scalar_one_or_none()
     if not p:
@@ -1052,17 +1374,20 @@ async def update_participant(
 async def delete_participant(
     participant_id: uuid.UUID,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id)
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
+    q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id, Participant.deleted_at.is_(None))
     result = await db.execute(q)
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(status_code=404, detail="Participant not found.")
 
-    await db.delete(p)
+    p.deleted_at = datetime.now(timezone.utc)
+    p.deleted_by = current_user.id
     await db.commit()
-    return MessageResponse(message="Participant registration removed successfully.")
+    return MessageResponse(message="Participant registration archived and remains recoverable through Command Center.")
 
 
 @router.post("/{participant_id}/checkin", response_model=CheckInResponse)
@@ -1070,36 +1395,55 @@ async def checkin_participant(
     participant_id: uuid.UUID,
     payload: CheckInCreate,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ) -> CheckInResponse:
-    # 1. Verify participant exists
-    p_q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id)
-    p = (await db.execute(p_q)).scalar_one_or_none()
-    if not p:
-        raise HTTPException(status_code=404, detail="Participant not found.")
-
-    # 2. Verify session exists
-    s_q = select(Session).where(Session.id == payload.session_id, Session.event_id == event.id)
-    session = (await db.execute(s_q)).scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-
-    # 3. Check if already checked in
-    existing_q = select(CheckIn).where(
-        CheckIn.event_id == event.id,
-        CheckIn.participant_id == participant_id,
-        CheckIn.session_id == payload.session_id
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.checkin", user_id=current_user.id)
+    from app.modules.registration.services.checkin_service import CheckInService
+    request_hash = hashlib.sha256(
+        f"CHECK_IN:{event.id}:{participant_id}:{payload.session_id}".encode("utf-8")
+    ).hexdigest()
+    replay = await CheckInService.acquire_mutation(
+        db,
+        event=event,
+        operation_type="PARTICIPANT_CHECK_IN",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
     )
-    existing = (await db.execute(existing_q)).scalar_one_or_none()
-    if existing:
-        return existing  # Idempotent return
+    if replay:
+        if replay.result_checkin_id is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESULT_UNAVAILABLE"})
+        check_in = await db.get(CheckIn, replay.result_checkin_id)
+        if check_in is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESULT_UNAVAILABLE"})
+        return check_in
 
-    check_in = CheckIn(
+    check_in, created = await CheckInService.create(db, event, participant_id, payload.session_id)
+    db.add(AttendanceMutation(
+        organization_id=event.organization_id,
         event_id=event.id,
-        participant_id=participant_id,
-        session_id=payload.session_id
-    )
-    db.add(check_in)
+        actor_user_id=current_user.id,
+        operation_type="PARTICIPANT_CHECK_IN",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        result_checkin_id=check_in.id,
+        result_created=created,
+    ))
+    db.add(AuditLog(
+        organization_id=event.organization_id,
+        actor_user_id=current_user.id,
+        actor_role=current_user.platform_role or current_user.role,
+        resource_type="participant_checkin",
+        resource_id=check_in.id,
+        action_type="PARTICIPANT_CHECKED_IN" if created else "PARTICIPANT_CHECKIN_REPLAYED",
+        new_state={
+            "event_id": str(event.id),
+            "participant_id": str(participant_id),
+            "session_id": str(payload.session_id),
+            "created": created,
+        },
+    ))
     await db.commit()
     await db.refresh(check_in)
     return check_in
@@ -1109,8 +1453,10 @@ async def checkin_participant(
 async def list_participant_checkins(
     participant_id: uuid.UUID,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[CheckInResponse]:
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.read", user_id=current_user.id)
     q = select(CheckIn).where(
         CheckIn.event_id == event.id,
         CheckIn.participant_id == participant_id
@@ -1122,8 +1468,10 @@ async def list_participant_checkins(
 @router.get("/analytics-dashboard")
 async def get_registration_analytics(
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id)
     from sqlalchemy import Date, cast, extract
     
     # 1. Base counts
@@ -1288,6 +1636,8 @@ async def get_registration_analytics(
 @router.post("/fetch-from-speakers", response_model=MessageResponse)
 async def fetch_participants_from_speakers(
     event: CurrentEvent,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """
@@ -1295,14 +1645,16 @@ async def fetch_participants_from_speakers(
     if their email or name is not already registered as a participant, and update the speaker's regno.
     """
     from app.modules.events.models.speaker import Speaker
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
+    await enforce_event_operation(db, event.organization_id, event.id, "speakers.manage", user_id=current_user.id)
 
     # 1. Get all speakers for the event
-    speakers_stmt = select(Speaker).where(Speaker.event_id == event.id)
+    speakers_stmt = select(Speaker).where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
     speakers_res = await db.execute(speakers_stmt)
     speakers = speakers_res.scalars().all()
 
     # 2. Get existing participants to build lookup sets for email and name
-    existing_stmt = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id)
+    existing_stmt = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
     existing_res = await db.execute(existing_stmt)
     existing_participants = list(existing_res.scalars().all())
 
@@ -1408,6 +1760,16 @@ async def fetch_participants_from_speakers(
         s.regno = regno
 
         # Create Participant record
+        reservation = await UsageReservationService.reserve(
+            db,
+            organization_id=event.organization_id,
+            event_id=event.id,
+            limit_key="max_registrations",
+            quantity=1,
+            unit="registration",
+            idempotency_key=f"speaker-participant-import:{idempotency_key}:{s.id}",
+            metadata={"speaker_id": str(s.id)},
+        )
         p = Participant(
             event_id=event.id,
             regno=regno,
@@ -1425,6 +1787,13 @@ async def fetch_participants_from_speakers(
             custom_fields={},
         )
         db.add(p)
+        await db.flush()
+        await UsageReservationService.consume(
+            db,
+            reservation.id,
+            source="registration.speaker_participant_import",
+            actor_user_id=current_user.id,
+        )
         existing_participants.append(p)
         inserted_count += 1
 

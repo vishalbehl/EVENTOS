@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     environment: str = "development"        # development | staging | production
     debug: bool = False
     PUBLIC_DEMO_SIGNUP_ENABLED: bool = False
-    PUBLIC_DEMO_PLAN_NAME: str = "Demo Public"
+    PUBLIC_DEMO_PLAN_NAME: str = "Free Trial"
     PUBLIC_DEMO_RETENTION_DAYS: int = 14
 
     # ── Database ──────────────────────────────────────────

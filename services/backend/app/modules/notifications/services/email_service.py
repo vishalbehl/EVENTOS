@@ -454,13 +454,11 @@ async def send_email(
         logger.warning("RESEND_API_KEY not configured — email send skipped.")
         return None
 
+    event = None
     if event_id and db:
-        from app.modules.billing.services.limit_guard import LimitGuard
         from app.modules.events.models.event import Event
 
         event = await db.scalar(select(Event).where(Event.id == event_id))
-        if event:
-            await LimitGuard.check_event_email_headroom(db, event.organization_id, event_id)
 
     # Generate log ID early if we want to track opens
     log_id = uuid.uuid4()
@@ -518,8 +516,9 @@ async def send_email(
         error_message = str(exc)
         logger.error(f"Failed to send email via SMTP to {to_email}: {exc}")
 
-    # Log to DB if session provided and we have a speaker_id or participant_id
-    if db is not None and (speaker_id is not None or participant_id is not None):
+    # Every event email is logged, including system/campaign messages without a
+    # speaker or participant foreign key.
+    if db is not None and event_id is not None:
         log = EmailLog(
             id=log_id,
             campaign_id=campaign_id,
@@ -535,6 +534,11 @@ async def send_email(
             css_inlined=True,  # Log that this email went through the CSS inlining pipeline
         )
         db.add(log)
+        await db.flush()
+        if event is not None:
+            from app.modules.platform.services.metering_service import MeteringService
+            metric_key = "emails" if status in {"queued", "sent", "delivered"} else "email_failures"
+            await MeteringService.record(db, organization_id=event.organization_id, event_id=event_id, metric_key=metric_key, quantity=1, unit="count", source="notifications.email_service", idempotency_key=f"email:{log.id}:{status}", metadata={"email_log_id": str(log.id), "status": status, "campaign_id": str(campaign_id) if campaign_id else None})
 
     return provider_message_id
 

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent } from "react"
-import { ArrowRight, Check, CheckCircle2, Cpu, Edit3, ImagePlus, Layers3, MapPin, Plus, Search, Trash2, Users, X } from "lucide-react"
+import { ArrowRight, Check, CheckCircle2, Clock3, Cpu, Edit3, ImagePlus, Layers3, MapPin, Plus, Search, Trash2, Users, X } from "lucide-react"
 import { toast } from "sonner"
 import { PageContainer } from "@/components/super-admin/ui/PageContainer"
 import { SectionHeader } from "@/components/super-admin/ui/SectionHeader"
@@ -14,13 +14,16 @@ import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import {
   Addon,
+  type AddonFeatureAssignment,
   formatINR,
   useAddons,
+  useAddonTemplateVersions,
   useCreateAddon,
   useDeleteAddon,
   useHardwareCatalog,
   useStaffCatalog,
   useSubscriptionPlans,
+  useFeaturesCatalog,
   useUpdateAddon,
 } from "@/services/super-admin-service"
 
@@ -36,16 +39,21 @@ type FormState = {
   image_url: string
   billing_unit: string
   price_unit: string
+  scope_type: "ORGANIZATION" | "EVENT"
+  consumption_model: "NON_CONSUMABLE" | "QUOTA" | "METERED"
+  unit_type: string
   min_price_inr: string
   max_price_inr: string
   available_for_plans: string[]
   is_active: boolean
+  lifecycle_status: "DRAFT" | "REVIEW" | "PUBLISHED" | "RETIRED"
   hardware: Resource[]
   staff: Resource[]
   inclusions: string[]
   exclusions: string[]
   consumables_cost: string
   template_types: string[]
+  feature_assignments: AddonFeatureAssignment[]
 }
 
 const emptyForm = (kind: Kind): FormState => ({
@@ -57,21 +65,27 @@ const emptyForm = (kind: Kind): FormState => ({
   image_url: "",
   billing_unit: "PER_EVENT",
   price_unit: "",
+  scope_type: "EVENT",
+  consumption_model: "NON_CONSUMABLE",
+  unit_type: "",
   min_price_inr: "",
   max_price_inr: "",
   available_for_plans: [],
   is_active: true,
+  lifecycle_status: "DRAFT",
   hardware: [],
   staff: [],
   inclusions: [""],
   exclusions: [],
   consumables_cost: "0",
   template_types: [],
+  feature_assignments: [],
 })
 
 export default function AddonsManagementPage() {
   const { data: addons = [], isLoading } = useAddons()
   const { data: plans = [] } = useSubscriptionPlans()
+  const { data: featureCatalog = [] } = useFeaturesCatalog()
   const { data: hardwareData } = useHardwareCatalog({ limit: 200 })
   const { data: staffData } = useStaffCatalog({ limit: 200 })
   const createAddon = useCreateAddon()
@@ -82,9 +96,12 @@ export default function AddonsManagementPage() {
   const [search, setSearch] = useState("")
   const [editing, setEditing] = useState<Addon | null>(null)
   const [previewAddon, setPreviewAddon] = useState<Addon | null>(null)
+  const [historyTarget, setHistoryTarget] = useState<Addon | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Addon | null>(null)
   const [form, setForm] = useState<FormState | null>(null)
+  const [adminReason, setAdminReason] = useState("")
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const { data: historyData, isLoading: historyLoading } = useAddonTemplateVersions(historyTarget?.id || "")
 
   const hardware = hardwareData?.items ?? []
   const staff = staffData?.items ?? []
@@ -131,6 +148,7 @@ export default function AddonsManagementPage() {
 
   const openCreate = () => {
     setEditing(null)
+    setAdminReason("")
     setForm(emptyForm(kind))
   }
 
@@ -145,17 +163,23 @@ export default function AddonsManagementPage() {
       image_url: a.image_url || "",
       billing_unit: a.billing_unit || "PER_EVENT",
       price_unit: a.price_unit || "",
+      scope_type: a.scope_type || "EVENT",
+      consumption_model: a.consumption_model || "NON_CONSUMABLE",
+      unit_type: a.unit_type || "",
       min_price_inr: String(a.min_price_inr ?? a.price_inr ?? ""),
       max_price_inr: String(a.max_price_inr ?? ""),
       available_for_plans: a.available_for_plans || [],
       is_active: a.is_active,
+      lifecycle_status: a.lifecycle_status || (a.is_active ? "PUBLISHED" : "DRAFT"),
       hardware: (a.hardware_spec || []).map((x) => ({ id: x.item_id, quantity: x.quantity, days: x.days })),
       staff: (a.staff_spec || []).map((x) => ({ id: x.role_id, quantity: x.quantity, days: x.days })),
       inclusions: a.inclusions?.length ? a.inclusions : [""],
       exclusions: a.exclusions || [],
       consumables_cost: String(a.consumables_cost || 0),
       template_types: a.template_types || [],
+      feature_assignments: a.feature_assignments || [],
     })
+    setAdminReason("")
     setKind((a.addon_type || "PLAN") as Kind)
   }
 
@@ -191,19 +215,22 @@ export default function AddonsManagementPage() {
 
   const save = async () => {
     if (!form || !form.name.trim() || !form.key.trim()) return toast.error("Name and catalog key are required")
+    if (adminReason.trim().length < 12) return toast.error("Enter an administrative reason of at least 12 characters")
 
     const normalizedType = form.addon_type || kind
+    const { hardware: _hardware, staff: _staff, ...catalogueFields } = form
     const payload = {
-      ...form,
+      ...catalogueFields,
       addon_type: normalizedType,
       key: form.key.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
       price_unit: form.price_unit || null,
+      unit_type: form.unit_type || null,
       min_price_inr: form.min_price_inr ? Number(form.min_price_inr) : null,
       max_price_inr: form.max_price_inr ? Number(form.max_price_inr) : null,
       price_inr: form.min_price_inr ? Number(form.min_price_inr) : null,
       consumables_cost: Number(form.consumables_cost || 0),
-      hardware_spec: normalizedType === "VENUE" ? form.hardware.map((r) => ({ item_id: r.id, quantity: r.quantity, days: r.days })) : [],
-      staff_spec: normalizedType === "VENUE" ? form.staff.map((r) => ({ role_id: r.id, quantity: r.quantity, days: r.days })) : [],
+      hardware_spec: normalizedType === "VENUE" ? _hardware.map((r) => ({ item_id: r.id, quantity: r.quantity, days: r.days })) : [],
+      staff_spec: normalizedType === "VENUE" ? _staff.map((r) => ({ role_id: r.id, quantity: r.quantity, days: r.days })) : [],
       inclusions: form.inclusions.filter(Boolean),
       exclusions: form.exclusions.filter(Boolean),
       template_types: normalizedType === "VENUE" ? form.template_types : [],
@@ -211,13 +238,14 @@ export default function AddonsManagementPage() {
 
     try {
       if (editing) {
-        await updateAddon.mutateAsync({ addonId: editing.id, data: payload })
+        await updateAddon.mutateAsync({ addonId: editing.id, data: payload, version: editing.version || 1, reason: adminReason.trim() })
       } else {
-        await createAddon.mutateAsync(payload)
+        await createAddon.mutateAsync({ data: payload, reason: adminReason.trim() })
       }
       toast.success(editing ? "Add-on updated" : "Add-on created")
       setForm(null)
       setEditing(null)
+      setAdminReason("")
     } catch (error: any) {
       toast.error(error?.response?.data?.detail || "Could not save add-on")
     }
@@ -313,20 +341,20 @@ export default function AddonsManagementPage() {
       <ConfirmDestructiveAction
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Delete add-on?"
-        description="This removes a commercial add-on from the platform catalogue and can affect future sales, subscriptions, and entitlement configuration. Capture the commercial or operational reason."
-        confirmLabel="Delete add-on"
+        title="Retire add-on?"
+        description="This removes the add-on from future sale while preserving active contracts, audit lineage, and immutable revisions. Retired add-ons cannot be edited."
+        confirmLabel="Retire add-on"
         resourceName={deleteTarget?.name}
         requireReason
         pending={deleteAddon.isPending}
         onConfirm={async (reason) => {
           if (!deleteTarget) return
           if (!reason) {
-            toast.error("A reason is required to delete an add-on")
+            toast.error("A reason is required to retire an add-on")
             return
           }
-          await deleteAddon.mutateAsync({ addonId: deleteTarget.id, reason })
-          toast.success("Add-on deleted")
+          await deleteAddon.mutateAsync({ addonId: deleteTarget.id, version: deleteTarget.version || 1, reason })
+          toast.success("Add-on retired")
           setDeleteTarget(null)
         }}
       />
@@ -440,6 +468,25 @@ export default function AddonsManagementPage() {
                   </Field>
                 </div>
 
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  <Field label="Entitlement scope">
+                    <select value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value as FormState["scope_type"] })} className="h-10 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-sm">
+                      <option value="EVENT">Per event</option>
+                      <option value="ORGANIZATION">Organization-wide</option>
+                    </select>
+                  </Field>
+                  <Field label="Consumption model">
+                    <select value={form.consumption_model} onChange={(event) => setForm({ ...form, consumption_model: event.target.value as FormState["consumption_model"] })} className="h-10 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-sm">
+                      <option value="NON_CONSUMABLE">Non-consumable unlock</option>
+                      <option value="QUOTA">Quota allocation</option>
+                      <option value="METERED">Metered usage</option>
+                    </select>
+                  </Field>
+                  <Field label="Unit">
+                    <Input value={form.unit_type} onChange={(event) => setForm({ ...form, unit_type: event.target.value })} placeholder="registrations, messages, GB" />
+                  </Field>
+                </div>
+
                 <div className="mt-4 flex flex-wrap gap-2">
                   {plans.map((plan) => (
                     <button
@@ -464,6 +511,17 @@ export default function AddonsManagementPage() {
                   ))}
                 </div>
               </Section>
+
+              {form.addon_type === "PLAN" ? (
+                <Section title="Capability assignments" subtitle="Unlock a feature, upgrade a tier, or add quota. The resolved preview is enforced by the same backend used by Organizer Portal.">
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {featureCatalog.filter((feature) => feature.is_active).map((feature) => {
+                      const assignment = form.feature_assignments.find((item) => item.feature_key === feature.key)
+                      return <div key={feature.key} className="rounded-xl border border-[var(--border-default)] p-3"><div className="flex items-start gap-3"><input type="checkbox" checked={Boolean(assignment)} onChange={(event) => setForm({ ...form, feature_assignments: event.target.checked ? [...form.feature_assignments, { feature_key: feature.key, name: feature.name, value_type: feature.value_type || "BOOLEAN", value: feature.default_value?.value ?? (feature.value_type === "BOOLEAN" ? true : feature.value_type === "LIMIT" ? 1 : feature.allowed_values?.[0] ?? ""), scope_type: feature.scope_type, operation: feature.value_type === "LIMIT" ? "INCREMENT" : "UNLOCK", validity_days: null, stackable: feature.value_type === "LIMIT", max_quantity: null, allowed_values: feature.allowed_values, unit: feature.unit, period: feature.period }] : form.feature_assignments.filter((item) => item.feature_key !== feature.key) })} className="mt-1" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{feature.name}</p><code className="text-[10px] text-[var(--text-tertiary)]">{feature.key} · {feature.value_type}</code>{assignment ? <AddonAssignmentEditor value={assignment} onChange={(next) => setForm({ ...form, feature_assignments: form.feature_assignments.map((item) => item.feature_key === feature.key ? next : item) })} /> : null}</div></div></div>
+                    })}
+                  </div>
+                </Section>
+              ) : null}
 
               {form.addon_type === "VENUE" ? (
                 <>
@@ -529,10 +587,29 @@ export default function AddonsManagementPage() {
                 <ListEditor label="Exclusions" items={form.exclusions} onChange={(next) => setForm({ ...form, exclusions: next })} />
               </div>
 
+              <Field label="Administrative reason">
+                <textarea
+                  value={adminReason}
+                  onChange={(event) => setAdminReason(event.target.value)}
+                  placeholder="Explain why this catalogue revision is required (minimum 12 characters)."
+                  className="min-h-20 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-3 text-sm"
+                />
+              </Field>
+
               <div className="flex items-center justify-between border-t border-[var(--border-default)] pt-5">
                 <div className="flex items-center gap-3">
                   <Switch checked={form.is_active} onCheckedChange={(checked) => setForm({ ...form, is_active: checked })} />
                   <span className="text-sm font-medium text-[var(--text-primary)]">Available for sale</span>
+                  <select
+                    aria-label="Add-on lifecycle"
+                    value={form.lifecycle_status}
+                    onChange={(event) => setForm({ ...form, lifecycle_status: event.target.value as FormState["lifecycle_status"] })}
+                    className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 py-2 text-xs font-semibold"
+                  >
+                    <option value="DRAFT">Draft</option>
+                    <option value="REVIEW">In review</option>
+                    {editing ? <option value="PUBLISHED">Published</option> : null}
+                  </select>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setForm(null)}>
@@ -563,9 +640,54 @@ export default function AddonsManagementPage() {
           setPreviewAddon(null)
           openEdit(previewAddon)
         }}
+        onHistory={() => {
+          if (!previewAddon) return
+          setHistoryTarget(previewAddon)
+        }}
       />
+
+      <Dialog open={!!historyTarget} onOpenChange={(open) => !open && setHistoryTarget(null)}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)]">
+          <DialogHeader>
+            <DialogTitle>{historyTarget?.name} revision history</DialogTitle>
+            <DialogDescription>Immutable catalogue snapshots, including assignments and the recorded administrative reason.</DialogDescription>
+          </DialogHeader>
+          {historyLoading ? (
+            <div className="h-40 animate-pulse rounded-2xl bg-[var(--bg-surface-2)]" />
+          ) : historyData?.items.length ? (
+            <div className="space-y-3">
+              {historyData.items.map((revision, index) => {
+                const previous = historyData.items[index + 1]
+                const currentTemplate = revision.snapshot.template || {}
+                const previousTemplate = previous?.snapshot.template || {}
+                const changedFields = Object.keys(currentTemplate).filter((key) => JSON.stringify(currentTemplate[key]) !== JSON.stringify(previousTemplate[key]))
+                return (
+                  <article key={revision.id} className="rounded-2xl border border-[var(--border-default)] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2"><span className="font-semibold">Version {revision.version}</span><span className="rounded-full bg-[var(--bg-surface-2)] px-2 py-1 text-[10px] font-semibold">{revision.lifecycle_status}</span></div>
+                      <time className="text-xs text-[var(--text-tertiary)]">{new Date(revision.created_at).toLocaleString()}</time>
+                    </div>
+                    <p className="mt-2 text-sm text-[var(--text-secondary)]">{revision.reason}</p>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <span className="rounded-md border border-[var(--border-default)] px-2 py-1 text-[10px]">{revision.change_type}</span>
+                      <span className="rounded-md border border-[var(--border-default)] px-2 py-1 text-[10px]">{revision.snapshot.assignments?.length || 0} assignments</span>
+                      {changedFields.slice(0, 8).map((field) => <span key={field} className="rounded-md border border-[var(--border-default)] px-2 py-1 text-[10px]">Changed: {field}</span>)}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-dashed border-[var(--border-default)] p-8 text-center text-sm text-[var(--text-secondary)]">No immutable revisions are available.</p>
+          )}
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   )
+}
+
+function AddonAssignmentEditor({ value, onChange }: { value: AddonFeatureAssignment; onChange: (value: AddonFeatureAssignment) => void }) {
+  return <div className="mt-3 grid grid-cols-2 gap-2"><select value={value.operation} onChange={(event) => onChange({ ...value, operation: event.target.value as AddonFeatureAssignment["operation"] })} className="rounded border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-2 text-xs"><option value="UNLOCK">Unlock</option><option value="REPLACE">Replace</option><option value="INCREMENT">Increment</option><option value="DECREMENT">Decrement</option></select>{value.value_type === "BOOLEAN" ? <select value={String(Boolean(value.value))} onChange={(event) => onChange({ ...value, value: event.target.value === "true" })} className="rounded border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-2 text-xs"><option value="true">Enabled</option><option value="false">Disabled</option></select> : value.value_type === "TIER" || value.value_type === "ENUM" ? <select value={String(value.value)} onChange={(event) => onChange({ ...value, value: event.target.value })} className="rounded border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-2 text-xs">{value.allowed_values?.map((option) => <option key={option}>{option}</option>)}</select> : <Input type="number" min={0} value={Number(value.value ?? 0)} onChange={(event) => onChange({ ...value, value: Number(event.target.value) })} />}<Input type="number" min={1} placeholder="Validity days" value={value.validity_days ?? ""} onChange={(event) => onChange({ ...value, validity_days: event.target.value ? Number(event.target.value) : null })} /><Input type="number" min={1} placeholder="Max quantity" value={value.max_quantity ?? ""} onChange={(event) => onChange({ ...value, max_quantity: event.target.value ? Number(event.target.value) : null })} /><label className="col-span-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={Boolean(value.stackable)} onChange={(event) => onChange({ ...value, stackable: event.target.checked })} />Stackable purchase</label></div>
 }
 
 function getAdjustedAddonPriceLabel(addon: Addon, hardwareMap?: Record<string, any>, staffMap?: Record<string, any>) {
@@ -641,8 +763,8 @@ function AddonCard({ addon, hardwareMap, staffMap, onOpen, onEdit, onDelete }: a
             <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]">
               {isVenue ? "Venue package" : "Plan extension"}
             </span>
-            <span className={cn("rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]", addon.is_active ? "bg-white text-black" : "bg-white/10 text-white/55")}>
-              {addon.is_active ? "Active" : "Draft"}
+            <span className={cn("rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]", addon.lifecycle_status === "PUBLISHED" ? "bg-white text-black" : "bg-white/10 text-white/55")}>
+              {addon.lifecycle_status || (addon.is_active ? "Published" : "Draft")}
             </span>
           </div>
           <h3 className="mt-3 truncate text-lg font-semibold">{addon.name}</h3>
@@ -699,6 +821,7 @@ function AddonCard({ addon, hardwareMap, staffMap, onOpen, onEdit, onDelete }: a
               onEdit()
             }}
             aria-label={`Edit ${addon.name}`}
+            disabled={addon.lifecycle_status === "RETIRED"}
             className="h-10 w-10 rounded-md border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)]"
           >
             <Edit3 className="h-4 w-4" />
@@ -710,7 +833,8 @@ function AddonCard({ addon, hardwareMap, staffMap, onOpen, onEdit, onDelete }: a
               event.stopPropagation()
               onDelete()
             }}
-            aria-label={`Delete ${addon.name}`}
+            aria-label={`Retire ${addon.name}`}
+            disabled={addon.lifecycle_status === "RETIRED"}
             className="h-10 w-10 rounded-md border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-red-500/10 hover:text-red-500"
           >
             <Trash2 className="h-4 w-4" />
@@ -867,6 +991,7 @@ function AddonDetailSheet({
   open,
   onOpenChange,
   onEdit,
+  onHistory,
 }: {
   addon: Addon | null
   hardwareMap: Record<string, any>
@@ -874,6 +999,7 @@ function AddonDetailSheet({
   open: boolean
   onOpenChange: (open: boolean) => void
   onEdit: () => void
+  onHistory: () => void
 }) {
   const imageUrl = typeof addon?.image_url === "string" && addon.image_url.trim() ? addon.image_url.trim() : undefined
   const isVenue = (addon?.addon_type || "PLAN") === "VENUE"
@@ -912,7 +1038,7 @@ function AddonDetailSheet({
               <div className="space-y-4 p-5">
                 <SheetHeader className="pr-8">
                   <div className="mb-1 flex items-center gap-2 text-[9px] uppercase text-[var(--text-tertiary)]">
-                    <span>{addon.is_active === false ? "Inactive" : "Active"}</span>
+                    <span>{addon.lifecycle_status || (addon.is_active === false ? "Inactive" : "Published")}</span>
                     <span>•</span>
                     <span>{isVenue ? "Venue package" : "Plan extension"}</span>
                   </div>
@@ -977,8 +1103,12 @@ function AddonDetailSheet({
               </div>
             </div>
 
-            <SheetFooter className="border-[var(--border-default)] bg-[var(--bg-surface)] p-4">
-              <Button type="button" onClick={onEdit} className="h-11 w-full rounded-md bg-black text-sm font-semibold text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/85">
+            <SheetFooter className="grid grid-cols-2 border-[var(--border-default)] bg-[var(--bg-surface)] p-4">
+              <Button type="button" variant="outline" onClick={onHistory} className="h-11 w-full rounded-md text-sm font-semibold">
+                <Clock3 className="mr-2 h-4 w-4" />
+                Revision history
+              </Button>
+              <Button type="button" onClick={onEdit} disabled={addon.lifecycle_status === "RETIRED"} className="h-11 w-full rounded-md bg-black text-sm font-semibold text-white hover:bg-black/90 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/85">
                 Edit add-on
                 <ArrowRight className="ml-1 h-3 w-3" />
               </Button>

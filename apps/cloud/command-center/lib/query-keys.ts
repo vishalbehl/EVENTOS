@@ -16,6 +16,12 @@ const event = (organizationId: string | null | undefined, eventId: string) =>
   [...tenant(organizationId), "event", eventId] as const;
 
 export const platformKey = (...segments: readonly unknown[]) => ["platform-admin", ...segments] as const;
+const organizationConsole = (organizationId: string) =>
+  platformKey("organization-console", organizationId);
+const organizationConsoleDomain = (organizationId: string, domain: string) =>
+  [...organizationConsole(organizationId), domain] as const;
+const organizationConsoleEvent = (organizationId: string, eventId: string) =>
+  [...organizationConsole(organizationId), "event", eventId] as const;
 
 export const queryKeys = {
   tenant,
@@ -62,6 +68,17 @@ export const queryKeys = {
     list: (params?: QueryParams) => ["platform-admin", "organizations", "list", stableParams(params)] as const,
     detail: (organizationId: string) => ["platform-admin", "organization", organizationId] as const,
   },
+  organizationConsole: {
+    all: organizationConsole,
+    domain: organizationConsoleDomain,
+    event: organizationConsoleEvent,
+    eventDomain: (
+      organizationId: string,
+      eventId: string,
+      domain: string,
+      ...segments: readonly unknown[]
+    ) => [...organizationConsoleEvent(organizationId, eventId), domain, ...segments] as const,
+  },
   admin: {
     all: ["platform-admin"] as const,
     domain: (domain: string, params?: QueryParams) =>
@@ -80,6 +97,9 @@ export const adminKeys = {
   featuresCatalog: queryKeys.admin.domain("features-catalog"),
   featureMatrix: queryKeys.admin.domain("feature-matrix"),
   addons: queryKeys.admin.domain("addons"),
+  addonVersions: (addonId: string) => queryKeys.admin.domain("addon-versions", { addonId }),
+  planVersions: (planId: string) => queryKeys.admin.domain("plan-versions", { planId }),
+  typedPlanFeatures: (planId: string) => queryKeys.admin.domain("typed-plan-features", { planId }),
   planFeatures: (planId: string) => ["platform-admin", "plan", planId, "features"] as const,
   subscriptions: (params?: QueryParams) => queryKeys.admin.domain("subscriptions", params),
   invoices: (params?: QueryParams) => queryKeys.admin.domain("invoices", params),
@@ -103,6 +123,7 @@ export const adminKeys = {
   orgEvents: (orgId: string) => ["platform-admin", "organization", orgId, "events"] as const,
   orgMembers: (orgId: string) => ["platform-admin", "organization", orgId, "members"] as const,
   orgAddons: (orgId: string) => ["platform-admin", "organization", orgId, "addons"] as const,
+  orgDossier: (orgId: string) => queryKeys.admin.domain("organization-dossier", { organizationId: orgId }),
   paymentEvents: (params?: QueryParams) => queryKeys.admin.domain("payment-events", params),
   revenueAnalytics: queryKeys.admin.domain("revenue-analytics"),
   invoiceItems: (invoiceId: string) => ["platform-admin", "invoices", invoiceId, "items"] as const,

@@ -12,6 +12,7 @@ import { useAuthStore } from '@/store/use-auth-store'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useOperationAccess } from '@/lib/capabilities'
 
 const DEFAULT_TERMS = `# Speaker Portal Terms & Conditions
 
@@ -129,6 +130,9 @@ const THEMES = [
 export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
   const { data: event, refetch } = useEvent(eventId)
   const token = useAuthStore(s => s.accessToken)
+  const themeAccess = useOperationAccess('branding.theme.manage')
+  const logoAccess = useOperationAccess('branding.logo.manage')
+  const speakerAccess = useOperationAccess('speakers.manage')
 
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
@@ -174,6 +178,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
   const templateRef = useRef<HTMLInputElement>(null)
 
   const uploadTemplateFile = async (file: File) => {
+    if (!speakerAccess.enabled) return
     setUploadingTemplate(true)
     try {
       const formData = new FormData()
@@ -305,6 +310,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
   // ── Upload helpers ────────────────────────────────────────────
   const uploadFile = async (file: File, field: 'logo' | 'header') => {
+    if (!logoAccess.enabled) return
     if (field === 'logo') setUploadingLogo(true)
     else setUploadingHeader(true)
 
@@ -343,6 +349,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
   // ── Remove a header image ─────────────────
   const removeHeaderImage = async (idx: number) => {
+    if (!logoAccess.enabled) return
     const next = headerImages.filter((_, i) => i !== idx)
     setHeaderImages(next)
 
@@ -376,6 +383,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
   }
 
   const addHeaderUrl = async () => {
+    if (!logoAccess.enabled) return
     if (!customHeaderUrl.trim()) return
     const url = customHeaderUrl.trim()
     setCustomHeaderUrl('')
@@ -427,6 +435,10 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
 
   // ── Save ─────────────────────────────────────────────────────
   const handleSave = async () => {
+    if (!themeAccess.enabled || !logoAccess.enabled || !speakerAccess.enabled) {
+      toast.error('Theme update is unavailable for this event contract or role.')
+      return
+    }
     if (!event) return
     const emptyFaq = faqs.some(f => !f.q.trim() || !f.a.trim());
     if (emptyFaq) {
@@ -548,7 +560,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
           {/* Save */}
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || themeAccess.loading || logoAccess.loading || speakerAccess.loading || !themeAccess.enabled || !logoAccess.enabled || !speakerAccess.enabled}
             className="flex items-center gap-2 h-9 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg"
           >
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
@@ -675,7 +687,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
                   type="file"
                   ref={headerRef}
                   accept="image/*"
-                  disabled={uploadingHeader}
+                  disabled={uploadingHeader || logoAccess.loading || !logoAccess.enabled}
                   className="hidden"
                   onChange={e => {
                     const file = e.target.files?.[0]
@@ -790,7 +802,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
                       type="file"
                       ref={logoRef}
                       accept="image/*"
-                      disabled={uploadingLogo}
+                      disabled={uploadingLogo || logoAccess.loading || !logoAccess.enabled}
                       className="hidden"
                       onChange={e => {
                         const file = e.target.files?.[0]
@@ -1337,7 +1349,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
                 type="file"
                 ref={templateRef}
                 accept=".docx,.pptx,.doc,.ppt"
-                disabled={uploadingTemplate}
+                disabled={uploadingTemplate || speakerAccess.loading || !speakerAccess.enabled}
                 className="hidden"
                 onChange={e => {
                   const file = e.target.files?.[0]
@@ -1424,7 +1436,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
           </div>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || themeAccess.loading || logoAccess.loading || speakerAccess.loading || !themeAccess.enabled || !logoAccess.enabled || !speakerAccess.enabled}
             className="flex items-center gap-2 h-8 px-5 bg-amber-500 hover:bg-amber-400 text-black rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all"
           >
             {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}

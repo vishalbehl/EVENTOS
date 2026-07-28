@@ -1,6 +1,6 @@
 # Command Center Completion Governance
 
-This directory is the authoritative implementation control surface for completing the EventX OS Command Center.
+This directory is the authoritative implementation control surface for completing the Event OS Command Center.
 
 ## Phase 0 artifacts
 

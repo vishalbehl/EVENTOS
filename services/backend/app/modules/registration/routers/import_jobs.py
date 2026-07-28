@@ -23,9 +23,11 @@ from app.modules.registration.schemas.import_job import (
 )
 from app.schemas.common import MessageResponse
 from app.services import upload_service
+from app.core.dependencies.feature_gate import require_event_feature
+
 from app.modules.registration.services.excel_import_service import parse_workbook
 
-router = APIRouter(prefix="/events/{event_id}/import", tags=["import-jobs"])
+router = APIRouter(prefix="/events/{event_id}/import", tags=["import-jobs"], dependencies=[require_event_feature("FEAT_BULK_IMPORT")])
 
 
 @router.post("/upload", response_model=ImportJobResponse, status_code=status.HTTP_202_ACCEPTED)

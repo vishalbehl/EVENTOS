@@ -305,6 +305,7 @@ class BillingMutationBase(BaseModel):
 
 
 class SubscriptionStatusUpdate(BillingMutationBase):
+    approved_request_id: uuid.UUID
     version: int = Field(ge=1)
     status: Literal[
         "ACTIVE", "TRIAL", "SUSPENDED", "EXPIRED", "PENDING_PAYMENT",
@@ -313,6 +314,7 @@ class SubscriptionStatusUpdate(BillingMutationBase):
 
 
 class GrantIssueRequest(BillingMutationBase):
+    approved_request_id: uuid.UUID
     subscription_id: uuid.UUID | None = None
     grant_type: Literal["EVENT_UNIT", "EVENT_PACK", "EVENT_CREDIT_POOL", "ORG_CAPABILITY", "SERVICE_ALLOWANCE"]
     scope_type: Literal["ORG", "EVENT"]
@@ -340,11 +342,13 @@ class GrantIssueRequest(BillingMutationBase):
 
 
 class GrantCapacityUpdate(BillingMutationBase):
+    approved_request_id: uuid.UUID
     version: int = Field(ge=1)
     quantity_total: int = Field(ge=1)
 
 
 class GrantStatusUpdate(BillingMutationBase):
+    approved_request_id: uuid.UUID
     version: int = Field(ge=1)
     status: Literal["PENDING", "ACTIVE", "SUSPENDED", "EXPIRED", "CANCELLED"]
 

@@ -43,6 +43,26 @@ async def lifespan(app: FastAPI):
             async with AsyncSessionLocal() as security_session:
                 await enforce_runtime_database_security(security_session)
         await ensure_admin_user()
+
+        # Keep catalogue data aligned with the immutable code-owned
+        # route/operation manifest. An active unknown key could otherwise be
+        # sold without any backend enforcement destination.
+        from app.database import AsyncSessionLocal
+        from app.modules.billing.services.capability_service import CapabilityService
+        async with AsyncSessionLocal() as capability_session:
+            catalogue_result = await CapabilityService.sync_catalogue(capability_session)
+            if catalogue_result["unknown_active"]:
+                raise RuntimeError(
+                    "Active feature catalogue keys are missing enforcement bindings: "
+                    + ", ".join(catalogue_result["unknown_active"])
+                )
+            await capability_session.commit()
+            logger.info(
+                "Capability catalogue validated: {} registered, {} created, {} updated",
+                catalogue_result["registered"],
+                len(catalogue_result["created"]),
+                len(catalogue_result["updated"]),
+            )
         
         # ── Initialize System Timezone Cache ───────────────────
         from app.database import AsyncSessionLocal
@@ -110,6 +130,23 @@ from app.core.dependencies.feature_gate import EntitlementRequiredException
 
 @app.exception_handler(EntitlementRequiredException)
 async def entitlement_required_exception_handler(request, exc):
+    if settings.environment != "testing":
+        from app.modules.billing.services.capability_diagnostics_service import CapabilityDiagnosticsService
+        reason_code = str(exc.detail.get("code") or "NOT_ENTITLED")
+        await CapabilityDiagnosticsService.record_isolated(
+            event_type="RESOLUTION_FAILURE" if reason_code == "RESOLUTION_UNAVAILABLE" else "GATE_DENIAL",
+            source="fastapi.entitlement_required_handler",
+            organization_id=exc.organization_id,
+            event_id=exc.event_id,
+            actor_user_id=exc.actor_user_id,
+            severity="ERROR" if reason_code == "RESOLUTION_UNAVAILABLE" else "WARNING",
+            reason_code=reason_code,
+            capability_key=str(exc.detail.get("feature") or ""),
+            operation_key=exc.operation,
+            request_id=request.headers.get("X-Request-ID"),
+            correlation_id=request.headers.get("X-Correlation-ID"),
+            metadata={"method": request.method, "path": request.url.path},
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.detail

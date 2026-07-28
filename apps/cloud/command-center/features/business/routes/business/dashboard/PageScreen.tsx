@@ -45,7 +45,7 @@ export default function CommercialDashboardPage() {
     <PageContainer>
       <SectionHeader
         title="Commercial Overview Dashboard"
-        description="EventX SaaS, IT infrastructure deployments, and commercial simulation cockpit"
+        description="Event SaaS, IT infrastructure deployments, and commercial simulation cockpit"
       />
 
       <MetricRow metrics={kpis} />

@@ -55,7 +55,7 @@ def generate_totp_secret() -> str:
     return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
 
 
-def build_totp_uri(secret: str, email: str, issuer: str = "EventX OS") -> str:
+def build_totp_uri(secret: str, email: str, issuer: str = "Event OS") -> str:
     label = quote(f"{issuer}:{email}")
     return f"otpauth://totp/{label}?secret={secret}&issuer={quote(issuer)}&algorithm=SHA1&digits=6&period=30"
 

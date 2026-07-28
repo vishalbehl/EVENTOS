@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, SoftDeleteMixin
 
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from app.modules.communications.models.email_campaign import EmailCampaign
 
 
-class EmailTemplate(Base):
+class EmailTemplate(Base, SoftDeleteMixin):
     """
     Reusable email templates with {{variable}} placeholder syntax.
     Templates can be global (event_id=NULL) or event-specific.
@@ -75,7 +75,7 @@ class EmailTemplate(Base):
     event: Mapped[Optional["Event"]] = relationship(
         "Event", back_populates="email_templates"
     )
-    creator: Mapped[Optional["User"]] = relationship("User")
+    creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     campaigns: Mapped[List["EmailCampaign"]] = relationship(
         "EmailCampaign", back_populates="template"
     )

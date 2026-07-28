@@ -34,17 +34,13 @@ export default function EventsPage() {
   );
 
   return (
-    <div className="space-y-6 pb-8">
-      <EnterprisePageIntro
-        title="Events"
-        subtitle="Run every organizer workspace from one geometry-led command surface. Plans, entitlements, and event creation now move through one controlled flow."
-        action={
-          <Button onClick={() => router.push("/events/new")} className="h-11 rounded-xl px-5 text-[12px] font-semibold">
-            <Plus className="mr-1 h-4 w-4" />
-            Create Event
-          </Button>
-        }
-      />
+    <div className="space-y-6 pb-8 pt-4">
+      <div className="flex items-center justify-end">
+        <Button onClick={() => router.push("/events/new")} className="h-11 rounded-xl px-5 text-[12px] font-semibold">
+          <Plus className="mr-1 h-4 w-4" />
+          Create Event
+        </Button>
+      </div>
 
       {sortedEvents.length === 0 ? (
         <>

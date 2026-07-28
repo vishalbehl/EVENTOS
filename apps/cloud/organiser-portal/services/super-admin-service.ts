@@ -1,5 +1,5 @@
 /**
- * Super Admin Service — EventX OS Control Plane
+ * Super Admin Service — Event OS Control Plane
  * All typed API calls for the Super Admin Console.
  * Uses existing apiClient from lib/api-client.ts
  */

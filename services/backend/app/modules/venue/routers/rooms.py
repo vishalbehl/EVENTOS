@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,8 +14,11 @@ from app.modules.events.models.room import Room
 from app.modules.identity.models.user import User
 from app.modules.venue.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 from app.schemas.common import MessageResponse
+from app.modules.platform.services.metering_service import MeteringService
+from app.core.dependencies.feature_gate import require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
-router = APIRouter(prefix="/events/{event_id}/rooms", tags=["rooms"])
+router = APIRouter(prefix="/events/{event_id}/rooms", tags=["rooms"], dependencies=[require_event_operation("venue.rooms.manage")])
 
 
 @router.get("", response_model=List[RoomResponse])
@@ -60,14 +63,30 @@ async def list_rooms(
 async def create_room(
     payload: RoomCreate,
     event: CurrentEvent,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RoomResponse:
-    # Check room limit
-    from app.modules.billing.services.limit_guard import LimitGuard
-    await LimitGuard.check_rooms(db, event.organization_id, event.id)
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_rooms",
+        quantity=1,
+        unit="room",
+        idempotency_key=f"room-create:{idempotency_key}",
+        metadata={"name": payload.name},
+    )
 
     room = Room(event_id=event.id, **payload.model_dump())
     db.add(room)
+    await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.rooms.create",
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     await db.refresh(room)
     return RoomResponse.model_validate(room)
@@ -109,9 +128,11 @@ async def delete_room(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     room = await _get_room_or_404(db, room_id, event.id, user=user)
-    await db.delete(room)
+    if room.is_active:
+        room.is_active = False
+        await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="rooms", quantity=-1, unit="count", source="organizer_portal.rooms.archive", idempotency_key=f"room-archive:{room.id}", actor_user_id=user.id, metadata={"resource_id": str(room.id)})
     await db.commit()
-    return MessageResponse(message="Room deleted.")
+    return MessageResponse(message="Room archived and remains recoverable.")
 
 
 async def _get_room_or_404(

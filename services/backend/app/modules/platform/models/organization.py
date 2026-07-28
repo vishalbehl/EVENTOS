@@ -65,7 +65,6 @@ class Organization(Base):
     date_format: Mapped[str] = mapped_column(String(20), nullable=False, default="DD/MM/YYYY")
     time_format: Mapped[str] = mapped_column(String(20), nullable=False, default="24 Hour")
     currency: Mapped[str] = mapped_column(String(20), nullable=False, default="INR (₹)")
-    enabled_modules: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=lambda: [])
     onboarding_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     onboarding_draft: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(

@@ -15,6 +15,7 @@ from app.modules.registration.routers.registration_portal import (
     get_public_registration_form,
     public_register_participant
 )
+from tests.conftest import activate_event_for_test
 
 
 @pytest.mark.asyncio
@@ -120,6 +121,7 @@ async def test_public_registration_flow(
     db: AsyncSession,
     event: Event
 ):
+    await activate_event_for_test(db, event)
     # 1. Update form config to live
     fields_payload = [
         FormFieldConfig(

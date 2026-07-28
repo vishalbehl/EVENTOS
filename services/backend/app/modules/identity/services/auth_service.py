@@ -55,6 +55,7 @@ def create_access_token(
     *,
     mfa_authenticated_at: Optional[datetime] = None,
     impersonator_id: Optional[uuid.UUID] = None,
+    impersonation_session_id: Optional[uuid.UUID] = None,
     expires_minutes: Optional[int] = None,
 ) -> str:
     """
@@ -86,6 +87,8 @@ def create_access_token(
     }
     if impersonator_id:
         payload["impersonator_id"] = str(impersonator_id)
+    if impersonation_session_id:
+        payload["impersonation_session_id"] = str(impersonation_session_id)
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 

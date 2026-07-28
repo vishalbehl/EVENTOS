@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "cost_center" {
   type        = string
   description = "Cost allocation tag."
-  default     = "eventx-production"
+  default     = "Event-production"
 }
 
 variable "vpc_cidr" {

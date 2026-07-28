@@ -17,6 +17,7 @@ import { cn, formatApiError, formatDateInTZ, formatTimeInTZ } from "@/lib/utils"
 import { toast } from "sonner";
 import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
+import { CapabilityAction } from "@/lib/capabilities";
 
 interface RegisterSpeakerDialogProps {
   isOpen: boolean;
@@ -622,15 +623,16 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
                 >
                   Cancel
                 </Button>
-                <Button
-                  disabled={loading || talks.length === 0 || talks.some(t => !t.session_id)}
-                  onClick={handleSubmit}
-                  className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : mode === "manual" ? <Check className="h-4 w-4 mr-2" /> : <Mail className="h-4 w-4 mr-2" />}
-                  {mode === "manual" ? "Finalize Registration" : "Send Quick Invite"}
-                </Button>
+                <CapabilityAction operation="speakers.manage">
+                  <Button
+                    disabled={loading || talks.length === 0 || talks.some(t => !t.session_id)}
+                    onClick={handleSubmit}
+                    className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : mode === "manual" ? <Check className="h-4 w-4 mr-2" /> : <Mail className="h-4 w-4 mr-2" />}
+                    {mode === "manual" ? "Finalize Registration" : "Send Quick Invite"}
+                  </Button>
+                </CapabilityAction>
               </div>
             </motion.div>
           </div>

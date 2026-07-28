@@ -119,8 +119,8 @@ resource "aws_db_instance" "postgres" {
   storage_type                    = "gp3"
   storage_encrypted               = true
   kms_key_id                      = var.kms_key_arn
-  db_name                         = "eventx"
-  username                        = "eventx_admin"
+  db_name                         = "Event"
+  username                        = "Event_admin"
   manage_master_user_password     = true
   port                            = 5432
   db_subnet_group_name            = aws_db_subnet_group.main.name
@@ -148,7 +148,7 @@ resource "aws_elasticache_subnet_group" "main" {
 
 resource "aws_elasticache_replication_group" "redis" {
   replication_group_id       = "${local.name_prefix}-redis"
-  description                = "EventX cache and Celery broker"
+  description                = "Event cache and Celery broker"
   engine                     = "redis"
   node_type                  = var.redis_node_type
   port                       = 6379
@@ -170,7 +170,7 @@ resource "aws_elasticache_replication_group" "redis" {
 
 resource "aws_secretsmanager_secret" "runtime" {
   name                    = "${local.name_prefix}/runtime"
-  description             = "Runtime-only EventX application secrets; populate before enabling ECS services"
+  description             = "Runtime-only Event application secrets; populate before enabling ECS services"
   kms_key_id              = var.kms_key_arn
   recovery_window_in_days = 7
   tags                    = local.common_tags
@@ -385,7 +385,7 @@ locals {
     { name = "ENFORCE_PRIVILEGED_MFA", value = "true" },
     { name = "ACCESS_TOKEN_EXPIRE_MINUTES", value = "60" },
     { name = "PUBLIC_DEMO_SIGNUP_ENABLED", value = tostring(var.public_demo_signup_enabled) },
-    { name = "PUBLIC_DEMO_PLAN_NAME", value = "Demo Public" },
+    { name = "PUBLIC_DEMO_PLAN_NAME", value = "Basic" },
     { name = "PUBLIC_DEMO_RETENTION_DAYS", value = "14" },
     { name = "LOG_LEVEL", value = var.log_level }
   ], local.storage_environment)

@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "cost_center" {
   type        = string
   description = "Cost allocation tag."
-  default     = "eventx-nonprod"
+  default     = "Event-nonprod"
 }
 
 variable "vpc_cidr" {

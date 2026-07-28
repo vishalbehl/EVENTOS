@@ -8,7 +8,8 @@ from app.modules.billing.models.licensing import EntitlementGrant, EventEntitlem
 from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
 from app.modules.identity.models.user import User
 from app.modules.rbac.models.user_assignment import UserEventAssignment
-from tests.conftest import auth_headers
+from app.config import settings
+from tests.conftest import assign_typed_plan_limits, auth_headers
 
 
 @pytest.mark.asyncio
@@ -16,6 +17,13 @@ async def test_activation_creates_grant_consumption_and_snapshot(client, db, org
     plan = SubscriptionPlan(name="Snapshot Plan", max_events=3, max_event_team_members=2, max_registrations=150)
     db.add(plan)
     await db.flush()
+    await assign_typed_plan_limits(
+        db,
+        plan,
+        max_events=3,
+        max_event_team_members=2,
+        max_registrations=150,
+    )
     sub = OrganizationSubscription(organization_id=organization.id, plan_id=plan.id, status="ACTIVE")
     db.add(sub)
     await db.flush()
@@ -46,6 +54,7 @@ async def test_activation_is_idempotent(client, db, organization, event, organiz
     plan = SubscriptionPlan(name="Idempotent Plan", max_events=1)
     db.add(plan)
     await db.flush()
+    await assign_typed_plan_limits(db, plan, max_events=1)
     sub = OrganizationSubscription(organization_id=organization.id, plan_id=plan.id, status="ACTIVE")
     db.add(sub)
     await db.flush()
@@ -64,6 +73,12 @@ async def test_event_team_members_limit_enforced(client, db, organization, event
     plan = SubscriptionPlan(name="Seat Plan", max_events=1, max_event_team_members=1)
     db.add(plan)
     await db.flush()
+    await assign_typed_plan_limits(
+        db,
+        plan,
+        max_events=1,
+        max_event_team_members=1,
+    )
     sub = OrganizationSubscription(organization_id=organization.id, plan_id=plan.id, status="ACTIVE")
     db.add(sub)
     await db.flush()
@@ -90,7 +105,7 @@ async def test_event_team_members_limit_enforced(client, db, organization, event
     res = await client.post(
         "/users/assignments",
         json={"user_id": str(extra_user.id), "event_id": str(event.id), "permissions": {}},
-        headers=auth_headers(organizer),
+        headers={**auth_headers(organizer), "Idempotency-Key": "assign-extra-seat"},
     )
     assert res.status_code == 402, res.text
     assert res.json()["detail"]["limit_key"] == "max_event_team_members"
@@ -102,6 +117,20 @@ async def test_billing_plan_supports_multiple_active_subscriptions(client, db, o
     pro = SubscriptionPlan(name="Billing Pro", max_events=1, max_users=10, max_registrations=500)
     db.add_all([basic, pro])
     await db.flush()
+    await assign_typed_plan_limits(
+        db,
+        basic,
+        max_events=1,
+        max_users=2,
+        max_registrations=150,
+    )
+    await assign_typed_plan_limits(
+        db,
+        pro,
+        max_events=1,
+        max_users=10,
+        max_registrations=500,
+    )
 
     older = OrganizationSubscription(organization_id=organization.id, plan_id=basic.id, status="ACTIVE")
     newer = OrganizationSubscription(organization_id=organization.id, plan_id=pro.id, status="ACTIVE")
@@ -119,7 +148,7 @@ async def test_billing_plan_supports_multiple_active_subscriptions(client, db, o
 @pytest.mark.asyncio
 async def test_public_signup_issues_demo_subscription_and_grant(client, db):
     demo_plan = SubscriptionPlan(
-        name="Demo Public",
+        name=settings.PUBLIC_DEMO_PLAN_NAME,
         max_events=1,
         max_users=2,
         max_event_team_members=2,
@@ -135,6 +164,23 @@ async def test_public_signup_issues_demo_subscription_and_grant(client, db):
         is_active=True,
     )
     db.add(demo_plan)
+    await db.flush()
+    await assign_typed_plan_limits(
+        db,
+        demo_plan,
+        max_events=1,
+        max_users=2,
+        max_event_team_members=2,
+        max_registrations=50,
+        max_speakers=10,
+        max_sessions=10,
+        max_rooms=3,
+        max_ticket_categories=2,
+        max_badge_templates=1,
+        max_certificate_templates=1,
+        max_emails_per_event=20,
+        storage_quota_mb=100,
+    )
     await db.commit()
 
     suffix = uuid.uuid4().hex[:10]

@@ -7,9 +7,7 @@ from starlette.responses import JSONResponse
 from loguru import logger
 
 from app.database import AsyncSessionLocal
-from app.modules.billing.models.subscription import OrganizationSubscription
-from app.modules.rbac.services.entitlement_service import EntitlementService
-from sqlalchemy import select
+from app.modules.billing.services.capability_service import CapabilityService
 
 # Regex-based URL path matching mapped to feature keys.
 FEATURE_URL_MAP = {
@@ -73,49 +71,29 @@ class PlanGuardMiddleware:
             return
 
         async with AsyncSessionLocal() as db:
-            # 4. Super Admin Bypass
-            from app.modules.identity.models.user import User
-            user = await db.get(User, user_id)
-            if user and (user.role == "super_admin" or user.platform_role == "SUPER_ADMIN"):
-                await self.app(scope, receive, send)
-                return
-
-            # 5. Check Subscription Status
-            active_sub_stmt = select(OrganizationSubscription.id).where(
-                OrganizationSubscription.organization_id == org_id,
-                OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"])
-            ).limit(1)
-            active_sub_id = await db.scalar(active_sub_stmt)
-            if not active_sub_id:
-                sub_stmt = (
-                    select(OrganizationSubscription.status)
-                    .where(OrganizationSubscription.organization_id == org_id)
-                    .order_by(OrganizationSubscription.created_at.desc())
-                    .limit(1)
+            # This middleware is defense in depth. Explicit operation
+            # dependencies remain authoritative, but both paths must use the
+            # same resolver and denial vocabulary. Platform actors do not
+            # bypass organizer-domain commercial or security controls.
+            try:
+                resolved = await CapabilityService.resolve_organization(
+                    db, uuid.UUID(str(org_id)), user_id=uuid.UUID(str(user_id))
                 )
-                status = await db.scalar(sub_stmt)
-            else:
-                status = None
+                feature = resolved["features"].get(required_entitlement)
+            except Exception as exc:
+                logger.exception(f"PlanGuard resolution failed: org={org_id} path={path}: {exc}")
+                feature = None
 
-            if status in ["SUSPENDED", "EXPIRED", "CANCELLED", "ARCHIVED"]:
-                response = JSONResponse(
-                    status_code=402,
-                    content={"detail": f"Subscription {status.lower()}. Please update your billing information.", "code": "ERR_SUBSCRIPTION_INACTIVE"}
-                )
-                await response(scope, receive, send)
-                return
-
-            # 6. EntitlementService Check
-            has_access = await EntitlementService.has_feature(db, org_id, required_entitlement)
-            
-            if not has_access:
+            if not feature or not feature.get("enabled"):
+                reason_code = (feature or {}).get("reason_code") or "RESOLUTION_UNAVAILABLE"
                 logger.warning(f"PlanGuard Denied: org={org_id} required={required_entitlement} path={path}")
                 response = JSONResponse(
                     status_code=403,
                     content={
-                        "detail": f"This feature requires a higher subscription plan or a specific add-on.",
+                        "detail": "This operation is not available for the resolved organization capability.",
                         "code": "ERR_ENTITLEMENT_REQUIRED",
-                        "required_entitlement": required_entitlement
+                        "reason_code": reason_code,
+                        "required_entitlement": required_entitlement,
                     }
                 )
                 await response(scope, receive, send)

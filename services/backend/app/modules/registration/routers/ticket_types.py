@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent
 from app.modules.registration.models.ticket_type import TicketType
+from app.modules.registration.services.ticket_pricing_service import TicketPricingService
 from app.schemas.common import MessageResponse
+from app.core.dependencies.feature_gate import require_event_operation
 
-router = APIRouter(prefix="/events/{event_id}/pricing", tags=["pricing"])
+router = APIRouter(prefix="/events/{event_id}/pricing", tags=["pricing"], dependencies=[require_event_operation("registration.ticket_types.manage")])
 
 
 # ── Tier management ───────────────────────────────────────────────────────────
@@ -44,9 +46,7 @@ async def save_tiers(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Persist tier names in event.registration_settings.tiers."""
-    reg_settings = dict(getattr(event, "registration_settings", {}) or {})
-    reg_settings["tiers"] = payload.tiers
-    event.registration_settings = reg_settings
+    await TicketPricingService.set_tiers(db, event, payload.tiers)
     await db.commit()
     return MessageResponse(message="Tiers saved successfully.")
 
@@ -79,51 +79,13 @@ async def save_pricing(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     try:
-        submitted_keys = set()
-        for key, price in payload.pricingData.items():
-            if "_" in key and price is not None and price != "":
-                submitted_keys.add(key)
-
-        current_q = select(TicketType).where(TicketType.event_id == event.id)
-        current_res = await db.execute(current_q)
-        current_tickets = current_res.scalars().all()
-
-        for t in current_tickets:
-            composite_key = f"{t.role_name}_{t.tier_name}"
-            if composite_key not in submitted_keys:
-                await db.delete(t)
-
-        for key, price in payload.pricingData.items():
-            if "_" not in key or price is None or price == "":
-                continue
-            role_name, tier_name = key.split("_", 1)
-            try:
-                price_val = float(price)
-            except (ValueError, TypeError):
-                continue
-
-            exist_q = select(TicketType).where(
-                TicketType.event_id == event.id,
-                TicketType.role_name == role_name,
-                TicketType.tier_name == tier_name
-            )
-            exist_res = await db.execute(exist_q)
-            existing_t = exist_res.scalar_one_or_none()
-
-            if existing_t:
-                existing_t.price = price_val
-            else:
-                new_t = TicketType(
-                    event_id=event.id,
-                    role_name=role_name,
-                    tier_name=tier_name,
-                    price=price_val
-                )
-                db.add(new_t)
-
+        await TicketPricingService.replace_matrix(db, event, payload.pricingData)
         await db.commit()
         return MessageResponse(message="Pricing matrix saved successfully.")
 
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         raise HTTPException(

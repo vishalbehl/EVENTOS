@@ -359,7 +359,7 @@ export function UserManagement() {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/rbac/roles/${selectedRole.id}/permissions`, {
         method: isActive ? 'DELETE' : 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ permission_code: permissionCode })
       });
       if (res.ok) {

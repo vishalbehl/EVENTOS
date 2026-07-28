@@ -23,11 +23,11 @@ Snapshot:
 ## Venue Hardware Outsourcing Rule
 
 Venue hardware vendors may differ by event, for example Event A using Company A
-and Event B using Company B. EventX OS does not need to manage the vendor's
+and Event B using Company B. Event OS does not need to manage the vendor's
 internal hardware inventory to close cloud Phase 0/1, but it must maintain cloud
 records for any machine identity, event scope, sync permission, credential
 expiry, revocation, and audit trail used to connect that outsourced venue setup
-to EventX OS.
+to Event OS.
 
 ## Closure Requirement
 

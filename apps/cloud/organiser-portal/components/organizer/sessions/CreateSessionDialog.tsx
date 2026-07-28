@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { fromDateTimeLocalString, formatApiError } from "@/lib/utils";
 import { SESSION_CATEGORIES } from "@/types/models";
+import { CapabilityAction } from "@/lib/capabilities";
 
 interface CreateSessionDialogProps {
   isOpen: boolean;
@@ -264,14 +265,16 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
               <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
                 Cancel
               </Button>
-              <Button
-                disabled={loading}
-                onClick={handleSubmit}
-                className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
-              >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-                Register Session
-              </Button>
+              <CapabilityAction operation="sessions.manage">
+                <Button
+                  disabled={loading}
+                  onClick={handleSubmit}
+                  className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                  Register Session
+                </Button>
+              </CapabilityAction>
             </div>
           </motion.div>
         </div>

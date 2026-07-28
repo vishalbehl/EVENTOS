@@ -28,6 +28,7 @@ import { SPEAKER_TYPES } from "@/types/backend";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
+import { useOperationAccess } from "@/lib/capabilities";
 
 const countries = [
   "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria",
@@ -62,6 +63,7 @@ type DrawerTab = "details" | "talks" | "profile";
 
 export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps) {
   const queryClient = useQueryClient();
+  const profileAccess = useOperationAccess("speakers.profiles.manage");
   const [tab, setTab] = useState<DrawerTab>("details");
   const [isEditing, setIsEditing] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -155,6 +157,10 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
   }, [tab, speaker.id, eventId, speaker.affiliation, speaker.country]);
 
   const handleSaveProfile = async () => {
+    if (!profileAccess.enabled) {
+      toast.error(`Speaker profile editing is unavailable: ${(profileAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
     try {
       setProfileError("");
       const res = await apiClient.put<any>(`/events/${eventId}/speakers/${speaker.id}/profile`, profileForm);
@@ -530,7 +536,7 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
                           recipient: speaker.email,
                           template: "upload_invite",
                           link: `${window.location.origin}/${eventId}/${speaker.speaker_code || speaker.id}?tab=profile`
-                        });
+                        }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
                         toast.success("Profile update requested successfully!", { id: loadingId });
                       } catch (err: any) {
                         toast.error(formatApiError(err, "Failed to send request email."));

@@ -13,10 +13,15 @@ from app.modules.events.models.session import Session
 from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
 
 
 QUEUE_BASE = "/events/{event_id}/queue"
+
+
+@pytest.fixture(autouse=True)
+async def licensed_event(db: AsyncSession, event: Event) -> None:
+    await activate_event_for_test(db, event)
 
 
 @pytest.fixture

@@ -2,11 +2,12 @@ from __future__ import annotations
 from loguru import logger
 
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from pydantic import BaseModel, ConfigDict, EmailStr
+from fastapi import APIRouter, Depends, Header, HTTPException, status, UploadFile, File
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -27,6 +28,12 @@ from app.modules.presentations.schemas.file import (
 from app.modules.presentations.schemas.poster import PosterUploadRequest, PresignedPosterUploadResponse
 from app.services import upload_service
 from app.websocket.events import broadcast_file_event, EventType
+from app.core.dependencies.feature_gate import enforce_event_operation
+from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.billing.services.capability_service import CapabilityService
+from app.modules.platform.models.organization_console import UsageReservation
+from app.core.tenant_context import TenantContextGuard
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -49,6 +56,28 @@ class PortalTalk(BaseModel):
     download_url: Optional[str] = None
     preview_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    abstract_text: Optional[str] = None
+    abstract_keywords: List[str] = []
+    abstract_status: str = "DRAFT"
+    abstract_version: int = 1
+    abstract_submitted_at: Optional[datetime] = None
+    abstract_review_notes: Optional[str] = None
+
+
+class AbstractDraftUpdate(BaseModel):
+    abstract_text: str = Field(min_length=50, max_length=20000)
+    keywords: List[str] = Field(default_factory=list, max_length=20)
+
+
+class AbstractMutationResponse(BaseModel):
+    session_speaker_id: uuid.UUID
+    abstract_text: Optional[str]
+    keywords: List[str]
+    status: str
+    version: int
+    submitted_at: Optional[datetime]
+    reviewed_at: Optional[datetime]
+    review_notes: Optional[str]
 
 
 class PortalPoster(BaseModel):
@@ -110,6 +139,8 @@ class SpeakerPortalAuthResponse(BaseModel):
     event_country: Optional[str] = None
     srr_checked_in: bool = False
     registration_mode_enabled: bool = True
+    abstract_submission_enabled: bool = False
+    abstract_submission_reason: Optional[str] = "RESOLUTION_UNAVAILABLE"
 
 
 class SpeakerPortalConfigResponse(BaseModel):
@@ -267,7 +298,13 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
         filename=filename,
         download_url=download_url,
         preview_url=preview_url,
-        thumbnail_url=thumbnail_url
+        thumbnail_url=thumbnail_url,
+        abstract_text=ss.abstract_text,
+        abstract_keywords=ss.abstract_keywords or [],
+        abstract_status=ss.abstract_status,
+        abstract_version=ss.abstract_version,
+        abstract_submitted_at=ss.abstract_submitted_at,
+        abstract_review_notes=ss.abstract_review_notes,
     )
 
 
@@ -362,21 +399,32 @@ async def speaker_portal_auth(
     for p in speaker.posters:
         posters.append(_build_portal_poster(p, event))
 
-    # Fetch active announcements
-    from app.modules.communications.models.announcement import Announcement
-    now_time = datetime.now(timezone.utc)
-    ann_stmt = (
-        select(Announcement)
-        .where(
-            Announcement.event_id == event.id,
-            Announcement.audience.in_(["all", "speakers"]),
-            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
-            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
-        )
-        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    # Fetch active announcements only when the event owns the capability.
+    from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
+    active_anns = await list_active_entitled_announcements(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        audiences=["all", "speakers"],
     )
-    ann_res = await db.execute(ann_stmt)
-    active_anns = ann_res.scalars().all()
+
+
+async def _resolve_abstract_access(
+    db: AsyncSession,
+    event: Event,
+) -> tuple[bool, Optional[str]]:
+    try:
+        capability = await CapabilityService.resolve_event(
+            db,
+            event.organization_id,
+            event.id,
+        )
+    except Exception:
+        return False, "RESOLUTION_UNAVAILABLE"
+    feature = capability.get("features", {}).get("FEAT_ABSTRACT_SUBMISSION")
+    if not feature:
+        return False, "NOT_ENTITLED"
+    return bool(feature.get("enabled")), feature.get("reason_code")
 
     announcements_list = [
         {
@@ -452,6 +500,7 @@ async def speaker_portal_auth(
         "template_filename": None
     }
 
+    abstract_enabled, abstract_reason = await _resolve_abstract_access(db, event)
     return SpeakerPortalAuthResponse(
         speaker_id=speaker.id,
         first_name=speaker.first_name,
@@ -495,15 +544,287 @@ async def speaker_portal_auth(
         event_country=event.country,
         srr_checked_in=len(speaker.srr_checkins) > 0,
         registration_mode_enabled=event.registration_mode_enabled,
+        abstract_submission_enabled=abstract_enabled,
+        abstract_submission_reason=abstract_reason,
     )
 
 
 # ── Upload ────────────────────────────────────────────────────
 
+def _abstract_response(slot: SessionSpeaker) -> AbstractMutationResponse:
+    return AbstractMutationResponse(
+        session_speaker_id=slot.id,
+        abstract_text=slot.abstract_text,
+        keywords=slot.abstract_keywords or [],
+        status=slot.abstract_status,
+        version=slot.abstract_version,
+        submitted_at=slot.abstract_submitted_at,
+        reviewed_at=slot.abstract_reviewed_at,
+        review_notes=slot.abstract_review_notes,
+    )
+
+
+async def _get_abstract_slot(
+    *,
+    db: AsyncSession,
+    token: str,
+    session_speaker_id: uuid.UUID,
+) -> tuple[Speaker, Event, SessionSpeaker]:
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    speaker = await db.scalar(
+        select(Speaker)
+        .where(
+            (Speaker.upload_token == token)
+            | (Speaker.upload_token == token_hash)
+            | (Speaker.speaker_code == token.upper())
+        )
+        .options(selectinload(Speaker.event))
+    )
+    if speaker is None:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+    event = speaker.event
+    if not event.speaker_mode_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Speaker portal is currently closed.",
+        )
+    slot = await db.scalar(
+        select(SessionSpeaker).where(
+            SessionSpeaker.id == session_speaker_id,
+            SessionSpeaker.speaker_id == speaker.id,
+        )
+    )
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Talk not found.")
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "abstracts.submit",
+    )
+    return speaker, event, slot
+
+
+async def _audit_abstract_mutation(
+    *,
+    db: AsyncSession,
+    event: Event,
+    speaker: Speaker,
+    slot: SessionSpeaker,
+    action: str,
+    old_state: dict[str, Any],
+) -> None:
+    await AuditService.write_log_sync(
+        AuditContext(
+            action_type=action,
+            resource_type="speaker_abstract",
+            resource_id=slot.id,
+            actor_user_id=None,
+            organization_id=event.organization_id,
+            actor_role="SPEAKER_PORTAL",
+            old_state=old_state,
+            new_state={
+                "event_id": str(event.id),
+                "speaker_id": str(speaker.id),
+                "status": slot.abstract_status,
+                "version": slot.abstract_version,
+            },
+        ),
+        db,
+    )
+
+
+@router.patch(
+    "/abstracts/{session_speaker_id}",
+    response_model=AbstractMutationResponse,
+)
+async def update_abstract_draft(
+    session_speaker_id: uuid.UUID,
+    payload: AbstractDraftUpdate,
+    token: str,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> AbstractMutationResponse:
+    """abstract_submission_mutations: save a speaker-owned abstract draft."""
+    speaker, event, slot = await _get_abstract_slot(
+        db=db, token=token, session_speaker_id=session_speaker_id
+    )
+    if slot.abstract_idempotency_key == idempotency_key:
+        return _abstract_response(slot)
+    if slot.abstract_version != expected_version:
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "VERSION_CONFLICT",
+                "current_version": slot.abstract_version,
+            },
+        )
+    if slot.abstract_status in {"SUBMITTED", "UNDER_REVIEW", "ACCEPTED"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ABSTRACT_LOCKED", "status": slot.abstract_status},
+        )
+    old_state = {
+        "status": slot.abstract_status,
+        "version": slot.abstract_version,
+    }
+    slot.abstract_text = payload.abstract_text.strip()
+    slot.abstract_keywords = list(
+        dict.fromkeys(
+            keyword.strip()
+            for keyword in payload.keywords
+            if keyword.strip()
+        )
+    )
+    slot.abstract_status = "DRAFT"
+    slot.abstract_review_notes = None
+    slot.abstract_reviewed_at = None
+    slot.abstract_reviewed_by = None
+    slot.abstract_version += 1
+    slot.abstract_idempotency_key = idempotency_key
+    await _audit_abstract_mutation(
+        db=db,
+        event=event,
+        speaker=speaker,
+        slot=slot,
+        action="SPEAKER_ABSTRACT_DRAFT_UPDATED",
+        old_state=old_state,
+    )
+    await db.commit()
+    await db.refresh(slot)
+    return _abstract_response(slot)
+
+
+@router.post(
+    "/abstracts/{session_speaker_id}/submit",
+    response_model=AbstractMutationResponse,
+)
+async def submit_abstract(
+    session_speaker_id: uuid.UUID,
+    token: str,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> AbstractMutationResponse:
+    """abstract_submission_mutations: submit a complete draft for review."""
+    speaker, event, slot = await _get_abstract_slot(
+        db=db, token=token, session_speaker_id=session_speaker_id
+    )
+    if slot.abstract_idempotency_key == idempotency_key:
+        return _abstract_response(slot)
+    if slot.abstract_version != expected_version:
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "VERSION_CONFLICT",
+                "current_version": slot.abstract_version,
+            },
+        )
+    if slot.abstract_status not in {
+        "DRAFT",
+        "REVISION_REQUESTED",
+        "REJECTED",
+        "WITHDRAWN",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_ABSTRACT_STATE",
+                "status": slot.abstract_status,
+            },
+        )
+    if len((slot.abstract_text or "").strip()) < 50:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "ABSTRACT_INCOMPLETE", "minimum_characters": 50},
+        )
+    old_state = {
+        "status": slot.abstract_status,
+        "version": slot.abstract_version,
+    }
+    slot.abstract_status = "SUBMITTED"
+    slot.abstract_submitted_at = datetime.now(timezone.utc)
+    slot.abstract_review_notes = None
+    slot.abstract_version += 1
+    slot.abstract_idempotency_key = idempotency_key
+    await _audit_abstract_mutation(
+        db=db,
+        event=event,
+        speaker=speaker,
+        slot=slot,
+        action="SPEAKER_ABSTRACT_SUBMITTED",
+        old_state=old_state,
+    )
+    await db.commit()
+    await db.refresh(slot)
+    return _abstract_response(slot)
+
+
+@router.post(
+    "/abstracts/{session_speaker_id}/withdraw",
+    response_model=AbstractMutationResponse,
+)
+async def withdraw_abstract(
+    session_speaker_id: uuid.UUID,
+    token: str,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> AbstractMutationResponse:
+    """abstract_submission_mutations: withdraw a pending submission."""
+    speaker, event, slot = await _get_abstract_slot(
+        db=db, token=token, session_speaker_id=session_speaker_id
+    )
+    if slot.abstract_idempotency_key == idempotency_key:
+        return _abstract_response(slot)
+    if slot.abstract_version != expected_version:
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "VERSION_CONFLICT",
+                "current_version": slot.abstract_version,
+            },
+        )
+    if slot.abstract_status not in {"SUBMITTED", "UNDER_REVIEW"}:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_ABSTRACT_STATE",
+                "status": slot.abstract_status,
+            },
+        )
+    old_state = {
+        "status": slot.abstract_status,
+        "version": slot.abstract_version,
+    }
+    slot.abstract_status = "WITHDRAWN"
+    slot.abstract_version += 1
+    slot.abstract_idempotency_key = idempotency_key
+    await _audit_abstract_mutation(
+        db=db,
+        event=event,
+        speaker=speaker,
+        slot=slot,
+        action="SPEAKER_ABSTRACT_WITHDRAWN",
+        old_state=old_state,
+    )
+    await db.commit()
+    await db.refresh(slot)
+    return _abstract_response(slot)
+
+
 @router.post("/upload-url", response_model=PresignedUploadResponse)
 async def portal_request_upload_url(
     payload: UploadRequestBody,
     token: str,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db)
 ) -> PresignedUploadResponse:
     """Speaker-facing upload URL request. Requires valid token."""
@@ -522,6 +843,7 @@ async def portal_request_upload_url(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Speaker portal is currently closed."
         )
+    await enforce_event_operation(db, event.organization_id, event.id, "presentations.upload")
     
     # Verify the slot belongs to this speaker
     ss_result = await db.execute(
@@ -539,6 +861,41 @@ async def portal_request_upload_url(
     max_bytes = event.max_file_size_mb * 1024 * 1024
     if payload.file_size_bytes > max_bytes:
         raise HTTPException(status_code=413, detail=f"File exceeds {event.max_file_size_mb}MB limit.")
+
+    existing_version_id = await db.scalar(
+        select(PresentationFile.id)
+        .where(PresentationFile.session_speaker_id == ss.id)
+        .limit(1)
+    )
+    if existing_version_id is not None:
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event.id,
+            "presentations.versions.create",
+        )
+
+    file_id = uuid.uuid5(uuid.NAMESPACE_URL, f"eventos:speaker-presentation:{speaker.id}:{idempotency_key}")
+    request_fingerprint = hashlib.sha256(f"{payload.session_speaker_id}|{payload.filename}|{payload.file_size_bytes}|{payload.mime_type}|{payload.file_format}".encode()).hexdigest()
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="storage_quota_mb",
+        quantity=max(1, (payload.file_size_bytes + 1024 * 1024 - 1) // (1024 * 1024)),
+        unit="megabyte",
+        idempotency_key=f"speaker-presentation-upload:{file_id}",
+        ttl_seconds=settings.S3_PRESIGNED_EXPIRY_SECONDS,
+        metadata={"file_id": str(file_id), "bytes": payload.file_size_bytes, "request_fingerprint": request_fingerprint, "consumption_quantity": payload.file_size_bytes, "consumption_unit": "byte"},
+    )
+    if reservation.metadata_json.get("request_fingerprint") not in {None, request_fingerprint}:
+        raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    replay_file = await db.get(PresentationFile, file_id)
+    if replay_file is not None:
+        if replay_file.speaker_id != speaker.id or replay_file.event_id != event.id:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+        upload_info = upload_service.create_presigned_upload(bucket=settings.S3_BUCKET_PRESENTATIONS, storage_path=replay_file.storage_path, content_type=replay_file.mime_type, max_size_bytes=replay_file.file_size_bytes)
+        return PresignedUploadResponse(upload_url=upload_info["url"], file_id=replay_file.id, expires_in=settings.S3_PRESIGNED_EXPIRY_SECONDS, max_file_size_bytes=max_bytes)
 
     # Determine version number and handle renaming
     existing_files_q = await db.execute(
@@ -612,6 +969,7 @@ async def portal_request_upload_url(
     )
 
     pf = PresentationFile(
+        id=file_id,
         speaker_id=speaker.id,
         session_speaker_id=ss.id,
         event_id=event.id,
@@ -715,6 +1073,15 @@ async def portal_confirm_upload(
     
     # Also update speaker status
     speaker.upload_status = "uploaded"
+    from app.modules.platform.services.metering_service import MeteringService
+    reservation = await db.scalar(select(UsageReservation).where(
+        UsageReservation.organization_id == speaker.event.organization_id,
+        UsageReservation.idempotency_key == f"speaker-presentation-upload:{pf.id}",
+    ))
+    if not reservation:
+        raise HTTPException(status_code=409, detail={"code": "RESERVATION_UNAVAILABLE"})
+    await UsageReservationService.consume(db, reservation.id, source="speaker_portal.confirm_upload")
+    await MeteringService.record(db, organization_id=speaker.event.organization_id, event_id=speaker.event_id, metric_key="file_count", quantity=1, unit="file", source="speaker_portal.confirm_upload", idempotency_key=f"presentation-file-count:{pf.id}", metadata={"file_id": str(pf.id)})
     
     # Log upload confirmation
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -1277,6 +1644,13 @@ async def get_profile_template(
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
 
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "speakers.profiles.manage",
+    )
+
     # Redirect to custom template if uploaded
     speaker_settings = speaker.event.speaker_settings or {}
     profile_settings = speaker_settings.get("profile_settings", {})
@@ -1344,6 +1718,12 @@ async def upload_profile_template(
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "speakers.profiles.manage",
+    )
 
     contents = await file.read()
     filename = file.filename.lower()
@@ -1429,21 +1809,14 @@ async def upload_profile_template(
     for p in speaker.posters:
         posters.append(_build_portal_poster(p, speaker.event))
 
-    # Fetch active announcements
-    from app.modules.communications.models.announcement import Announcement
-    now_time = datetime.now(timezone.utc)
-    ann_stmt = (
-        select(Announcement)
-        .where(
-            Announcement.event_id == speaker.event_id,
-            Announcement.audience.in_(["all", "speakers"]),
-            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
-            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
-        )
-        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    # Fetch active announcements only when the event owns the capability.
+    from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
+    active_anns = await list_active_entitled_announcements(
+        db,
+        organization_id=speaker.event.organization_id,
+        event_id=speaker.event_id,
+        audiences=["all", "speakers"],
     )
-    ann_res = await db.execute(ann_stmt)
-    active_anns = ann_res.scalars().all()
     announcements_list = [
         {
             "id": str(ann.id),
@@ -1457,6 +1830,9 @@ async def upload_profile_template(
         for ann in active_anns
     ]
 
+    abstract_enabled, abstract_reason = await _resolve_abstract_access(
+        db, speaker.event
+    )
     return SpeakerPortalAuthResponse(
         speaker_id=speaker.id,
         first_name=speaker.first_name,
@@ -1485,6 +1861,8 @@ async def upload_profile_template(
         research_interests=speaker.research_interests,
         profile_completeness=calculate_profile_completeness(speaker),
         registration_mode_enabled=speaker.event.registration_mode_enabled,
+        abstract_submission_enabled=abstract_enabled,
+        abstract_submission_reason=abstract_reason,
     )
 
 
@@ -1499,11 +1877,18 @@ async def upload_profile_cv(
     """
     speaker_q = select(Speaker).where(
         (Speaker.upload_token == token) | (Speaker.speaker_code == token.upper())
-    )
+    ).options(selectinload(Speaker.event))
     speaker_res = await db.execute(speaker_q)
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
+
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "speakers.profiles.manage",
+    )
 
     contents = await file.read()
     if not file.filename.lower().endswith(".pdf"):
@@ -1536,24 +1921,34 @@ async def upload_profile_photo(
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
 
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "speakers.profiles.manage",
+    )
+
     contents = await file.read()
     photo_path = f"{speaker.event.organization_id}/{speaker.event_id}/speakers/{speaker.id}/profile_photo.png"
     bucket = settings.S3_BUCKET_ASSETS
     try:
-        upload_service.upload_bytes(
-            bucket=bucket,
-            storage_path=photo_path,
-            data=contents,
-            content_type=file.content_type or "image/png"
-        )
-        if settings.STORAGE_MODE == "local":
-            photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
-        else:
-            photo_url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{photo_path}"
-        
-        # Save directly to speaker
-        speaker.photo_url = photo_url
-        await db.commit()
+        async with TenantContextGuard.scoped(db, speaker.event.organization_id):
+            upload_service.upload_bytes(
+                bucket=bucket,
+                storage_path=photo_path,
+                data=contents,
+                content_type=file.content_type or "image/png"
+            )
+            if settings.STORAGE_MODE == "local":
+                photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
+            else:
+                photo_url = f"{settings.S3_ENDPOINT_URL}/{bucket}/{photo_path}"
+
+            # The token was resolved to an event before tenant context is
+            # established; the storage write and profile mutation stay inside
+            # that verified organization scope.
+            speaker.photo_url = photo_url
+            await db.commit()
         
         return {"photo_url": photo_url}
     except Exception as e:
@@ -1583,6 +1978,15 @@ async def update_speaker_profile(
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "speakers.profiles.manage",
+    )
+    abstract_enabled, abstract_reason = await _resolve_abstract_access(
+        db, speaker.event
+    )
 
     if payload.bio is not None:
         word_count = len(payload.bio.split())
@@ -1629,20 +2033,13 @@ async def update_speaker_profile(
     for p in speaker.posters:
         posters.append(_build_portal_poster(p, speaker.event))
 
-    from app.modules.communications.models.announcement import Announcement
-    now_time = datetime.now(timezone.utc)
-    ann_stmt = (
-        select(Announcement)
-        .where(
-            Announcement.event_id == speaker.event_id,
-            Announcement.audience.in_(["all", "speakers"]),
-            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
-            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
-        )
-        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
+    active_anns = await list_active_entitled_announcements(
+        db,
+        organization_id=speaker.event.organization_id,
+        event_id=speaker.event_id,
+        audiences=["all", "speakers"],
     )
-    ann_res = await db.execute(ann_stmt)
-    active_anns = ann_res.scalars().all()
     announcements_list = [
         {
             "id": str(ann.id),
@@ -1684,5 +2081,7 @@ async def update_speaker_profile(
         research_interests=speaker.research_interests,
         profile_completeness=calculate_profile_completeness(speaker),
         registration_mode_enabled=speaker.event.registration_mode_enabled,
+        abstract_submission_enabled=abstract_enabled,
+        abstract_submission_reason=abstract_reason,
     )
 

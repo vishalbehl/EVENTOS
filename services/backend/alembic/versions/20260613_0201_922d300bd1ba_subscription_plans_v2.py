@@ -139,7 +139,7 @@ def upgrade() -> None:
          ARRAY['BASIC','PROFESSIONAL','ENTERPRISE'], NULL, 'ENTERPRISE', true),
         
         (gen_random_uuid(), 'White Label Deployment', 'ADDON_WHITE_LABEL',
-         'Remove all EventX branding, use your own domain and identity',
+         'Remove all Event branding, use your own domain and identity',
          50000, 'PER_EVENT',
          ARRAY['ENTERPRISE'], NULL, NULL, true),
         
@@ -165,7 +165,7 @@ def upgrade() -> None:
     (gen_random_uuid(), 'LIMIT_STORAGE', 'Storage', 'PLATFORM_LIMITS', 1, 6, 'File storage quota', true, '10 GB', '50 GB', '200 GB+ (Custom)'),
     (gen_random_uuid(), 'FEAT_EVENT_WEBSITE', 'Event Website', 'PLATFORM_LIMITS', 1, 7, 'Event website quality and customization', true, 'Basic', 'Customizable', 'Fully Branded'),
     (gen_random_uuid(), 'FEAT_CUSTOM_DOMAIN', 'Custom Domain', 'PLATFORM_LIMITS', 1, 8, 'Use your own domain name for portals', true, '❌', '✅', '✅'),
-    (gen_random_uuid(), 'FEAT_WHITE_LABEL', 'White Label', 'PLATFORM_LIMITS', 1, 9, 'Remove all EventX branding', true, '❌', '❌', '✅'),
+    (gen_random_uuid(), 'FEAT_WHITE_LABEL', 'White Label', 'PLATFORM_LIMITS', 1, 9, 'Remove all Event branding', true, '❌', '❌', '✅'),
     (gen_random_uuid(), 'FEAT_REGISTRATION_PORTAL', 'Registration Portal', 'REGISTRATION', 2, 1, 'Attendee-facing registration portal', true, 'Basic', 'Advanced', 'Enterprise'),
     (gen_random_uuid(), 'FEAT_REGISTRATION_FORMS', 'Registration Forms', 'REGISTRATION', 2, 2, 'Custom registration form fields', true, 'Standard (Up to 10 Fields)', 'Custom (Unlimited)', 'Custom (Unlimited)'),
     (gen_random_uuid(), 'FEAT_TICKET_CATEGORIES', 'Ticket Categories', 'REGISTRATION', 2, 3, 'Number of registration ticket types', true, '3', '10', 'Unlimited'),
@@ -198,7 +198,7 @@ def upgrade() -> None:
     (gen_random_uuid(), 'FEAT_PUSH_NOTIFICATIONS', 'Push Notifications', 'COMMUNICATIONS', 5, 6, 'Mobile push notifications', true, '❌', '✅', '✅'),
     (gen_random_uuid(), 'FEAT_WHATSAPP', 'WhatsApp Integration', 'COMMUNICATIONS', 5, 7, 'WhatsApp messaging for speakers and attendees', true, '❌', 'Optional Add-On', '✅'),
     (gen_random_uuid(), 'FEAT_SMS', 'SMS Integration', 'COMMUNICATIONS', 5, 8, 'SMS notifications and OTPs', true, '❌', 'Optional Add-On', '✅'),
-    (gen_random_uuid(), 'FEAT_DEFAULT_THEME', 'Default Theme', 'BRANDING', 6, 1, 'Standard EventX theme for all portals', true, '✅', '✅', '✅'),
+    (gen_random_uuid(), 'FEAT_DEFAULT_THEME', 'Default Theme', 'BRANDING', 6, 1, 'Standard Event theme for all portals', true, '✅', '✅', '✅'),
     (gen_random_uuid(), 'FEAT_THEME_CUSTOMIZATION', 'Theme Customization', 'BRANDING', 6, 2, 'Customize portal themes', true, '❌', '✅', '✅'),
     (gen_random_uuid(), 'FEAT_CUSTOM_COLORS', 'Custom Colors', 'BRANDING', 6, 3, 'Brand-matching color schemes', true, '❌', '✅', '✅'),
     (gen_random_uuid(), 'FEAT_CUSTOM_FONTS', 'Custom Fonts', 'BRANDING', 6, 4, 'Custom typography selection', true, '❌', 'Limited', 'Unlimited'),

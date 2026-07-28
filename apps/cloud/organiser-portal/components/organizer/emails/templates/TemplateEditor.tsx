@@ -23,6 +23,7 @@ import {
 } from '@/services/email-service'
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
+import { useOperationAccess } from '@/lib/capabilities'
 
 // ===== Specialized Sub-components =====
 import VariablePanel from './VariablePanel'
@@ -33,6 +34,9 @@ interface Props {
 }
 
 export default function TemplateEditor({ eventId }: Props) {
+    const readAccess = useOperationAccess('communications.email.read')
+    const manageAccess = useOperationAccess('communications.campaign.manage')
+    const sendAccess = useOperationAccess('communications.email.send')
     const [templates, setTemplates] = useState<Template[]>([])
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
@@ -45,10 +49,10 @@ export default function TemplateEditor({ eventId }: Props) {
     const textAreaRef = useRef<HTMLTextAreaElement>(null)
 
     useEffect(() => {
-        if (eventId && eventId !== 'undefined' && eventId !== '[eventId]') {
-            loadTemplates()
+        if (eventId && eventId !== 'undefined' && eventId !== '[eventId]' && readAccess.enabled) {
+            void loadTemplates()
         }
-    }, [eventId])
+    }, [eventId, readAccess.enabled])
 
     const loadTemplates = async () => {
         try {
@@ -60,6 +64,10 @@ export default function TemplateEditor({ eventId }: Props) {
     }
 
     const handleSave = async () => {
+        if (!manageAccess.enabled) {
+            toast.error(`Template changes unavailable: ${(manageAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}.`)
+            return
+        }
         if (!editData.name || !editData.subject) {
             toast.error('Identity and Subject required.')
             return
@@ -85,6 +93,10 @@ export default function TemplateEditor({ eventId }: Props) {
     }
 
     const handleTestEmail = async () => {
+        if (!sendAccess.enabled) {
+            toast.error(`Test sending unavailable: ${(sendAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}.`)
+            return
+        }
         if (!selectedId) {
             toast.error('Please select and save a template first.')
             return
@@ -97,7 +109,7 @@ export default function TemplateEditor({ eventId }: Props) {
             await apiClient.post(`/events/${eventId}/notifications/test-template`, {
                 template_id: selectedId,
                 to_email: testEmail
-            })
+            }, { headers: { "Idempotency-Key": crypto.randomUUID() } })
             toast.success(`Test email sent to ${testEmail}`)
         } catch (err) {
             toast.error('Test dispatch failure.')
@@ -122,6 +134,14 @@ export default function TemplateEditor({ eventId }: Props) {
                 textAreaRef.current.setSelectionRange(start + tag.length, start + tag.length)
             }
         }, 10)
+    }
+
+    if (!readAccess.loading && !readAccess.enabled) {
+        return (
+            <div className="flex min-h-[320px] items-center justify-center rounded-3xl border border-amber-500/20 bg-amber-500/5 p-8 text-center text-sm text-amber-100">
+                Email templates are unavailable: {(readAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}.
+            </div>
+        )
     }
 
     return (
@@ -205,6 +225,8 @@ export default function TemplateEditor({ eventId }: Props) {
                                 </button>
                                 <button
                                     onClick={handleTestEmail}
+                                    disabled={sendAccess.loading || !sendAccess.enabled}
+                                    title={sendAccess.enabled ? 'Send test email' : `Unavailable: ${(sendAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}`}
                                     className="flex items-center gap-2 px-4 py-2.5 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all active:scale-95"
                                 >
                                     <Send className="w-3.5 h-3.5 text-[var(--pri)]" />
@@ -212,6 +234,8 @@ export default function TemplateEditor({ eventId }: Props) {
                                 </button>
                                 <button
                                     onClick={handleSave}
+                                    disabled={manageAccess.loading || !manageAccess.enabled}
+                                    title={manageAccess.enabled ? 'Save template' : `Unavailable: ${(manageAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}`}
                                     className="flex items-center gap-2.5 px-5 py-2.5 bg-[var(--pri)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-[var(--pri)]/20 hover:bg-[var(--sec)] transition-all active:scale-95"
                                 >
                                     <Save className="w-3.5 h-3.5" />

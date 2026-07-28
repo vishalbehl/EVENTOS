@@ -158,6 +158,10 @@ async def _flush_api_usage_async() -> None:
                     and_(
                         ApiUsageMetric.organization_id == org_id,
                         ApiUsageMetric.endpoint == endpoint,
+                        ApiUsageMetric.period_start
+                        == datetime.now(timezone.utc).replace(
+                            day=1, hour=0, minute=0, second=0, microsecond=0
+                        ),
                     )
                 )
                 res = await db.execute(stmt)
@@ -171,9 +175,26 @@ async def _flush_api_usage_async() -> None:
                             organization_id=org_id,
                             endpoint=endpoint,
                             call_count=val,
+                            period_start=datetime.now(timezone.utc).replace(
+                                day=1, hour=0, minute=0, second=0, microsecond=0
+                            ),
                             recorded_at=datetime.now(timezone.utc),
                         )
                     )
+                await db.flush()
+                from app.modules.platform.services.metering_service import MeteringService
+                cumulative = metric.call_count if metric else val
+                await MeteringService.record(
+                    db,
+                    organization_id=org_id,
+                    event_id=None,
+                    metric_key="api_calls",
+                    quantity=val,
+                    unit="request",
+                    source="api_usage.redis_flush",
+                    idempotency_key=f"api-flush:{endpoint_fingerprint}:{cumulative}",
+                    metadata={"endpoint": endpoint, "endpoint_fingerprint": endpoint_fingerprint, "cumulative_count": cumulative},
+                )
                 await db.commit()
         finally:
             tenant_org_id.reset(token)

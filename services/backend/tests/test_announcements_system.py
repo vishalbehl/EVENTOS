@@ -13,7 +13,7 @@ from app.modules.identity.models.user import User
 from app.modules.communications.models.announcement import Announcement
 
 
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, activate_event_for_test
 
 
 @pytest.mark.asyncio
@@ -23,6 +23,7 @@ async def test_announcements_crud_and_permissions(
     event: Event,
     organizer: User,
 ):
+    await activate_event_for_test(db, event)
     headers = auth_headers(organizer)
     # 1. Create an announcement as organizer / admin
     ann_data = {
@@ -42,7 +43,7 @@ async def test_announcements_crud_and_permissions(
     resp = await client.post(
         f"/api/v1/events/{event.id}/announcements",
         json=ann_data,
-        headers=headers
+        headers={**headers, "Idempotency-Key": "announcement-create-welcome"}
     )
     assert resp.status_code == 201
     created = resp.json()
@@ -69,7 +70,7 @@ async def test_announcements_crud_and_permissions(
     resp_bad = await client.post(
         f"/api/v1/events/{event.id}/announcements",
         json=ann_data,
-        headers=bad_headers
+        headers={**bad_headers, "Idempotency-Key": "announcement-create-denied"}
     )
     assert resp_bad.status_code == 401
 
@@ -79,13 +80,15 @@ async def test_announcements_crud_and_permissions(
         headers=headers
     )
     assert resp_del.status_code == 200
-    assert resp_del.json()["message"] == "Announcement deleted successfully."
+    assert "archived" in resp_del.json()["message"].lower()
 
     # Check db
     deleted_ann = (await db.execute(
         select(Announcement).where(Announcement.id == uuid.UUID(announcement_id))
     )).scalar_one_or_none()
-    assert deleted_ann is None
+    assert deleted_ann is not None
+    assert deleted_ann.deleted_at is not None
+    assert deleted_ann.deleted_by == organizer.id
 
 
 @pytest.mark.asyncio
@@ -95,6 +98,7 @@ async def test_announcements_upload_attachment(
     event: Event,
     organizer: User,
 ):
+    await activate_event_for_test(db, event)
     headers = auth_headers(organizer)
     # Test upload endpoint
     ann_id = str(uuid.uuid4())
@@ -105,7 +109,7 @@ async def test_announcements_upload_attachment(
         f"/api/v1/events/{event.id}/announcements/upload",
         files=files,
         data=data,
-        headers=headers
+        headers={**headers, "Idempotency-Key": f"announcement-upload-{ann_id}"}
     )
 
     assert resp.status_code == 200
@@ -125,6 +129,7 @@ async def test_announcements_verify_link(
     organizer: User,
     mocker,
 ):
+    await activate_event_for_test(db, event)
     headers = auth_headers(organizer)
     # Mock httpx response for URL verification
     class MockResponse:
@@ -153,9 +158,31 @@ async def test_announcements_verify_link(
 async def test_announcements_signed_url(
     client: AsyncClient,
     db: AsyncSession,
+    event: Event,
+    organizer: User,
 ):
-    # Test getting presigned download URL
-    storage_path = "some-event-id/announcements/ann-id/test.pdf"
+    announcement_id = uuid.uuid4()
+    storage_path = (
+        f"{event.organization_id}/{event.id}/announcements/"
+        f"{announcement_id}/test.pdf"
+    )
+    db.add(
+        Announcement(
+            id=announcement_id,
+            event_id=event.id,
+            title="Attachment",
+            body="Attachment announcement",
+            audience="all",
+            attachments=[{
+                "type": "file",
+                "name": "test.pdf",
+                "url": "pending",
+                "storage_path": storage_path,
+            }],
+            created_by=organizer.id,
+        )
+    )
+    await db.commit()
     resp = await client.get(f"/api/v1/portal/announcements/signed-url?storage_path={storage_path}")
 
     assert resp.status_code == 200
@@ -164,3 +191,12 @@ async def test_announcements_signed_url(
     # For local storage mode, should return a local API storage url
     assert "storage" in data["url"]
     assert "test.pdf" in data["url"]
+
+    unauthorized_path = (
+        f"{event.organization_id}/{event.id}/announcements/"
+        f"{announcement_id}/secret.pdf"
+    )
+    denied = await client.get(
+        f"/api/v1/portal/announcements/signed-url?storage_path={unauthorized_path}"
+    )
+    assert denied.status_code == 404

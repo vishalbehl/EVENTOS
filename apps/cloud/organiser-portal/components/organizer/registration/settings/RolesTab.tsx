@@ -5,6 +5,7 @@ import { LayoutTemplate, Plus, RefreshCw, Save, Search, Tag, ToggleLeft, ToggleR
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
+import { useOperationAccess } from '@/lib/capabilities'
 
 const MASTER_ROLES: Record<string, { name: string; isDefault: boolean }[]> = {
   'General Attendees': [
@@ -98,6 +99,10 @@ interface PrintTemplate {
 }
 
 export default function RolesTab({ eventId }: { eventId: string }) {
+  const roleReadAccess = useOperationAccess('registration.ticket_types.read')
+  const roleAccess = useOperationAccess('registration.ticket_types.manage')
+  const formAccess = useOperationAccess('registration.forms.manage')
+  const badgeTemplateAccess = useOperationAccess('badges.templates.read')
   const { data: event } = useEvent(eventId)
   const updateEvent = useUpdateEvent(eventId)
 
@@ -129,15 +134,17 @@ export default function RolesTab({ eventId }: { eventId: string }) {
     setRoleTemplateAssignments((badgeDesign.role_template_assignments as Record<string, string>) || {})
   }, [event?.registration_settings])
 
-  useEffect(() => { load() }, [eventId])
+  useEffect(() => { load() }, [eventId, roleReadAccess.enabled, badgeTemplateAccess.enabled])
 
   const load = async () => {
     setLoading(true)
     try {
-      const [roleData, templateData] = await Promise.all([
-        apiClient.get<Role[]>(`/events/${eventId}/registration/roles`),
-        apiClient.get<PrintTemplate[]>(`/events/${eventId}/print-templates`),
-      ])
+      const roleData = roleReadAccess.enabled
+        ? await apiClient.get<Role[]>(`/events/${eventId}/registration/roles`)
+        : []
+      const templateData = badgeTemplateAccess.enabled
+        ? await apiClient.get<PrintTemplate[]>(`/events/${eventId}/print-templates?template_type=badge`)
+        : []
       setRoles(roleData || [])
       setTemplates(templateData || [])
       setPending({})
@@ -150,7 +157,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
   }
 
   const toggleCategoryVisibility = async (cat: string, isCurrentlyEnabled: boolean) => {
-    if (!event) return
+    if (!event || !formAccess.enabled) return
     const currentDisabled: string[] = ((event.registration_settings as Record<string, any>)?.disabled_categories as string[]) || []
     let nextDisabled = [...currentDisabled]
     if (isCurrentlyEnabled) {
@@ -177,7 +184,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
     defaultTemplateId?: string
     assignments?: Record<string, string>
   }) => {
-    if (!event) return
+    if (!event || !formAccess.enabled || !badgeTemplateAccess.enabled) return
     const nextUseSameDesign = overrides?.useSameDesign ?? useSameDesign
     const nextDefaultTemplateId = overrides?.defaultTemplateId ?? defaultTemplateId
     const nextAssignments = overrides?.assignments ?? roleTemplateAssignments
@@ -210,18 +217,21 @@ export default function RolesTab({ eventId }: { eventId: string }) {
     (MASTER_ROLES[cat] || []).filter(r => !r.isDefault && !existingNames.has(r.name))
 
   const toggleRoleActive = (id: string, current: boolean) => {
+    if (!roleAccess.enabled) return
     const next = !current
     setPending(p => ({ ...p, [id]: next }))
     setRoles(r => r.map(x => x.id === id ? { ...x, is_active: next } : x))
   }
 
   const updateRoleCode = (id: string, value: string) => {
+    if (!roleAccess.enabled) return
     const clean = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
     setPendingCodes(prev => ({ ...prev, [id]: clean }))
     setRoles(prev => prev.map(role => role.id === id ? { ...role, role_code: clean } : role))
   }
 
   const saveChanges = async () => {
+    if (!roleAccess.enabled) return
     if (!Object.keys(pending).length && !Object.keys(pendingCodes).length) {
       toast.info('No role changes.')
       return
@@ -246,6 +256,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
   }
 
   const addRoleToEvent = async () => {
+    if (!roleAccess.enabled) return
     const nameToAdd = selectedRole === 'custom' ? customName.trim() : selectedRole
     if (!nameToAdd) {
       toast.error('Please select or enter a role name.')
@@ -260,7 +271,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
         role_code: customCode || nameToAdd.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase(),
         is_active: true,
         sort_order: 99,
-      })
+      }, { headers: { "Idempotency-Key": crypto.randomUUID() } })
       toast.success(`"${nameToAdd}" added to this event.`)
       setSelectedRole('')
       setCustomName('')
@@ -274,6 +285,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
   }
 
   const removeRoleFromEvent = async (id: string, name: string) => {
+    if (!roleAccess.enabled) return
     try {
       await apiClient.delete(`/events/${eventId}/registration/roles/${id}`)
       setRoles(r => r.filter(x => x.id !== id))
@@ -324,7 +336,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
           </button>
           <button
             onClick={saveChanges}
-            disabled={saving || pendingCount === 0}
+            disabled={saving || pendingCount === 0 || !roleAccess.enabled}
             className="flex items-center gap-2 h-9 px-5 bg-[var(--pri)] hover:bg-[var(--pri-hover)] disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
           >
             <Save className="h-3.5 w-3.5" />
@@ -352,7 +364,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
                   setDefaultTemplateId(e.target.value)
                   saveTemplateSettings({ defaultTemplateId: e.target.value })
                 }}
-                disabled={templateSaving || templates.length === 0}
+                disabled={templateSaving || templates.length === 0 || !formAccess.enabled || !badgeTemplateAccess.enabled}
                 className="h-10 min-w-56 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all cursor-pointer disabled:opacity-40"
               >
                 <option value="" className="bg-[var(--base)] text-[var(--text)]">Select default template</option>
@@ -366,7 +378,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
                   setUseSameDesign(next)
                   saveTemplateSettings({ useSameDesign: next })
                 }}
-                disabled={templateSaving}
+                disabled={templateSaving || !formAccess.enabled || !badgeTemplateAccess.enabled}
                 className="flex items-center gap-2 h-10 px-4 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl transition-all disabled:opacity-40"
               >
                 {useSameDesign ? <ToggleRight className="h-7 w-7 text-emerald-400" /> : <ToggleLeft className="h-7 w-7 text-muted/30" />}
@@ -404,6 +416,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
                       {/* Single Category Toggle */}
                       <button
                         onClick={() => toggleCategoryVisibility(category, categoryLive)}
+                        disabled={!formAccess.enabled}
                         className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 hover:text-[var(--text)] transition-all cursor-pointer"
                         title={categoryLive ? 'Hide category on registration portal' : 'Show category on registration portal'}
                       >
@@ -439,6 +452,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
                                   <input
                                     value={role.role_code || ''}
                                     onChange={(e) => updateRoleCode(role.id, e.target.value)}
+                                    disabled={!roleAccess.enabled}
                                     className="h-9 w-24 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-black tracking-widest text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all"
                                     title="Registration number prefix for this role"
                                   />
@@ -452,7 +466,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
                                       setRoleTemplateAssignments(nextAssignments)
                                       saveTemplateSettings({ assignments: nextAssignments })
                                     }}
-                                    disabled={useSameDesign || templateSaving || templates.length === 0}
+                                    disabled={useSameDesign || templateSaving || templates.length === 0 || !formAccess.enabled || !badgeTemplateAccess.enabled}
                                     className="h-9 w-full max-w-64 bg-white/5 border border-white/5 rounded-xl px-3 text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/40 focus:ring-0 focus:outline-none transition-all cursor-pointer disabled:opacity-45"
                                   >
                                     <option value="" className="bg-[var(--base)] text-[var(--text)]">Use default template</option>
@@ -462,13 +476,13 @@ export default function RolesTab({ eventId }: { eventId: string }) {
                                   </select>
                                 </td>
                                 <td className="px-4 py-3.5 text-center">
-                                  <button onClick={() => toggleRoleActive(role.id, role.is_active)} className="inline-flex transition-colors cursor-pointer" title="Toggle role availability">
+                                  <button onClick={() => toggleRoleActive(role.id, role.is_active)} disabled={!roleAccess.enabled} className="inline-flex transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40" title="Toggle role availability">
                                     {role.is_active ? <ToggleRight className={`h-7 w-7 ${textCls}`} /> : <ToggleLeft className="h-7 w-7 text-muted/30" />}
                                   </button>
                                 </td>
                                 <td className="px-4 py-3.5 text-right">
                                   {!role.is_default ? (
-                                    <button onClick={() => removeRoleFromEvent(role.id, role.name)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer" title="Remove role from this event">
+                                    <button onClick={() => removeRoleFromEvent(role.id, role.name)} disabled={!roleAccess.enabled} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40" title="Remove role from this event">
                                       <X className="h-4 w-4" />
                                     </button>
                                   ) : (
@@ -536,7 +550,7 @@ export default function RolesTab({ eventId }: { eventId: string }) {
           </div>
 
           <div className="flex justify-end pt-2">
-            <button onClick={addRoleToEvent} disabled={adding} className="h-11 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2">
+            <button onClick={addRoleToEvent} disabled={adding || !roleAccess.enabled} className="h-11 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2">
               <Plus className="h-4 w-4" /> Add Role to Event
             </button>
           </div>

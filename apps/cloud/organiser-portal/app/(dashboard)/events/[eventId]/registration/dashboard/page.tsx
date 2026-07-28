@@ -19,6 +19,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar
 } from "recharts";
+import { useOperationAccess } from "@/lib/capabilities";
 
 const COLORS = ["#6366F1", "#8B5CF6", "#EC4899", "#10B981", "#F59E0B", "#EF4444", "#06B6D4"];
 
@@ -39,6 +40,8 @@ export default function RegistrationDashboard() {
   const { eventId } = useParams();
   const { data: event } = useEvent(eventId as string);
   const { socket, isConnected } = useWebSocket(eventId as string);
+  const analyticsAccess = useOperationAccess("registration.analytics.view");
+  const formsAccess = useOperationAccess("registration.forms.manage");
 
   // Tab State: 'metrics' | 'reports'
   const [activeTab, setActiveTab] = useState<"metrics" | "reports">("metrics");
@@ -60,12 +63,16 @@ export default function RegistrationDashboard() {
       }
     };
 
-    if (eventId) {
+    if (eventId && formsAccess.enabled) {
       fetchPortalStatus();
     }
-  }, [eventId]);
+  }, [eventId, formsAccess.enabled]);
 
   const handleToggleLive = async () => {
+    if (!formsAccess.enabled) {
+      toast.error(`Portal publishing unavailable: ${(formsAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
     setToggling(true);
     try {
       const res = await apiPost<any>(`/events/${eventId}/registration/form-config`, {
@@ -149,14 +156,14 @@ export default function RegistrationDashboard() {
 
   // Sync data based on eventId and activeTab
   useEffect(() => {
-    if (eventId) {
+    if (eventId && analyticsAccess.enabled) {
       if (activeTab === "metrics") {
         fetchDashboardData();
       } else {
         fetchReportsData();
       }
     }
-  }, [eventId, activeTab]);
+  }, [eventId, activeTab, analyticsAccess.enabled]);
 
   // WebSocket Live Invalidation
   useEffect(() => {
@@ -311,6 +318,14 @@ export default function RegistrationDashboard() {
     );
   };
 
+  if (!analyticsAccess.loading && !analyticsAccess.enabled) {
+    return (
+      <div className="flex min-h-[360px] items-center justify-center rounded-3xl border border-amber-500/20 bg-amber-500/5 p-8 text-center text-sm text-amber-100">
+        Registration analytics are unavailable: {(analyticsAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 p-6 max-w-7xl mx-auto min-h-screen text-[var(--text)]">
       {/* Header section */}
@@ -346,9 +361,9 @@ export default function RegistrationDashboard() {
               </span>
               <button
                 onClick={handleToggleLive}
-                disabled={toggling}
+                disabled={toggling || formsAccess.loading || !formsAccess.enabled}
+                title={formsAccess.enabled ? (isLive ? "Set to Draft" : "Go Live") : `Unavailable: ${(formsAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
                 className="ml-2 hover:scale-105 transition-all text-muted hover:text-[var(--text)] disabled:opacity-50"
-                title={isLive ? "Set to Draft" : "Go Live"}
               >
                 {isLive ? <ToggleRight className="h-5 w-5 text-emerald-400" /> : <ToggleLeft className="h-5 w-5 text-muted" />}
               </button>

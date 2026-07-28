@@ -16,7 +16,7 @@ export default function ApplicationRegistryPage() {
       required={[
         "Persisted application, version, environment, owner, release, and compatibility records.",
         "Observed health with freshness, source, degraded-state behavior, and deployment correlation.",
-        "Cloud and outsourced-venue application scope without implying EventX ownership of supplier hardware.",
+        "Cloud and outsourced-venue application scope without implying Event ownership of supplier hardware.",
         "Release history, permissions, operational kill switches, mobile/device metadata, and audit evidence.",
       ]}
       note="Application availability must come from deployment and monitoring records, not a static list or an inferred online label."

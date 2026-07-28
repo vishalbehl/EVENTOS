@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { sendCampaign, resendFailed, deleteCampaign, Campaign } from '@/services/email-service'
 import { toast } from 'sonner'
+import { CapabilityAction } from '@/lib/capabilities'
 
 interface Props {
     campaigns: Campaign[]
@@ -148,6 +149,7 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                         <td className="p-5 text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 {campaign.status === 'draft' && (
+                                                  <CapabilityAction operation="communications.bulk_email.send">
                                                     <button
                                                         onClick={(e) => handleSend(e, campaign.id)}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--pri)] text-white hover:scale-105 active:scale-95 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-[var(--pri)]/20"
@@ -155,8 +157,10 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                         <Play className="w-3 h-3" />
                                                         Send
                                                     </button>
+                                                  </CapabilityAction>
                                                 )}
                                                 {campaign.status === 'sent' && campaign.sent_count < campaign.total_recipients && (
+                                                  <CapabilityAction operation="communications.bulk_email.send">
                                                     <button
                                                         onClick={(e) => handleResend(e, campaign.id)}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 text-[var(--text)] border border-white/10 hover:bg-white/10 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg"
@@ -164,6 +168,7 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                         <RefreshCcw className="w-3 h-3 animate-spin-slow" />
                                                         Retry
                                                     </button>
+                                                  </CapabilityAction>
                                                 )}
                                                 <button 
                                                     onClick={(e) => handleDelete(e, campaign.id)}

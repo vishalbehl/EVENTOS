@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { apiClient, apiGet, apiPost } from "@/lib/api-client";
 import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
+import { CapabilityAction } from "@/lib/capabilities";
 
 interface AddParticipantModalProps {
   isOpen: boolean;
@@ -168,7 +169,9 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
 
     setSubmitting(true);
     try {
-      await apiPost(`/events/${eventId}/participants`, buildPayload());
+      await apiPost(`/events/${eventId}/participants`, buildPayload(), {
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      });
       toast.success("Participant registered successfully.");
       onSuccess();
       onClose();
@@ -213,7 +216,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       const data = new FormData();
       data.append("file", importFile);
       const result = await apiClient.post<any>(`/events/${eventId}/participants/import-excel`, data, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data", "Idempotency-Key": crypto.randomUUID() },
       });
       setImportResult(result);
       toast.success("Spreadsheet processed successfully.");
@@ -456,14 +459,16 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                     >
                       Cancel
                     </Button>
-                    <Button
-                      type="submit"
-                      disabled={submitting}
-                      className="h-11 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_25%,transparent)]"
-                    >
-                      <Save className="h-4 w-4 mr-2" />
-                      {submitting ? "Registering..." : "Save Delegate"}
-                    </Button>
+                    <CapabilityAction operation="registration.manage">
+                      <Button
+                        type="submit"
+                        disabled={submitting}
+                        className="h-11 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_25%,transparent)]"
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        {submitting ? "Registering..." : "Save Delegate"}
+                      </Button>
+                    </CapabilityAction>
                   </div>
                 </form>
               ) : importResult ? (
@@ -586,13 +591,15 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                     >
                       Cancel
                     </Button>
-                    <Button
-                      onClick={handleExcelImport}
-                      disabled={importing || !importFile}
-                      className="h-11 px-8 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 disabled:opacity-40"
-                    >
-                      {importing ? "Importing delegates..." : "Import delegates"}
-                    </Button>
+                    <CapabilityAction operation="registration.import">
+                      <Button
+                        onClick={handleExcelImport}
+                        disabled={importing || !importFile}
+                        className="h-11 px-8 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 disabled:opacity-40"
+                      >
+                        {importing ? "Importing delegates..." : "Import delegates"}
+                      </Button>
+                    </CapabilityAction>
                   </div>
                 </div>
               )}

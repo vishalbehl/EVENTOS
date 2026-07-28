@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import select
+from sqlalchemy import select, delete, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
@@ -54,6 +54,7 @@ async def ensure_rbac_defaults():
                 ("BADGES:REPRINT", "Reprint Badges", "BADGES"),
                 ("BADGES:TEMPLATES", "Manage Badge Templates", "BADGES"),
                 ("BADGES:QUEUE", "View Badge Print Queue", "BADGES"),
+                ("BADGES:EXPORT", "Export Badge Manifests", "BADGES"),
                 # Check-in
                 ("CHECKIN:VIEW", "View Check-ins", "CHECKIN"),
                 ("CHECKIN:QR", "QR Check-in Scanner", "CHECKIN"),
@@ -73,6 +74,12 @@ async def ensure_rbac_defaults():
                 ("CAMPAIGNS:SEND", "Send Email Campaign", "CAMPAIGNS"),
                 ("CAMPAIGNS:DELETE", "Delete Email Campaign", "CAMPAIGNS"),
                 ("CAMPAIGNS:TEMPLATES", "Manage Campaign Templates", "CAMPAIGNS"),
+                ("ANNOUNCEMENTS:VIEW", "View Event Announcements", "CAMPAIGNS"),
+                ("ANNOUNCEMENTS:EDIT", "Manage Event Announcements", "CAMPAIGNS"),
+                # Developer capabilities
+                ("DEVELOPER:API_USE", "Use Developer APIs", "DEVELOPER"),
+                ("DEVELOPER:WEBHOOKS_MANAGE", "Manage Webhooks", "DEVELOPER"),
+                ("DEVELOPER:INTEGRATIONS_MANAGE", "Manage Integrations", "DEVELOPER"),
                 # Analytics
                 ("ANALYTICS:REG_DASHBOARD", "View Registration Dashboard", "ANALYTICS"),
                 ("ANALYTICS:HUB", "View Analytics Hub", "ANALYTICS"),
@@ -323,10 +330,21 @@ async def ensure_event_settings_defaults(db: AsyncSession):
 async def ensure_plans_and_features():
     """Seed the database with default subscription plans and features."""
     from app.modules.platform.models.feature import FeatureCatalog
-    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature, Addon, AddonFeature, OrganizationFeature
+    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature, Addon, AddonFeature, OrganizationFeature, OrganizationSubscription
+    from app.modules.billing.capability_registry import (
+        CATALOG_LIMIT_KEYS,
+        FEATURE_DEFINITIONS,
+        PLATFORM_HARD_CEILINGS,
+    )
+    from app.modules.billing.services.capability_service import CapabilityService
     
     async with AsyncSessionLocal() as db:
         try:
+            # The code-owned registry is authoritative for enforcement keys.
+            # Synchronize it before applying commercial labels/default plans so
+            # a fresh database receives the same catalogue as an upgraded one.
+            await CapabilityService.sync_catalogue(db)
+
             # 1. Seed Feature Catalog
             features = [
                 {"key": "LIMIT_ORGANIZER_USERS", "name": "Organizer Users", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 1, "description": "Maximum organizer/staff users allowed", "display_value_basic": "2", "display_value_professional": "10", "display_value_enterprise": "50"},
@@ -337,7 +355,7 @@ async def ensure_plans_and_features():
                 {"key": "LIMIT_STORAGE", "name": "Storage", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 6, "description": "File storage quota", "display_value_basic": "10 GB", "display_value_professional": "50 GB", "display_value_enterprise": "200 GB+ (Custom)"},
                 {"key": "FEAT_EVENT_WEBSITE", "name": "Event Website", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 7, "description": "Event website quality and customization", "display_value_basic": "Basic", "display_value_professional": "Customizable", "display_value_enterprise": "Fully Branded"},
                 {"key": "FEAT_CUSTOM_DOMAIN", "name": "Custom Domain", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 8, "description": "Use your own domain name for portals", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_WHITE_LABEL", "name": "White Label", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 9, "description": "Remove all EventX branding", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
+                {"key": "FEAT_WHITE_LABEL", "name": "White Label", "category": "PLATFORM_LIMITS", "category_order": 1, "feature_order": 9, "description": "Remove all Event branding", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
                 
                 {"key": "FEAT_REGISTRATION_PORTAL", "name": "Registration Portal", "category": "REGISTRATION", "category_order": 2, "feature_order": 1, "description": "Attendee-facing registration portal", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Enterprise"},
                 {"key": "FEAT_REGISTRATION_FORMS", "name": "Registration Forms", "category": "REGISTRATION", "category_order": 2, "feature_order": 2, "description": "Custom registration form fields", "display_value_basic": "Standard (Up to 10 Fields)", "display_value_professional": "Custom (Unlimited)", "display_value_enterprise": "Custom (Unlimited)"},
@@ -375,36 +393,21 @@ async def ensure_plans_and_features():
                 {"key": "FEAT_WHATSAPP", "name": "WhatsApp Integration", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 7, "description": "WhatsApp messaging for speakers and attendees", "display_value_basic": "❌", "display_value_professional": "Optional Add-On", "display_value_enterprise": "✅"},
                 {"key": "FEAT_SMS", "name": "SMS Integration", "category": "COMMUNICATIONS", "category_order": 5, "feature_order": 8, "description": "SMS notifications and OTPs", "display_value_basic": "❌", "display_value_professional": "Optional Add-On", "display_value_enterprise": "✅"},
 
-                {"key": "FEAT_DEFAULT_THEME", "name": "Default Theme", "category": "BRANDING", "category_order": 6, "feature_order": 1, "description": "Standard EventX theme for all portals", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
+                {"key": "FEAT_DEFAULT_THEME", "name": "Default Theme", "category": "BRANDING", "category_order": 6, "feature_order": 1, "description": "Standard Event theme for all portals", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
                 {"key": "FEAT_THEME_CUSTOMIZATION", "name": "Theme Customization", "category": "BRANDING", "category_order": 6, "feature_order": 2, "description": "Customize portal themes", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
                 {"key": "FEAT_CUSTOM_COLORS", "name": "Custom Colors", "category": "BRANDING", "category_order": 6, "feature_order": 3, "description": "Brand-matching color schemes", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
                 {"key": "FEAT_CUSTOM_FONTS", "name": "Custom Fonts", "category": "BRANDING", "category_order": 6, "feature_order": 4, "description": "Custom typography selection", "display_value_basic": "❌", "display_value_professional": "Limited", "display_value_enterprise": "Unlimited"},
                 {"key": "FEAT_LOGO_BRANDING", "name": "Logo Branding", "category": "BRANDING", "category_order": 6, "feature_order": 5, "description": "Organization logo on all portals", "display_value_basic": "Basic", "display_value_professional": "Advanced", "display_value_enterprise": "Full White Label"},
                 {"key": "FEAT_CUSTOM_LOGIN_PAGE", "name": "Custom Login Page", "category": "BRANDING", "category_order": 6, "feature_order": 6, "description": "Fully branded login experience", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
 
-                {"key": "FEAT_EMAIL_SUPPORT", "name": "Email Support", "category": "SUPPORT", "category_order": 7, "feature_order": 1, "description": "Email-based customer support", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_OFFICE_HOURS_SUPPORT", "name": "Office Hours Support", "category": "SUPPORT", "category_order": 7, "feature_order": 2, "description": "Support during business hours", "display_value_basic": "✅", "display_value_professional": "✅", "display_value_enterprise": "❌"},
-                {"key": "FEAT_PRIORITY_SUPPORT", "name": "Priority Support", "category": "SUPPORT", "category_order": 7, "feature_order": 3, "description": "Priority queue for support tickets", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_DEDICATED_MANAGER", "name": "Dedicated Account Manager", "category": "SUPPORT", "category_order": 7, "feature_order": 4, "description": "Personal account manager assigned", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
-                {"key": "FEAT_24x7_SUPPORT", "name": "24×7 Support", "category": "SUPPORT", "category_order": 7, "feature_order": 5, "description": "Round-the-clock support availability", "display_value_basic": "❌", "display_value_professional": "✅", "display_value_enterprise": "✅"},
-                {"key": "FEAT_SLA", "name": "SLA Commitment", "category": "SUPPORT", "category_order": 7, "feature_order": 6, "description": "Formal service level agreement", "display_value_basic": "❌", "display_value_professional": "❌", "display_value_enterprise": "✅"},
-
                 # Mobile integrations and venue-operations entitlements are intentionally excluded.
                 # They are no longer seeded into the canonical feature catalog.
             ]
             
-            # Clean up obsolete features in catalog that are no longer in our seed list
-            from sqlalchemy import delete
-            seed_keys = {f["key"] for f in features}
-            obsolete_stmt = select(FeatureCatalog).where(FeatureCatalog.key.not_in(seed_keys))
-            obsolete_feats = (await db.execute(obsolete_stmt)).scalars().all()
-            for ob_feat in obsolete_feats:
-                logger.info(f"Deleting obsolete feature from catalog: {ob_feat.key}")
-                await db.execute(delete(PlanFeature).where(PlanFeature.feature_id == ob_feat.id))
-                await db.execute(delete(OrganizationFeature).where(OrganizationFeature.feature_id == ob_feat.id))
-                await db.execute(delete(AddonFeature).where(AddonFeature.feature_id == ob_feat.id))
-                await db.delete(ob_feat)
-            await db.flush()
+            # Never infer obsolescence from this legacy presentation list.
+            # Canonical keys may be owned by Developer, Operations, Security,
+            # or Support and must be deprecated through governed catalogue
+            # lifecycle controls rather than deleted during application start.
             
             existing_feats_res = await db.execute(select(FeatureCatalog.key))
             existing_feats = set(existing_feats_res.scalars().all())
@@ -436,32 +439,47 @@ async def ensure_plans_and_features():
             # Fetch all features to get their IDs
             feat_res = await db.execute(select(FeatureCatalog))
             all_feats = {f.key: f for f in feat_res.scalars().all()}
+            feature_seed = {item["key"]: item for item in features}
             
+            # Purge any legacy 'Demo Public' plan and its references if present in current DB
+            legacy_demo_plans = (await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.name == "Demo Public"))).scalars().all()
+            if legacy_demo_plans:
+                basic_plan = (await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.name == "Basic"))).scalars().first()
+                for dp in legacy_demo_plans:
+                    if basic_plan:
+                        await db.execute(
+                            update(OrganizationSubscription)
+                            .where(OrganizationSubscription.plan_id == dp.id)
+                            .values(plan_id=basic_plan.id)
+                        )
+                    await db.execute(delete(PlanFeature).where(PlanFeature.plan_id == dp.id))
+                    await db.delete(dp)
+                await db.flush()
+
             # 2. Seed Default Plans
             plans = [
                 {
-                    "name": "Demo Public",
-                    "tagline": "Time-limited public product evaluation",
-                    "description": "A tightly capped sample plan for verified public demo accounts.",
+                    "name": "Free Trial",
+                    "tagline": "14-Day Workspace Evaluation",
+                    "description": "14-day evaluation trial with minimal capacity limits. Upgrade to purchase a commercial subscription.",
                     "billing_model": "PER_EVENT",
                     "currency": "INR",
-                    "price_per_event_min": 0,
-                    "price_per_event_max": 0,
+                    "price_per_event": 0,
                     "max_events": 1,
-                    "max_users": 2,
-                    "max_event_team_members": 2,
-                    "max_registrations": 50,
-                    "max_speakers": 10,
-                    "max_sessions": 10,
-                    "max_rooms": 3,
-                    "max_ticket_categories": 2,
-                    "max_badge_templates": 1,
-                    "max_certificate_templates": 1,
-                    "max_emails_per_event": 20,
-                    "storage_quota_mb": 100,
-                    "display_order": 0,
+                    "max_users": 1,
+                    "max_event_team_members": 1,
+                    "max_registrations": 10,
+                    "max_speakers": 3,
+                    "max_sessions": 3,
+                    "max_rooms": 1,
+                    "max_ticket_categories": 1,
+                    "max_badge_templates": 0,
+                    "max_certificate_templates": 0,
+                    "max_emails_per_event": 0,
+                    "storage_quota_mb": 500, # 500 MB
+                    "display_order": -1,
                     "is_popular": False,
-                    "color_hex": "#0F766E"
+                    "color_hex": "#F59E0B"
                 },
                 {
                     "name": "Basic",
@@ -469,8 +487,7 @@ async def ensure_plans_and_features():
                     "description": "Perfect for small events and basic registration.",
                     "billing_model": "PER_EVENT",
                     "currency": "INR",
-                    "price_per_event_min": 15000,
-                    "price_per_event_max": 25000,
+                    "price_per_event": 15000,
                     "max_events": 1,
                     "max_users": 2,
                     "max_event_team_members": 2,
@@ -483,7 +500,7 @@ async def ensure_plans_and_features():
                     "max_certificate_templates": 3,
                     "max_emails_per_event": 450,
                     "storage_quota_mb": 10240, # 10 GB
-                    "display_order": 1,
+                    "display_order": 0,
                     "is_popular": False,
                     "color_hex": "#64748B"
                 },
@@ -493,8 +510,7 @@ async def ensure_plans_and_features():
                     "description": "For scaling events needing advanced workflows and badge printing.",
                     "billing_model": "PER_EVENT",
                     "currency": "INR",
-                    "price_per_event_min": 60000,
-                    "price_per_event_max": 120000,
+                    "price_per_event": 60000,
                     "max_events": 1,
                     "max_users": 10,
                     "max_event_team_members": 10,
@@ -507,7 +523,7 @@ async def ensure_plans_and_features():
                     "max_certificate_templates": None,
                     "max_emails_per_event": 5000,
                     "storage_quota_mb": 51200, # 50 GB
-                    "display_order": 2,
+                    "display_order": 1,
                     "is_popular": True,
                     "color_hex": "#4F46E5"
                 },
@@ -517,8 +533,7 @@ async def ensure_plans_and_features():
                     "description": "Full control, advanced security, API access, and integrations.",
                     "billing_model": "PER_EVENT",
                     "currency": "INR",
-                    "price_per_event_min": 250000,
-                    "price_per_event_max": None,
+                    "price_per_event": 250000,
                     "max_events": 1,
                     "max_users": 50,
                     "max_event_team_members": 50,
@@ -531,11 +546,125 @@ async def ensure_plans_and_features():
                     "max_certificate_templates": None,
                     "max_emails_per_event": None,
                     "storage_quota_mb": 204800, # 200 GB
-                    "display_order": 3,
+                    "display_order": 2,
                     "is_popular": False,
                     "color_hex": "#7C3AED"
                 }
             ]
+
+            limit_attribute_by_key = {
+                "max_events": "max_events",
+                "max_users": "max_users",
+                "max_event_team_members": "max_event_team_members",
+                "max_registrations": "max_registrations",
+                "max_speakers": "max_speakers",
+                "max_sessions": "max_sessions",
+                "max_rooms": "max_rooms",
+                "max_ticket_categories": "max_ticket_categories",
+                "max_badge_templates": "max_badge_templates",
+                "max_certificate_templates": "max_certificate_templates",
+                "max_emails_per_event": "max_emails_per_event",
+                "storage_quota_mb": "storage_quota_mb",
+            }
+            canonical_defaults = {
+                "FEAT_EVENT_PLANNING": {"Free Trial", "Basic", "Professional", "Enterprise"},
+                "FEAT_SESSION_MANAGEMENT": {"Free Trial", "Basic", "Professional", "Enterprise"},
+                "FEAT_COMMUNICATION_CENTER": {"Free Trial", "Basic", "Professional", "Enterprise"},
+                "FEAT_DATA_EXPORTS": {"Basic", "Professional", "Enterprise"},
+                "FEAT_SESSION_QUEUE": {"Professional", "Enterprise"},
+                "FEAT_API_ACCESS": {"Enterprise"},
+                "FEAT_WEBHOOK_ACCESS": {"Enterprise"},
+                "FEAT_THIRD_PARTY_INTEGRATIONS": {"Enterprise"},
+                "FEAT_VENUE_SYNC": {"Enterprise"},
+                "FEAT_DEDICATED_MANAGER": {"Enterprise"},
+            }
+            new_limit_defaults = {
+                "max_sms_per_event": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 0, "Enterprise": 10_000,
+                },
+                "max_whatsapp_per_event": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 0, "Enterprise": 10_000,
+                },
+                "max_push_per_event": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 10_000, "Enterprise": 1_000_000,
+                },
+                "max_api_calls_per_month": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 0, "Enterprise": 1_000_000,
+                },
+                "max_webhook_deliveries_per_month": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 0, "Enterprise": 100_000,
+                },
+                "max_integrations": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 0, "Enterprise": 50,
+                },
+                "max_exports_per_event": {
+                    "Free Trial": 0, "Basic": 50, "Professional": 500, "Enterprise": 10_000,
+                },
+                "max_devices_per_event": {
+                    "Free Trial": 0, "Basic": 0, "Professional": 0, "Enterprise": 500,
+                },
+            }
+
+            def typed_seed_assignment(
+                *,
+                feature: FeatureCatalog,
+                plan_name: str,
+                plan_data: dict,
+            ) -> tuple[bool, dict]:
+                canonical_limit = CATALOG_LIMIT_KEYS.get(feature.key)
+                if canonical_limit:
+                    attribute = limit_attribute_by_key.get(canonical_limit)
+                    if attribute:
+                        raw_value = plan_data.get(attribute)
+                    else:
+                        raw_value = new_limit_defaults.get(canonical_limit, {}).get(plan_name, 0)
+                    if raw_value is None and attribute:
+                        raw_value = PLATFORM_HARD_CEILINGS.get(canonical_limit, 0)
+                    return True, {"value": int(raw_value)}
+
+                seed = feature_seed.get(feature.key)
+                display_value = ""
+                if seed:
+                    display_key = {
+                        "Basic": "display_value_basic",
+                        "Professional": "display_value_professional",
+                        "Enterprise": "display_value_enterprise",
+                    }.get(plan_name)
+                    display_value = str(seed.get(display_key, "")) if display_key else ""
+
+                normalized = display_value.strip().upper().replace("-", " ").replace("_", " ")
+                explicitly_disabled = (
+                    plan_name == "Free Trial"
+                    or "❌" in display_value
+                    or "OPTIONAL ADD ON" in normalized
+                )
+                enabled = (
+                    not explicitly_disabled
+                    if seed
+                    else plan_name in canonical_defaults.get(feature.key, set())
+                )
+
+                if feature.value_type == "BOOLEAN":
+                    return enabled, {"value": bool(enabled)}
+                if not enabled:
+                    return False, {"value": None}
+
+                allowed_values = list(
+                    feature.allowed_values
+                    or FEATURE_DEFINITIONS.get(feature.key, {}).get("allowed_values", [])
+                )
+                for allowed in sorted(allowed_values, key=len, reverse=True):
+                    allowed_words = allowed.upper().replace("_", " ")
+                    if (
+                        normalized == allowed_words
+                        or normalized.startswith(f"{allowed_words} ")
+                        or allowed_words in normalized
+                    ):
+                        return True, {"value": allowed}
+
+                if feature.key == "FEAT_SLA" and plan_name == "Enterprise":
+                    return True, {"value": "MISSION_CRITICAL"}
+                return False, {"value": None}
             
             existing_plans_res = await db.execute(select(SubscriptionPlan))
             existing_plans = {p.name: p for p in existing_plans_res.scalars().all()}
@@ -549,8 +678,7 @@ async def ensure_plans_and_features():
                         description=p_data["description"],
                         billing_model=p_data["billing_model"],
                         currency=p_data["currency"],
-                        price_per_event_min=p_data["price_per_event_min"],
-                        price_per_event_max=p_data["price_per_event_max"],
+                        price_per_event=p_data.get("price_per_event"),
                         max_events=p_data["max_events"],
                         max_users=p_data["max_users"],
                         max_event_team_members=p_data["max_event_team_members"],
@@ -571,21 +699,116 @@ async def ensure_plans_and_features():
                     db.add(plan)
                     await db.flush() # get plan.id
                     
-                    # Wire plan features (only for newly created plans)
-                    for f_data in features:
-                        feat = all_feats.get(f_data["key"])
-                        if feat:
-                            enabled = True
-                            if plan.name in {"Basic", "Demo Public"}:
-                                enabled = f_data["display_value_basic"] != "❌"
-                            elif plan.name == "Professional":
-                                enabled = f_data["display_value_professional"] != "❌"
-                            elif plan.name == "Enterprise":
-                                enabled = f_data["display_value_enterprise"] != "❌"
-                            db.add(PlanFeature(plan_id=plan.id, feature_id=feat.id, enabled=enabled))
+                    for feat in all_feats.values():
+                        enabled, entitlement_value = typed_seed_assignment(
+                            feature=feat,
+                            plan_name=plan.name,
+                            plan_data=p_data,
+                        )
+                        db.add(PlanFeature(
+                            plan_id=plan.id,
+                            feature_id=feat.id,
+                            enabled=enabled,
+                            value_type=feat.value_type,
+                            entitlement_value=entitlement_value,
+                            scope_type=feat.scope_type,
+                            hard_ceiling=(
+                                {"value": PLATFORM_HARD_CEILINGS[CATALOG_LIMIT_KEYS[feat.key]]}
+                                if feat.key in CATALOG_LIMIT_KEYS
+                                else None
+                            ),
+                        ))
                 else:
-                    # Plan exists. We don't overwrite its customized configuration details or feature mappings.
-                    pass
+                    existing_pf_rows = {
+                        row.feature_id: row
+                        for row in (await db.scalars(
+                            select(PlanFeature).where(PlanFeature.plan_id == plan.id)
+                        )).all()
+                    }
+                    for feat in all_feats.values():
+                        enabled, entitlement_value = typed_seed_assignment(
+                            feature=feat,
+                            plan_name=plan.name,
+                            plan_data=p_data,
+                        )
+                        row = existing_pf_rows.get(feat.id)
+                        if row is None:
+                            db.add(PlanFeature(
+                                plan_id=plan.id,
+                                feature_id=feat.id,
+                                enabled=enabled,
+                                value_type=feat.value_type,
+                                entitlement_value=entitlement_value,
+                                scope_type=feat.scope_type,
+                                hard_ceiling=(
+                                    {"value": PLATFORM_HARD_CEILINGS[CATALOG_LIMIT_KEYS[feat.key]]}
+                                    if feat.key in CATALOG_LIMIT_KEYS
+                                    else None
+                                ),
+                            ))
+                            continue
+                        current_value = (
+                            row.entitlement_value.get("value")
+                            if isinstance(row.entitlement_value, dict)
+                            else row.entitlement_value
+                        )
+                        is_untyped_legacy_value = (
+                            row.entitlement_value is None
+                            or (feat.value_type != "BOOLEAN" and isinstance(current_value, bool))
+                        )
+                        if is_untyped_legacy_value:
+                            row.enabled = enabled
+                            row.value_type = feat.value_type
+                            row.entitlement_value = entitlement_value
+                            row.scope_type = feat.scope_type
+                            if feat.key in CATALOG_LIMIT_KEYS and row.hard_ceiling is None:
+                                row.hard_ceiling = {
+                                    "value": PLATFORM_HARD_CEILINGS[CATALOG_LIMIT_KEYS[feat.key]]
+                                }
+                    await db.flush()
+
+
+            # Sync FeatureCatalog value_type for numeric limit features
+            await db.execute(
+                text("""
+                    UPDATE billing.feature_catalog
+                    SET value_type = 'LIMIT',
+                        unit = CASE key
+                            WHEN 'FEAT_TICKET_CATEGORIES' THEN 'categories'
+                            WHEN 'FEAT_BADGE_TEMPLATES' THEN 'templates'
+                            WHEN 'FEAT_CERTIFICATE_TEMPLATES' THEN 'templates'
+                            WHEN 'FEAT_EMAIL_NOTIFICATIONS' THEN 'messages'
+                            ELSE unit
+                        END
+                    WHERE key IN ('FEAT_TICKET_CATEGORIES', 'FEAT_BADGE_TEMPLATES', 'FEAT_CERTIFICATE_TEMPLATES', 'FEAT_EMAIL_NOTIFICATIONS');
+                """)
+            )
+
+            # Sync value_type and scope_type for all existing plan_features from feature_catalog
+            await db.execute(
+                text("""
+                    UPDATE billing.plan_features pf
+                    SET value_type = fc.value_type,
+                        scope_type = fc.scope_type
+                    FROM billing.feature_catalog fc
+                    WHERE pf.feature_id = fc.id
+                      AND (pf.value_type != fc.value_type OR pf.scope_type != fc.scope_type)
+                """)
+            )
+            # Migrate any TRIAL subscriptions currently pointing to "Basic" to point to "Free Trial"
+            free_trial_plan = (await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.name == "Free Trial"))).scalar_one_or_none()
+            if free_trial_plan:
+                basic_plan = (await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.name == "Basic"))).scalar_one_or_none()
+                if basic_plan:
+                    await db.execute(
+                        update(OrganizationSubscription)
+                        .where(
+                            OrganizationSubscription.plan_id == basic_plan.id,
+                            OrganizationSubscription.status == "TRIAL"
+                        )
+                        .values(plan_id=free_trial_plan.id)
+                    )
+            await db.flush()
 
             # Remove legacy seed-driven add-ons so the catalog stays manual-only.
             legacy_addon_keys = {
@@ -738,14 +961,14 @@ async def ensure_plans_and_features():
                 {
                     "name": "White Label Deployment",
                     "key": "ADDON_WHITE_LABEL",
-                    "description": "Remove all EventX branding, use your own domain and identity",
+                    "description": "Remove all Event branding, use your own domain and identity",
                     "price_inr": 50000.0,
                     "billing_unit": "PER_EVENT",
                     "available_for_plans": ["ENTERPRISE"],
                     "is_optional_for_plan": None,
                     "included_in_plan": None,
                     "features_spec": [
-                        {"category": "Branding", "feature": "EventX Branding Removal", "value": "Included"},
+                        {"category": "Branding", "feature": "Event Branding Removal", "value": "Included"},
                         {"category": "Branding", "feature": "Custom Logo", "value": "Included"},
                         {"category": "Branding", "feature": "Custom Domain", "value": "Included"},
                         {"category": "Branding", "feature": "Custom Email Templates", "value": "Included"},
@@ -882,9 +1105,9 @@ async def ensure_admin_user():
             result = await db.execute(select(Organization).where(Organization.slug == "default-org"))
             default_org = result.scalar_one_or_none()
             if default_org:
-                logger.info("Migrating default organization slug/name to Eventxos...")
-                default_org.name = "Eventxos"
-                default_org.slug = "eventxos"
+                logger.info("Migrating default organization slug/name to Eventos...")
+                default_org.name = "Eventos"
+                default_org.slug = "Eventos"
                 await db.flush()
 
             # 2. Check if any organization exists
@@ -892,11 +1115,11 @@ async def ensure_admin_user():
             org = result.scalars().first()
 
             if not org:
-                logger.info("No organization found. Creating default organization Eventxos...")
+                logger.info("No organization found. Creating default organization Eventos...")
                 org = Organization(
                     id=uuid.uuid4(),
-                    name="Eventxos",
-                    slug="eventxos",
+                    name="Eventos",
+                    slug="Eventos",
                     is_platform_org=True
                 )
                 db.add(org)
@@ -914,7 +1137,7 @@ async def ensure_admin_user():
 
             all_orgs_res = await db.execute(select(Organization))
             for target_org in all_orgs_res.scalars().all():
-                if target_org.slug != "eventxos":
+                if target_org.slug != "Eventos":
                     continue
                 
                 # Keep Organization legacy columns in sync with Enterprise plan (unlimited for super org)

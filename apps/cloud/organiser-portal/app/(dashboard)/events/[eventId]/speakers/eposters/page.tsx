@@ -31,6 +31,7 @@ import { useSpeakers } from "@/hooks/useSpeakers";
 import { useSessions } from "@/hooks/useSessions";
 import { Portal } from "@/components/ui/portal";
 import { ManageScreensDialog } from "@/components/organizer/eposters/ManageScreensDialog";
+import { CapabilityAction } from "@/lib/capabilities";
 
 export default function EPostersPage() {
   const { eventId } = useParams();
@@ -182,12 +183,14 @@ export default function EPostersPage() {
            <p className="text-[13px] font-bold text-muted uppercase tracking-[0.3em]">Orchestrate the digital knowledge wall</p>
         </div>
         <div className="flex items-center gap-4">
-           <Button 
-             onClick={() => setIsManageScreensOpen(true)}
-             className="h-12 px-8 font-black uppercase tracking-widest text-[11px] rounded-full shadow-lg border-0 transition-all bg-[var(--pri)] text-[var(--text)] hover:bg-[var(--sec)]"
-           >
-             <Layout className="mr-2 h-4 w-4" /> Manage Screens
-           </Button>
+           <CapabilityAction operation="eposters.manage">
+             <Button 
+               onClick={() => setIsManageScreensOpen(true)}
+               className="h-12 px-8 font-black uppercase tracking-widest text-[11px] rounded-full shadow-lg border-0 transition-all bg-[var(--pri)] text-[var(--text)] hover:bg-[var(--sec)]"
+             >
+               <Layout className="mr-2 h-4 w-4" /> Manage Screens
+             </Button>
+           </CapabilityAction>
         </div>
       </header>
 
@@ -291,15 +294,17 @@ export default function EPostersPage() {
               <span className="text-[11px] font-black uppercase tracking-widest px-3 border-r border-[var(--pri)]/30 text-[var(--pri)]">
                 {selectedPosterIds.size} Selected
               </span>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={handleBatchDelete}
-                disabled={batchDelete.isPending}
-                className="h-8 w-8 p-0 rounded-lg text-[var(--dan)] hover:bg-[var(--dan)]/10"
-              >
-                {batchDelete.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-              </Button>
+              <CapabilityAction operation="eposters.manage">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={handleBatchDelete}
+                  disabled={batchDelete.isPending}
+                  className="h-8 w-8 p-0 rounded-lg text-[var(--dan)] hover:bg-[var(--dan)]/10"
+                >
+                  {batchDelete.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                </Button>
+              </CapabilityAction>
               <Button 
                 variant="ghost" 
                 size="sm" 

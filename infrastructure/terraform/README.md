@@ -1,4 +1,4 @@
-# EventX OS Phase 2 Terraform
+# Event OS Phase 2 Terraform
 
 This directory implements the Vercel-frontend/AWS-backend sample foundation.
 It remains apply-gated until the AWS account boundary, remote state, cost owner,

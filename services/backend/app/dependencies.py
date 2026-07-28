@@ -87,7 +87,7 @@ class TokenData:
     org  = organization UUID string
     jti  = JWT ID (unique per token, for future blacklisting)
     """
-    __slots__ = ("user_id", "role", "organization_id", "jti", "amr", "auth_time", "impersonator_id")
+    __slots__ = ("user_id", "role", "organization_id", "jti", "amr", "auth_time", "impersonator_id", "impersonation_session_id")
 
     def __init__(
         self,
@@ -98,6 +98,7 @@ class TokenData:
         amr: tuple[str, ...] = (),
         auth_time: Optional[datetime] = None,
         impersonator_id: Optional[uuid.UUID] = None,
+        impersonation_session_id: Optional[uuid.UUID] = None,
     ) -> None:
         self.user_id = user_id
         self.role = role
@@ -106,6 +107,7 @@ class TokenData:
         self.amr = amr
         self.auth_time = auth_time
         self.impersonator_id = impersonator_id
+        self.impersonation_session_id = impersonation_session_id
 
 
 async def get_token_data(
@@ -168,6 +170,7 @@ async def get_token_data(
     amr_claim = payload.get("amr") or []
     auth_time_claim = payload.get("auth_time")
     impersonator_claim = payload.get("impersonator_id")
+    impersonation_session_claim = payload.get("impersonation_session_id")
 
     if not sub or not role or not org or not jti:
         raise _unauthorized
@@ -184,6 +187,7 @@ async def get_token_data(
         user_id = uuid.UUID(sub)
         organization_id = uuid.UUID(org)
         impersonator_id = uuid.UUID(impersonator_claim) if impersonator_claim else None
+        impersonation_session_id = uuid.UUID(impersonation_session_claim) if impersonation_session_claim else None
     except ValueError:
         raise _unauthorized
 
@@ -194,6 +198,18 @@ async def get_token_data(
         except (TypeError, ValueError, OSError):
             raise _unauthorized
 
+    if impersonator_id:
+        if not impersonation_session_id:
+            raise _unauthorized
+        try:
+            from app.redis import redis_client
+            active = await redis_client.get(f"impersonation:session:{impersonation_session_id}")
+        except Exception as exc:
+            logger.error(f"Impersonation session validation unavailable: {type(exc).__name__}")
+            raise HTTPException(status_code=503, detail="Impersonation session validation is unavailable") from exc
+        if active != str(impersonator_id):
+            raise HTTPException(status_code=401, detail="Impersonation session has expired or was revoked")
+
     return TokenData(
         user_id=user_id,
         role=role,
@@ -202,6 +218,7 @@ async def get_token_data(
         amr=tuple(str(item) for item in amr_claim),
         auth_time=auth_time,
         impersonator_id=impersonator_id,
+        impersonation_session_id=impersonation_session_id,
     )
 
 
@@ -490,7 +507,7 @@ async def get_current_event(
         async def list_sessions(event: CurrentEvent): ...
     """
     result = await db.execute(
-        select(Event).where(Event.id == event_id)
+        select(Event).where(Event.id == event_id, Event.deleted_at.is_(None))
     )
     event = result.scalar_one_or_none()
 

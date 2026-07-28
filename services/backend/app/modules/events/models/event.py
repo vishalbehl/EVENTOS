@@ -50,6 +50,12 @@ class Event(Base, SoftDeleteMixin):
         nullable=False,
         index=True,
     )
+    organization_location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("platform.organization_locations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     # Who created this event
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

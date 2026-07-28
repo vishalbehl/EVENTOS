@@ -1,204 +1,208 @@
 "use client";
 
-import { use, useState } from "react";
-import { 
-  Calendar, Clock, AlertTriangle, Play, RefreshCw, BarChart2,
-  Tv, CheckCircle2, ShieldCheck, MapPin, Users, HelpCircle
-} from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Calendar, Clock, MapPin, Monitor, RefreshCw, Rows3, ServerCog } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useRooms } from "@/hooks/useRooms";
+import { useSessions } from "@/hooks/useSessions";
+import { apiGet } from "@/lib/api-client";
+import { useOperationAccess } from "@/lib/capabilities";
 
-const ROOMS_DATA = [
-  { name: "Grand Ballroom", type: "Keynote Hall", status: "Live", currentSession: "Opening Keynote & AI Foundations", moderator: "Dr. Eleanor Vance", devices: 4, signal: "Excellent" },
-  { name: "Hall A", type: "Technical Talks", status: "Active", currentSession: "Quantum Computing & Scalability", moderator: "Prof. Alan Turing", devices: 3, signal: "Good" },
-  { name: "Hall B", type: "Interactive Workshop", status: "Active", currentSession: "Rust for High Performance Microservices", moderator: "Linus Torvalds", devices: 2, signal: "Good" },
-  { name: "Room 101", type: "ePoster Presentation", status: "Idle", currentSession: "None — Next: Biotech Innovation Panel", moderator: "Dr. Sarah Chen", devices: 2, signal: "Excellent" },
-  { name: "Executive Suite", type: "Roundtable", status: "Offline", currentSession: "None", moderator: "Steve Jobs", devices: 0, signal: "N/A" }
-];
+type VenueSyncStatus = {
+  event_id: string;
+  devices_by_status: Record<string, number>;
+  latest_jobs: Array<{
+    id: string;
+    sync_type: string;
+    status: string;
+    retry_count: number;
+    bytes_transferred?: number | null;
+    checksum_verified?: boolean | null;
+    error_message?: string | null;
+    created_at?: string | null;
+    completed_at?: string | null;
+  }>;
+  freshness_at: string;
+  source: string;
+};
 
-export default function SessionsDashboardPage({ params: paramsPromise }: { params: Promise<{ eventId: string }> }) {
-  const params = use(paramsPromise);
-  const { eventId } = params;
+type QueueItem = { id: string; status?: string; position?: number; session_id?: string };
 
-  const [refreshing, setRefreshing] = useState(false);
+function reasonLabel(reason?: string | null) {
+  return (reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase();
+}
 
-  const triggerRefresh = () => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 800);
+export default function SessionsDashboardPage() {
+  const { eventId } = useParams<{ eventId: string }>();
+  const syncAccess = useOperationAccess("venue.sync");
+  const deviceAccess = useOperationAccess("venue.devices.manage");
+  const queueAccess = useOperationAccess("presentations.queue.manage");
+  const roomsQuery = useRooms(eventId);
+  const sessionsQuery = useSessions(eventId);
+  const syncQuery = useQuery({
+    queryKey: ["venue-sync-status", eventId],
+    queryFn: () => apiGet<VenueSyncStatus>(`/events/${eventId}/venue-sync/status`),
+    enabled: Boolean(eventId) && syncAccess.enabled && deviceAccess.enabled,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+  const queueQuery = useQuery({
+    queryKey: ["presentation-queue", eventId],
+    queryFn: () => apiGet<QueueItem[]>(`/events/${eventId}/queue`),
+    enabled: Boolean(eventId) && queueAccess.enabled,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+
+  const rooms = roomsQuery.data ?? [];
+  const sessions = sessionsQuery.data ?? [];
+  const now = Date.now();
+  const upcoming = sessions
+    .filter(session => session.start_time && new Date(session.start_time).getTime() >= now)
+    .sort((left, right) => new Date(left.start_time).getTime() - new Date(right.start_time).getTime())
+    .slice(0, 8);
+  const activeRooms = rooms.filter(room => room.is_active).length;
+  const onlineDevices = syncQuery.data?.devices_by_status.online ?? 0;
+  const totalDevices = Object.values(syncQuery.data?.devices_by_status ?? {}).reduce((sum, count) => sum + count, 0);
+  const failedJobs = syncQuery.data?.latest_jobs.filter(job => ["failed", "error"].includes(job.status.toLowerCase())).length ?? 0;
+  const loading = roomsQuery.isLoading || sessionsQuery.isLoading;
+
+  const refresh = async () => {
+    await Promise.all([
+      roomsQuery.refetch(),
+      sessionsQuery.refetch(),
+      syncAccess.enabled ? syncQuery.refetch() : Promise.resolve(),
+      queueAccess.enabled ? queueQuery.refetch() : Promise.resolve(),
+    ]);
   };
 
   return (
-    <div className="relative w-full max-w-full overflow-x-hidden p-6">
-      {/* Background Aesthetics */}
-      <div className="absolute inset-0 z-0 pointer-events-none">
-        <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-[var(--pri)] rounded-full blur-[120px] opacity-10 animate-pulse" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[400px] h-[400px] bg-[var(--sec)] rounded-full blur-[120px] opacity-10" />
-      </div>
-
-      <div className="relative z-10 w-full space-y-6">
-        {/* Header section */}
-        <header className="flex flex-col gap-4 border-b border-white/5 pb-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Calendar className="h-4 w-4 text-[var(--pri)]" />
-              <span className="text-[9px] font-black uppercase tracking-[0.35em] text-[var(--pri)]">Overview</span>
-            </div>
-            <h1 className="text-4xl font-black tracking-tighter text-[var(--text)]">
-              SESSIONS & <span className="text-[var(--pri)]">ROOMS</span>
-            </h1>
-            <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-muted mt-1">
-              Agenda Status · Room Management · Device Control
-            </p>
-          </div>
-
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={triggerRefresh}
-            className="w-fit bg-white/5 border-white/10 hover:bg-white/10 gap-2 text-xs font-semibold rounded-xl"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-[var(--pri)]" : ""}`} />
-            Sync Status
-          </Button>
-        </header>
-
-        {/* Conflict Checks Banner */}
-        <div className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 backdrop-blur-md">
-          <ShieldCheck className="h-5 w-5 text-emerald-400 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <h4 className="text-xs font-black text-emerald-400">All Schedules Aligned</h4>
-            <p className="text-[10px] text-muted mt-0.5">
-              The AI scheduler checked 142 sessions across 5 rooms. No room double-bookings or speaker time clashes detected.
-            </p>
-          </div>
-          <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md font-bold uppercase tracking-wider text-[8px]">
-            Conflicts: 0
-          </Badge>
+    <main className="space-y-6 p-6">
+      <header className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--pri)]">Authoritative event data</p>
+          <h1 className="text-3xl font-black tracking-tight text-[var(--text)]">Sessions and venue operations</h1>
+          <p className="mt-2 text-sm text-muted">Live records from event sessions, rooms, venue devices, sync jobs, and presentation queue.</p>
         </div>
+        <Button variant="outline" onClick={() => void refresh()} disabled={loading || syncQuery.isFetching || queueQuery.isFetching}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${(loading || syncQuery.isFetching || queueQuery.isFetching) ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </header>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { label: "Active Rooms", value: "4", sub: "1 Offline", icon: MapPin },
-            { label: "Scheduled", value: "142", sub: "+12 Pending", icon: Calendar },
-            { label: "Room Devices", value: "11", sub: "All Live", icon: Tv },
-            { label: "Total Duration", value: "6.4k", sub: "Minutes", icon: Clock },
-          ].map((stat, i) => (
-            <Card key={i} className="glass-3d border-default bg-[color-mix(in_srgb,var(--text)_2%,transparent)] rounded-2xl">
-              <CardContent className="p-5 flex items-center justify-between">
-                <div>
-                  <span className="text-[9px] font-black uppercase text-muted tracking-widest">{stat.label}</span>
-                  <h3 className="text-2xl font-black text-[var(--text)] mt-1">{stat.value}</h3>
-                  <span className="text-[9px] text-indigo-400 font-semibold block mt-0.5">{stat.sub}</span>
-                </div>
-                <div className="h-10 w-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center text-muted">
-                  <stat.icon className="h-5 w-5" />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+      {(roomsQuery.isError || sessionsQuery.isError) && (
+        <Card className="border-rose-500/20 bg-rose-500/5">
+          <CardContent className="flex items-center gap-3 p-5 text-sm text-rose-200">
+            <AlertTriangle className="h-5 w-5" /> Room or session records are unavailable. This is not being displayed as an empty event.
+          </CardContent>
+        </Card>
+      )}
 
-        {/* Rooms and Devices Status */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text)]">
-              Room & Device Status Grid
-            </h3>
-            <Badge className="bg-white/5 text-muted border-none rounded-lg text-[8px] font-bold">
-              Auto-refreshing
-            </Badge>
-          </div>
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Event operations summary">
+        {[
+          { label: "Active rooms", value: roomsQuery.isError ? "Unavailable" : String(activeRooms), detail: `${rooms.length} configured`, icon: MapPin },
+          { label: "Sessions", value: sessionsQuery.isError ? "Unavailable" : String(sessions.length), detail: `${upcoming.length} shown next`, icon: Calendar },
+          { label: "Venue devices", value: !deviceAccess.enabled ? "Restricted" : syncQuery.isError ? "Unavailable" : String(totalDevices), detail: deviceAccess.enabled ? `${onlineDevices} online` : reasonLabel(deviceAccess.reason), icon: Monitor },
+          { label: "Presentation queue", value: !queueAccess.enabled ? "Restricted" : queueQuery.isError ? "Unavailable" : String(queueQuery.data?.length ?? 0), detail: queueAccess.enabled ? "live queue records" : reasonLabel(queueAccess.reason), icon: Rows3 },
+        ].map(item => (
+          <Card key={item.label} className="border-white/10 bg-white/[0.025]">
+            <CardContent className="p-5">
+              <item.icon className="mb-5 h-5 w-5 text-[var(--pri)]" />
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted">{item.label}</p>
+              <p className="mt-1 text-2xl font-black text-[var(--text)]">{loading ? "..." : item.value}</p>
+              <p className="mt-1 text-xs text-muted">{item.detail}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {ROOMS_DATA.map((room, idx) => {
-              const live = room.status === "Live";
-              const active = room.status === "Active";
-              const offline = room.status === "Offline";
-
-              const badgeStyle = live 
-                ? "bg-rose-500/10 text-rose-400 border-rose-500/20" 
-                : active 
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
-                : "bg-white/5 text-muted border-white/10";
-
-              return (
-                <Card key={idx} className="glass-3d border-default bg-[color-mix(in_srgb,var(--text)_2%,transparent)] rounded-2xl hover:border-white/10 transition-all duration-350 flex flex-col justify-between">
-                  <CardContent className="p-5 space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="text-sm font-black text-[var(--text)]">{room.name}</h4>
-                        <span className="text-[9px] text-muted font-bold uppercase tracking-wider">{room.type}</span>
-                      </div>
-                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${badgeStyle}`}>
-                        {room.status}
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5 space-y-2">
-                      <span className="text-[8px] font-black uppercase tracking-widest text-muted block">Current Presentation</span>
-                      <p className="text-xs font-bold text-[var(--text)] truncate">{room.currentSession}</p>
-                      <div className="flex items-center gap-1.5 text-[9px] text-muted">
-                        <Users className="h-3 w-3" />
-                        <span>Host: {room.moderator}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[9px] text-muted font-bold uppercase tracking-wider">
-                      <span>Devices: {room.devices} Live</span>
-                      <span>Signal: <span className="text-indigo-400">{room.signal}</span></span>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Live Timeline & Conflict Checker Preview */}
-        <Card className="glass-3d border-default bg-[color-mix(in_srgb,var(--text)_3%,transparent)] rounded-[2rem] p-6">
-          <CardContent className="p-0 space-y-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-white/5 pb-4">
+      <section className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
+        <Card className="border-white/10 bg-white/[0.025]">
+          <CardContent className="p-6">
+            <div className="mb-5 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-black text-[var(--text)]">Schedule Timeline Preview</h3>
-                <p className="text-[10px] text-muted mt-0.5">Real-time visualization of room blocks and session progression.</p>
+                <h2 className="font-bold text-[var(--text)]">Configured rooms</h2>
+                <p className="text-xs text-muted">No operational state is inferred when source records are absent.</p>
               </div>
-
-              <div className="flex items-center gap-2">
-                <Button size="sm" className="bg-[var(--pri)] hover:bg-[var(--pri-hover)] rounded-xl text-xs font-black uppercase tracking-wider">
-                  Launch Visual Agenda Planner
-                </Button>
-              </div>
+              <Link href={`/events/${eventId}/sessions/rooms`} className="text-xs font-bold text-[var(--pri)]">Manage rooms</Link>
             </div>
-
-            <div className="space-y-4">
-              {[
-                { time: "09:00 AM - 10:00 AM", event: "Opening Ceremony & Logistics Briefing", halls: ["Grand Ballroom"] },
-                { time: "10:15 AM - 11:30 AM", event: "Deep Learning Architectures in Production", halls: ["Hall A", "Hall B"] },
-                { time: "11:45 AM - 01:00 PM", event: "ePoster Presenters Quick-Pitch Rounds", halls: ["Room 101"] }
-              ].map((slot, i) => (
-                <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 border border-white/5 bg-white/[0.01] rounded-2xl">
-                  <div className="sm:w-48 shrink-0">
-                    <span className="text-xs font-black text-indigo-400 tracking-tight">{slot.time}</span>
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="text-xs font-bold text-[var(--text)]">{slot.event}</h4>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      {slot.halls.map((h, hIdx) => (
-                        <span key={hIdx} className="inline-flex px-1.5 py-0.5 bg-white/5 text-[8px] font-bold text-muted uppercase tracking-wider rounded">
-                          {h}
-                        </span>
-                      ))}
+            {roomsQuery.isLoading ? <p className="py-8 text-center text-sm text-muted">Loading rooms...</p> : null}
+            {!roomsQuery.isLoading && !roomsQuery.isError && rooms.length === 0 ? <p className="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-muted">No rooms have been configured.</p> : null}
+            <div className="space-y-3">
+              {rooms.map(room => {
+                const roomSessions = sessions.filter(session => session.room_id === room.id);
+                return (
+                  <div key={room.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/10 p-4">
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">{room.name}</p>
+                      <p className="mt-1 text-xs text-muted">{room.room_type || "Unclassified"} · {room.capacity ?? 0} capacity · {roomSessions.length} sessions</p>
                     </div>
+                    <Badge className={room.is_active ? "bg-emerald-500/10 text-emerald-300" : "bg-white/5 text-muted"}>{room.is_active ? "Active" : "Inactive"}</Badge>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
 
-      </div>
-    </div>
+        <Card className="border-white/10 bg-white/[0.025]">
+          <CardContent className="p-6">
+            <div className="mb-5 flex items-center gap-3">
+              <ServerCog className="h-5 w-5 text-[var(--pri)]" />
+              <div>
+                <h2 className="font-bold text-[var(--text)]">Venue sync</h2>
+                <p className="text-xs text-muted">Device and transfer state from production records.</p>
+              </div>
+            </div>
+            {!syncAccess.enabled || !deviceAccess.enabled ? (
+              <p className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5 text-sm text-amber-100">Restricted: {reasonLabel(!syncAccess.enabled ? syncAccess.reason : deviceAccess.reason)}.</p>
+            ) : syncQuery.isError ? (
+              <p className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-5 text-sm text-rose-100">Venue sync status is unavailable.</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-white/10 p-4"><p className="text-xs text-muted">Online devices</p><p className="mt-1 text-xl font-black">{onlineDevices}/{totalDevices}</p></div>
+                  <div className="rounded-xl border border-white/10 p-4"><p className="text-xs text-muted">Failed jobs</p><p className="mt-1 text-xl font-black">{failedJobs}</p></div>
+                </div>
+                <div className="space-y-2">
+                  {(syncQuery.data?.latest_jobs ?? []).slice(0, 6).map(job => (
+                    <div key={job.id} className="rounded-xl border border-white/10 p-3">
+                      <div className="flex items-center justify-between"><span className="text-xs font-semibold">{job.sync_type}</span><Badge className="bg-white/5 text-muted">{job.status}</Badge></div>
+                      <p className="mt-1 text-[11px] text-muted">{job.created_at ? new Date(job.created_at).toLocaleString() : "Timestamp unavailable"}</p>
+                      {job.error_message ? <p className="mt-2 text-xs text-rose-300">{job.error_message}</p> : null}
+                    </div>
+                  ))}
+                  {!syncQuery.isLoading && (syncQuery.data?.latest_jobs.length ?? 0) === 0 ? <p className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs text-muted">No venue sync jobs recorded.</p> : null}
+                </div>
+                {syncQuery.data?.freshness_at ? <p className="text-[10px] text-muted">Freshness: {new Date(syncQuery.data.freshness_at).toLocaleString()} · {syncQuery.data.source}</p> : null}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <Card className="border-white/10 bg-white/[0.025]">
+        <CardContent className="p-6">
+          <div className="mb-5 flex items-center justify-between">
+            <div><h2 className="font-bold text-[var(--text)]">Upcoming agenda</h2><p className="text-xs text-muted">Ordered from persisted session start times.</p></div>
+            <Link href={`/events/${eventId}/sessions/agenda`} className="text-xs font-bold text-[var(--pri)]">Open agenda</Link>
+          </div>
+          <div className="space-y-3">
+            {upcoming.map(session => (
+              <div key={session.id} className="grid gap-2 rounded-2xl border border-white/10 p-4 sm:grid-cols-[180px_1fr_auto] sm:items-center">
+                <p className="flex items-center gap-2 text-xs font-semibold text-[var(--pri)]"><Clock className="h-4 w-4" />{new Date(session.start_time).toLocaleString()}</p>
+                <div><p className="font-semibold text-[var(--text)]">{session.name}</p><p className="text-xs text-muted">{session.room_name || "Room not assigned"}</p></div>
+                <Badge className="w-fit bg-white/5 text-muted">{session.status || "Unspecified"}</Badge>
+              </div>
+            ))}
+            {!sessionsQuery.isLoading && !sessionsQuery.isError && upcoming.length === 0 ? <p className="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-muted">No upcoming sessions found.</p> : null}
+          </div>
+        </CardContent>
+      </Card>
+    </main>
   );
 }

@@ -4,8 +4,8 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Globe, Sliders, Shield, Trash2, Save, Loader2, Building2, MapPin, Calendar, Users, Info, ToggleLeft, FileArchive, Zap, AlertCircle, Clock, Mail, Phone, CheckCircle2, AlertTriangle, ArrowRight, ShieldCheck, Plus,
-  TrendingUp, Award, ExternalLink, RefreshCw, Upload
+  Globe, Sliders, Trash2, Save, Loader2, Building2, MapPin, Calendar, Users, Info, Zap, Clock, CheckCircle2, AlertTriangle, Plus,
+  ExternalLink, RefreshCw, Upload
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,9 +21,10 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CountryStateEntry, fetchCountryStates, getStatesForCountry } from "@/lib/country-states";
+import { useEventCapabilities } from "@/lib/capabilities";
 
 type DetailsTab = "overview" | "venue" | "settings" | "activation";
-type SettingsSubTab = "general" | "time" | "privacy" | "integrations" | "team" | "danger";
+type SettingsSubTab = "general" | "time" | "privacy" | "integrations" | "team";
 type ProgramStatus = "draft" | "final" | "updated";
 
 const statusToProgram = (status?: string): ProgramStatus => {
@@ -56,6 +57,11 @@ export default function EventSettingsPage() {
   const { data: sessions } = useSessions(eventIdValue);
   const { data: files } = useFiles(eventIdValue);
   const updateEvent = useUpdateEvent(eventIdValue);
+  const {
+    data: capabilityData,
+    isLoading: capabilitiesLoading,
+    isError: capabilitiesError,
+  } = useEventCapabilities();
 
   const isAdmin = useMemo(() => {
     return user && ["super_admin", "organiser", "admin"].includes(user.role);
@@ -68,7 +74,6 @@ export default function EventSettingsPage() {
   const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>("general");
 
   const [isSaving, setIsSaving] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
@@ -90,16 +95,9 @@ export default function EventSettingsPage() {
     start_date: "",
     end_date: "",
     status: "draft" as ProgramStatus,
-    enable_posters: true,
     upload_deadline: "",
     max_file_size_mb: 500,
     allowed_formats: "pptx, pdf, mp4, zip, folder",
-    enable_moderator: true,
-    enable_whatsapp: false,
-    enable_srr: true,
-    enable_signage: true,
-    enable_webhooks: false,
-    enable_auto_approval: false,
     timezone: "UTC",
     tagline: "",
     description: "",
@@ -113,14 +111,6 @@ export default function EventSettingsPage() {
       images: [] as string[],
       notes: "",
       map_coords: "",
-    },
-    licensing_details: {
-      plan_name: "",
-      price: 0,
-      addons: [] as string[],
-      activated_at: null as string | null,
-      expires_at: null as string | null,
-      status: "inactive",
     },
   });
 
@@ -171,10 +161,8 @@ export default function EventSettingsPage() {
 
   useEffect(() => {
     if (!event) return;
-    const toggles = (event as any).feature_toggles || {};
     const details = (event as any).organizer_details || { name: "", email: "", phone: "", website: "" };
     const vDetails = (event as any).venue_details || {};
-    const lDetails = (event as any).licensing_details || {};
 
     setForm((current) => ({
       ...current,
@@ -210,22 +198,6 @@ export default function EventSettingsPage() {
         notes: vDetails.notes || "",
         map_coords: vDetails.map_coords || "",
       },
-      licensing_details: {
-        plan_name: lDetails.plan_name || "",
-        price: lDetails.price || 0,
-        addons: lDetails.addons || [],
-        activated_at: lDetails.activated_at || null,
-        expires_at: lDetails.expires_at || null,
-        status: lDetails.status || "inactive",
-      },
-      // Feature Toggles
-      enable_posters: toggles.enable_posters ?? true,
-      enable_moderator: toggles.enable_moderator ?? true,
-      enable_whatsapp: toggles.enable_whatsapp ?? false,
-      enable_srr: toggles.enable_srr ?? true,
-      enable_signage: toggles.enable_signage ?? true,
-      enable_webhooks: toggles.enable_webhooks ?? false,
-      enable_auto_approval: toggles.enable_auto_approval ?? false,
     }));
   }, [event]);
 
@@ -257,34 +229,10 @@ export default function EventSettingsPage() {
       { label: "Sessions & Rooms", pct: sessionsCount > 0 ? 100 : 0, color: sessionsCount > 0 ? "bg-emerald-400" : "bg-amber-400" },
       { label: "Speakers", pct: speakerCount > 0 ? 100 : 0, color: speakerCount > 0 ? "bg-emerald-400" : "bg-amber-400" },
       { label: "Registration Portal", pct: (event as any)?.registration_settings?.enabled ? 100 : 0, color: (event as any)?.registration_settings?.enabled ? "bg-emerald-400" : "bg-amber-400" },
-      { label: "Communications", pct: form.enable_webhooks ? 100 : 50, color: form.enable_webhooks ? "bg-emerald-400" : "bg-amber-400" },
+      { label: "Communications", pct: capabilityData?.features.FEAT_COMMUNICATION_CENTER?.enabled ? 100 : 0, color: capabilityData?.features.FEAT_COMMUNICATION_CENTER?.enabled ? "bg-emerald-400" : "bg-amber-400" },
       { label: "Venue Operations", pct: isVenueConfigured ? 100 : 0, color: isVenueConfigured ? "bg-emerald-400" : "bg-amber-400" }
     ];
-  }, [form, sessionsCount, speakerCount, event]);
-
-  const planInclusions = useMemo(() => {
-    const tier = form.licensing_details.plan_name;
-    if (!tier) return [];
-    if (tier.toLowerCase().includes("starter") || tier.toLowerCase().includes("basic") || tier.toLowerCase().includes("free")) {
-      return [
-        "Up to 500 Registrations",
-        "Up to 25 Speakers & Posters",
-        "Up to 15 Active Sessions",
-        "Up to 3 Rooms Setup Layout",
-        "Standard Email Campaigns",
-        "Basic Analytics Dashboard"
-      ];
-    }
-    return [
-      "Up to 5,000 Registrations",
-      "Up to 250 Speakers & Posters",
-      "Up to 150 Active Sessions",
-      "Up to 20 Rooms Setup Layout",
-      "Unlimited Email Campaigns",
-      "Real-time Dashboard Analytics",
-      "Standard 24/7 Technical Support"
-    ];
-  }, [form.licensing_details.plan_name]);
+  }, [form, sessionsCount, speakerCount, event, capabilityData]);
 
   const coverImage = useMemo(() => {
     const banner = (event as any)?.branding_settings?.banner_url || (event as any)?.branding_settings?.logo_url;
@@ -313,16 +261,6 @@ export default function EventSettingsPage() {
         map_link: form.map_link || null,
         venue_images: form.venue_images || [],
         venue_details: form.venue_details,
-        licensing_details: form.licensing_details,
-        feature_toggles: {
-          enable_posters: form.enable_posters,
-          enable_moderator: form.enable_moderator,
-          enable_whatsapp: form.enable_whatsapp,
-          enable_srr: form.enable_srr,
-          enable_signage: form.enable_signage,
-          enable_webhooks: form.enable_webhooks,
-          enable_auto_approval: form.enable_auto_approval,
-        },
       };
       if (form.start_date) eventPayload.start_date = form.start_date;
       if (form.end_date) eventPayload.end_date = form.end_date;
@@ -334,25 +272,6 @@ export default function EventSettingsPage() {
       toast.error(error?.message || "Could not save configuration.");
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleClearData = async () => {
-    if (!window.confirm("ARE YOU SURE? This will PERMANENTLY DELETE all sessions, speakers, rooms, and import history for this event. This cannot be undone.")) {
-      return;
-    }
-
-    setIsClearing(true);
-    try {
-      await apiClient.post(`/events/${eventIdValue}/clear-data`);
-      toast.success("All event data has been cleared.");
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-    } catch (error) {
-      toast.error("Failed to clear event data.");
-    } finally {
-      setIsClearing(false);
     }
   };
 
@@ -877,8 +796,7 @@ export default function EventSettingsPage() {
                 { id: "time", label: "Date & Time" },
                 { id: "privacy", label: "Preferences & Toggles" },
                 { id: "integrations", label: "Security & Pipelines" },
-                { id: "team", label: "Team Access" },
-                { id: "danger", label: "Danger Zone" }
+                { id: "team", label: "Team Access" }
               ].map((t) => (
                 <button
                   key={t.id}
@@ -1006,22 +924,27 @@ export default function EventSettingsPage() {
                 <motion.div key="privacy" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
                   <Card className="glass-3d border-default p-6 rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_3%,transparent)] space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <ToggleRow label="Enable Waitlist" value={form.enable_auto_approval} disabled={!isAdmin} onChange={(val) => setForm({ ...form, enable_auto_approval: val })} />
-                      <ToggleRow label="Enable Agenda Public View" value={form.enable_srr} disabled={!isAdmin} onChange={(val) => setForm({ ...form, enable_srr: val })} />
-                      <ToggleRow label="Enable Speaker Directory" value={form.enable_moderator} disabled={!isAdmin} onChange={(val) => setForm({ ...form, enable_moderator: val })} />
-                      <ToggleRow label="Enable Event App" value={form.enable_signage} disabled={!isAdmin} onChange={(val) => setForm({ ...form, enable_signage: val })} />
-                      <ToggleRow label="Enable Multi-language Support" value={form.enable_whatsapp} disabled={!isAdmin} onChange={(val) => setForm({ ...form, enable_whatsapp: val })} />
-                      <ToggleRow label="Enable Real-time Chat" value={form.enable_webhooks} disabled={!isAdmin} onChange={(val) => setForm({ ...form, enable_webhooks: val })} />
+                      {capabilitiesLoading ? (
+                        <p className="col-span-full text-xs text-muted">Loading contract capabilitiesâ€¦</p>
+                      ) : capabilitiesError ? (
+                        <p className="col-span-full text-xs text-rose-400">Capability service is unavailable. No feature is assumed enabled.</p>
+                      ) : Object.values(capabilityData?.features ?? {}).slice(0, 8).map((feature) => (
+                        <div key={feature.key} className="rounded-2xl border border-default bg-[color-mix(in_srgb,var(--text)_3%,transparent)] p-5">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[13px] font-bold text-[var(--text)]">{feature.name}</span>
+                            <Badge className={feature.enabled ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}>
+                              {feature.enabled ? String(feature.value ?? "Enabled") : "Locked"}
+                            </Badge>
+                          </div>
+                          <p className="mt-2 text-[9px] font-black uppercase tracking-widest text-muted">
+                            {feature.source ?? feature.reason_code ?? "Contract controlled"}
+                          </p>
+                        </div>
+                      ))}
                     </div>
-
-                    {isAdmin && (
-                      <div className="flex justify-end pt-4 border-t border-white/5">
-                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
-                          {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          <span>Save Settings</span>
-                        </Button>
-                      </div>
-                    )}
+                    <p className="border-t border-white/5 pt-4 text-[10px] leading-5 text-muted">
+                      Commercial capabilities are read-only here. Request a plan, add-on, or extra allocation from Subscriptions; Command Center approval changes the event contract.
+                    </p>
                   </Card>
                 </motion.div>
               )}
@@ -1098,202 +1021,99 @@ export default function EventSettingsPage() {
                 </motion.div>
               )}
 
-              {/* Sub-Tab 6: Danger Zone */}
-              {activeSubTab === "danger" && (
-                <motion.div key="danger" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-                  <Card className="glass-3d border-red-500/10 bg-red-500/5 p-6 rounded-[2rem] space-y-4">
-                    <h4 className="text-xs font-black uppercase text-red-400 tracking-wider flex items-center gap-1.5">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span>Factory telemetry reset</span>
-                    </h4>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Wipes all databases, sessions, presentations, and speaker rosters for this Event ID. This action is non-reversible.
-                    </p>
-                    <div className="pt-2">
-                      <Button
-                        onClick={handleClearData}
-                        disabled={isClearing}
-                        className="rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black uppercase tracking-wider px-6 h-10 shadow-lg shadow-rose-600/20"
-                      >
-                        {isClearing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Complete Factory Reset"}
-                      </Button>
-                    </div>
-                  </Card>
-                </motion.div>
-              )}
-
             </AnimatePresence>
 
           </div>
         )}
 
-        {/* VIEW 4: PLAN & ACTIVATION */}
+        {/* VIEW 4: CANONICAL CONTRACT & CAPABILITIES */}
         {activeTab === "activation" && (
           <div className="space-y-6 animate-in fade-in duration-500">
+            <Card className="glass-3d border-default rounded-[2rem] bg-gradient-to-br from-indigo-500/10 via-[var(--pri)]/5 to-transparent p-6">
+              <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <Badge className="border-[var(--pri)]/30 bg-[var(--pri)]/20 text-[var(--pri)]">Canonical event contract</Badge>
+                  <h3 className="mt-3 text-xl font-black text-[var(--text)]">Commercial access is managed by Command Center</h3>
+                  <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted">
+                    This portal can inspect the event&apos;s resolved access and request a change. It cannot edit the plan, add-ons, grants, restrictions, or limits directly.
+                  </p>
+                </div>
+                <Button type="button" onClick={() => router.push("/subscriptions")} className="rounded-xl">Request plan or add-on</Button>
+              </div>
+              <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <CapabilityFact label="Status" value={capabilitiesLoading ? "Loading" : capabilitiesError ? "Unavailable" : capabilityData?.availability.available ? "Resolved" : "Restricted"} />
+                <CapabilityFact label="Contract version" value={capabilityData?.contract_version == null ? "Not available" : "Version " + capabilityData.contract_version} />
+                <CapabilityFact label="Rollout" value={capabilityData?.rollout_mode ?? "Not available"} />
+                <CapabilityFact label="Resolution" value={capabilityData?.resolution_version ?? "Not available"} mono />
+              </div>
+            </Card>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-              {/* Plan Information (Takes 2 Columns) */}
-              <div className="lg:col-span-2 space-y-6">
-
-                {/* Plan Information Card */}
-                {form.licensing_details.plan_name ? (
-                  <Card className="glass-3d border-default p-6 rounded-[2rem] bg-gradient-to-br from-indigo-500/10 via-[var(--pri)]/5 to-transparent space-y-6">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <Badge className="bg-[var(--pri)]/20 text-[var(--pri)] border-[var(--pri)]/30 text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded">
-                          {form.licensing_details.status === "active" ? "Active Plan" : "Plan Purchased"}
+            {capabilitiesError ? (
+              <Card className="rounded-[2rem] border-amber-500/20 bg-amber-500/5 p-6">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                  <div>
+                    <h4 className="text-sm font-bold text-[var(--text)]">Capability resolution unavailable</h4>
+                    <p className="mt-1 text-xs text-muted">Access is not assumed when the resolver cannot be reached. Try again or contact support.</p>
+                  </div>
+                </div>
+              </Card>
+            ) : capabilitiesLoading ? (
+              <Card className="rounded-[2rem] border-default p-6">
+                <div className="flex items-center gap-3 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" /> Resolving event capabilities…</div>
+              </Card>
+            ) : (
+              <div className="grid gap-6 xl:grid-cols-2">
+                <Card className="rounded-[2rem] border-default p-6">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text)]">Resolved features</h4>
+                  <div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto pr-1">
+                    {Object.values(capabilityData?.features ?? {}).map((feature) => (
+                      <div key={feature.key} className="flex items-start justify-between gap-4 rounded-xl border border-default bg-white/[0.02] p-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-[var(--text)]">{feature.name}</p>
+                          <p className="mt-1 truncate font-mono text-[9px] text-muted">{feature.key} · {feature.source ?? "No commercial source"}</p>
+                        </div>
+                        <Badge className={feature.enabled ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400" : "border-slate-500/20 bg-slate-500/10 text-slate-400"}>
+                          {feature.enabled ? String(feature.value ?? "Enabled") : feature.reason_code?.replaceAll("_", " ") ?? "Locked"}
                         </Badge>
-                        <h3 className="text-xl font-black text-[var(--text)] mt-2">{form.licensing_details.plan_name}</h3>
-                        <p className="text-[10px] text-muted mt-0.5">This plan was purchased when the event was created.</p>
                       </div>
-                      <div className="text-right">
-                        <h2 className="text-2xl font-black text-white">
-                          {form.licensing_details.price > 0 ? `₹ ${form.licensing_details.price.toLocaleString()}` : "Free"}
-                        </h2>
-                        <span className="text-[8px] text-muted font-bold block uppercase tracking-widest mt-1">Per Event (Excl. GST)</span>
-                      </div>
-                    </div>
+                    ))}
+                    {Object.keys(capabilityData?.features ?? {}).length === 0 ? <p className="text-xs text-muted">No feature data is available.</p> : null}
+                  </div>
+                </Card>
 
-                    {/* Plan Includes list */}
-                    {planInclusions.length > 0 && (
-                      <div className="pt-4 border-t border-white/5 space-y-3">
-                        <span className="text-[8px] font-black uppercase text-muted tracking-widest block">Plan Includes</span>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-muted">
-                          {planInclusions.map((item, idx) => (
-                            <div key={idx} className="flex items-center gap-2">
-                              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                              <span>{item}</span>
-                            </div>
-                          ))}
+                <Card className="rounded-[2rem] border-default p-6">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text)]">Resolved limits</h4>
+                  <div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto pr-1">
+                    {Object.values(capabilityData?.limits ?? {}).map((limit) => (
+                      <div key={limit.key} className="rounded-xl border border-default bg-white/[0.02] p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-[10px] font-bold text-[var(--text)]">{limit.key}</span>
+                          <span className="text-xs font-black text-[var(--text)]">{limit.allowed == null ? "Unlimited" : String(limit.used + limit.reserved) + " / " + String(limit.allowed)}</span>
                         </div>
+                        <p className="mt-1 text-[9px] text-muted">Used {limit.used} · Reserved {limit.reserved} · Remaining {limit.remaining == null ? "Unlimited" : limit.remaining} {limit.unit ?? ""}</p>
                       </div>
-                    )}
-                  </Card>
-                ) : (
-                  <Card className="glass-3d border-default p-6 rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_2%,transparent)] space-y-4 flex flex-col items-center justify-center text-center min-h-[180px]">
-                    <div className="h-12 w-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2">
-                      <ShieldCheck className="h-6 w-6 text-muted" />
-                    </div>
-                    <h3 className="text-sm font-black text-[var(--text)]">No Plan Associated</h3>
-                    <p className="text-[10px] text-muted max-w-xs">
-                      This event has no active licensing plan on record. A plan must be selected during event creation.
-                    </p>
-                  </Card>
-                )}
-
-                {/* Event Activation details */}
-                <Card className="glass-3d border-default p-6 rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_2%,transparent)] space-y-4">
-                  <div className="flex items-center gap-2 border-b border-white/5 pb-2">
-                    <ShieldCheck className="h-5 w-5 text-emerald-400" />
-                    <h4 className="text-xs font-black uppercase text-[var(--text)] tracking-wider">Event Activation details</h4>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 text-xs">
-                    <div>
-                      <span className="text-muted block">Activation Date (Estimated):</span>
-                      <span className="font-bold text-[var(--text)]">
-                        {form.licensing_details.activated_at ? new Date(form.licensing_details.activated_at).toLocaleDateString() : new Date(form.start_date || Date.now()).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted block">Event Expiry Date:</span>
-                      <span className="font-bold text-[var(--text)]">
-                        {form.licensing_details.expires_at ? new Date(form.licensing_details.expires_at).toLocaleDateString() : new Date(form.end_date || Date.now()).toLocaleDateString()}
-                      </span>
-                    </div>
+                    ))}
+                    {Object.keys(capabilityData?.limits ?? {}).length === 0 ? <p className="text-xs text-muted">No limit data is available.</p> : null}
                   </div>
                 </Card>
-
               </div>
-
-              {/* Add-ons & Checkout (Takes 1 Column) */}
-              <div className="space-y-6">
-
-                {/* Add-ons card */}
-                <Card className="glass-3d border-default p-6 rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_3%,transparent)] space-y-4">
-                  <h4 className="text-xs font-black uppercase text-muted tracking-wider border-b border-white/5 pb-2">Add-Ons ({form.licensing_details.addons.length} Selected)</h4>
-
-                  <div className="space-y-3">
-                    {[
-                      { name: "Venue Operations", price: 19999 },
-                      { name: "Digital Signage", price: 9999 },
-                      { name: "WhatsApp Notifications", price: 5999 }
-                    ].map((addon, i) => {
-                      const isChecked = form.licensing_details.addons.includes(addon.name);
-                      return (
-                        <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-white/5 bg-white/[0.01] text-xs">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => {
-                                const updated = isChecked
-                                  ? form.licensing_details.addons.filter(a => a !== addon.name)
-                                  : [...form.licensing_details.addons, addon.name];
-                                setForm({ ...form, licensing_details: { ...form.licensing_details, addons: updated } });
-                              }}
-                              className="rounded border-white/10 bg-white/5 text-[var(--pri)] focus:ring-0 focus:ring-offset-0"
-                            />
-                            <span className="font-bold text-[var(--text)]">{addon.name}</span>
-                          </label>
-                          <span className="font-mono text-indigo-400">₹ {addon.price.toLocaleString()}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Card>
-
-                {/* Billing Summary */}
-                <Card className="glass-3d border-default p-6 rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_3%,transparent)] space-y-4">
-                  <h4 className="text-xs font-black uppercase text-muted tracking-wider border-b border-white/5 pb-2">Payment Summary</h4>
-
-                  <div className="space-y-2 text-xs">
-                    <div className="flex items-center justify-between text-muted">
-                      <span>Plan Amount:</span>
-                      <span className="font-mono">₹ {form.licensing_details.price.toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-muted">
-                      <span>Add-Ons Total:</span>
-                      <span className="font-mono">₹ {(form.licensing_details.addons.reduce((sum, name) => sum + (name === "Venue Operations" ? 19999 : name === "Digital Signage" ? 9999 : 5999), 0)).toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-muted">
-                      <span>Sub Total:</span>
-                      <span className="font-mono">₹ {(form.licensing_details.price + form.licensing_details.addons.reduce((sum, name) => sum + (name === "Venue Operations" ? 19999 : name === "Digital Signage" ? 9999 : 5999), 0)).toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-muted">
-                      <span>GST (18%):</span>
-                      <span className="font-mono">₹ {Math.round((form.licensing_details.price + form.licensing_details.addons.reduce((sum, name) => sum + (name === "Venue Operations" ? 19999 : name === "Digital Signage" ? 9999 : 5999), 0)) * 0.18).toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm font-bold text-[var(--text)] border-t border-white/5 pt-2">
-                      <span>Total Amount:</span>
-                      <span className="font-mono text-[var(--pri)]">
-                        ₹ {Math.round((form.licensing_details.price + form.licensing_details.addons.reduce((sum, name) => sum + (name === "Venue Operations" ? 19999 : name === "Digital Signage" ? 9999 : 5999), 0)) * 1.18).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={() => {
-                      handleSave().then(() => {
-                        toast.success("Checkout processing started! Plan and Add-ons applied.");
-                      });
-                    }}
-                    className="w-full rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider py-3 shadow-lg shadow-[var(--pri)]/20 mt-2 flex items-center justify-center gap-1"
-                  >
-                    <span>Proceed to Checkout</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </Card>
-
-              </div>
-
-            </div>
-
+            )}
           </div>
         )}
-
       </div>
 
+    </div>
+  );
+}
+
+function CapabilityFact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-xl border border-default bg-white/[0.02] p-3">
+      <p className="text-[8px] font-black uppercase tracking-widest text-muted">{label}</p>
+      <p className={cn("mt-1 truncate text-xs font-bold text-[var(--text)]", mono && "font-mono text-[10px]")} title={value}>
+        {value}
+      </p>
     </div>
   );
 }

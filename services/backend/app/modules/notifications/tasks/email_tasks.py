@@ -20,6 +20,9 @@ from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.services import email_service
 from app.core.tenant_context import TenantContextGuard
 from app.database import tenant_org_id
+from app.core.dependencies.feature_gate import enforce_event_feature
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.platform.models.organization_console import UsageReservation
 
 def _run_async(coro):
     if sys.platform == "win32":
@@ -28,7 +31,7 @@ def _run_async(coro):
 
 @celery_app.task(name="app.tasks.process_email_campaign", bind=True, max_retries=3)
 def process_email_campaign(
-    self, campaign_id_str: str, organization_id_str: str
+    self, campaign_id_str: str, organization_id_str: str, reservation_id_str: str | None = None
 ) -> None:
     """
     Background task to process a bulk email campaign.
@@ -36,26 +39,53 @@ def process_email_campaign(
     """
     campaign_id = uuid.UUID(campaign_id_str)
     organization_id = uuid.UUID(organization_id_str)
+    reservation_id = uuid.UUID(reservation_id_str) if reservation_id_str else None
     logger.info(f"[Celery] Processing campaign: {campaign_id}")
 
     try:
-        _run_async(_process_email_campaign_async(campaign_id, organization_id))
+        _run_async(_process_email_campaign_async(campaign_id, organization_id, reservation_id))
     except Exception as exc:
         logger.exception(f"[Celery] Error processing campaign {campaign_id}: {exc}")
+        if self.request.retries >= self.max_retries:
+            _run_async(_fail_campaign_async(campaign_id, organization_id, str(exc), reservation_id))
         raise self.retry(exc=exc, countdown=60)
 
+
+async def _fail_campaign_async(campaign_id: uuid.UUID, organization_id: uuid.UUID, failure: str, reservation_id: uuid.UUID | None = None) -> None:
+    """Release held quota only after Celery has exhausted every retry."""
+    context_token = tenant_org_id.set(organization_id)
+    try:
+        async with AsyncSessionLocal() as db:
+            await TenantContextGuard.apply(db, organization_id)
+            campaign = await db.scalar(select(EmailCampaign).where(EmailCampaign.id == campaign_id).with_for_update())
+            reservation = await db.scalar(select(UsageReservation).where(
+                UsageReservation.organization_id == organization_id,
+                UsageReservation.id == reservation_id,
+            ).with_for_update()) if reservation_id else await db.scalar(select(UsageReservation).where(
+                UsageReservation.organization_id == organization_id,
+                UsageReservation.idempotency_key == f"email-campaign:{campaign_id}",
+            ).with_for_update())
+            if reservation and reservation.status == "RESERVED":
+                await UsageReservationService.release(db, reservation.id)
+            if campaign and campaign.status != "sent":
+                campaign.status = "failed"
+            logger.error(f"Email campaign permanently failed: campaign={campaign_id} failure={failure}")
+            await db.commit()
+    finally:
+        tenant_org_id.reset(context_token)
+
 async def _process_email_campaign_async(
-    campaign_id: uuid.UUID, organization_id: uuid.UUID
+    campaign_id: uuid.UUID, organization_id: uuid.UUID, reservation_id: uuid.UUID | None = None
 ) -> None:
     context_token = tenant_org_id.set(organization_id)
     try:
-        await _process_email_campaign_in_tenant(campaign_id, organization_id)
+        await _process_email_campaign_in_tenant(campaign_id, organization_id, reservation_id)
     finally:
         tenant_org_id.reset(context_token)
 
 
 async def _process_email_campaign_in_tenant(
-    campaign_id: uuid.UUID, organization_id: uuid.UUID
+    campaign_id: uuid.UUID, organization_id: uuid.UUID, reservation_id: uuid.UUID | None = None
 ) -> None:
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from sqlalchemy.pool import NullPool
@@ -73,13 +103,13 @@ async def _process_email_campaign_in_tenant(
     )
 
     try:
-        await _process_email_campaign_with_session(TaskSessionLocal, campaign_id, organization_id)
+        await _process_email_campaign_with_session(TaskSessionLocal, campaign_id, organization_id, reservation_id)
     finally:
         await task_engine.dispose()
 
 
 async def _process_email_campaign_with_session(
-    session_factory, campaign_id: uuid.UUID, organization_id: uuid.UUID
+    session_factory, campaign_id: uuid.UUID, organization_id: uuid.UUID, reservation_id: uuid.UUID | None = None
 ) -> None:
 
     async with session_factory() as db:
@@ -159,13 +189,46 @@ async def _process_email_campaign_with_session(
             recipients = result.scalars().all()
         
         campaign.total_recipients = len(recipients)
-        await db.commit()
 
         if not recipients:
+            if reservation_id:
+                empty_reservation = await db.get(UsageReservation, reservation_id)
+                if empty_reservation and empty_reservation.status == "RESERVED":
+                    await UsageReservationService.release(db, empty_reservation.id)
             campaign.status = "sent"
             campaign.sent_at = datetime.now(timezone.utc)
             await db.commit()
             return
+
+        # Re-check canonical access inside the worker so a restriction or kill
+        # switch applied after dispatch still stops delivery. Capacity remains
+        # reserved across retries and is released only on terminal failure.
+        await enforce_event_feature(
+            db, organization_id, campaign.event_id, "FEAT_BULK_EMAIL"
+        )
+        if reservation_id:
+            reservation = await db.scalar(select(UsageReservation).where(
+                UsageReservation.id == reservation_id,
+                UsageReservation.organization_id == organization_id,
+                UsageReservation.event_id == campaign.event_id,
+                UsageReservation.metric_key == "max_emails_per_event",
+                UsageReservation.status == "RESERVED",
+            ).with_for_update())
+            if not reservation:
+                raise RuntimeError("Provided email quota reservation is unavailable")
+        else:
+            reservation = await UsageReservationService.reserve(
+                db,
+                organization_id=organization_id,
+                event_id=campaign.event_id,
+                limit_key="max_emails_per_event",
+                quantity=len(recipients),
+                unit="recipient",
+                idempotency_key=f"email-campaign:{campaign.id}",
+                ttl_seconds=86_400,
+                metadata={"campaign_id": str(campaign.id)},
+            )
+        await db.commit()
 
         # 4. Batch Processing
         batch_size = 50
@@ -309,6 +372,10 @@ async def _process_email_campaign_with_session(
         # 5. Mark as Sent
         campaign.status = "sent"
         campaign.sent_at = datetime.now(timezone.utc)
+        if reservation.status == "RESERVED":
+            await UsageReservationService.consume(
+                db, reservation.id, source="communications.email_campaign"
+            )
         await db.commit()
 
         # Emit websocket notification and log it

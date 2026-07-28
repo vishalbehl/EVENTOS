@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Integer
+from sqlalchemy import DateTime, ForeignKey, Index, String, Integer, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -61,6 +61,16 @@ class AttendanceLog(Base):
     # Relationships
     participant: Mapped["Participant"] = relationship("Participant")
     session: Mapped[Optional["Session"]] = relationship("Session")
+
+    __table_args__ = (
+        Index(
+            "uq_attendance_logs_active_participant_session",
+            "participant_id",
+            "session_id",
+            unique=True,
+            postgresql_where=text("checkout_time IS NULL"),
+        ),
+    )
 
     def __repr__(self) -> str:
         return f"<AttendanceLog id={self.id} participant_id={self.participant_id} session_id={self.session_id}>"

@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, CheckConstra
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, SoftDeleteMixin
 
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.modules.communications.models.email_log import EmailLog
 
 
-class EmailCampaign(Base):
+class EmailCampaign(Base, SoftDeleteMixin):
     """
     A bulk email send targeting a filtered set of speakers.
     One campaign uses one template and targets speakers matching a filter.
@@ -109,7 +109,7 @@ class EmailCampaign(Base):
     template: Mapped["EmailTemplate"] = relationship(
         "EmailTemplate", back_populates="campaigns"
     )
-    creator: Mapped[Optional["User"]] = relationship("User")
+    creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     session_filter: Mapped[Optional["Session"]] = relationship(
         "Session",
         foreign_keys=[session_id_filter],

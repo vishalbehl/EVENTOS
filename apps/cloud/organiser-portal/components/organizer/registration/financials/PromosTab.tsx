@@ -5,6 +5,7 @@ import { Ticket, Plus, Trash2, Calendar, Users, Percent, DollarSign, ToggleLeft,
 import { apiClient } from '@/lib/api-client'
 import { formatApiError } from '@/lib/utils'
 import { toast } from 'sonner'
+import { useOperationAccess } from '@/lib/capabilities'
 
 interface PromoCode {
   id: string
@@ -20,6 +21,7 @@ interface PromoCode {
 }
 
 export default function PromosTab({ eventId }: { eventId: string }) {
+  const couponAccess = useOperationAccess('registration.coupons.manage')
   const [promos, setPromos] = useState<PromoCode[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -210,7 +212,8 @@ export default function PromosTab({ eventId }: { eventId: string }) {
 
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || couponAccess.loading || !couponAccess.enabled}
+            title={!couponAccess.enabled ? `Unavailable: ${(couponAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
             className="flex items-center justify-center gap-2 w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg shadow-[var(--pri)]/20 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
@@ -260,6 +263,8 @@ export default function PromosTab({ eventId }: { eventId: string }) {
                       <div className="flex items-center gap-2">
                         <button 
                           onClick={() => handleToggleActive(promo)}
+                          disabled={couponAccess.loading || !couponAccess.enabled}
+                          title={!couponAccess.enabled ? `Unavailable: ${(couponAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
                           className="text-muted hover:text-[var(--text)] transition-colors cursor-pointer"
                         >
                           {promo.is_active ? (
@@ -270,6 +275,8 @@ export default function PromosTab({ eventId }: { eventId: string }) {
                         </button>
                         <button 
                           onClick={() => handleDeletePromo(promo.id)}
+                          disabled={couponAccess.loading || !couponAccess.enabled}
+                          title={!couponAccess.enabled ? `Unavailable: ${(couponAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
                           className="text-muted hover:text-rose-400 p-1 bg-white/5 rounded-lg border border-white/5 hover:bg-white/10 active:scale-95 transition-all cursor-pointer"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

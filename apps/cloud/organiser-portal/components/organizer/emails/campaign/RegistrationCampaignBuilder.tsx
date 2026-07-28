@@ -7,6 +7,7 @@ import { useUIStore } from '@/store/useUIStore'
 import { Plus, X, Send, Users, Mail, Calendar, Zap, ShieldCheck } from 'lucide-react'
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
+import { useOperationAccess } from '@/lib/capabilities'
 
 interface Props {
   eventId: string
@@ -26,6 +27,8 @@ const PARTICIPANT_FILTERS = [
 ]
 
 export default function RegistrationCampaignBuilder({ eventId, onCreated }: Props) {
+  const campaignAccess = useOperationAccess('communications.campaign.manage')
+  const reminderAccess = useOperationAccess('communications.reminders.manage')
   const [isOpen, setIsOpen] = useState(false)
   const [templates, setTemplates] = useState<any[]>([])
   const [mounted, setMounted] = useState(false)
@@ -55,6 +58,10 @@ export default function RegistrationCampaignBuilder({ eventId, onCreated }: Prop
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (formData.scheduled_at && !reminderAccess.enabled) {
+      toast.error(`Scheduled reminders are unavailable: ${(reminderAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}.`)
+      return
+    }
     try {
       await apiClient.post(`/events/${eventId}/notifications/campaigns`, {
         ...formData,
@@ -143,6 +150,7 @@ export default function RegistrationCampaignBuilder({ eventId, onCreated }: Prop
                     <input
                       type="datetime-local" value={formData.scheduled_at}
                       onChange={e => setFormData({ ...formData, scheduled_at: e.target.value })}
+                      disabled={reminderAccess.loading || !reminderAccess.enabled}
                       className="w-full bg-transparent border-0 font-bold text-[var(--text)] focus:ring-0 p-0 cursor-pointer"
                     />
                   </Field>
@@ -156,6 +164,8 @@ export default function RegistrationCampaignBuilder({ eventId, onCreated }: Prop
                 </div>
                 <button
                   type="submit" form="reg-campaign-form"
+                  disabled={campaignAccess.loading || !campaignAccess.enabled || (Boolean(formData.scheduled_at) && (reminderAccess.loading || !reminderAccess.enabled))}
+                  title={!campaignAccess.enabled ? `Unavailable: ${(campaignAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
                   className="px-10 h-14 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-[0.3em] text-[11px] rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 group"
                 >
                   Create <Zap className="w-4 h-4 group-hover:animate-bounce" />
@@ -173,6 +183,8 @@ export default function RegistrationCampaignBuilder({ eventId, onCreated }: Prop
       <motion.button
         whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
         onClick={() => setIsOpen(true)}
+        disabled={campaignAccess.loading || !campaignAccess.enabled}
+        title={!campaignAccess.enabled ? `Unavailable: ${(campaignAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
         className="w-full py-4 bg-[var(--pri)] hover:bg-[var(--sec)] text-white rounded-[1.5rem] font-black uppercase tracking-[0.3em] text-[12px] flex items-center justify-center gap-3 shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 transition-all group"
       >
         <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-500" />

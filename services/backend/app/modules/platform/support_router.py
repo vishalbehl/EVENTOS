@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant_context import TenantContextGuard
+from app.core.dependencies.feature_gate import resolve_org_operation
 from app.config import settings
 from app.dependencies import StepUpAuth, get_current_user, get_db
 from app.modules.audit.models.audit_log import AuditLog
@@ -46,6 +47,11 @@ SLA_HOURS = {
     "MEDIUM": (8, 48),
     "NORMAL": (24, 72),
     "LOW": (48, 120),
+}
+SLA_TIER_MULTIPLIER = {
+    "STANDARD": 1.0,
+    "PRIORITY": 0.5,
+    "MISSION_CRITICAL": 0.25,
 }
 
 
@@ -240,6 +246,26 @@ async def create_ticket(
     priority = _normalize(payload.priority, TICKET_PRIORITIES, "priority")
     now = datetime.now(timezone.utc)
     response_hours, resolution_hours = SLA_HOURS[priority]
+    sla_capability = await resolve_org_operation(
+        db,
+        current_user.organization_id,
+        "support.sla.apply",
+        user_id=current_user.id,
+    )
+    dedicated_manager = await resolve_org_operation(
+        db,
+        current_user.organization_id,
+        "support.dedicated_manager",
+        user_id=current_user.id,
+    )
+    sla_tier = (
+        str(sla_capability.get("value", "STANDARD")).upper()
+        if sla_capability.get("enabled")
+        else "STANDARD"
+    )
+    multiplier = SLA_TIER_MULTIPLIER.get(sla_tier, 1.0)
+    response_hours = max(response_hours * multiplier, 0.25)
+    resolution_hours = max(resolution_hours * multiplier, 1.0)
     ticket = SupportTicket(
         organization_id=current_user.organization_id,
         creator_id=current_user.id,
@@ -258,10 +284,20 @@ async def create_ticket(
         organization_id=current_user.organization_id,
         actor_id=current_user.id,
         action_type="SUPPORT_TICKET_CREATED",
-        metadata_data={"ticket_id": str(ticket.id), "subject": payload.subject},
+        metadata_data={
+            "ticket_id": str(ticket.id),
+            "subject": payload.subject,
+            "sla_tier": sla_tier,
+            "dedicated_manager_entitled": bool(dedicated_manager.get("enabled")),
+        },
     ))
     await db.commit()
-    return {"message": "Ticket created successfully", "ticket_id": ticket.id}
+    return {
+        "message": "Ticket created successfully",
+        "ticket_id": ticket.id,
+        "sla_tier": sla_tier,
+        "dedicated_manager_entitled": bool(dedicated_manager.get("enabled")),
+    }
 
 
 @router.get("/admin", response_model=CursorPage[TicketResponse])

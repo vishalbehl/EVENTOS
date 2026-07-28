@@ -12,6 +12,13 @@ import { useEvent } from "@/hooks/useEvents";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
+import { capabilityForPath, CapabilityBoundary, EventCapabilitiesProvider, OrganizationCapabilitiesProvider, useEventCapabilities } from "@/lib/capabilities";
+
+function EventPageBoundary({ eventId, pathname, children }: { eventId?: string; pathname: string; children: React.ReactNode }) {
+  const { data } = useEventCapabilities();
+  const featureKey = eventId ? capabilityForPath(data?.features, pathname, eventId) : undefined;
+  return featureKey ? <CapabilityBoundary featureKey={featureKey}>{children}</CapabilityBoundary> : <>{children}</>;
+}
 
 export default function DashboardLayout({
   children,
@@ -37,7 +44,11 @@ export default function DashboardLayout({
     setImpersonatingOrg(localStorage.getItem("eventos_impersonating_org"));
     const fetchGlobalSettings = async () => {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/global-settings`);
+        const token = useAuthStore.getState().accessToken;
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const response = await fetch(`${baseUrl}/api/v1/global-settings`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         if (!response.ok) return;
         const data = await response.json();
         if (data?.timezone) {
@@ -225,6 +236,8 @@ export default function DashboardLayout({
   }
 
   return (
+    <OrganizationCapabilitiesProvider>
+    <EventCapabilitiesProvider eventId={eventId}>
     <div className="relative h-screen overflow-hidden" style={{ background: "var(--color-bg)" }}>
       {/* Mobile Sidebar Navigation Drawer Overlay */}
       <AnimatePresence>
@@ -307,10 +320,12 @@ export default function DashboardLayout({
               border: "1px solid var(--color-border-subtle)",
             }}
           >
-            {content}
+            <EventPageBoundary eventId={eventId} pathname={pathname || ""}>{content}</EventPageBoundary>
           </div>
         </div>
       </main>
     </div>
+    </EventCapabilitiesProvider>
+    </OrganizationCapabilitiesProvider>
   );
 }

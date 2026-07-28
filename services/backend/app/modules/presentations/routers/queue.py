@@ -22,11 +22,27 @@ from app.modules.presentations.schemas.queue import (
 )
 from app.schemas.common import MessageResponse
 from app.websocket.events import broadcast_file_event, EventType
+from app.core.dependencies.feature_gate import require_event_operation
 
-router = APIRouter(prefix="/events/{event_id}/queue", tags=["queue"])
+router = APIRouter(prefix="/events/{event_id}/queue", tags=["queue"], dependencies=[require_event_operation("presentations.queue.manage")])
 
 
 # ── Session queue endpoints ───────────────────────────────────
+
+@router.get("", response_model=List[QueueEntryResponse])
+async def list_event_queue(
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+) -> List[QueueEntryResponse]:
+    """Return the event-wide presentation queue without cross-tenant leakage."""
+    result = await db.execute(
+        select(PresentationQueue)
+        .join(Session, Session.id == PresentationQueue.session_id)
+        .where(Session.event_id == event.id)
+        .order_by(Session.start_time, PresentationQueue.queue_order)
+    )
+    return [QueueEntryResponse.model_validate(entry) for entry in result.scalars().all()]
+
 
 @router.get("/sessions/{session_id}", response_model=SessionQueueResponse)
 async def get_session_queue(

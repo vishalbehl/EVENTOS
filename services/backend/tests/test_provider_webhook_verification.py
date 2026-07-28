@@ -34,7 +34,7 @@ def _stripe_body(event_id: str = "evt_123") -> bytes:
             "id": "pi_123",
             "amount_received": 12500,
             "currency": "inr",
-            "metadata": {"eventx_organization_id": str(ORG_ID), "eventx_invoice_id": str(INVOICE_ID)},
+            "metadata": {"Event_organization_id": str(ORG_ID), "Event_invoice_id": str(INVOICE_ID)},
         }},
     }, separators=(",", ":")).encode()
 
@@ -81,7 +81,7 @@ def test_razorpay_verifies_raw_body_and_normalizes(monkeypatch):
         "event": "payment.captured",
         "payload": {"payment": {"entity": {
             "id": "pay_123", "amount": 9900, "currency": "INR", "created_at": int(time.time()),
-            "notes": {"eventx_organization_id": str(ORG_ID), "eventx_invoice_id": str(INVOICE_ID)},
+            "notes": {"Event_organization_id": str(ORG_ID), "Event_invoice_id": str(INVOICE_ID)},
         }}},
     }, separators=(",", ":")).encode()
     signature = hmac.new(b"razor_secret", body, hashlib.sha256).hexdigest()

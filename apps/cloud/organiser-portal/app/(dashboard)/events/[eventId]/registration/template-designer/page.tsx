@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
 
 const uuidv4 = () => {
   if (typeof window !== "undefined" && window.crypto && window.crypto.randomUUID) {
@@ -347,6 +348,9 @@ const useHistoryReducer = (initialState: any) => {
 
 export default function PrintDesigner() {
   const { eventId } = useParams();
+  const badgeDesignAccess = useOperationAccess("badges.custom_design.manage");
+  const certificateDesignAccess = useOperationAccess("certificates.custom_design.manage");
+  const qrDesignAccess = useOperationAccess("badges.qr.manage");
   const [loading, setLoading] = useState(false);
   const [templatesList, setTemplatesList] = useState<any[]>([]);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -1245,6 +1249,15 @@ export default function PrintDesigner() {
   };
 
   const addField = (type: string) => {
+    const designAccess = template.template_type === "certificate" ? certificateDesignAccess : badgeDesignAccess;
+    if (!designAccess.enabled) {
+      toast.error(`Custom design is unavailable: ${(designAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
+    if (["qr", "contact_qr", "custom_qr"].includes(type) && !qrDesignAccess.enabled) {
+      toast.error(`QR design is unavailable: ${(qrDesignAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
     const coords = getInitialCoords();
     const common = { id: uuidv4(), enabled: true, x_mm: coords.x_mm, y_mm: coords.y_mm };
     let field: any;
@@ -1277,6 +1290,11 @@ export default function PrintDesigner() {
   };
 
   const addTextPreset = (size: "heading" | "subheading" | "body") => {
+    const designAccess = template.template_type === "certificate" ? certificateDesignAccess : badgeDesignAccess;
+    if (!designAccess.enabled) {
+      toast.error(`Custom design is unavailable: ${(designAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
     const coords = getInitialCoords();
     const common = { id: uuidv4(), enabled: true, x_mm: coords.x_mm, y_mm: coords.y_mm, bold: false, italic: false, underline: false, align: "left", textCase: "none" };
     let field;
@@ -1452,9 +1470,11 @@ export default function PrintDesigner() {
       const isNew = currentTemplateId === "new";
       let res;
       if (isNew) {
-        res = await apiPost<any>(`/events/${eventId}/print-templates`, payload);
+        res = await apiPost<any>(`/events/${eventId}/print-templates`, payload, { headers: { "Idempotency-Key": crypto.randomUUID() } });
       } else {
-        res = await apiPatch<any>(`/events/${eventId}/print-templates/${currentTemplateId}`, payload);
+        res = await apiPatch<any>(`/events/${eventId}/print-templates/${currentTemplateId}`, payload, {
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+        });
       }
       toast.success("Template saved successfully!");
       await fetchTemplates();
@@ -1480,7 +1500,7 @@ export default function PrintDesigner() {
         template_type: template.template_type || "custom",
         template_data: { ...template, template_name: `${template.template_name} (Copy)`, relative_to_page: true },
       };
-      const res = await apiPost<any>(`/events/${eventId}/print-templates`, payload);
+      const res = await apiPost<any>(`/events/${eventId}/print-templates`, payload, { headers: { "Idempotency-Key": crypto.randomUUID() } });
       toast.success("Template saved as new copy!");
       await fetchTemplates();
       if (res && res.id) {
@@ -2279,15 +2299,21 @@ export default function PrintDesigner() {
                         <option value="certificate">🏅 Certificate</option>
                         <option value="custom">⚙️ Custom</option>
                       </select>
-                      <Button onClick={handleSaveTemplate} className="w-full h-9 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl shadow-lg border-0">
-                        <Save className="h-3.5 w-3.5 mr-2" /> Save Design
-                      </Button>
-                      <Button onClick={handleSaveAsNew} disabled={currentTemplateId === "new"} className="w-full h-9 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl disabled:opacity-40">
-                        <Copy className="h-3.5 w-3.5 mr-2 text-zinc-500" /> Save As Copy
-                      </Button>
-                      <Button onClick={() => setConfirmDeleteOpen(true)} disabled={currentTemplateId === "new"} className="w-full h-9 bg-rose-600/10 hover:bg-rose-600/20 text-rose-400 border border-rose-500/20 justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl disabled:opacity-40">
-                        <Trash2 className="h-3.5 w-3.5 mr-2 text-rose-500" /> Delete Template
-                      </Button>
+                      <CapabilityAction operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}>
+                        <Button onClick={handleSaveTemplate} className="w-full h-9 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl shadow-lg border-0">
+                          <Save className="h-3.5 w-3.5 mr-2" /> Save Design
+                        </Button>
+                      </CapabilityAction>
+                      <CapabilityAction operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}>
+                        <Button onClick={handleSaveAsNew} disabled={currentTemplateId === "new"} className="w-full h-9 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl disabled:opacity-40">
+                          <Copy className="h-3.5 w-3.5 mr-2 text-zinc-500" /> Save As Copy
+                        </Button>
+                      </CapabilityAction>
+                      <CapabilityAction operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}>
+                        <Button onClick={() => setConfirmDeleteOpen(true)} disabled={currentTemplateId === "new"} className="w-full h-9 bg-rose-600/10 hover:bg-rose-600/20 text-rose-400 border border-rose-500/20 justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl disabled:opacity-40">
+                          <Trash2 className="h-3.5 w-3.5 mr-2 text-rose-500" /> Delete Template
+                        </Button>
+                      </CapabilityAction>
                       <Button onClick={handleNewTemplate} className="w-full h-9 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl">
                         <FileText className="h-3.5 w-3.5 mr-2 text-zinc-400" /> New Empty File
                       </Button>

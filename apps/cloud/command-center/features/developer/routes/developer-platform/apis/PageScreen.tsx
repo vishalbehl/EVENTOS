@@ -6,7 +6,7 @@ export default function ApiCatalogPage() {
   return (
     <UnavailableRouteState
       title="API Catalog"
-      description="Publish versioned EventX API domains, authentication, scopes, pagination, errors, rate limits, idempotency, and deprecation guidance."
+      description="Publish versioned Event API domains, authentication, scopes, pagination, errors, rate limits, idempotency, and deprecation guidance."
       breadcrumb={["Console", "Developer", "API Catalog"]}
       removed={[
         "Static API usage and latency charts that were not backed by authoritative telemetry.",

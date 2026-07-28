@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     ARRAY, Boolean, DateTime, ForeignKey,
-    Integer, String, Text,
+    Integer, String, Text, UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -89,6 +89,7 @@ class Webhook(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # ── Relationship ──────────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="webhooks")
@@ -127,3 +128,34 @@ class Webhook(Base):
             f"<Webhook id={self.id} url={self.url[:50]} "
             f"status={self.status}>"
         )
+
+
+class WebhookMutation(Base):
+    """Durable idempotency/result envelope for organizer webhook mutations."""
+
+    __tablename__ = "webhook_mutations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), index=True
+    )
+    webhook_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("integrations.webhooks.id", ondelete="SET NULL"), nullable=True
+    )
+    operation_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    requested_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_webhook_mutations_org_idempotency"),
+    )

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, Integer
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,8 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     prefix: Mapped[str] = mapped_column(String(10), nullable=False)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -23,7 +25,10 @@ class ApiKey(Base):
 
 class OAuthClient(Base):
     __tablename__ = "oauth_clients"
-    __table_args__ = {"schema": "developer"}
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_oauth_clients_org_idempotency"),
+        {"schema": "developer"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=True)
@@ -32,6 +37,15 @@ class OAuthClient(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     redirect_uris: Mapped[list] = mapped_column(JSONB, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revoke_idempotency_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    revoke_request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class RateLimit(Base):

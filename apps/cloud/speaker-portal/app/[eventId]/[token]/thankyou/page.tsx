@@ -100,7 +100,7 @@ export default function ThankYouPage() {
             transition={{ delay: 1 }}
             className="mt-12 flex items-center gap-3 text-[10px] font-black text-muted uppercase tracking-[0.3em]"
           >
-            <PartyPopper className="h-4 w-4 text-emerald-400" /> Transmission Confirmed via EventX OS Cloud
+            <PartyPopper className="h-4 w-4 text-emerald-400" /> Transmission Confirmed via Event OS Cloud
           </motion.div>
         </main>
       </div>

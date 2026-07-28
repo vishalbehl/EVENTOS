@@ -31,6 +31,8 @@ from app.modules.registration.services.pricing_service import (
 )
 from app.modules.registration.routers.registrations import helper_approve_registration
 from app.modules.registration.services.portal_service import verify_and_resolve_registration
+from app.core.dependencies.feature_gate import enforce_event_feature, enforce_event_operation, require_event_operation
+from app.modules.platform.services.metering_service import MeteringService
 
 router = APIRouter(tags=["registration_portal"])
 
@@ -168,7 +170,11 @@ async def get_registration_form_config(
     }
 
 
-@router.post("/events/{event_id}/registration/form-config", response_model=RegistrationFormConfigResponse)
+@router.post(
+    "/events/{event_id}/registration/form-config",
+    response_model=RegistrationFormConfigResponse,
+    dependencies=[require_event_operation("registration.forms.manage")],
+)
 async def update_registration_form_config(
     payload: RegistrationFormConfigUpdate,
     event: CurrentEvent,
@@ -245,7 +251,6 @@ async def get_public_registration_form(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found."
         )
-
     # Load form config
     config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
     config_result = await db.execute(config_stmt)
@@ -368,6 +373,7 @@ async def public_register_participant(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found."
         )
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
 
     # 3. Check email presence and verify duplicate / merging logic
     email_val = payload.get("email", "").strip()
@@ -589,6 +595,8 @@ async def public_register_participant(
         waitlist_position=waitlist_pos
     )
     db.add(reg)
+    await db.flush()
+    await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="registration_submissions", quantity=1, unit="count", source="registration.portal.register", idempotency_key=f"registration-submit:{reg.id}", metadata={"registration_id": str(reg.id), "status": status_str})
     await db.commit()
     await db.refresh(reg)
 
@@ -733,7 +741,7 @@ async def validate_public_promo(
     event = (await db.execute(event_stmt)).scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
-        
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.coupons.manage")
     code_upper = payload.code.strip().upper()
     promo_stmt = select(PromoCode).where(
         PromoCode.event_id == event_id,
@@ -798,10 +806,15 @@ async def public_checkout_payment(
     event = (await db.execute(event_stmt)).scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
         
     reg_settings = event.registration_settings or {}
     payment_enabled = reg_settings.get("payment_enabled", False)
     active_gateway = reg_settings.get("active_gateway", "simulated")
+    if payment_enabled:
+        await enforce_event_operation(db, event.organization_id, event.id, "registration.payments.manage")
+    if payload.promo_code:
+        await enforce_event_operation(db, event.organization_id, event.id, "registration.coupons.manage")
     
     # Check duplicate email and verify merging logic
     email_val = payload.formData.get("email", "").strip()
@@ -946,6 +959,7 @@ async def public_checkout_payment(
     )
     db.add(reg)
     await db.flush()  # get reg.id
+    await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="registration_submissions", quantity=1, unit="count", source="registration.portal.checkout", idempotency_key=f"registration-submit:{reg.id}", metadata={"registration_id": str(reg.id), "status": status_str})
     
     # If waitlisted or free checkout
     if status_str == "waitlisted":
@@ -1059,6 +1073,7 @@ async def verify_public_payment(
     event = (await db.execute(event_stmt)).scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.payments.manage")
         
     reg_settings = event.registration_settings or {}
     

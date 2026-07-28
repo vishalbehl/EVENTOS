@@ -1,9 +1,10 @@
 import uuid
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.dependencies import StepUpAuth, get_db
+from app.dependencies import StepUpAuth, TokenDep, get_db
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.audit.models.audit_domain_tables import ImpersonationLog
@@ -19,6 +20,46 @@ class ImpersonationRequest(BaseModel):
     target_user_id: Optional[uuid.UUID] = None
     reason: str
 
+
+class ImpersonationHandoffExchange(BaseModel):
+    handoff_code: str
+
+
+@router.post("/handoff/exchange")
+async def exchange_impersonation_handoff(payload: ImpersonationHandoffExchange, db: AsyncSession = Depends(get_db)):
+    code_hash = hashlib.sha256(payload.handoff_code.encode()).hexdigest()
+    now = datetime.now(timezone.utc)
+    log = await db.scalar(select(ImpersonationLog).where(ImpersonationLog.session_token_hash == code_hash).with_for_update())
+    if not log or log.terminated_at is not None or log.session_expires_at <= now:
+        raise HTTPException(status_code=401, detail="Handoff code is invalid or expired")
+    target_user = await db.get(User, log.target_user_id)
+    if not target_user or not target_user.is_active or target_user.organization_id != log.target_organization_id:
+        raise HTTPException(status_code=401, detail="Handoff target is no longer available")
+    log.session_token_hash = None
+    log.session_expires_at = now + timedelta(minutes=15)
+    token = create_access_token(target_user, impersonator_id=log.super_admin_id, impersonation_session_id=log.id, expires_minutes=15)
+    from app.redis import redis_client
+    try:
+        await redis_client.set(f"impersonation:session:{log.id}", str(log.super_admin_id), ex=900)
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Impersonation session store is unavailable") from exc
+    await db.commit()
+    return {"access_token": token, "token_type": "bearer", "expires_in": 900, "session_id": log.id, "target_organization_id": log.target_organization_id}
+
+
+@router.post("/handoff/end")
+async def end_own_impersonation_handoff(token_data: TokenDep, db: AsyncSession = Depends(get_db)):
+    if not token_data.impersonator_id or not token_data.impersonation_session_id:
+        raise HTTPException(status_code=403, detail="No active impersonation session")
+    log = await db.scalar(select(ImpersonationLog).where(ImpersonationLog.id == token_data.impersonation_session_id, ImpersonationLog.super_admin_id == token_data.impersonator_id).with_for_update())
+    if not log: raise HTTPException(status_code=404, detail="Impersonation session not found")
+    if log.terminated_at is None: log.terminated_at = datetime.now(timezone.utc)
+    from app.redis import redis_client
+    await redis_client.delete(f"impersonation:session:{log.id}")
+    await db.commit()
+    return {"status": "ended", "session_id": log.id, "ended_at": log.terminated_at}
+
 @router.post("/start")
 async def start_impersonation(
     payload: ImpersonationRequest,
@@ -27,6 +68,7 @@ async def start_impersonation(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    raise HTTPException(status_code=410, detail="Direct impersonation token issuance is retired. Create a governed Organizer Console handoff and exchange its single-use code.")
     """
     Generate a short-lived JWT scoped to the target organization for support debugging.
     Only SUPER_ADMINs can impersonate.
@@ -144,6 +186,8 @@ async def superadmin_end_impersonation_session(
     if log.terminated_at is not None:
         raise HTTPException(status_code=400, detail="Session already ended.")
     log.terminated_at = datetime.now(timezone.utc)
+    from app.redis import redis_client
+    await redis_client.delete(f"impersonation:session:{log.id}")
     await db.commit()
     return {"status": "success", "session_id": str(session_id),
             "ended_at": log.terminated_at.isoformat()}

@@ -48,7 +48,7 @@ class ProviderWebhookService:
 
     @staticmethod
     def _parse_uuid(metadata: Mapping[str, Any], key: str) -> uuid.UUID:
-        value = metadata.get(f"eventx_{key}") or metadata.get(key)
+        value = metadata.get(f"Event_{key}") or metadata.get(key)
         try:
             return uuid.UUID(str(value))
         except (TypeError, ValueError):

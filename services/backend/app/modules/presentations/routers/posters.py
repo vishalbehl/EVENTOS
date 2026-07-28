@@ -23,8 +23,9 @@ from app.schemas.common import MessageResponse
 from app.modules.presentations.schemas.file import FileDownloadResponse
 from app.services import upload_service
 from app.websocket.events import broadcast_file_event, EventType
+from app.core.dependencies.feature_gate import require_event_operation
 
-router = APIRouter(prefix="/events/{event_id}/posters", tags=["posters"])
+router = APIRouter(prefix="/events/{event_id}/posters", tags=["posters"], dependencies=[require_event_operation("eposters.manage")])
 
 
 @router.get("/categories", response_model=List[str])

@@ -6,11 +6,12 @@ from typing import List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import DeviceAuth, get_db
+from app.dependencies import CurrentEvent, DeviceAuth, get_db
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.events.models.session import Session
 from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.registration.models.participant import Participant
@@ -20,9 +21,58 @@ from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.analytics.models.attendance_log import AttendanceLog
 from app.modules.registration.models.check_in import CheckIn
+from app.modules.venue.models.room_device import RoomDevice
+from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+organizer_router = APIRouter(
+    prefix="/events/{event_id}/venue-sync",
+    tags=["venue-sync"],
+    dependencies=[require_event_operation("venue.sync")],
+)
+
+
+@organizer_router.get("/status")
+async def get_organizer_sync_status(
+    event: CurrentEvent,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return authoritative event-scoped venue device and sync-job status."""
+    device_rows = (await db.execute(
+        select(RoomDevice.status, func.count(RoomDevice.id))
+        .where(
+            RoomDevice.event_id == event.id,
+            RoomDevice.organization_id == event.organization_id,
+        )
+        .group_by(RoomDevice.status)
+    )).all()
+    jobs = list((await db.execute(
+        select(VenueSyncJob)
+        .where(VenueSyncJob.event_id == event.id)
+        .order_by(VenueSyncJob.created_at.desc())
+        .limit(25)
+    )).scalars().all())
+    return {
+        "event_id": str(event.id),
+        "devices_by_status": {str(status): int(count) for status, count in device_rows},
+        "latest_jobs": [
+            {
+                "id": str(job.id),
+                "sync_type": job.sync_type,
+                "status": job.status,
+                "retry_count": job.retry_count,
+                "bytes_transferred": job.bytes_transferred,
+                "checksum_verified": job.checksum_verified,
+                "error_message": job.error_message,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            }
+            for job in jobs
+        ],
+        "freshness_at": datetime.utcnow().isoformat() + "Z",
+        "source": "venue.room_devices,venue.sync_jobs",
+    }
 
 @router.get("/events/{event_id}/queue")
 async def get_sync_payload(
@@ -35,6 +85,12 @@ async def get_sync_payload(
     approved participants, badges, templates, capacity rules, and roles.
     """
     _require_device_event(device_auth, event_id)
+    await enforce_event_operation(
+        db,
+        device_auth["organization_id"],
+        event_id,
+        "venue.sync",
+    )
 
     # 1. Fetch sessions & speakers
     sessions_result = await db.execute(
@@ -199,6 +255,12 @@ async def push_sync_payload(
     db: AsyncSession = Depends(get_db)
 ):
     _require_device_event(device_auth, event_id)
+    await enforce_event_operation(
+        db,
+        device_auth["organization_id"],
+        event_id,
+        "venue.sync",
+    )
     processed_ids = []
     errors = []
     

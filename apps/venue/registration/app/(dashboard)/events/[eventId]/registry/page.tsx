@@ -265,11 +265,21 @@ export default function DelegateRegistry() {
     if (sessionId === "all") return;
     try {
       let count = 0;
+      let failed = 0;
       for (const pid of Array.from(selectedIds)) {
-        await apiPost(`/events/${eventId}/participants/${pid}/checkin`, { session_id: sessionId }).catch(() => {});
-        count++;
+        try {
+          await apiPost(
+            `/events/${eventId}/participants/${pid}/checkin`,
+            { session_id: sessionId },
+            { headers: { "Idempotency-Key": crypto.randomUUID() } },
+          );
+          count++;
+        } catch {
+          failed++;
+        }
       }
-      toast.success(`Assigned ${count} delegates to session.`);
+      if (count > 0) toast.success(`Checked ${count} delegates into the session.`);
+      if (failed > 0) toast.error(`${failed} delegate check-in${failed === 1 ? "" : "s"} failed.`);
       fetchRegistryData();
     } catch (err: any) {
       toast.error(err.message || "Failed to bulk assign session.");
@@ -323,9 +333,11 @@ export default function DelegateRegistry() {
 
   const handleCheckInManual = async (pid: string, sessionId: string) => {
     try {
-      await apiPost(`/events/${eventId}/participants/${pid}/checkin`, {
-        session_id: sessionId
-      });
+      await apiPost(
+        `/events/${eventId}/participants/${pid}/checkin`,
+        { session_id: sessionId },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+      );
       toast.success(`Check-in successful!`);
       fetchRegistryData();
     } catch (err: any) {

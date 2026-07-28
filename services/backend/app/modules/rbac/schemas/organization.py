@@ -15,10 +15,11 @@ class OrganizationCreate(BaseModel):
 
 
 class OrganizationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     slug: Optional[str] = Field(None, min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
     logo_url: Optional[str] = None
-    plan: Optional[str] = None
     primary_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
     secondary_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
     billing_email: Optional[str] = None
@@ -35,7 +36,6 @@ class OrganizationUpdate(BaseModel):
     date_format: Optional[str] = None
     time_format: Optional[str] = None
     currency: Optional[str] = None
-    enabled_modules: Optional[list] = None
     onboarding_step: Optional[int] = None
     onboarding_draft: Optional[dict] = None
 
@@ -64,7 +64,6 @@ class OrganizationResponse(BaseModel):
     date_format: str = "DD/MM/YYYY"
     time_format: str = "24 Hour"
     currency: str = "INR (₹)"
-    enabled_modules: Optional[list] = None
     onboarding_step: int = 0
     onboarding_draft: Optional[dict] = None
     max_events: int = 1

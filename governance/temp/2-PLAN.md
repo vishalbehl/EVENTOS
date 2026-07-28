@@ -1,10 +1,10 @@
-# EventX OS Enterprise Target-State Architecture and Production Standards Plan
+# Event OS Enterprise Target-State Architecture and Production Standards Plan
 
 ## Purpose
 
-This plan preserves the long-term EventX OS architecture while separating immediate production work from capabilities activated by measured scale, customer contracts, regulatory obligations, or demonstrated technical bottlenecks.
+This plan preserves the long-term Event OS architecture while separating immediate production work from capabilities activated by measured scale, customer contracts, regulatory obligations, or demonstrated technical bottlenecks.
 
-EventX OS will scale from evidence. It will not pre-build Kubernetes, OpenSearch, multi-cell routing, dedicated databases, advanced identity federation, or hyperscale infrastructure before those capabilities are justified.
+Event OS will scale from evidence. It will not pre-build Kubernetes, OpenSearch, multi-cell routing, dedicated databases, advanced identity federation, or hyperscale infrastructure before those capabilities are justified.
 
 Responsible roles used in this plan:
 

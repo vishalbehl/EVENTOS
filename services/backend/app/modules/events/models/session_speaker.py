@@ -2,8 +2,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -62,6 +62,33 @@ class SessionSpeaker(Base):
     )
     end_time: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    abstract_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    abstract_keywords: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    abstract_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="DRAFT", index=True
+    )
+    abstract_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+    abstract_submitted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    abstract_reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    abstract_reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    abstract_review_notes: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+    abstract_idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True
     )
     presentation_bundle_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),

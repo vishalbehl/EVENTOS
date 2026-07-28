@@ -193,8 +193,8 @@ jobs:
         if: ${{ !inputs.infrastructure_only }}
         shell: bash
         run: |
-          aws ecs update-service --cluster "${{ steps.tf.outputs.cluster }}" --service "${{ steps.tf.outputs.backend_service }}" --task-definition eventx-sample-backend --desired-count 1 >/dev/null
-          aws ecs update-service --cluster "${{ steps.tf.outputs.cluster }}" --service "${{ steps.tf.outputs.worker_service }}" --task-definition eventx-sample-workers --desired-count 1 >/dev/null
+          aws ecs update-service --cluster "${{ steps.tf.outputs.cluster }}" --service "${{ steps.tf.outputs.backend_service }}" --task-definition Event-sample-backend --desired-count 1 >/dev/null
+          aws ecs update-service --cluster "${{ steps.tf.outputs.cluster }}" --service "${{ steps.tf.outputs.worker_service }}" --task-definition Event-sample-workers --desired-count 1 >/dev/null
           aws ecs wait services-stable --cluster "${{ steps.tf.outputs.cluster }}" --services "${{ steps.tf.outputs.backend_service }}" "${{ steps.tf.outputs.worker_service }}"
 
       - name: Verify readiness

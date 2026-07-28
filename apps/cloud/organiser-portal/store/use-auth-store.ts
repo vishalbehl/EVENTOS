@@ -38,13 +38,14 @@ interface AuthState {
   originalRefreshToken: string | null;
   impersonatedOrgName: string | null;
   impersonatedUserName: string | null;
+  impersonationSessionId: string | null;
 
   setAuth: (user: User, accessToken: string, refreshToken?: string, rememberMe?: boolean) => void;
   logout: () => void;
   updateUser: (user: Partial<User>) => void;
   updateActivity: () => void;
   setHasHydrated: (state: boolean) => void;
-  startImpersonation: (impersonatedUser: User, token: string, orgName: string, userName: string) => void;
+  startImpersonation: (impersonatedUser: User, token: string, orgName: string, userName: string, sessionId: string) => void;
   stopImpersonation: () => void;
 }
 
@@ -65,6 +66,7 @@ export const useAuthStore = create<AuthState>()(
       originalRefreshToken: null,
       impersonatedOrgName: null,
       impersonatedUserName: null,
+      impersonationSessionId: null,
 
       setAuth: (user, accessToken, refreshToken, rememberMe = false) => 
         set({ 
@@ -90,6 +92,7 @@ export const useAuthStore = create<AuthState>()(
           originalRefreshToken: null,
           impersonatedOrgName: null,
           impersonatedUserName: null
+          ,impersonationSessionId: null
         }),
       updateUser: (userData) => 
         set((state) => ({
@@ -101,7 +104,7 @@ export const useAuthStore = create<AuthState>()(
         })),
       setHasHydrated: (state) => set({ hasHydrated: state }),
       
-      startImpersonation: (impersonatedUser, token, orgName, userName) => {
+      startImpersonation: (impersonatedUser, token, orgName, userName, sessionId) => {
         set((state) => ({
           originalUser: state.originalUser || state.user,
           originalAccessToken: state.originalAccessToken || state.accessToken,
@@ -111,6 +114,7 @@ export const useAuthStore = create<AuthState>()(
           refreshToken: null,
           impersonatedOrgName: orgName,
           impersonatedUserName: userName,
+          impersonationSessionId: sessionId,
           isAuthenticated: true,
           lastActivity: Date.now()
         }));
@@ -125,6 +129,7 @@ export const useAuthStore = create<AuthState>()(
           originalRefreshToken: null,
           impersonatedOrgName: null,
           impersonatedUserName: null,
+          impersonationSessionId: null,
           isAuthenticated: !!state.originalAccessToken,
           lastActivity: Date.now()
         }));

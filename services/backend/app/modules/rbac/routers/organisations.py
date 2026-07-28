@@ -16,7 +16,7 @@ from app.dependencies import StepUpAuth, get_current_user, get_db, require_activ
 from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.billing.services.admin_lifecycle_service import BillingAdminLifecycleService
-from app.modules.billing.services.limit_guard import LimitGuard
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
@@ -127,7 +127,10 @@ async def _org_role(db: AsyncSession, user: User) -> str:
             OrganizationMember.is_active.is_(True),
         )
     )
-    return result.scalar_one_or_none() or ("owner" if user.role in ("organiser", "admin") else "member")
+    role = result.scalar_one_or_none()
+    if role in {"organiser", "organizer", "super_admin"}:
+        return "owner"
+    return role or ("owner" if user.role in ("organiser", "organizer", "admin") else "member")
 
 
 async def _require_org_admin(db: AsyncSession, user: User) -> None:
@@ -336,16 +339,37 @@ async def get_my_org(current_user: User = Depends(require_active_user), db: Asyn
     event_count, member_count = await _usage(db, org.id)
     max_events = await EntitlementResolver.get_limit(db, org.id, "max_events")
     max_users = await EntitlementResolver.get_limit(db, org.id, "max_users")
-    max_storage_gb = await EntitlementResolver.get_limit(db, org.id, "max_storage_gb")
+    storage_quota_mb = await EntitlementResolver.get_limit(db, org.id, "storage_quota_mb")
+    subscription = await EntitlementResolver.get_active_subscription(db, org.id)
+    measured = [max_events, max_users, storage_quota_mb]
+    availability = (
+        "AVAILABLE"
+        if all(value is not None for value in measured)
+        else "PARTIAL"
+        if any(value is not None for value in measured)
+        else "UNAVAILABLE"
+    )
+    organization = OrganizationResponse.model_validate(org).model_dump(mode="json")
+    for legacy_field in ("plan", "plan_expires_at", "max_events", "max_users", "max_storage_gb"):
+        organization.pop(legacy_field, None)
     return {
-        "organization": OrganizationResponse.model_validate(org).model_dump(mode="json"),
+        "organization": organization,
         "member_count": member_count,
         "event_count": event_count,
         "storage_used_gb": 0,
         "plan_limits": {
-            "events": max_events if max_events is not None else org.max_events,
-            "users": max_users if max_users is not None else org.max_users,
-            "storage_gb": max_storage_gb if max_storage_gb is not None else org.max_storage_gb,
+            "events": max_events,
+            "users": max_users,
+            "storage_gb": round(storage_quota_mb / 1024, 3) if storage_quota_mb is not None else None,
+        },
+        "commercial": {
+            "availability": availability,
+            "freshness_at": datetime.now(timezone.utc).isoformat(),
+            "source": "CANONICAL_ENTITLEMENT_RESOLVER",
+            "subscription_id": str(subscription.id) if subscription else None,
+            "subscription_status": subscription.status if subscription else None,
+            "plan_id": str(subscription.plan_id) if subscription else None,
+            "plan_name": subscription.plan.name if subscription and subscription.plan else None,
         },
         "org_role": await _org_role(db, current_user),
     }
@@ -385,19 +409,49 @@ async def list_members(current_user: User = Depends(require_active_user), db: As
 
 
 @router.post("/organisations/me/members/invite")
-async def invite_member(payload: InviteRequest, current_user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)) -> dict:
+async def invite_member(
+    payload: InviteRequest,
+    current_user: User = Depends(require_active_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     await _require_org_admin(db, current_user)
     org = await db.get(Organization, current_user.organization_id)
-    _, member_count = await _usage(db, org.id)
-    if member_count >= org.max_users:
-        raise HTTPException(status_code=403, detail="Team member limit reached for your plan.")
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=org.id,
+        event_id=None,
+        limit_key="max_users",
+        quantity=1,
+        unit="user",
+        idempotency_key=f"organization-member-invite:{idempotency_key}",
+        metadata={"invite_email": payload.email.lower()},
+    )
     token = secrets.token_urlsafe(32)[:64]
-    db.add(OrganizationMember(
+    member = OrganizationMember(
         organization_id=org.id,
         org_role=payload.org_role,
         invited_by=current_user.id,
         invite_token=token,
         invite_email=payload.email.lower(),
+    )
+    db.add(member)
+    await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organization.members.invite",
+        actor_user_id=current_user.id,
+    )
+    db.add(AuditLog(
+        organization_id=org.id,
+        actor_user_id=current_user.id,
+        actor_role=current_user.role,
+        action_type="ORGANIZATION_MEMBER_INVITED",
+        resource_type="organization_member",
+        resource_id=member.id,
+        new_state={"invite_email": payload.email.lower(), "org_role": payload.org_role},
+        occurred_at=datetime.now(timezone.utc),
     ))
     await db.commit()
     return {"message": "Invitation sent", "invite_token": token}
@@ -454,7 +508,7 @@ async def remove_member(member_id: uuid.UUID, current_user: User = Depends(requi
 
 
 async def _require_platform_admin(current_user: User = Depends(get_current_user)) -> User:
-    if not getattr(current_user, "is_platform_admin", False) and current_user.role != "super_admin" and not (current_user.organization and current_user.organization.slug == "eventxos"):
+    if not getattr(current_user, "is_platform_admin", False) and current_user.role != "super_admin" and not (current_user.organization and current_user.organization.slug == "Eventos"):
         raise HTTPException(status_code=403, detail="Platform admin access required.")
     return current_user
 
@@ -767,6 +821,7 @@ async def platform_assign_member_event(
     event_id: uuid.UUID,
     payload: PlatformAssignmentUpdate,
     step_up: StepUpAuth,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     actor: User = Depends(_require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -784,8 +839,18 @@ async def platform_assign_member_event(
             UserEventAssignment.user_id == member.user_id,
             UserEventAssignment.event_id == event_id,
         ).with_for_update())
+        reservation = None
         if existing is None:
-            await LimitGuard.check_event_team_members(db, org_id, event_id)
+            reservation = await UsageReservationService.reserve(
+                db,
+                organization_id=org_id,
+                event_id=event_id,
+                limit_key="max_event_team_members",
+                quantity=1,
+                unit="member",
+                idempotency_key=f"platform-event-assignment:{idempotency_key}",
+                metadata={"member_id": str(member_id), "user_id": str(member.user_id)},
+            )
             existing = UserEventAssignment(user_id=member.user_id, event_id=event_id, permissions=payload.permissions)
             db.add(existing)
             action = "EVENT_WORKSPACE_MEMBER_ASSIGNED"
@@ -793,6 +858,13 @@ async def platform_assign_member_event(
             existing.permissions = payload.permissions
             action = "EVENT_WORKSPACE_ASSIGNMENT_UPDATED"
         await db.flush()
+        if reservation is not None:
+            await UsageReservationService.consume(
+                db,
+                reservation.id,
+                source="command_center.event_assignments.create",
+                actor_user_id=actor.id,
+            )
         db.add(AuditLog(
             organization_id=org_id,
             actor_user_id=actor.id,
@@ -875,6 +947,25 @@ async def platform_update_org(
     if not org:
         raise HTTPException(status_code=404, detail="Organisation not found.")
     changes = payload.model_dump(exclude_unset=True, exclude={"reason"})
+    governed_fields = {
+        "plan",
+        "max_events",
+        "max_users",
+        "max_storage_gb",
+        "is_active",
+        "suspension_reason",
+    }
+    attempted_governed_fields = sorted(governed_fields.intersection(changes))
+    if attempted_governed_fields:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DUAL_APPROVAL_REQUIRED",
+                "workflow": "organizer-console-commercial-or-lifecycle",
+                "fields": attempted_governed_fields,
+                "message": "Commercial limits and lifecycle state cannot be edited through organization metadata.",
+            },
+        )
     if "slug" in changes:
         changes["slug"] = _clean_slug(changes["slug"])
         if not SLUG_RE.match(changes["slug"]):
@@ -888,11 +979,6 @@ async def platform_update_org(
     old_state = {field: getattr(org, field) for field in changes}
     for field, value in changes.items():
         setattr(org, field, value)
-    if payload.is_active is False:
-        org.suspended_at = datetime.now(timezone.utc)
-    elif payload.is_active is True:
-        org.suspended_at = None
-        org.suspension_reason = None
     db.add(AuditLog(
         organization_id=org_id,
         actor_user_id=actor.id,
@@ -947,7 +1033,7 @@ async def _calculate_price_logic(
     if not plan:
         raise HTTPException(status_code=404, detail=f"Plan '{plan_name}' not found.")
         
-    base_price_per_event = float(plan.price_per_event_min or 0)
+    base_price_per_event = float(plan.price_per_event or 0)
     
     # Quota additions
     extra_quota_price_per_event = 0.0
@@ -1183,8 +1269,6 @@ async def get_plan_details(
         "description": p.description,
         "billing_model": p.billing_model,
         "currency": p.currency,
-        "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
-        "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
         "price_per_event": float(p.price_per_event) if p.price_per_event is not None else None,
         "max_events": p.max_events,
         "max_users": p.max_users,
@@ -1266,6 +1350,138 @@ class SubscribeRequest(BaseModel):
     cvv: Optional[str] = None
 
 
+class CommercialAccessRequestCreate(BaseModel):
+    event_id: Optional[uuid.UUID] = None
+    plan_name: str = Field(min_length=1, max_length=100)
+    addon_keys: list[str] = Field(default_factory=list, max_length=50)
+    billing_name: str = Field(min_length=2, max_length=180)
+    billing_email: EmailStr
+    billing_phone: str = Field(min_length=3, max_length=40)
+    gst_number: Optional[str] = Field(default=None, max_length=40)
+    reason: str = Field(min_length=12, max_length=2000)
+
+
+@router.post("/organisations/me/commercial-access-requests", status_code=status.HTTP_202_ACCEPTED)
+async def request_commercial_access(
+    payload: CommercialAccessRequestCreate,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
+    current_user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Request plan/add-on access without granting commercial rights in the portal."""
+    await _require_org_admin(db, current_user)
+    if not current_user.organization_id:
+        raise HTTPException(status_code=409, detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"})
+
+    from app.modules.billing.models.subscription import Addon, SubscriptionPlan
+    from app.modules.platform.models.organization_console import CommercialAccessRequest
+
+    existing = await db.scalar(select(CommercialAccessRequest).where(
+        CommercialAccessRequest.organization_id == current_user.organization_id,
+        CommercialAccessRequest.idempotency_key == idempotency_key,
+    ))
+    if existing:
+        return {"id": existing.id, "status": existing.status, "version": existing.version}
+
+    if payload.event_id:
+        event = await db.scalar(select(Event).where(
+            Event.id == payload.event_id,
+            Event.organization_id == current_user.organization_id,
+        ))
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+
+    plan = await db.scalar(select(SubscriptionPlan).where(
+        func.lower(SubscriptionPlan.name) == payload.plan_name.strip().lower(),
+        SubscriptionPlan.is_active.is_(True),
+        SubscriptionPlan.lifecycle_status == "PUBLISHED",
+    ))
+    if not plan:
+        raise HTTPException(status_code=404, detail="Published plan not found")
+
+    addon_keys = sorted(set(key.strip().upper() for key in payload.addon_keys if key.strip()))
+    addons = (await db.scalars(select(Addon).where(
+        Addon.key.in_(addon_keys),
+        Addon.is_active.is_(True),
+    ))).all() if addon_keys else []
+    found_addons = {addon.key: addon for addon in addons}
+    missing_addons = sorted(set(addon_keys) - set(found_addons))
+    if missing_addons:
+        raise HTTPException(status_code=422, detail={"code": "UNKNOWN_ADDON_KEYS", "keys": missing_addons})
+    incompatible = sorted(
+        addon.key for addon in addons
+        if addon.available_for_plans and plan.name not in addon.available_for_plans
+    )
+    if incompatible:
+        raise HTTPException(status_code=422, detail={"code": "INCOMPATIBLE_ADDONS", "keys": incompatible})
+
+    price_info = await _calculate_price_logic(
+        db,
+        plan_name=plan.name,
+        is_custom=False,
+        custom_limits=None,
+        addon_keys=addon_keys,
+        promo_code=None,
+    )
+    row = CommercialAccessRequest(
+        organization_id=current_user.organization_id,
+        event_id=payload.event_id,
+        requested_plan_id=plan.id,
+        requested_addon_keys=addon_keys,
+        billing_profile={
+            "name": payload.billing_name,
+            "email": str(payload.billing_email),
+            "phone": payload.billing_phone,
+            "gst_number": payload.gst_number,
+        },
+        quoted_amount=price_info.get("total"),
+        currency=getattr(plan, "currency", None) or "INR",
+        reason=payload.reason,
+        requested_by=current_user.id,
+        idempotency_key=idempotency_key,
+    )
+    db.add(row)
+    await db.flush()
+    db.add(AuditLog(
+        actor_user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        action_type="COMMERCIAL_ACCESS_REQUESTED",
+        resource_type="commercial_access_request",
+        resource_id=row.id,
+        new_state={"plan_id": str(plan.id), "addon_keys": addon_keys, "event_id": str(payload.event_id) if payload.event_id else None},
+        change_diff={"reason": payload.reason},
+        is_sensitive=True,
+        occurred_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+    return {"id": row.id, "status": row.status, "version": row.version, "quoted_amount": row.quoted_amount, "currency": row.currency}
+
+
+@router.get("/organisations/me/commercial-access-requests")
+async def list_my_commercial_access_requests(
+    current_user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await _require_org_admin(db, current_user)
+    from app.modules.platform.models.organization_console import CommercialAccessRequest
+    rows = (await db.scalars(select(CommercialAccessRequest).where(
+        CommercialAccessRequest.organization_id == current_user.organization_id,
+    ).order_by(CommercialAccessRequest.created_at.desc()).limit(100))).all()
+    return {"items": [{
+        "id": row.id,
+        "event_id": row.event_id,
+        "requested_plan_id": row.requested_plan_id,
+        "requested_addon_keys": row.requested_addon_keys,
+        "quoted_amount": row.quoted_amount,
+        "currency": row.currency,
+        "status": row.status,
+        "decision_reason": row.decision_reason,
+        "version": row.version,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    } for row in rows]}
+
+
 @router.post("/organisations/me/subscribe")
 async def subscribe_organization(
     payload: SubscribeRequest,
@@ -1274,6 +1490,14 @@ async def subscribe_organization(
 ) -> dict:
     """Subscribe current organization to a plan with custom limits, addons, and invoice logging."""
     await _require_org_admin(db, current_user)
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "COMMAND_CENTER_APPROVAL_REQUIRED",
+            "message": "Organizer Portal cannot grant plans, add-ons, or limits. Submit a commercial access request for Command Center approval.",
+            "request_url": "/organisations/me/commercial-access-requests",
+        },
+    )
     
     org = await db.get(Organization, current_user.organization_id)
     if not org:
@@ -1468,8 +1692,6 @@ async def list_available_plans(
             "description": p.description,
             "billing_model": p.billing_model,
             "currency": p.currency,
-            "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
-            "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
             "price_per_event": float(p.price_per_event) if p.price_per_event is not None else None,
             "price_display": p.price_display,
             "max_events": p.max_events,

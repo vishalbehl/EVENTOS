@@ -25,7 +25,9 @@ from app.database import AsyncSessionLocal
 from app.core.dependencies.feature_gate import require_feature, EntitlementRequiredException
 from app.modules.developer.models.developer_registry import RateLimit
 from app.modules.analytics.models.analytics_domain_tables import ApiUsageMetric
-from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
+from app.modules.billing.models.subscription import OrganizationSubscription, PlanFeature, SubscriptionPlan
+from app.modules.billing.services.capability_service import CapabilityService
+from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.analytics.models.usage import OrganizationUsage
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
@@ -60,7 +62,7 @@ def patch_all_async_session_locals(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_require_feature_decorator_success(db: AsyncSession, organizer):
     """
-    Test require_feature allows access when EntitlementResolver.has_feature returns True.
+    Test require_feature allows access when the canonical capability resolver enables it.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -77,21 +79,35 @@ async def test_require_feature_decorator_success(db: AsyncSession, organizer):
     app.dependency_overrides[get_current_user] = lambda: organizer
     app.dependency_overrides[get_db] = lambda: db
 
-    with patch("app.modules.billing.services.entitlement_resolver.EntitlementResolver.has_feature", new_callable=AsyncMock) as mock_has:
-        mock_has.return_value = True
+    capability_result = {
+        "features": {
+            "ADV_BADGE_PRINTING": {
+                "enabled": True,
+                "reason_code": None,
+            }
+        }
+    }
+    with patch(
+        "app.core.dependencies.feature_gate.CapabilityService.resolve_organization",
+        new=AsyncMock(return_value=capability_result),
+    ) as mock_resolve:
 
         client = TestClient(app)
         response = client.get("/test-gated")
 
         assert response.status_code == 200
         assert response.json() == {"ok": True}
-        mock_has.assert_called_once_with(db, organizer.organization_id, "ADV_BADGE_PRINTING")
+        mock_resolve.assert_awaited_once_with(
+            db,
+            organizer.organization_id,
+            user_id=organizer.id,
+        )
 
 
 @pytest.mark.asyncio
 async def test_require_feature_decorator_forbidden(db: AsyncSession, organizer):
     """
-    Test require_feature blocks access and returns custom JSON when EntitlementResolver.has_feature returns False.
+    Test require_feature blocks access when the canonical capability is disabled.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -111,8 +127,18 @@ async def test_require_feature_decorator_forbidden(db: AsyncSession, organizer):
     app.dependency_overrides[get_current_user] = lambda: organizer
     app.dependency_overrides[get_db] = lambda: db
 
-    with patch("app.modules.billing.services.entitlement_resolver.EntitlementResolver.has_feature", new_callable=AsyncMock) as mock_has:
-        mock_has.return_value = False
+    capability_result = {
+        "features": {
+            "ADV_BADGE_PRINTING": {
+                "enabled": False,
+                "reason_code": "NOT_ENTITLED",
+            }
+        }
+    }
+    with patch(
+        "app.core.dependencies.feature_gate.CapabilityService.resolve_organization",
+        new=AsyncMock(return_value=capability_result),
+    ):
 
         client = TestClient(app)
         response = client.get("/test-gated")
@@ -125,9 +151,9 @@ async def test_require_feature_decorator_forbidden(db: AsyncSession, organizer):
 
 
 @pytest.mark.asyncio
-async def test_require_feature_decorator_super_admin_bypass(db: AsyncSession, super_admin):
+async def test_require_feature_decorator_super_admin_does_not_bypass_commercial_access(db: AsyncSession, super_admin):
     """
-    Test require_feature bypasses check completely for Super Admin/platform admin.
+    Test a Super Admin cannot make an organization commercially entitled by bypassing the resolver.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -142,13 +168,27 @@ async def test_require_feature_decorator_super_admin_bypass(db: AsyncSession, su
     app.dependency_overrides[get_current_user] = lambda: super_admin
     app.dependency_overrides[get_db] = lambda: db
 
-    with patch("app.modules.billing.services.entitlement_resolver.EntitlementResolver.has_feature", new_callable=AsyncMock) as mock_has:
+    capability_result = {
+        "features": {
+            "ADV_BADGE_PRINTING": {
+                "enabled": False,
+                "reason_code": "NOT_ENTITLED",
+            }
+        }
+    }
+    with patch(
+        "app.core.dependencies.feature_gate.CapabilityService.resolve_organization",
+        new=AsyncMock(return_value=capability_result),
+    ) as mock_resolve:
         client = TestClient(app)
         response = client.get("/test-gated")
 
-        assert response.status_code == 200
-        assert response.json() == {"ok": True}
-        mock_has.assert_not_called()
+        assert response.status_code == 403
+        mock_resolve.assert_awaited_once_with(
+            db,
+            super_admin.organization_id,
+            user_id=super_admin.id,
+        )
 
 
 # ── 2. Alembic Migration & RateLimit Model Column Tests ───────────
@@ -327,6 +367,33 @@ async def test_billing_usage_endpoint(client: AsyncClient, db: AsyncSession, org
     )
     db.add(plan)
     await db.flush()
+    await CapabilityService.sync_catalogue(db)
+    typed_limits = {
+        "LIMIT_EVENTS": 10,
+        "LIMIT_ORGANIZER_USERS": 50,
+        "LIMIT_REGISTRATIONS": 5000,
+        "LIMIT_STORAGE": 1000,
+    }
+    feature_rows = {
+        row.key: row
+        for row in (
+            await db.scalars(
+                select(FeatureCatalog).where(FeatureCatalog.key.in_(typed_limits))
+            )
+        ).all()
+    }
+    for feature_key, value in typed_limits.items():
+        db.add(
+            PlanFeature(
+                plan_id=plan.id,
+                feature_id=feature_rows[feature_key].id,
+                enabled=True,
+                value_type="LIMIT",
+                entitlement_value={"value": value},
+                scope_type=feature_rows[feature_key].scope_type,
+                enforcement_mode=feature_rows[feature_key].enforcement_mode,
+            )
+        )
 
     sub = OrganizationSubscription(
         organization_id=organization.id,

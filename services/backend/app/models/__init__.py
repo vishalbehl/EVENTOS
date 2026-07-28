@@ -10,6 +10,7 @@ from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.health import OrganizationHealth
 from app.modules.platform.models.platform_domain_tables import (
     OrganizationDomain, OrganizationSetting, FeatureFlag,
+    PlatformFlagDefinition, PlatformFlagOverride,
     GlobalAnnouncement, TenantLimit, TenantUsage
 )
 from app.modules.platform.departments.models import Department, DepartmentMember
@@ -19,10 +20,41 @@ from app.modules.platform.permissions.models import PlatformPermission, Platform
 # Phase 1 — Super Admin Console platform models
 from app.modules.platform.models.maintenance_window import MaintenanceWindow
 from app.modules.platform.models.platform_integration import PlatformIntegration
+from app.modules.platform.models.organization_console import (
+    CapabilityRevision,
+    EntitlementOverrideRequest,
+    EntitlementShadowComparison,
+    EventCommercialContract,
+    PrivilegedAccessSession,
+    UsageLedgerEntry,
+    UsageCounterEpoch,
+    UsageReconciliationRun,
+    CapabilityDiagnosticEvent,
+    UsageReservation,
+    CapabilityRestriction,
+    OrganizationFinancialAdjustment,
+    CommercialAccessRequest,
+    OrganizationBrandProfile,
+    OrganizationComplianceControl,
+    OrganizationComplianceEvidence,
+    OrganizationInsightSnapshot,
+    OrganizationLegalHold,
+    OrganizationLifecycleJob,
+    OrganizationTeam,
+    OrganizationTeamMember,
+    OrganizationTeamEvent,
+    OrganizationLocation,
+    OrganizationNotificationChannelConfig,
+    OrganizationNotificationRule,
+    OrganizationPrivacyRequest,
+    OrganizationRetentionPolicy,
+    OrganizationSecurityPolicy,
+    OrganizationTrustedDevice,
+)
 
 from app.modules.billing.models.subscription import (
     SubscriptionPlan, OrganizationSubscription, PlanFeature,
-    OrganizationFeature, Addon, AddonFeature, OrganizationAddon,
+    OrganizationFeature, Addon, AddonFeature, CommercialTemplateVersion, OrganizationAddon,
     ActivityTimeline, RevenueMetric
 )
 from app.modules.billing.models.event_activation import EventActivation
@@ -89,6 +121,7 @@ from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
+from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.registration.models.check_in import CheckIn
 from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
@@ -119,6 +152,10 @@ from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.communications.models.announcement import Announcement
 from app.modules.communications.models.notification_event import NotificationEvent
+from app.modules.communications.models.channel_delivery import (
+    CommunicationDelivery,
+    CommunicationDeliveryBatch,
+)
 from app.modules.communications.models.communications_domain_tables import (
     PushNotification, DeviceToken, SmsMessage, NotificationPreference, NotificationQueue
 )
@@ -238,5 +275,10 @@ from app.modules.operations_control.models import (
     VenueReadinessAttestation, VenueOperationalIncident,
     VenueCredentialOperation,
 )
+
+# Register after every mapped class is loaded so capability revisions can be
+# collected without introducing model-import cycles.
+from app.modules.billing.services.capability_cache_service import register_capability_revision_listeners
+register_capability_revision_listeners()
 
 

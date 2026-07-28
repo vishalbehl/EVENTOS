@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,10 +19,13 @@ from app.modules.billing.models.licensing import (
     EventLimitSnapshotItem,
     GrantConsumption,
 )
-from app.modules.billing.models.subscription import OrganizationSubscription
+from app.modules.billing.models.subscription import AddonFeature, OrganizationAddon, OrganizationSubscription, PlanFeature
+from app.modules.platform.models.feature import FeatureCatalog
+from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, PLATFORM_HARD_CEILINGS
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.services.usage_service import UsageService
 from app.modules.events.models.event import Event
+from app.modules.platform.models.organization_console import EventCommercialContract
 
 
 class ActivationService:
@@ -212,6 +215,94 @@ class ActivationService:
             )
         await db.flush()
         activation.current_snapshot_set_id = snapshot.id
+        if created_by is None:
+            raise HTTPException(status_code=409, detail={"code": "ATTRIBUTED_ACTOR_REQUIRED", "message": "Event activation cannot create an unattributed commercial contract."})
+        current_contract = await db.scalar(select(EventCommercialContract).where(EventCommercialContract.event_id == activation.event_id, EventCommercialContract.status == "ACTIVE").with_for_update())
+        contract_version = 1
+        if current_contract:
+            current_contract.status = "SUPERSEDED"
+            contract_version = current_contract.version + 1
+        subscription = await db.scalar(select(OrganizationSubscription).options(selectinload(OrganizationSubscription.plan)).where(OrganizationSubscription.id == activation.subscription_id))
+        plan = subscription.plan if subscription else None
+        entitlements = {
+            **{key: {"type": "BOOLEAN", "value": item["enabled"]} for key, item in package["features"].items() if item["source_type"] != "ADDON"},
+            **{key: {"type": "LIMIT", "value": item["limit_value"]} for key, item in package["limits"].items()},
+        }
+        hard_ceilings: dict[str, Any] = dict(PLATFORM_HARD_CEILINGS)
+        ceiling_sources: dict[str, str] = {
+            key: "HARD_PLATFORM_CEILING" for key in hard_ceilings
+        }
+        if plan:
+            typed_assignments = (await db.execute(select(FeatureCatalog.key, PlanFeature.value_type, PlanFeature.entitlement_value, PlanFeature.hard_ceiling).join(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id).where(PlanFeature.plan_id == plan.id, PlanFeature.enabled.is_(True)))).all()
+            for feature_key, value_type, raw, hard_ceiling in typed_assignments:
+                value = raw.get("value") if isinstance(raw, dict) else True
+                contract_key = CATALOG_LIMIT_KEYS.get(feature_key, feature_key)
+                entitlements[contract_key] = {"type": value_type, "value": value}
+                if hard_ceiling is not None:
+                    plan_ceiling = hard_ceiling.get("value") if isinstance(hard_ceiling, dict) else hard_ceiling
+                    platform_ceiling = hard_ceilings.get(contract_key)
+                    hard_ceilings[contract_key] = (
+                        min(plan_ceiling, platform_ceiling)
+                        if platform_ceiling is not None
+                        else plan_ceiling
+                    )
+                    ceiling_sources[contract_key] = "PLAN_POLICY"
+        addon_filters = [OrganizationAddon.event_id.is_(None), OrganizationAddon.event_id == activation.event_id, OrganizationAddon.activation_id == activation.id]
+        snapshot_at = datetime.now(timezone.utc)
+        addon_rows = (await db.execute(
+            select(
+                OrganizationAddon.id,
+                OrganizationAddon.addon_id,
+                OrganizationAddon.quantity,
+                OrganizationAddon.expires_at,
+                FeatureCatalog.key,
+                AddonFeature.value_type,
+                AddonFeature.entitlement_value,
+                AddonFeature.operation,
+                AddonFeature.scope_type,
+                AddonFeature.validity_days,
+                AddonFeature.stackable,
+                AddonFeature.max_quantity,
+            )
+            .join(AddonFeature, AddonFeature.addon_id == OrganizationAddon.addon_id)
+            .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
+            .where(
+                OrganizationAddon.organization_id == activation.organization_id,
+                OrganizationAddon.status == "ACTIVE",
+                or_(OrganizationAddon.expires_at.is_(None), OrganizationAddon.expires_at > snapshot_at),
+                or_(*addon_filters),
+            )
+        )).all()
+        contract_addons: list[dict[str, Any]] = []
+        for organization_addon_id, addon_id, purchased_quantity, expires_at, feature_key, value_type, raw, operation, scope_type, validity_days, stackable, max_quantity in addon_rows:
+            contract_key = CATALOG_LIMIT_KEYS.get(feature_key, feature_key)
+            quantity = max(1, int(purchased_quantity or 1)) if stackable else 1
+            if max_quantity is not None:
+                quantity = min(quantity, int(max_quantity))
+            contract_addons.append({
+                "id": str(organization_addon_id),
+                "addon_id": str(addon_id),
+                "operation": operation,
+                "quantity": quantity,
+                "scope": scope_type,
+                "validity_days": validity_days,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "entitlements": {
+                    contract_key: {
+                        "type": value_type,
+                        "value": raw.get("value") if isinstance(raw, dict) else True,
+                    }
+                },
+            })
+        db.add(EventCommercialContract(
+            organization_id=activation.organization_id, event_id=activation.event_id,
+            version=contract_version, status="ACTIVE",
+            plan_key=plan.name if plan else "SUBSCRIPTION_GRANT",
+            plan_version=str(getattr(plan, "version", 1)), currency=getattr(plan, "currency", "INR") or "INR",
+            entitlements=entitlements, hard_ceilings=hard_ceilings, addons=contract_addons,
+            source={"type": "ACTIVATION_SNAPSHOT", "activation_id": str(activation.id), "snapshot_set_id": str(snapshot.id), "checksum": checksum, "ceiling_sources": ceiling_sources},
+            effective_at=activation.activated_at, ends_at=activation.expires_at, created_by=created_by,
+        ))
         return snapshot
 
     @staticmethod

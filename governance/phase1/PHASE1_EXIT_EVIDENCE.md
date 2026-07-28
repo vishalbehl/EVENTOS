@@ -10,7 +10,7 @@ for currently enabled backend runtime paths.
 ## Verified Controls
 
 - Alembic head is `phase1_exports_0550`.
-- Runtime RLS canary passed against `eventx_runtime`.
+- Runtime RLS canary passed against `Event_runtime`.
 - Tenant-owned background jobs require explicit `organization_id_str` or fail
   closed.
 - Celery beat schedules only the tenant-aware API usage flusher.
@@ -28,7 +28,7 @@ for currently enabled backend runtime paths.
 ```powershell
 .\.venv\Scripts\alembic.exe heads
 .\.venv\Scripts\alembic.exe current
-.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role eventx_runtime
+.\.venv\Scripts\python.exe scripts\verify_rls_canary.py --role Event_runtime
 .\.venv\Scripts\python.exe -m py_compile app/tasks/tenant_job_scope.py app/tasks/platform_tasks.py app/tasks/workflow_jobs.py app/tasks/platform_builder_tasks.py app/tasks/platform_commercial_tasks.py app/tasks/operations_jobs.py app/worker.py tests/test_tenant_runtime_boundaries.py
 .\.venv\Scripts\python.exe -m pytest -q tests/test_tenant_runtime_boundaries.py
 .\.venv\Scripts\python.exe -m pytest -q tests/test_rate_limiting_and_gating.py tests/test_tenant_runtime_boundaries.py tests/test_phase1_rls_foundation.py tests/test_phase3_developer.py

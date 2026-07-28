@@ -49,6 +49,8 @@ export function BillingStatusDialog({
   currentVersion,
   statusOptions,
   invoices,
+  requiresApproval = false,
+  approvalHint,
   onSubmit,
 }: DialogBaseProps & {
   title: string;
@@ -56,22 +58,27 @@ export function BillingStatusDialog({
   currentVersion: number;
   statusOptions: string[];
   invoices?: BillingInvoice[];
+  requiresApproval?: boolean;
+  approvalHint?: string;
   onSubmit: (payload: Record<string, unknown>, idempotencyKey: string) => Promise<void>;
 }) {
   const [status, setStatus] = useState("");
   const [reason, setReason] = useState("");
   const [targetInvoiceId, setTargetInvoiceId] = useState("");
+  const [approvedRequestId, setApprovedRequestId] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   useEffect(() => {
     if (!open) return;
     setStatus("");
     setReason("");
     setTargetInvoiceId("");
+    setApprovedRequestId("");
     setIdempotencyKey(crypto.randomUUID());
   }, [open]);
-  const valid = Boolean(status) && reason.trim().length >= 12 && (status !== "APPLIED" || Boolean(targetInvoiceId.trim()));
+  const valid = Boolean(status) && reason.trim().length >= 12 && (status !== "APPLIED" || Boolean(targetInvoiceId.trim())) && (!requiresApproval || Boolean(approvedRequestId.trim()));
   const submit = async () => {
     const payload: Record<string, unknown> = { version: currentVersion, status, reason: reason.trim() };
+    if (requiresApproval) payload.approved_request_id = approvedRequestId.trim();
     if (status === "APPLIED") payload.applied_to_invoice_id = targetInvoiceId.trim();
     await onSubmit(payload, idempotencyKey);
   };
@@ -84,6 +91,13 @@ export function BillingStatusDialog({
           {status === "APPLIED" ? (
             invoices ? <SelectField id="billing-target-invoice" label="Target invoice" value={targetInvoiceId} options={invoices.filter((invoice) => !["VOID", "REFUNDED"].includes(invoice.status)).map((invoice) => ({ value: invoice.id, label: `${invoice.invoice_number ?? invoice.id.slice(0, 8)} - ${invoice.status} - ${invoice.currency} ${Number(invoice.total_amount_inr).toFixed(2)}` }))} onChange={setTargetInvoiceId} />
               : <div className="space-y-1.5"><Label htmlFor="billing-target-invoice">Target invoice ID</Label><Input id="billing-target-invoice" value={targetInvoiceId} onChange={(event) => setTargetInvoiceId(event.target.value)} placeholder="UUID from the selected tenant invoice" /></div>
+          ) : null}
+          {requiresApproval ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="billing-approved-request">Approved request ID</Label>
+              <Input id="billing-approved-request" value={approvedRequestId} onChange={(event) => setApprovedRequestId(event.target.value)} placeholder="UUID from an independently approved Organizer Console request" />
+              {approvalHint ? <p className="text-xs text-[var(--text-tertiary)]">{approvalHint}</p> : null}
+            </div>
           ) : null}
           <div className="space-y-1.5"><Label htmlFor="billing-status-reason">Decision reason</Label><Textarea id="billing-status-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Provide at least 12 characters for immutable audit evidence" /></div>
         </div>
@@ -101,23 +115,27 @@ export function GrantIssueDialog({ open, onOpenChange, pending, subscriptions, o
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   useEffect(() => {
     if (!open) return;
-    setValues({ grant_type: "EVENT_UNIT", scope_type: "EVENT", consumption_model: "SINGLE_USE", unit_type: "EVENT", source_type: "PLAN", quantity_total: "1", reason: "" });
+    setValues({ grant_type: "EVENT_UNIT", scope_type: "EVENT", consumption_model: "SINGLE_USE", unit_type: "EVENT", source_type: "PLAN", quantity_total: "1", approved_request_id: "", reason: "" });
     setIdempotencyKey(crypto.randomUUID());
   }, [open]);
   const set = (key: string, value: string) => setValues((current) => ({ ...current, [key]: value }));
   const nonConsumable = ["NON_CONSUMABLE", "MANUAL_FULFILLMENT"].includes(values.consumption_model);
-  const valid = values.reason?.trim().length >= 12 && Boolean(values.grant_type && values.scope_type && values.consumption_model && values.unit_type && values.source_type) && (values.source_type !== "PLAN" || Boolean(values.subscription_id)) && (nonConsumable || Number(values.quantity_total) >= 1);
+  const valid = values.reason?.trim().length >= 12 && Boolean(values.approved_request_id?.trim() && values.grant_type && values.scope_type && values.consumption_model && values.unit_type && values.source_type) && (values.source_type !== "PLAN" || Boolean(values.subscription_id)) && (nonConsumable || Number(values.quantity_total) >= 1);
+  const approvedRequestedValue = {
+    ...(values.subscription_id ? { subscription_id: values.subscription_id } : {}),
+    grant_type: values.grant_type,
+    scope_type: values.scope_type,
+    consumption_model: values.consumption_model,
+    unit_type: values.unit_type,
+    source_type: values.source_type,
+    ...(values.source_ref ? { source_ref: values.source_ref } : {}),
+    ...(nonConsumable ? {} : { quantity_total: Number(values.quantity_total) }),
+    metadata_json: {},
+  };
   const submit = async () => {
     await onSubmit({
-      subscription_id: values.subscription_id || null,
-      grant_type: values.grant_type,
-      scope_type: values.scope_type,
-      consumption_model: values.consumption_model,
-      unit_type: values.unit_type,
-      source_type: values.source_type,
-      source_ref: values.source_ref || null,
-      quantity_total: nonConsumable ? null : Number(values.quantity_total),
-      metadata_json: {},
+      ...approvedRequestedValue,
+      approved_request_id: values.approved_request_id.trim(),
       reason: values.reason.trim(),
     }, idempotencyKey);
   };
@@ -134,6 +152,8 @@ export function GrantIssueDialog({ open, onOpenChange, pending, subscriptions, o
           <SelectField id="grant-source" label="Source" value={values.source_type ?? ""} options={["PLAN", "ADDON", "CONTRACT", "PLATFORM_OVERRIDE"].map((value) => ({ value, label: value }))} onChange={(value) => set("source_type", value)} />
           {!nonConsumable ? <div className="space-y-1.5"><Label htmlFor="grant-quantity">Quantity</Label><Input id="grant-quantity" type="number" min={1} disabled={values.consumption_model === "SINGLE_USE"} value={values.quantity_total ?? ""} onChange={(event) => set("quantity_total", event.target.value)} /></div> : null}
           <div className="space-y-1.5"><Label htmlFor="grant-source-ref">Source reference</Label><Input id="grant-source-ref" value={values.source_ref ?? ""} onChange={(event) => set("source_ref", event.target.value)} /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label htmlFor="grant-approved-request">Approved request ID</Label><Input id="grant-approved-request" value={values.approved_request_id ?? ""} onChange={(event) => set("approved_request_id", event.target.value)} placeholder="UUID for billing.entitlement_grant.issue" /><p className="text-xs text-[var(--text-tertiary)]">The approved request must use REPLACE and exactly match every grant field above.</p></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Required requested_value</Label><pre className="max-h-40 overflow-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-3 text-[10px] text-[var(--text-secondary)]">{JSON.stringify(approvedRequestedValue, null, 2)}</pre></div>
           <div className="space-y-1.5 sm:col-span-2"><Label htmlFor="grant-reason">Issuance reason</Label><Textarea id="grant-reason" value={values.reason ?? ""} onChange={(event) => set("reason", event.target.value)} placeholder="Approved contract, add-on, plan, or platform override evidence" /></div>
         </div>
         <DialogFooter><Button variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!valid || pending} onClick={() => void submit()}>{pending ? "Issuing..." : "Issue grant"}</Button></DialogFooter>
@@ -149,19 +169,21 @@ export function GrantCapacityDialog({ open, onOpenChange, pending, version, curr
 }) {
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
+  const [approvedRequestId, setApprovedRequestId] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   useEffect(() => {
     if (!open) return;
     setQuantity(String(currentQuantity ?? 1));
     setReason("");
+    setApprovedRequestId("");
     setIdempotencyKey(crypto.randomUUID());
   }, [open, currentQuantity]);
   return (
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <DialogContent className="border-[var(--border-default)] bg-[var(--bg-surface)] sm:max-w-md">
         <DialogHeader><DialogTitle>Adjust grant capacity</DialogTitle><DialogDescription>The server rejects values below authoritative reserved and consumed ledger usage.</DialogDescription></DialogHeader>
-        <div className="space-y-4 py-2"><div className="space-y-1.5"><Label htmlFor="grant-capacity">Total capacity</Label><Input id="grant-capacity" type="number" min={1} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></div><div className="space-y-1.5"><Label htmlFor="grant-capacity-reason">Change reason</Label><Textarea id="grant-capacity-reason" value={reason} onChange={(event) => setReason(event.target.value)} /></div></div>
-        <DialogFooter><Button variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={Number(quantity) < 1 || reason.trim().length < 12 || pending} onClick={() => void onSubmit({ version, quantity_total: Number(quantity), reason: reason.trim() }, idempotencyKey)}>{pending ? "Updating..." : "Update capacity"}</Button></DialogFooter>
+        <div className="space-y-4 py-2"><div className="space-y-1.5"><Label htmlFor="grant-capacity">Total capacity</Label><Input id="grant-capacity" type="number" min={1} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></div><div className="space-y-1.5"><Label htmlFor="grant-capacity-approved-request">Approved request ID</Label><Input id="grant-capacity-approved-request" value={approvedRequestId} onChange={(event) => setApprovedRequestId(event.target.value)} placeholder="UUID for billing.entitlement_grant.capacity" /></div><div className="space-y-1.5"><Label htmlFor="grant-capacity-reason">Change reason</Label><Textarea id="grant-capacity-reason" value={reason} onChange={(event) => setReason(event.target.value)} /></div></div>
+        <DialogFooter><Button variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={Number(quantity) < 1 || !approvedRequestId.trim() || reason.trim().length < 12 || pending} onClick={() => void onSubmit({ approved_request_id: approvedRequestId.trim(), version, quantity_total: Number(quantity), reason: reason.trim() }, idempotencyKey)}>{pending ? "Updating..." : "Update capacity"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

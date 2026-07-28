@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
-from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY, Index, text
+from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, Numeric, ARRAY, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -37,25 +37,23 @@ class SubscriptionPlan(Base):
     storage_quota_mb: Mapped[int] = mapped_column(BigInteger, default=10240)
     
     currency: Mapped[str] = mapped_column(String(3), default='INR')
-    price_per_event_min: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
-    price_per_event_max: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     price_per_event: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
     billing_model: Mapped[str] = mapped_column(String(20), default='PER_EVENT')
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     is_popular: Mapped[bool] = mapped_column(Boolean, default=False)
     color_hex: Mapped[Optional[str]] = mapped_column(String(7))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    lifecycle_status: Mapped[str] = mapped_column(String(20), default="PUBLISHED", nullable=False)
+    effective_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     @property
     def price_display(self) -> str:
         if self.price_per_event is not None:
-            return f"â‚¹{int(self.price_per_event):,} / event"
-        if self.price_per_event_max:
-            return f"₹{int(self.price_per_event_min):,} - ₹{int(self.price_per_event_max):,}"
-        elif self.price_per_event_min:
-            return f"Starting at ₹{int(self.price_per_event_min):,}"
+            return f"₹{int(self.price_per_event):,} / event"
         return "Custom Pricing"
 
     def check_limit(self, dimension: str, current_value: int) -> bool:
@@ -103,15 +101,21 @@ class PlanFeature(Base):
     __table_args__ = {"schema": "billing"}
 
     plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.subscription_plans.id", ondelete="CASCADE"), primary_key=True)
-    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    value_type: Mapped[Optional[str]] = mapped_column(String(20), default="BOOLEAN", nullable=True)
+    entitlement_value: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    scope_type: Mapped[Optional[str]] = mapped_column(String(30), default="EVENT", nullable=True)
+    enforcement_mode: Mapped[Optional[str]] = mapped_column(String(30), default="HARD", nullable=True)
+    hard_ceiling: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 class OrganizationFeature(Base):
     __tablename__ = "organization_feature_overrides"
     __table_args__ = {"schema": "billing"}
 
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), primary_key=True)
-    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     override_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     override_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=True)
@@ -145,6 +149,10 @@ class Addon(Base):
     is_optional_for_plan: Mapped[Optional[str]] = mapped_column(String(50))
     included_in_plan: Mapped[Optional[str]] = mapped_column(String(50))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    lifecycle_status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False)
+    effective_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     final_price: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), default=0.0)
     
     features_spec: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list)
@@ -161,7 +169,43 @@ class AddonFeature(Base):
     __table_args__ = {"schema": "billing"}
 
     addon_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.addons.id", ondelete="CASCADE"), primary_key=True)
-    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    value_type: Mapped[Optional[str]] = mapped_column(String(20), default="BOOLEAN", nullable=True)
+    entitlement_value: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    operation: Mapped[Optional[str]] = mapped_column(String(20), default="OVERRIDE", nullable=True)
+    scope_type: Mapped[Optional[str]] = mapped_column(String(30), default="EVENT", nullable=True)
+    validity_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    stackable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    max_quantity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class CommercialTemplateVersion(Base):
+    """Append-only snapshots for plan and add-on template revisions."""
+
+    __tablename__ = "commercial_template_versions"
+    __table_args__ = (
+        UniqueConstraint("resource_type", "resource_id", "version", name="uq_commercial_template_resource_version"),
+        UniqueConstraint("resource_type", "idempotency_key", name="uq_commercial_template_idempotency"),
+        Index("ix_commercial_template_versions_resource", "resource_type", "resource_id", "created_at"),
+        {"schema": "billing"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resource_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    lifecycle_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    change_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    snapshot_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
 
 class OrganizationAddon(Base):
     __tablename__ = "organization_addons"

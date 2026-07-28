@@ -7,7 +7,7 @@ Create Date: 2026-06-23 00:01:00.000000+00:00
 Phase 1 — Super Admin Console DB Foundation
 ============================================
 This single migration applies ALL Phase 1 schema changes required for the
-Super Admin (EventX Command Centre) console.
+Super Admin (Event Command Centre) console.
 
 Sections:
   1.  FIX   billing.event_activations          — add 8 missing columns

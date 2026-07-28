@@ -260,7 +260,7 @@ export default function ProposalGeneratorPage() {
         <body>
           <div class="cover-page">
             <div>
-              <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px;">EVENTX</div>
+              <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px;">Event</div>
               <h1 class="cover-title">${inputs.proposalTitle}</h1>
               <p style="font-size: 16px; max-width: 600px; margin-top: 20px; opacity: 0.85; line-height: 1.5;">${inputs.coverNote}</p>
             </div>
@@ -620,7 +620,7 @@ export default function ProposalGeneratorPage() {
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_75%_25%,rgba(255,255,255,0.06),transparent_16rem)]" />
             
             <div className="flex justify-between items-start">
-              <span className="text-xs font-black tracking-widest">EVENTX</span>
+              <span className="text-xs font-black tracking-widest">Event</span>
               <span className="text-[8px] bg-white/10 px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold border border-white/20">Proposal Preview</span>
             </div>
 

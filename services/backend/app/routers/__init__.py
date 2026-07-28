@@ -9,6 +9,7 @@ from app.modules.registration.routers.ticket_types import router as ticket_types
 from app.modules.identity.routers import auth, users, me, impersonation
 from app.modules.platform import router as platform
 from app.modules.platform import support_router
+from app.modules.platform.organization_console_router import router as organization_console_router
 from app.modules.platform.communications_router import router as platform_communications_router
 from app.modules.operations_control.router import router as operations_control_router
 from app.modules.platform.departments.router import router as departments_router
@@ -18,6 +19,7 @@ from app.modules.audit.routers.security_governance import router as security_gov
 from app.modules.platform.permissions.router import router as permissions_router, admin_router as permissions_admin_router
 from app.modules.rbac.routers import events, settings, rbac, global_settings, organisations
 from app.modules.speakers.routers import sessions, speakers, portal, speaker_profiles
+from app.modules.speakers.routers.session_builder import router as session_builder_router, tracks_router
 from app.modules.presentations.routers import bundles, files, queue, posters, storage
 from app.modules.venue.routers import rooms, rooms_devices, attendance, capacity, srr, sync
 from app.modules.registration.routers import (
@@ -60,6 +62,7 @@ api_router.include_router(procurement_router)
 api_router.include_router(auth.router)
 api_router.include_router(impersonation.router)
 api_router.include_router(platform.router)
+api_router.include_router(organization_console_router)
 api_router.include_router(platform_communications_router)
 api_router.include_router(operations_control_router)
 
@@ -76,8 +79,11 @@ api_router.include_router(organisations.router)
 api_router.include_router(bundles.router)
 api_router.include_router(events.router)
 api_router.include_router(sessions.router)
+api_router.include_router(session_builder_router)
+api_router.include_router(tracks_router)
 api_router.include_router(rooms.router)
 api_router.include_router(speakers.router)
+api_router.include_router(speakers.abstracts_router)
 api_router.include_router(speaker_profiles.router)
 api_router.include_router(portal.router)
 api_router.include_router(files.router)
@@ -100,6 +106,7 @@ api_router.include_router(users.router)
 api_router.include_router(rbac.router)
 api_router.include_router(me.router)
 api_router.include_router(participants.router)
+api_router.include_router(participants.public_confirmation_router)
 api_router.include_router(print_templates.router)
 api_router.include_router(ticket_types_router)
 api_router.include_router(registration_portal.router)
@@ -110,6 +117,7 @@ api_router.include_router(badges.router)
 api_router.include_router(printers.router)
 api_router.include_router(attendance.router)
 api_router.include_router(sync.router)
+api_router.include_router(sync.organizer_router)
 api_router.include_router(payments.router)
 api_router.include_router(portal_auth.router)
 api_router.include_router(portal_dashboard.router)
@@ -130,9 +138,12 @@ api_router.include_router(developer_router)
 from app.modules.billing.routers.billing import router as billing_router
 from app.modules.billing.routers.activations import router as activations_router
 from app.modules.billing.routers.provider_webhooks import router as provider_webhooks_router
+from app.modules.billing.routers.capabilities import router as capabilities_router, admin_router as capability_admin_router
 api_router.include_router(billing_router)
 api_router.include_router(activations_router)
 api_router.include_router(provider_webhooks_router)
+api_router.include_router(capabilities_router)
+api_router.include_router(capability_admin_router)
 
 # ── Phase 7: Tech Services & Operations Planning Engine ───────
 from app.modules.operations_planning.router import router as operations_planning_router

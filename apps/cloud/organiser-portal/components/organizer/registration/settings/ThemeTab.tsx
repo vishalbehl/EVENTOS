@@ -12,6 +12,7 @@ import { useAuthStore } from '@/store/use-auth-store'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useOperationAccess } from '@/lib/capabilities'
 
 const DEFAULT_TERMS = `# Registration Portal Terms & Conditions
 
@@ -125,9 +126,15 @@ const THEMES = [
   { id: 'slate',    label: 'Slate',     desc: 'Neutral, corporate clean',       color: '#94a3b8', bg: '#0b0f17', surf: '#151e2e', card: '#202c3f', sec: '#cbd5e1' },
 ]
 
+const PORTAL_FONTS = ['Inter', 'Roboto', 'Open Sans', 'Montserrat', 'Poppins', 'Lato']
+
 export default function ThemeTab({ eventId }: { eventId: string }) {
   const { data: event, refetch } = useEvent(eventId)
   const token = useAuthStore(s => s.accessToken)
+  const themeAccess = useOperationAccess('branding.theme.manage')
+  const colorAccess = useOperationAccess('branding.colors.manage')
+  const fontAccess = useOperationAccess('branding.fonts.manage')
+  const logoAccess = useOperationAccess('branding.logo.manage')
 
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
@@ -146,6 +153,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
   const [footerLocations, setFooterLocations] = useState<string[]>([])
   const [footerShowLogo, setFooterShowLogo] = useState(true)
   const [selectedTheme, setSelectedTheme] = useState('midnight')
+  const [fontFamily, setFontFamily] = useState('Inter')
   const [customHeaderUrl, setCustomHeaderUrl] = useState('')
 
   // Temp item inputs
@@ -173,26 +181,28 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
       setLogoUrl(bs.logo_url || '')
       
       const loadedBanners = bs.header_images || (bs.banner_url ? [bs.banner_url] : [])
-      setHeaderImages(loadedBanners.length > 0 ? loadedBanners : ["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
+      setHeaderImages(loadedBanners)
       
       setFooterTerms(bs.footer_terms || '')
       setFooterSupportEmail(bs.footer_support_email || '')
       setFooterSupportPhone(bs.footer_support_phone || '')
       
       const loadedEmails = bs.footer_support_emails || []
-      setFooterSupportEmails(loadedEmails.length > 0 ? loadedEmails : ["support@eventos.com"])
+      setFooterSupportEmails(loadedEmails)
       
       const loadedPhones = bs.footer_support_phones || []
-      setFooterSupportPhones(loadedPhones.length > 0 ? loadedPhones : ["011-123456789"])
+      setFooterSupportPhones(loadedPhones)
       
       setFooterWebsites(bs.footer_websites || [])
       setFooterLocations(bs.footer_locations || [])
       setFooterShowLogo(bs.footer_show_logo !== false)
       setSelectedTheme(bs.theme || 'midnight')
+      setFontFamily(bs.font_family || 'Inter')
     } else {
-      setHeaderImages(["/header/1.jpg", "/header/2.jpg", "/header/3.jpg"])
-      setFooterSupportEmails(["support@eventos.com"])
-      setFooterSupportPhones(["011-123456789"])
+      setHeaderImages([])
+      setFooterSupportEmails([])
+      setFooterSupportPhones([])
+      setFontFamily('Inter')
     }
     if (event?.registration_settings) {
       const rs = event.registration_settings as Record<string, any>
@@ -215,6 +225,10 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
 
   // ── Authenticated branding upload ────────────────────────────────
   const handleFileUpload = async (file: File, field: 'logo' | 'header') => {
+    if (!logoAccess.enabled) {
+      toast.error(`Branding upload unavailable: ${(logoAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}`)
+      return
+    }
     if (field === 'logo') setUploadingLogo(true)
     else setUploadingHeader(true)
 
@@ -257,6 +271,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
 
   // ── Remove a header image (persists immediately) ─────────────────
   const removeHeaderImage = async (idx: number) => {
+    if (!logoAccess.enabled) return
     const next = headerImages.filter((_, i) => i !== idx)
     setHeaderImages(next)
 
@@ -304,6 +319,11 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
 
   // ── Save footer / theme / text settings ─────────────────────────
   const handleSave = async () => {
+    const blockedAccess = [themeAccess, colorAccess, fontAccess, logoAccess].find(access => !access.enabled)
+    if (blockedAccess) {
+      toast.error(`Theme update unavailable: ${(blockedAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}`)
+      return
+    }
     const emptyFaq = faqs.some(f => !f.q.trim() || !f.a.trim());
     if (emptyFaq) {
       toast.error("All FAQ entries must have a question and an answer.");
@@ -337,6 +357,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
             footer_locations: footerLocations,
             footer_show_logo: footerShowLogo,
             theme: selectedTheme,
+            font_family: fontFamily,
           },
           registration_settings: {
             ...currentRegSettings,
@@ -391,6 +412,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
   }
 
   const addHeaderUrl = async () => {
+    if (!logoAccess.enabled) return
     if (!customHeaderUrl.trim()) return
     const url = customHeaderUrl.trim()
     setCustomHeaderUrl('')
@@ -447,7 +469,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
           </a>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || themeAccess.loading || colorAccess.loading || fontAccess.loading || logoAccess.loading || !themeAccess.enabled || !colorAccess.enabled || !fontAccess.enabled || !logoAccess.enabled}
             className="flex items-center gap-2 h-9 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all shadow-lg"
           >
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
@@ -524,7 +546,8 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
                   <button
                     key={theme.id}
                     type="button"
-                    onClick={() => { setSelectedTheme(theme.id); setDirtyMeta(true) }}
+                    onClick={() => { if (themeAccess.enabled && colorAccess.enabled) { setSelectedTheme(theme.id); setDirtyMeta(true) } }}
+                    disabled={!themeAccess.enabled || !colorAccess.enabled}
                     className={`relative p-4 rounded-2xl border transition-all text-left group overflow-hidden ${
                       selectedTheme === theme.id
                         ? 'border-[var(--pri)]/60 bg-[var(--pri)]/10 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_10%,transparent)]'
@@ -544,6 +567,20 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
                     )}
                   </button>
                 ))}
+              </div>
+
+              <div className="mt-6 space-y-2">
+                <label htmlFor="portal-font-family" className="text-[9px] font-black uppercase tracking-widest text-muted block">Portal font</label>
+                <select
+                  id="portal-font-family"
+                  value={fontFamily}
+                  onChange={event => { setFontFamily(event.target.value); setDirtyMeta(true) }}
+                  disabled={fontAccess.loading || !fontAccess.enabled}
+                  title={fontAccess.enabled ? 'Portal font family' : `Unavailable: ${(fontAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}`}
+                  className="h-11 w-full rounded-xl border border-white/10 bg-[#080912] px-4 text-xs font-semibold text-[var(--text)] disabled:opacity-50"
+                >
+                  {PORTAL_FONTS.map(font => <option key={font} value={font}>{font}</option>)}
+                </select>
               </div>
             </div>
 
@@ -565,7 +602,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
                 <input
                   type="file"
                   accept="image/*"
-                  disabled={uploadingHeader}
+                  disabled={uploadingHeader || logoAccess.loading || !logoAccess.enabled}
                   className="hidden"
                   onChange={e => {
                     const file = e.target.files?.[0]
@@ -682,7 +719,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
                     <input
                       type="file"
                       accept="image/*"
-                      disabled={uploadingLogo}
+                      disabled={uploadingLogo || logoAccess.loading || !logoAccess.enabled}
                       className="hidden"
                       onChange={e => {
                         const file = e.target.files?.[0]
@@ -1143,7 +1180,7 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
           </div>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || themeAccess.loading || colorAccess.loading || fontAccess.loading || logoAccess.loading || !themeAccess.enabled || !colorAccess.enabled || !fontAccess.enabled || !logoAccess.enabled}
             className="flex items-center gap-2 h-8 px-5 bg-amber-500 hover:bg-amber-400 text-black rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all"
           >
             {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}

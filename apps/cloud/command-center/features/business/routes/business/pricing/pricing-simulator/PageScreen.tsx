@@ -118,12 +118,12 @@ export default function PricingSimulatorPage() {
     notes: ""
   })
   const [pdfTemplate, setPdfTemplate] = useState({
-    companyName: "EVENTX",
+    companyName: "Event",
     companyTagline: "Event Technology Solutions",
     logoUrl: "",
     stampUrl: "",
     stampLabel: "Approved",
-    footerText: "Thank you for considering EventX for your event technology needs.",
+    footerText: "Thank you for considering Event for your event technology needs.",
     coverTitle: "Pricing Proposal",
     coverSubtitle: "Event Technology Quotation",
     solutionTitle: "Solution Configuration",
@@ -139,12 +139,12 @@ export default function PricingSimulatorPage() {
     validityDays: 14,
   })
   const [pdfTemplate, setPdfTemplate] = useState({
-    companyName: "EVENTX",
+    companyName: "Event",
     companyTagline: "Event Technology Solutions",
     logoUrl: "",
     stampUrl: "",
     stampLabel: "Approved",
-    footerText: "Thank you for considering EventX for your event technology needs.",
+    footerText: "Thank you for considering Event for your event technology needs.",
     coverTitle: "Pricing Proposal",
     coverSubtitle: "Event Technology Quotation",
     solutionTitle: "Solution Configuration",
@@ -433,12 +433,12 @@ export default function PricingSimulatorPage() {
     notes: ""
   })
   const [pdfTemplate, setPdfTemplate] = useState({
-    companyName: "EVENTX",
+    companyName: "Event",
     companyTagline: "Event Technology Solutions",
     logoUrl: "",
     stampUrl: "",
     stampLabel: "Approved",
-    footerText: "Thank you for considering EventX for your event technology needs.",
+    footerText: "Thank you for considering Event for your event technology needs.",
     coverTitle: "Pricing Proposal",
     coverSubtitle: "Event Technology Quotation",
     solutionTitle: "Solution Configuration",
@@ -1533,7 +1533,7 @@ export default function PricingSimulatorPage() {
           <div class="header">
             <div>
               <h1>PRICING PROPOSAL</h1>
-              <span style="font-size: 11px; text-transform: uppercase; color: #6B7280; font-weight: bold;">EventX Quote Workspace</span>
+              <span style="font-size: 11px; text-transform: uppercase; color: #6B7280; font-weight: bold;">Event Quote Workspace</span>
             </div>
             <div style="text-align: right; font-size: 12px; color: #4B5563;">
               <strong>Date:</strong> ${new Date().toLocaleDateString()}<br/>

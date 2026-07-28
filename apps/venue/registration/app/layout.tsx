@@ -4,7 +4,7 @@ import { Providers } from "@/components/providers";
 import { GlobalModal } from "@/components/modals/GlobalModal";
 
 export const metadata: Metadata = {
-  title: "EventX OS | Ecosystem Control",
+  title: "Event OS | Ecosystem Control",
   description: "Advanced administrative terminal for ecosystem management.",
 };
 

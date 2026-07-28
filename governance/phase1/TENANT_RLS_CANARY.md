@@ -9,7 +9,7 @@
 - Development currently uses a PostgreSQL superuser and therefore bypasses RLS.
 - Production startup requires `REQUIRE_RLS_SAFE_RUNTIME_ROLE=true` and fails if
   the connected role is superuser, has `BYPASSRLS`, or canary policies are missing.
-- The local `eventx_runtime` group is `NOLOGIN`, non-superuser, and cannot bypass RLS.
+- The local `Event_runtime` group is `NOLOGIN`, non-superuser, and cannot bypass RLS.
 - The rollback-only live canary proves no-context denial, tenant A/B read isolation,
   cross-tenant update filtering, and wrong-owner insert denial for both direct
   billing records and event-derived room records.
@@ -51,7 +51,7 @@ transaction and always rolls the transaction back.
 
 ## Promotion Gate
 
-1. Provision a non-owner login and grant `eventx_runtime`.
+1. Provision a non-owner login and grant `Event_runtime`.
 2. Run `scripts/audit_tenant_rls.py` and retain the JSON evidence.
 3. Run HTTP, worker, WebSocket, export, storage, and venue cross-tenant tests.
 4. Run canary traffic with SQLAlchemy tenant filtering and RLS together.
@@ -60,4 +60,4 @@ transaction and always rolls the transaction back.
 7. Design event-derived policies separately before child-table rollout.
 8. Enable `FORCE ROW LEVEL SECURITY` only after owner-path and migration-role tests.
 
-Never use `eventx_migration` for API or worker traffic.
+Never use `Event_migration` for API or worker traffic.

@@ -314,7 +314,7 @@ export default function EventPortalLayout({
                     {config.event_name}
                   </h1>
                   <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300/80 mt-1 pl-1">
-                    Powered by EventX OS
+                    Powered by Event OS
                   </p>
                 </div>
               </div>
@@ -370,7 +370,7 @@ export default function EventPortalLayout({
 
             {/* Column 2: Event Info */}
             <div className="space-y-3">
-              <span className="font-black uppercase tracking-wider text-[#E8EAFF] text-xs block">{config.event_name || "EventX OS Portal"}</span>
+              <span className="font-black uppercase tracking-wider text-[#E8EAFF] text-xs block">{config.event_name || "Event OS Portal"}</span>
               <p className="leading-relaxed text-[11px] text-muted/80">
                 Secure, premium public registration and attendee portal. Manage your pass, speaker session assets, and event updates in real-time.
               </p>

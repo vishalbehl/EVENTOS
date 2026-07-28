@@ -1,7 +1,7 @@
 module "network" {
   source = "../../modules/network"
 
-  project     = "eventx"
+  project     = "Event"
   environment = "nonprod"
   vpc_cidr    = var.vpc_cidr
   cost_center = var.cost_center
@@ -10,7 +10,7 @@ module "network" {
 module "foundation" {
   source = "../../modules/foundation"
 
-  project              = "eventx"
+  project              = "Event"
   environment          = "nonprod"
   aws_region           = var.aws_region
   cost_center          = var.cost_center
@@ -22,7 +22,7 @@ module "application" {
   count  = var.deploy_application ? 1 : 0
   source = "../../modules/application"
 
-  project                    = "eventx"
+  project                    = "Event"
   environment                = "sample"
   aws_region                 = var.aws_region
   cost_center                = var.cost_center

@@ -69,8 +69,13 @@ from app.modules.identity.services.auth_service import hash_password
 
 async def activate_event_for_test(db: AsyncSession, event: Event) -> None:
     """Create a real snapshot-first license for tests that mutate paid resources."""
-    from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
+    from sqlalchemy import select
+    from app.modules.billing.models.subscription import OrganizationSubscription, PlanFeature, SubscriptionPlan
     from app.modules.billing.services.activation_service import ActivationService
+    from app.modules.billing.services.capability_service import CapabilityService
+    from app.modules.platform.models.feature import FeatureCatalog
+
+    await CapabilityService.sync_catalogue(db)
 
     plan = SubscriptionPlan(
         name=f"Test Licensed Plan {uuid.uuid4().hex[:8]}",
@@ -87,6 +92,25 @@ async def activate_event_for_test(db: AsyncSession, event: Event) -> None:
         storage_quota_mb=10240,
     )
     db.add(plan)
+    await db.flush()
+    features = (await db.scalars(select(FeatureCatalog).where(FeatureCatalog.is_active.is_(True)))).all()
+    for feature in features:
+        value_type = (feature.value_type or "BOOLEAN").upper()
+        if value_type == "BOOLEAN":
+            value = True
+        elif value_type == "LIMIT":
+            value = 10000
+        else:
+            value = (feature.allowed_values or [None])[-1]
+        db.add(PlanFeature(
+            plan_id=plan.id,
+            feature_id=feature.id,
+            enabled=True,
+            value_type=value_type,
+            entitlement_value={"value": value},
+            scope_type=feature.scope_type,
+            enforcement_mode=feature.enforcement_mode,
+        ))
     await db.flush()
     subscription = OrganizationSubscription(
         organization_id=event.organization_id,
@@ -147,6 +171,8 @@ async def setup_test_database():
     """
     Create all tables in the test database once before tests run.
     Use CASCADE to ensure clean teardown of complex cross-schema foreign keys.
+    A PostgreSQL advisory lock prevents concurrent pytest sessions from
+    dropping one another's shared schemas.
     """
     from sqlalchemy import text
     schemas = [
@@ -160,58 +186,75 @@ async def setup_test_database():
         "templates", "website_builder", "blueprints", "design_system", "theme_engine",
         "technology_services", "operations_planning", "resource_management", "deployment_management"
     ]
-    
-    async with _test_engine.begin() as conn:
-        # Interrupted test processes can leave a partially initialized schema.
-        # This database is dedicated to tests, so reset it before every session.
-        for schema in schemas:
-            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-        for schema in schemas:
-            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
-        await conn.run_sync(Base.metadata.create_all)
+    lock_key = 1163284047  # Stable key reserved for the EventOS test database.
+    lock_conn = await _test_engine.connect()
+    acquired = await lock_conn.scalar(
+        text("SELECT pg_try_advisory_lock(:lock_key)"),
+        {"lock_key": lock_key},
+    )
+    if not acquired:
+        await lock_conn.close()
+        raise RuntimeError(
+            "The EventOS test database is already in use by another pytest session."
+        )
 
-        # Create default partitions for test runs only when parent tables exist in metadata/schema.
-        partition_specs = [
-            ("inventory", "hardware_movements", "hardware_movements_default"),
-            ("pricing", "pricing_simulations", "pricing_simulations_default"),
-            ("pricing", "revenue_forecasts", "revenue_forecasts_default"),
-            ("technology_services", "request_history", "request_history_default"),
-            ("operations_planning", "project_tasks", "project_tasks_default"),
-            ("deployment_management", "deployment_logs", "deployment_logs_default"),
-        ]
-        for schema_name, parent_table, default_table in partition_specs:
-            exists = await conn.scalar(
-                text(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1
-                        FROM information_schema.tables
-                        WHERE table_schema = :schema_name
-                          AND table_name = :table_name
-                    )
-                    """
-                ),
-                {"schema_name": schema_name, "table_name": parent_table},
-            )
-            if exists:
-                await conn.execute(
+    try:
+        async with _test_engine.begin() as conn:
+            # Interrupted test processes can leave a partially initialized schema.
+            # This database is dedicated to tests, so reset it before every session.
+            for schema in schemas:
+                await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            for schema in schemas:
+                await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await conn.run_sync(Base.metadata.create_all)
+
+            # Create default partitions for test runs only when parent tables exist in metadata/schema.
+            partition_specs = [
+                ("inventory", "hardware_movements", "hardware_movements_default"),
+                ("pricing", "pricing_simulations", "pricing_simulations_default"),
+                ("pricing", "revenue_forecasts", "revenue_forecasts_default"),
+                ("technology_services", "request_history", "request_history_default"),
+                ("operations_planning", "project_tasks", "project_tasks_default"),
+                ("deployment_management", "deployment_logs", "deployment_logs_default"),
+            ]
+            for schema_name, parent_table, default_table in partition_specs:
+                exists = await conn.scalar(
                     text(
-                        f"CREATE TABLE IF NOT EXISTS {schema_name}.{default_table} "
-                        f"PARTITION OF {schema_name}.{parent_table} DEFAULT"
-                    )
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.tables
+                            WHERE table_schema = :schema_name
+                              AND table_name = :table_name
+                        )
+                        """
+                    ),
+                    {"schema_name": schema_name, "table_name": parent_table},
                 )
+                if exists:
+                    await conn.execute(
+                        text(
+                            f"CREATE TABLE IF NOT EXISTS {schema_name}.{default_table} "
+                            f"PARTITION OF {schema_name}.{parent_table} DEFAULT"
+                        )
+                    )
 
-    
-    yield
-    
-    # Teardown: drop schemas with CASCADE to handle foreign key dependencies
-    async with _test_engine.begin() as conn:
-        for schema in schemas:
-            await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        # Drop public just in case
-        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-        await conn.execute(text("CREATE SCHEMA public"))
-    await _test_engine.dispose()
+        yield
+
+        # Teardown: drop schemas with CASCADE to handle foreign key dependencies.
+        async with _test_engine.begin() as conn:
+            for schema in schemas:
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            # Drop public just in case.
+            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+    finally:
+        await lock_conn.execute(
+            text("SELECT pg_advisory_unlock(:lock_key)"),
+            {"lock_key": lock_key},
+        )
+        await lock_conn.close()
+        await _test_engine.dispose()
 
 
 # ── Per-test transaction rollback ─────────────────────────────
@@ -484,3 +527,56 @@ def auth_headers(user: User) -> dict:
     """Return Authorization headers dict for httpx requests."""
     token = make_access_token(user)
     return {"Authorization": f"Bearer {token}"}
+
+
+async def assign_typed_plan_limits(
+    db: AsyncSession,
+    plan,
+    **limits: int,
+) -> None:
+    """Create canonical typed LIMIT assignments for a test plan."""
+    from sqlalchemy import select
+
+    from app.modules.billing.capability_registry import (
+        CATALOG_LIMIT_KEYS,
+        LIMIT_DEFINITIONS,
+        PLATFORM_HARD_CEILINGS,
+    )
+    from app.modules.billing.models.subscription import PlanFeature
+    from app.modules.platform.models.feature import FeatureCatalog
+
+    catalogue_key_by_limit = {
+        limit_key: catalogue_key
+        for catalogue_key, limit_key in CATALOG_LIMIT_KEYS.items()
+    }
+    for limit_key, value in limits.items():
+        catalogue_key = catalogue_key_by_limit[limit_key]
+        definition = LIMIT_DEFINITIONS[limit_key]
+        feature = await db.scalar(
+            select(FeatureCatalog).where(FeatureCatalog.key == catalogue_key)
+        )
+        if feature is None:
+            feature = FeatureCatalog(
+                key=catalogue_key,
+                name=limit_key.replace("_", " ").title(),
+                category="LIMITS",
+                scope_type=definition["scope"],
+                value_type="LIMIT",
+                default_value={"value": 0},
+                unit=definition["unit"],
+                period=definition["period"],
+                metric_key=definition["metric_key"],
+            )
+            db.add(feature)
+            await db.flush()
+        db.add(PlanFeature(
+            plan_id=plan.id,
+            feature_id=feature.id,
+            enabled=True,
+            value_type="LIMIT",
+            entitlement_value={"value": int(value)},
+            scope_type=definition["scope"],
+            enforcement_mode="HARD",
+            hard_ceiling={"value": PLATFORM_HARD_CEILINGS[limit_key]},
+        ))
+    await db.flush()

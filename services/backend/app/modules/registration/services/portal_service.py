@@ -135,22 +135,14 @@ async def get_dashboard_data(
     config = (await db.execute(config_stmt)).scalar_one_or_none()
     is_live = config.is_live if config else True
 
-    from app.modules.communications.models.announcement import Announcement
-    from sqlalchemy import or_
+    from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
 
-    now_time = datetime.now(timezone.utc)
-    ann_stmt = (
-        select(Announcement)
-        .where(
-            Announcement.event_id == event_id,
-            Announcement.audience.in_(["all", "participants"]),
-            or_(Announcement.scheduled_at.is_(None), Announcement.scheduled_at <= now_time),
-            or_(Announcement.expires_at.is_(None), Announcement.expires_at > now_time)
-        )
-        .order_by(Announcement.is_pinned.desc(), Announcement.created_at.desc())
+    active_anns = await list_active_entitled_announcements(
+        db,
+        organization_id=event.organization_id,
+        event_id=event_id,
+        audiences=["all", "participants"],
     )
-    ann_res = await db.execute(ann_stmt)
-    active_anns = ann_res.scalars().all()
 
     announcements_list = [
         {

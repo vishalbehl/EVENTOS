@@ -1,10 +1,12 @@
 import uuid
 from uuid import UUID
+import base64
 import hashlib
+import json
 import re
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Any, Dict, Literal
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import select, func, and_, or_, desc, update, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,7 +23,7 @@ from app.modules.platform.models.health import OrganizationHealth
 from app.modules.analytics.models.usage import OrganizationUsage
 from app.modules.billing.models.subscription import (
     SubscriptionPlan, OrganizationSubscription, PlanFeature, 
-    OrganizationFeature, Addon, AddonFeature, OrganizationAddon, 
+    OrganizationFeature, Addon, AddonFeature, CommercialTemplateVersion, OrganizationAddon, 
     ActivityTimeline, RevenueMetric
 )
 from app.modules.billing.models.billing_domain_tables import Invoice, InvoiceItem
@@ -30,12 +32,33 @@ from app.modules.billing.models.event_activation import EventActivation
 from app.modules.rbac.models.organization_member import OrganizationMember
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
 from app.dependencies import get_current_user
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from app.modules.platform.models.platform_domain_tables import OrganizationDomain, TenantLimit
+from app.modules.platform.models.organization_console import OrganizationBrandProfile
 from app.modules.events.models.event import Event
 from app.modules.registration.models.payment_transaction import PaymentTransaction
+from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, FEATURE_DEFINITIONS
+from app.modules.billing.services.capability_service import CapabilityService
+from app.core.dependencies.feature_gate import enforce_org_operation
+from app.core.tenant_context import TenantContextGuard
+from app.modules.presentations.services import upload_service as presentation_upload_service
 
 router = APIRouter(prefix="/platform", tags=["Platform Admin CRM"])
+
+
+def _governed_commercial_workflow_required(workflow: str) -> None:
+    """Fail closed for obsolete mutation routes superseded by approvals."""
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "DUAL_APPROVAL_REQUIRED",
+            "workflow": workflow,
+            "message": (
+                "This legacy mutation is disabled. Submit and approve the "
+                "corresponding request in Organizer Console."
+            ),
+        },
+    )
 
 # ── Response Models ──────────────────────────────────────────
 
@@ -157,7 +180,7 @@ async def require_platform_admin(current_user: User = Depends(get_current_user))
         (current_user.platform_role and current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN", "FINANCE_ADMIN"]) or
         current_user.role == "super_admin" or
         getattr(current_user, "is_platform_admin", False) or
-        (current_user.organization and current_user.organization.slug == "eventxos")
+        (current_user.organization and current_user.organization.slug == "Eventos")
     )
     if not is_admin:
         raise HTTPException(status_code=403, detail="Platform Admin access required")
@@ -628,6 +651,7 @@ class FeatureOverrideDeleteRequest(BaseModel):
 @router.put("/organizations/{org_id}/features/overrides")
 async def override_organization_feature(org_id: uuid.UUID, payload: FeatureOverrideRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Manual feature unlock without upgrading plan."""
+    _governed_commercial_workflow_required("entitlement-override-request")
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required for overrides")
 
@@ -703,6 +727,7 @@ async def delete_organization_feature_override(
     current_user: User = Depends(require_platform_admin)
 ):
     """Remove a manual feature override so it reverts to plan default."""
+    _governed_commercial_workflow_required("entitlement-override-revocation")
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required for overrides")
 
@@ -807,6 +832,8 @@ async def get_organization_timeline(org_id: uuid.UUID, db: AsyncSession = Depend
 # ── Pydantic Schemas ──────────────────────────────────────────
 
 class SubscriptionPlanIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     tagline: Optional[str] = None
     description: Optional[str] = None
@@ -823,14 +850,13 @@ class SubscriptionPlanIn(BaseModel):
     max_emails_per_event: Optional[int] = None
     storage_quota_mb: int = 10240
     currency: str = "INR"
-    price_per_event_min: Optional[float] = None
-    price_per_event_max: Optional[float] = None
     price_per_event: Optional[float] = None
     billing_model: str = "PER_EVENT"
     display_order: int = 0
     is_popular: bool = False
     color_hex: Optional[str] = None
     is_active: bool = True
+    lifecycle_status: Literal["DRAFT", "REVIEW", "PUBLISHED", "RETIRED"] = "DRAFT"
 
 class OrgStatusUpdate(BaseModel):
     is_active: bool
@@ -841,6 +867,136 @@ class ReasonRequiredRequest(BaseModel):
 
 
 # ── Subscription Plans CRUD ────────────────────────────────────
+
+def _commercial_request_hash(resource_type: str, resource_id: uuid.UUID | None, payload: dict) -> str:
+    material = {"resource_type": resource_type, "resource_id": str(resource_id) if resource_id else None, "payload": payload}
+    return hashlib.sha256(json.dumps(material, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+
+
+async def _commercial_version_replay(db: AsyncSession, resource_type: str, idempotency_key: str, request_hash: str) -> CommercialTemplateVersion | None:
+    existing = await db.scalar(select(CommercialTemplateVersion).where(
+        CommercialTemplateVersion.resource_type == resource_type,
+        CommercialTemplateVersion.idempotency_key == idempotency_key,
+    ))
+    if existing and existing.request_hash != request_hash:
+        raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    return existing
+
+
+async def _plan_template_snapshot(db: AsyncSession, plan: SubscriptionPlan) -> dict:
+    assignments = (await db.execute(
+        select(PlanFeature, FeatureCatalog)
+        .join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id)
+        .where(PlanFeature.plan_id == plan.id)
+        .order_by(FeatureCatalog.key)
+    )).all()
+    return {
+        "template": {
+            "id": str(plan.id), "name": plan.name, "tagline": plan.tagline,
+            "description": plan.description, "billing_model": plan.billing_model,
+            "currency": plan.currency,
+            "price_per_event": float(plan.price_per_event) if plan.price_per_event is not None else None,
+            "max_events": plan.max_events, "max_users": plan.max_users,
+            "max_event_team_members": plan.max_event_team_members,
+            "max_registrations": plan.max_registrations, "max_speakers": plan.max_speakers,
+            "max_sessions": plan.max_sessions, "max_rooms": plan.max_rooms,
+            "max_ticket_categories": plan.max_ticket_categories,
+            "max_badge_templates": plan.max_badge_templates,
+            "max_certificate_templates": plan.max_certificate_templates,
+            "max_emails_per_event": plan.max_emails_per_event,
+            "storage_quota_mb": plan.storage_quota_mb, "display_order": plan.display_order,
+            "is_popular": plan.is_popular, "color_hex": plan.color_hex,
+            "is_active": plan.is_active, "version": plan.version,
+            "lifecycle_status": plan.lifecycle_status,
+            "effective_at": plan.effective_at.isoformat() if plan.effective_at else None,
+            "retired_at": plan.retired_at.isoformat() if plan.retired_at else None,
+        },
+        "assignments": [{
+            "feature_key": feature.key, "enabled": mapping.enabled,
+            "value_type": mapping.value_type, "value": mapping.entitlement_value,
+            "scope_type": mapping.scope_type, "enforcement_mode": mapping.enforcement_mode,
+            "hard_ceiling": mapping.hard_ceiling,
+        } for mapping, feature in assignments],
+    }
+
+
+async def _record_plan_template_version(
+    db: AsyncSession, plan: SubscriptionPlan, *, actor: User,
+    idempotency_key: str, request_hash: str, reason: str, change_type: str,
+) -> CommercialTemplateVersion:
+    row = CommercialTemplateVersion(
+        resource_type="PLAN", resource_id=plan.id, version=plan.version,
+        lifecycle_status=plan.lifecycle_status, change_type=change_type,
+        snapshot_json=await _plan_template_snapshot(db, plan), request_hash=request_hash,
+        reason=reason, idempotency_key=idempotency_key, actor_user_id=actor.id,
+    )
+    db.add(row)
+    db.add(AuditLog(
+        organization_id=None, actor_user_id=actor.id, actor_role=actor.platform_role or actor.role,
+        resource_type="subscription_plan", resource_id=plan.id,
+        action_type=f"PLAN_TEMPLATE_{change_type}",
+        new_state={"version": plan.version, "lifecycle_status": plan.lifecycle_status, "reason": reason},
+        is_sensitive=True,
+    ))
+    await db.flush()
+    return row
+
+
+async def _addon_template_snapshot(db: AsyncSession, addon: Addon) -> dict:
+    assignments = (await db.execute(
+        select(AddonFeature, FeatureCatalog)
+        .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
+        .where(AddonFeature.addon_id == addon.id)
+        .order_by(FeatureCatalog.key)
+    )).all()
+    return {
+        "template": {
+            "id": str(addon.id), "key": addon.key, "name": addon.name,
+            "description": addon.description, "short_description": addon.short_description,
+            "addon_type": addon.addon_type, "scope_type": addon.scope_type,
+            "consumption_model": addon.consumption_model, "unit_type": addon.unit_type,
+            "price_inr": float(addon.price_inr) if addon.price_inr is not None else None,
+            "min_price_inr": float(addon.min_price_inr) if addon.min_price_inr is not None else None,
+            "max_price_inr": float(addon.max_price_inr) if addon.max_price_inr is not None else None,
+            "billing_unit": addon.billing_unit, "price_unit": addon.price_unit,
+            "available_for_plans": addon.available_for_plans or [],
+            "is_active": addon.is_active, "version": addon.version,
+            "lifecycle_status": addon.lifecycle_status,
+            "effective_at": addon.effective_at.isoformat() if addon.effective_at else None,
+            "retired_at": addon.retired_at.isoformat() if addon.retired_at else None,
+            "features_spec": addon.features_spec or [], "hardware_spec": addon.hardware_spec or [],
+            "staff_spec": addon.staff_spec or [], "inclusions": addon.inclusions or [],
+            "exclusions": addon.exclusions or [], "template_types": addon.template_types or [],
+        },
+        "assignments": [{
+            "feature_key": feature.key, "value_type": mapping.value_type,
+            "value": mapping.entitlement_value, "operation": mapping.operation,
+            "scope_type": mapping.scope_type, "validity_days": mapping.validity_days,
+            "stackable": mapping.stackable, "max_quantity": mapping.max_quantity,
+        } for mapping, feature in assignments],
+    }
+
+
+async def _record_addon_template_version(
+    db: AsyncSession, addon: Addon, *, actor: User,
+    idempotency_key: str, request_hash: str, reason: str, change_type: str,
+) -> CommercialTemplateVersion:
+    row = CommercialTemplateVersion(
+        resource_type="ADDON", resource_id=addon.id, version=addon.version,
+        lifecycle_status=addon.lifecycle_status, change_type=change_type,
+        snapshot_json=await _addon_template_snapshot(db, addon), request_hash=request_hash,
+        reason=reason, idempotency_key=idempotency_key, actor_user_id=actor.id,
+    )
+    db.add(row)
+    db.add(AuditLog(
+        organization_id=None, actor_user_id=actor.id, actor_role=actor.platform_role or actor.role,
+        resource_type="commercial_addon", resource_id=addon.id,
+        action_type=f"ADDON_TEMPLATE_{change_type}",
+        new_state={"version": addon.version, "lifecycle_status": addon.lifecycle_status, "reason": reason},
+        is_sensitive=True,
+    ))
+    await db.flush()
+    return row
 
 @router.get("/subscription-plans")
 async def list_subscription_plans(
@@ -881,9 +1037,7 @@ async def list_subscription_plans(
             "description": p.description,
             "billing_model": p.billing_model,
             "currency": p.currency,
-            "price_per_event_min": float(p.price_per_event_min) if p.price_per_event_min is not None else None,
-            "price_per_event_max": float(p.price_per_event_max) if p.price_per_event_max is not None else None,
-            "price_per_event": float(p.price_per_event) if p.price_per_event is not None else (float(p.price_per_event_min) if p.price_per_event_min is not None else None),
+            "price_per_event": float(p.price_per_event) if p.price_per_event is not None else None,
             "price_display": p.price_display,
             "max_events": p.max_events,
             "max_users": p.max_users,
@@ -900,6 +1054,10 @@ async def list_subscription_plans(
             "is_popular": p.is_popular,
             "color_hex": p.color_hex,
             "is_active": p.is_active,
+            "version": p.version,
+            "lifecycle_status": p.lifecycle_status,
+            "effective_at": p.effective_at,
+            "retired_at": p.retired_at,
             "created_at": p.created_at,
             "subscribers_count": subscribers_count,
             "mrr": float(plan_mrr),
@@ -1066,8 +1224,33 @@ async def list_platform_addons(
     
     addon_list = []
     for a in addons:
-        f_stmt = select(AddonFeature.feature_id).where(AddonFeature.addon_id == a.id)
-        feature_ids = (await db.execute(f_stmt)).scalars().all()
+        feature_rows = (await db.execute(
+            select(AddonFeature, FeatureCatalog)
+            .join(FeatureCatalog, FeatureCatalog.id == AddonFeature.feature_id)
+            .where(AddonFeature.addon_id == a.id)
+            .order_by(FeatureCatalog.category_order, FeatureCatalog.feature_order)
+        )).all()
+        feature_ids = [mapping.feature_id for mapping, _feature in feature_rows]
+        feature_assignments = []
+        for mapping, feature in feature_rows:
+            raw_value = mapping.entitlement_value
+            value = raw_value.get("value") if isinstance(raw_value, dict) else raw_value
+            if value is None and (mapping.value_type or feature.value_type) == "BOOLEAN":
+                value = True
+            feature_assignments.append({
+                "feature_key": feature.key,
+                "name": feature.name,
+                "value_type": mapping.value_type or feature.value_type or "BOOLEAN",
+                "value": value,
+                "scope_type": mapping.scope_type or feature.scope_type,
+                "operation": mapping.operation or "UNLOCK",
+                "validity_days": mapping.validity_days,
+                "stackable": mapping.stackable,
+                "max_quantity": mapping.max_quantity,
+                "allowed_values": feature.allowed_values or [],
+                "unit": feature.unit,
+                "period": feature.period,
+            })
         addon_list.append({
             "id": a.id,
             "key": a.key,
@@ -1081,13 +1264,21 @@ async def list_platform_addons(
             "max_price_inr": float(a.max_price_inr) if a.max_price_inr is not None else None,
             "billing_unit": a.billing_unit,
             "price_unit": a.price_unit,
+            "scope_type": a.scope_type,
+            "consumption_model": a.consumption_model,
+            "unit_type": a.unit_type,
             "final_price": float(a.final_price) if a.final_price is not None else None,
             "available_for_plans": a.available_for_plans or [],
             "is_optional_for_plan": a.is_optional_for_plan,
             "included_in_plan": a.included_in_plan,
             "is_active": a.is_active,
+            "version": a.version,
+            "lifecycle_status": a.lifecycle_status,
+            "effective_at": a.effective_at,
+            "retired_at": a.retired_at,
             "created_at": a.created_at,
             "feature_ids": [str(fid) for fid in feature_ids],
+            "feature_assignments": feature_assignments,
             "features_spec": a.features_spec or [],
             "hardware_spec": a.hardware_spec or [],
             "staff_spec": a.staff_spec or [],
@@ -1102,6 +1293,9 @@ async def list_platform_addons(
 @router.post("/subscription-plans", status_code=201)
 async def create_subscription_plan(
     payload: SubscriptionPlanIn,
+    step_up: StepUpAuth,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -1109,6 +1303,15 @@ async def create_subscription_plan(
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    del step_up
+    if payload.lifecycle_status in {"PUBLISHED", "RETIRED"}:
+        raise HTTPException(status_code=422, detail={"code": "PLAN_MUST_START_AS_DRAFT_OR_REVIEW"})
+    request_payload = payload.model_dump(mode="json")
+    request_hash = _commercial_request_hash("PLAN", None, request_payload)
+    replay = await _commercial_version_replay(db, "PLAN", idempotency_key, request_hash)
+    if replay:
+        existing_plan = await db.get(SubscriptionPlan, replay.resource_id)
+        return {"id": replay.resource_id, "name": existing_plan.name if existing_plan else None, "message": "Plan already created", "replayed": True}
     plan = SubscriptionPlan(
         name=payload.name,
         tagline=payload.tagline,
@@ -1125,25 +1328,34 @@ async def create_subscription_plan(
         max_emails_per_event=payload.max_emails_per_event,
         storage_quota_mb=payload.storage_quota_mb,
         currency=payload.currency,
-        price_per_event_min=payload.price_per_event_min,
-        price_per_event_max=payload.price_per_event_max,
         price_per_event=payload.price_per_event,
         billing_model=payload.billing_model,
         display_order=payload.display_order,
         is_popular=payload.is_popular,
         color_hex=payload.color_hex,
-        is_active=payload.is_active,
+        is_active=False,
+        lifecycle_status=payload.lifecycle_status,
+        version=1,
     )
     db.add(plan)
+    await db.flush()
+    await _record_plan_template_version(
+        db, plan, actor=current_user, idempotency_key=idempotency_key,
+        request_hash=request_hash, reason=reason, change_type="CREATED",
+    )
     await db.commit()
     await db.refresh(plan)
-    return {"id": plan.id, "name": plan.name, "message": "Plan created"}
+    return {"id": plan.id, "name": plan.name, "message": "Plan created", "version": plan.version, "replayed": False}
 
 
 @router.patch("/subscription-plans/{plan_id}")
 async def update_subscription_plan(
     plan_id: uuid.UUID,
     payload: SubscriptionPlanIn,
+    step_up: StepUpAuth,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -1151,13 +1363,42 @@ async def update_subscription_plan(
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    del step_up
+    request_payload = payload.model_dump(mode="json", exclude_unset=True)
+    request_hash = _commercial_request_hash("PLAN", plan_id, request_payload)
+    replay = await _commercial_version_replay(db, "PLAN", idempotency_key, request_hash)
+    if replay:
+        return {"message": "Plan update already applied", "version": replay.version, "replayed": True}
     plan = await db.get(SubscriptionPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
-    for field, val in payload.model_dump(exclude_unset=True).items():
+    if plan.version != expected_version:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": plan.version})
+    previous_lifecycle = plan.lifecycle_status
+    target_lifecycle = request_payload.get("lifecycle_status", plan.lifecycle_status)
+    if plan.lifecycle_status == "RETIRED" and target_lifecycle != "RETIRED":
+        raise HTTPException(status_code=409, detail={"code": "RETIRED_PLAN_IMMUTABLE", "message": "Clone a retired plan to create a new draft."})
+    if target_lifecycle == "PUBLISHED":
+        assignment_count = int(await db.scalar(select(func.count(PlanFeature.feature_id)).where(PlanFeature.plan_id == plan_id)) or 0)
+        if assignment_count == 0:
+            raise HTTPException(status_code=422, detail={"code": "PLAN_ASSIGNMENTS_REQUIRED"})
+    for field, val in request_payload.items():
         setattr(plan, field, val)
+    now = datetime.now(timezone.utc)
+    if target_lifecycle == "PUBLISHED" and previous_lifecycle != "PUBLISHED":
+        plan.effective_at = now
+    if target_lifecycle == "RETIRED":
+        plan.retired_at = now
+    plan.lifecycle_status = target_lifecycle
+    plan.is_active = bool(request_payload.get("is_active", plan.is_active)) and target_lifecycle == "PUBLISHED"
+    plan.version = expected_version + 1
+    await db.flush()
+    await _record_plan_template_version(
+        db, plan, actor=current_user, idempotency_key=idempotency_key,
+        request_hash=request_hash, reason=reason, change_type="UPDATED",
+    )
     await db.commit()
-    return {"message": "Plan updated"}
+    return {"message": "Plan updated", "version": plan.version, "replayed": False}
 
 
 class PlanFeaturesUpdate(BaseModel):
@@ -1179,19 +1420,7 @@ async def list_features_catalog(
         )
     )
     catalog = result.scalars().all()
-    return [
-        {
-            "id": f.id,
-            "key": f.key,
-            "name": f.name,
-            "description": f.description,
-            "category": f.category,
-            "category_order": f.category_order,
-            "feature_order": f.feature_order,
-            "is_active": f.is_active,
-        }
-        for f in catalog
-    ]
+    return [_serialize_feature_catalog_item(feature) for feature in catalog]
 
 
 class FeatureCatalogIn(BaseModel):
@@ -1202,6 +1431,13 @@ class FeatureCatalogIn(BaseModel):
     category_order: Optional[int] = None
     feature_order: Optional[int] = None
     is_active: bool = True
+    value_type: Literal["BOOLEAN", "LIMIT", "TIER", "ENUM"] = "BOOLEAN"
+    scope_type: str = "EVENT"
+    default_value: Any = None
+    allowed_values: List[str] = Field(default_factory=list)
+    unit: Optional[str] = None
+    period: Optional[str] = None
+    enforcement_mode: Literal["HARD", "SOFT_WARNING", "METERED_OVERAGE"] = "HARD"
 
 
 class FeatureCategoryReorderIn(BaseModel):
@@ -1264,6 +1500,22 @@ async def _resolve_feature_order(
     return max_order + 1
 
 
+def _validated_catalog_value(payload: FeatureCatalogIn) -> Optional[dict]:
+    raw = payload.default_value.get("value") if isinstance(payload.default_value, dict) else payload.default_value
+    if payload.value_type == "BOOLEAN" and raw is not None and not isinstance(raw, bool):
+        raise HTTPException(status_code=422, detail="BOOLEAN features require a Boolean default value")
+    if payload.value_type == "LIMIT" and raw is not None and (
+        isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0
+    ):
+        raise HTTPException(status_code=422, detail="LIMIT features require a non-negative numeric default value")
+    if payload.value_type in {"TIER", "ENUM"}:
+        if not payload.allowed_values:
+            raise HTTPException(status_code=422, detail=f"{payload.value_type} features require allowed values")
+        if raw is not None and raw not in payload.allowed_values:
+            raise HTTPException(status_code=422, detail="The default value must be one of the allowed values")
+    return {"value": raw} if raw is not None else None
+
+
 def _serialize_feature_catalog_item(feature: FeatureCatalog) -> dict:
     return {
         "id": feature.id,
@@ -1274,6 +1526,25 @@ def _serialize_feature_catalog_item(feature: FeatureCatalog) -> dict:
         "category_order": feature.category_order,
         "feature_order": feature.feature_order,
         "is_active": feature.is_active,
+        "value_type": feature.value_type,
+        "scope_type": feature.scope_type,
+        "default_value": feature.default_value,
+        "allowed_values": feature.allowed_values or [],
+        "unit": feature.unit,
+        "period": feature.period,
+        "enforcement_mode": feature.enforcement_mode,
+        "version": feature.version,
+        "portal_routes": feature.portal_routes or [],
+        "backend_operations": feature.backend_operations or [],
+        "required_permissions": feature.required_permissions or [],
+        "metric_key": feature.metric_key,
+        "dependencies": feature.dependencies or [],
+        "conflicts": feature.conflicts or [],
+        "owner_console": feature.owner_console,
+        "owner_team": feature.owner_team,
+        "risk_level": feature.risk_level,
+        "lifecycle_status": feature.lifecycle_status,
+        "replacement_key": feature.replacement_key,
     }
 
 
@@ -1305,6 +1576,13 @@ async def create_feature_catalog_item(
         category_order=await _resolve_category_order(db, category, payload.category_order),
         feature_order=await _resolve_feature_order(db, category, payload.feature_order),
         is_active=payload.is_active,
+        value_type=payload.value_type,
+        scope_type=payload.scope_type,
+        default_value=_validated_catalog_value(payload),
+        allowed_values=payload.allowed_values,
+        unit=payload.unit,
+        period=payload.period,
+        enforcement_mode=payload.enforcement_mode,
     )
     db.add(feature)
     await db.commit()
@@ -1331,12 +1609,10 @@ async def update_feature_catalog_item(
     key = _normalize_feature_key(payload.key)
     category = _normalize_feature_category(payload.category)
 
-    # If key is changing, check for duplicates
+    # Enforcement keys are immutable once created. Deprecation/replacement is
+    # explicit so active contracts never silently change meaning.
     if feature.key != key:
-        existing_stmt = select(FeatureCatalog).where(FeatureCatalog.key == key)
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-        if existing:
-            raise HTTPException(status_code=400, detail=f"Feature with key '{key}' already exists")
+        raise HTTPException(status_code=409, detail={"code": "IMMUTABLE_FEATURE_KEY", "feature_key": feature.key})
 
     feature.key = key
     feature.name = payload.name
@@ -1345,6 +1621,14 @@ async def update_feature_catalog_item(
     feature.category_order = await _resolve_category_order(db, category, payload.category_order)
     feature.feature_order = await _resolve_feature_order(db, category, payload.feature_order)
     feature.is_active = payload.is_active
+    feature.value_type = payload.value_type
+    feature.scope_type = payload.scope_type
+    feature.default_value = _validated_catalog_value(payload)
+    feature.allowed_values = payload.allowed_values
+    feature.unit = payload.unit
+    feature.period = payload.period
+    feature.enforcement_mode = payload.enforcement_mode
+    feature.version = (feature.version or 0) + 1
 
     await db.commit()
     await db.refresh(feature)
@@ -1429,7 +1713,7 @@ async def delete_feature_catalog_item(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
-    """Delete a feature catalog item (SUPER_ADMIN only)."""
+    """Deprecate a feature key without breaking active contracts."""
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
@@ -1438,9 +1722,11 @@ async def delete_feature_catalog_item(
     if not feature:
         raise HTTPException(status_code=404, detail="Feature not found")
 
-    await db.delete(feature)
+    feature.is_active = False
+    feature.lifecycle_status = "DEPRECATED"
+    feature.version = (feature.version or 0) + 1
     await db.commit()
-    return {"message": "Feature deleted successfully"}
+    return {"message": "Feature deprecated successfully", "feature_key": feature.key}
 
 
 @router.get("/subscription-plans/{plan_id}/features")
@@ -1457,7 +1743,6 @@ async def get_plan_features(
     return result.scalars().all()
 
 
-@router.put("/subscription-plans/{plan_id}/features")
 async def update_plan_features(
     plan_id: uuid.UUID,
     payload: PlanFeaturesUpdate,
@@ -2222,6 +2507,7 @@ async def update_organization_status(
     current_user: User = Depends(require_platform_admin)
 ):
     """Suspend or activate an organization (SUPER_ADMIN only)."""
+    _governed_commercial_workflow_required("capability-restriction-request")
     del step_up
     is_auth = (current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN"]) or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_auth:
@@ -3144,6 +3430,7 @@ async def save_org_feature_overrides(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
+    _governed_commercial_workflow_required("entitlement-override-request")
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3238,6 +3525,7 @@ async def change_organization_plan(
     current_user: User = Depends(require_platform_admin)
 ):
     """Change the plan tier for an organization."""
+    _governed_commercial_workflow_required("commercial-access-request")
     sub = await _get_current_subscription(db, org_id, with_plan=True)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
@@ -3319,6 +3607,7 @@ async def delete_organization_subscription(
     current_user: User = Depends(require_platform_admin)
 ):
     """Delete the active subscription, addons, and limits override for an organization (Super Admin)."""
+    _governed_commercial_workflow_required("commercial-access-request")
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3415,6 +3704,7 @@ async def extend_organization_trial(
     current_user: User = Depends(require_platform_admin)
 ):
     """Extend the trial period for an organization's subscription."""
+    _governed_commercial_workflow_required("entitlement-override-request")
     sub = await _get_current_subscription(db, org_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
@@ -3498,6 +3788,7 @@ async def apply_organization_credit(
     current_user: User = Depends(require_platform_admin)
 ):
     """Apply a manual billing credit to an organization."""
+    _governed_commercial_workflow_required("financial-adjustment-request")
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3559,6 +3850,7 @@ async def update_organization_limits(
     current_user: User = Depends(require_platform_admin)
 ):
     """Replace customized limits overrides for a tenant."""
+    _governed_commercial_workflow_required("entitlement-override-request")
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3613,6 +3905,125 @@ class DeleteDomainRequest(BaseModel):
 class VerifyDomainRequest(BaseModel):
     reason: str = Field(..., min_length=8, max_length=1000)
 
+
+@router.get("/public/branding")
+async def get_public_organization_branding(
+    response: Response,
+    host: Optional[str] = Query(default=None, min_length=3, max_length=255),
+    slug: Optional[str] = Query(default=None, min_length=2, max_length=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return only the currently published, entitlement-resolved brand shell."""
+    if bool(host) == bool(slug):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "BRAND_LOOKUP_REQUIRED", "message": "Supply exactly one of host or slug."},
+        )
+    if host:
+        normalized_host = host.strip().lower().split(":", 1)[0].rstrip(".")
+        if not re.fullmatch(r"[a-z0-9.-]+", normalized_host):
+            raise HTTPException(status_code=422, detail={"code": "INVALID_HOST"})
+        organization = await db.scalar(
+            select(Organization).where(
+                func.lower(Organization.custom_domain) == normalized_host,
+                Organization.is_active.is_(True),
+            )
+        )
+    else:
+        normalized_slug = (slug or "").strip().lower()
+        organization = await db.scalar(
+            select(Organization).where(
+                Organization.slug == normalized_slug,
+                Organization.is_active.is_(True),
+            )
+        )
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization brand not found")
+
+    try:
+        capabilities = await CapabilityService.resolve_organization(
+            db,
+            organization.id,
+            environment=settings.environment.upper(),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "RESOLUTION_UNAVAILABLE"},
+        ) from exc
+
+    profile = await db.scalar(
+        select(OrganizationBrandProfile).where(
+            OrganizationBrandProfile.organization_id == organization.id,
+            OrganizationBrandProfile.status == "PUBLISHED",
+            OrganizationBrandProfile.published_version
+            == OrganizationBrandProfile.version,
+        )
+    )
+    templates = dict(profile.templates or {}) if profile else {}
+    white_capability = capabilities["features"].get("FEAT_WHITE_LABEL", {})
+    login_capability = capabilities["features"].get("FEAT_CUSTOM_LOGIN_PAGE", {})
+
+    def resolved_configuration(key: str, capability: dict) -> dict:
+        configured = templates.get(key)
+        if not isinstance(configured, dict) or not configured.get("enabled"):
+            return {"enabled": False, "reason_code": "NOT_CONFIGURED"}
+        if not capability.get("enabled"):
+            return {
+                "enabled": False,
+                "reason_code": capability.get("reason_code") or "NOT_ENTITLED",
+            }
+        return configured
+
+    safe_tokens = {
+        key: value
+        for key, value in (profile.tokens or {}).items()
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", str(key))
+        and isinstance(value, (str, int, float, bool))
+        and "css" not in str(key).lower()
+        and "script" not in str(key).lower()
+    } if profile else {}
+    async with TenantContextGuard.scoped(db, organization.id):
+        def public_asset_url(reference: Any) -> Any:
+            if not isinstance(reference, str) or not reference.lstrip("/").startswith(
+                f"{organization.id}/"
+            ):
+                return reference
+            return presentation_upload_service.create_presigned_download(
+                bucket=settings.S3_BUCKET_ASSETS,
+                storage_path=reference.lstrip("/"),
+                expiry_seconds=300,
+                inline=True,
+            )
+
+        public_assets = {
+            key: public_asset_url(value)
+            for key, value in (profile.assets or {}).items()
+        } if profile else {}
+        public_login = resolved_configuration("login_page", login_capability)
+        for field in ("logo_asset_ref", "background_asset_ref"):
+            if public_login.get(field):
+                public_login[field.removesuffix("_ref") + "_url"] = public_asset_url(
+                    public_login[field]
+                )
+                public_login.pop(field, None)
+
+        response.headers["Cache-Control"] = "public, max-age=60, must-revalidate"
+        return {
+            "organization": {
+                "slug": organization.slug,
+                "name": organization.name,
+            },
+            "published": profile is not None,
+            "published_version": profile.published_version if profile else None,
+            "assets": public_assets,
+            "tokens": safe_tokens,
+            "white_label": resolved_configuration("white_label", white_capability),
+            "login_page": public_login,
+            "freshness_at": capabilities["freshness_at"],
+        }
+
+
 @router.get("/organizations/{org_id}/domains")
 async def get_organization_domains(
     org_id: uuid.UUID,
@@ -3639,6 +4050,12 @@ async def add_organization_domain(
     current_user: User = Depends(require_platform_admin)
 ):
     """Add a new custom domain for an organization."""
+    await enforce_org_operation(
+        db,
+        org_id,
+        "branding.custom_domain.manage",
+        user_id=current_user.id,
+    )
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3686,6 +4103,12 @@ async def delete_organization_domain(
     current_user: User = Depends(require_platform_admin)
 ):
     """Remove a domain mapping."""
+    await enforce_org_operation(
+        db,
+        org_id,
+        "branding.custom_domain.manage",
+        user_id=current_user.id,
+    )
     stmt = select(OrganizationDomain).where(
         and_(OrganizationDomain.organization_id == org_id, OrganizationDomain.id == domain_id)
     )
@@ -3734,6 +4157,12 @@ async def verify_organization_domain(
     current_user: User = Depends(require_platform_admin)
 ):
     """Mark a domain as verified and activate it as the primary custom domain."""
+    await enforce_org_operation(
+        db,
+        org_id,
+        "branding.custom_domain.manage",
+        user_id=current_user.id,
+    )
     stmt = select(OrganizationDomain).where(
         and_(OrganizationDomain.organization_id == org_id, OrganizationDomain.id == domain_id)
     )
@@ -3976,8 +4405,6 @@ class PlanPatchRequest(BaseModel):
     max_badge_templates: Optional[int] = None
     max_certificate_templates: Optional[int] = None
     max_emails_per_event: Optional[int] = None
-    price_per_event_min: Optional[int] = None
-    price_per_event_max: Optional[int] = None
     price_per_event: Optional[float] = None
     currency: Optional[str] = None
     billing_model: Optional[str] = None
@@ -3992,30 +4419,113 @@ async def patch_plan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
-    """Update subscription plan limits, details, or active toggle (Super Admin)."""
-    is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
-    if not is_super:
-        raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-        
-    plan = await db.get(SubscriptionPlan, plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-        
-    for field, val in payload.model_dump(exclude_unset=True).items():
-        setattr(plan, field, val)
-        
-    await db.commit()
-    await db.refresh(plan)
-    return {"message": "Plan updated successfully", "plan": plan.name}
+    """Retired Boolean/legacy-limit mutation route."""
+    del plan_id, payload, db, current_user
+    _governed_commercial_workflow_required("versioned-subscription-plan-update")
 
 
+class TypedFeatureAssignmentPayload(BaseModel):
+    feature_key: str
+    name: Optional[str] = None
+    value_type: str = "BOOLEAN"
+    value: Any = True
+    scope_type: str = "EVENT"
+    enforcement_mode: str = "HARD"
+    hard_ceiling: Optional[int] = None
+    allowed_values: Optional[List[str]] = None
+    unit: Optional[str] = None
 class PlanFeaturesBulkUpdate(BaseModel):
-    feature_keys: List[str]
+    feature_keys: Optional[List[str]] = Field(default=None)
+    assignments: Optional[List[TypedFeatureAssignmentPayload]] = Field(default=None)
+
+@router.get("/plans/{plan_id}/feature-assignments")
+@router.get("/subscription-plans/{plan_id}/feature-assignments")
+async def get_typed_plan_feature_assignments(plan_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
+    if not await db.get(SubscriptionPlan, plan_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+    rows = (await db.execute(select(PlanFeature, FeatureCatalog).join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id).where(PlanFeature.plan_id == plan_id).order_by(FeatureCatalog.category_order, FeatureCatalog.feature_order))).all()
+    items = []
+    for mapping, feature in rows:
+        v_type = feature.value_type or mapping.value_type or "BOOLEAN"
+        if isinstance(mapping.entitlement_value, dict) and "value" in mapping.entitlement_value:
+            val = mapping.entitlement_value["value"]
+        else:
+            val = None if v_type == "LIMIT" else mapping.enabled
+        ceiling = mapping.hard_ceiling.get("value") if isinstance(mapping.hard_ceiling, dict) else mapping.hard_ceiling
+        items.append({
+            "feature_key": feature.key,
+            "name": feature.name,
+            "value_type": v_type,
+            "value": val,
+            "scope_type": mapping.scope_type or feature.scope_type,
+            "enforcement_mode": mapping.enforcement_mode or feature.enforcement_mode,
+            "hard_ceiling": ceiling,
+            "allowed_values": feature.allowed_values,
+            "unit": feature.unit,
+            "period": feature.period
+        })
+    return {"items": items}
+
+
+@router.get("/subscription-plans/{plan_id}/versions")
+async def list_plan_template_versions(
+    plan_id: uuid.UUID,
+    cursor: Optional[str] = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin),
+):
+    del current_user
+    if not await db.get(SubscriptionPlan, plan_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+    stmt = select(CommercialTemplateVersion).where(
+        CommercialTemplateVersion.resource_type == "PLAN",
+        CommercialTemplateVersion.resource_id == plan_id,
+    )
+    if cursor:
+        try:
+            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
+            created_raw, version_raw = decoded.split("|", 1)
+            created_before = datetime.fromisoformat(created_raw)
+            version_before = int(version_raw)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_CURSOR"}) from exc
+        stmt = stmt.where(or_(
+            CommercialTemplateVersion.created_at < created_before,
+            and_(
+                CommercialTemplateVersion.created_at == created_before,
+                CommercialTemplateVersion.version < version_before,
+            ),
+        ))
+    rows = (await db.scalars(stmt.order_by(
+        CommercialTemplateVersion.created_at.desc(),
+        CommercialTemplateVersion.version.desc(),
+    ).limit(limit + 1))).all()
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit and page:
+        last = page[-1]
+        next_cursor = base64.urlsafe_b64encode(f"{last.created_at.isoformat()}|{last.version}".encode()).decode()
+    return {
+        "items": [{
+            "id": str(row.id), "version": row.version,
+            "lifecycle_status": row.lifecycle_status, "change_type": row.change_type,
+            "snapshot": row.snapshot_json, "reason": row.reason,
+            "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
+            "created_at": row.created_at,
+        } for row in page],
+        "next_cursor": next_cursor,
+    }
 
 @router.put("/plans/{plan_id}/features")
+@router.put("/subscription-plans/{plan_id}/features")
 async def bulk_update_plan_features(
     plan_id: uuid.UUID,
     payload: PlanFeaturesBulkUpdate,
+    step_up: StepUpAuth,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -4023,21 +4533,122 @@ async def bulk_update_plan_features(
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
+    del step_up
+    request_payload = payload.model_dump(mode="json")
+    request_hash = _commercial_request_hash("PLAN", plan_id, {"assignments": request_payload})
+    replay = await _commercial_version_replay(db, "PLAN", idempotency_key, request_hash)
+    if replay:
+        return {"message": "Plan features already updated", "organizations_affected": 0, "version": replay.version, "replayed": True}
         
     plan = await db.get(SubscriptionPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
+    if plan.version != expected_version:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": plan.version})
+    if plan.lifecycle_status == "RETIRED":
+        raise HTTPException(status_code=409, detail={"code": "RETIRED_PLAN_IMMUTABLE"})
+    requested_keys = payload.feature_keys or [assignment.feature_key for assignment in (payload.assignments or [])]
+    if plan.lifecycle_status == "PUBLISHED" and not requested_keys:
+        raise HTTPException(status_code=422, detail={"code": "PUBLISHED_PLAN_ASSIGNMENTS_REQUIRED"})
         
     # Delete current mappings
     await db.execute(delete(PlanFeature).where(PlanFeature.plan_id == plan_id))
     
     # Insert new mappings
-    if payload.feature_keys:
-        feat_stmt = select(FeatureCatalog).where(FeatureCatalog.key.in_(payload.feature_keys))
+    assignments = payload.assignments or []
+    feature_keys = payload.feature_keys or [a.feature_key for a in assignments]
+    if feature_keys:
+        feat_stmt = select(FeatureCatalog).where(FeatureCatalog.key.in_(feature_keys))
         features = (await db.execute(feat_stmt)).scalars().all()
-        for f in features:
-            db.add(PlanFeature(plan_id=plan_id, feature_id=f.id, enabled=True))
+        by_key = {f.key: f for f in features}
+        missing = sorted(set(feature_keys) - set(by_key))
+        if missing:
+            raise HTTPException(status_code=422, detail={"code": "UNKNOWN_FEATURE_KEYS", "keys": missing})
+        inactive = sorted(feature.key for feature in features if not feature.is_active)
+        if inactive:
+            raise HTTPException(status_code=422, detail={"code": "INACTIVE_FEATURE_KEYS", "keys": inactive})
+        valid_keys = set(FEATURE_DEFINITIONS) | set(CATALOG_LIMIT_KEYS) | set(by_key.keys())
+        unenforced = sorted(set(feature_keys) - valid_keys)
+        if unenforced:
+            raise HTTPException(status_code=422, detail={"code": "UNENFORCED_FEATURE_KEYS", "keys": unenforced})
+        
+        plan_defaults = {
+            "LIMIT_ORGANIZER_USERS": plan.max_users,
+            "LIMIT_REGISTRATIONS": plan.max_registrations,
+            "LIMIT_SPEAKERS": plan.max_speakers,
+            "LIMIT_SESSIONS": plan.max_sessions,
+            "LIMIT_ROOMS": plan.max_rooms,
+            "LIMIT_STORAGE": plan.storage_quota_mb,
+            "FEAT_TICKET_CATEGORIES": plan.max_ticket_categories,
+            "FEAT_BADGE_TEMPLATES": plan.max_badge_templates,
+            "FEAT_CERTIFICATE_TEMPLATES": plan.max_certificate_templates,
+            "FEAT_EMAIL_NOTIFICATIONS": plan.max_emails_per_event,
+        }
+
+        if payload.assignments:
+            for assignment in payload.assignments:
+                if assignment.feature_key in by_key:
+                    f = by_key[assignment.feature_key]
+                    val_type = (f.value_type or "BOOLEAN").upper()
+                    if assignment.value_type.upper() != val_type:
+                        raise HTTPException(status_code=422, detail={
+                            "code": "FEATURE_TYPE_MISMATCH",
+                            "feature_key": f.key,
+                            "expected": val_type,
+                            "received": assignment.value_type,
+                        })
+                    val = assignment.value
+                    # Honor explicit enabled from payload (supports toggle off).
+                    # For LIMIT features — always enabled=True (the limit itself is what controls access).
+                    # For BOOLEAN features — enabled mirrors the boolean value.
+                    if val_type == "LIMIT":
+                        if val is None:
+                            val = plan_defaults.get(f.key) if plan_defaults.get(f.key) is not None else 0
+                        if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0:
+                            raise HTTPException(status_code=422, detail={"code": "INVALID_LIMIT_VALUE", "feature_key": f.key})
+                        val = int(val)
+                        # For LIMIT features: enabled reflects whether the feature is available at all.
+                        # A limit of 0 means blocked; otherwise always enabled=True.
+                        enabled = val > 0 if isinstance(val, int) else True
+                    elif val_type == "BOOLEAN":
+                        if not isinstance(val, bool):
+                            raise HTTPException(status_code=422, detail={"code": "INVALID_BOOLEAN_VALUE", "feature_key": f.key})
+                        enabled = val
+                    else:
+                        if val not in (f.allowed_values or []):
+                            raise HTTPException(status_code=422, detail={
+                                "code": "INVALID_ENUM_VALUE",
+                                "feature_key": f.key,
+                                "allowed_values": f.allowed_values or [],
+                            })
+                        enabled = True
+                    if assignment.hard_ceiling is not None:
+                        if assignment.hard_ceiling < 0:
+                            raise HTTPException(status_code=422, detail={"code": "INVALID_HARD_CEILING", "feature_key": f.key})
+                        if val_type == "LIMIT" and assignment.hard_ceiling < val:
+                            raise HTTPException(status_code=422, detail={"code": "CEILING_BELOW_ALLOWANCE", "feature_key": f.key})
+
+                    db.add(PlanFeature(
+                        plan_id=plan_id,
+                        feature_id=f.id,
+                        enabled=enabled,
+                        value_type=val_type,
+                        entitlement_value={"value": val} if val is not None else None,
+                        scope_type=assignment.scope_type or f.scope_type,
+                        enforcement_mode=assignment.enforcement_mode or "HARD",
+                        hard_ceiling={"value": assignment.hard_ceiling} if assignment.hard_ceiling is not None else None,
+                        version=plan.version + 1 if hasattr(plan, "version") else 1
+                    ))
+        else:
+            for f in features:
+                db.add(PlanFeature(plan_id=plan_id, feature_id=f.id, enabled=True, value_type=f.value_type, scope_type=f.scope_type))
             
+    plan.version = expected_version + 1
+    await db.flush()
+    await _record_plan_template_version(
+        db, plan, actor=current_user, idempotency_key=idempotency_key,
+        request_hash=request_hash, reason=reason, change_type="ENTITLEMENTS_UPDATED",
+    )
     await db.commit()
     
     # Calculate affected organizations count
@@ -4046,51 +4657,164 @@ async def bulk_update_plan_features(
         .where(OrganizationSubscription.plan_id == plan_id)
     ) or 0
     
-    return {"message": "Plan features updated successfully", "organizations_affected": org_count}
+    return {"message": "Plan features updated successfully", "organizations_affected": org_count, "version": plan.version, "replayed": False}
 
 
 # ── Add-ons Extensions ──────────────────────────────────────────
 
+class AddonFeatureAssignmentPayload(BaseModel):
+    feature_key: str
+    value_type: Literal["BOOLEAN", "LIMIT", "TIER", "ENUM"] = "BOOLEAN"
+    value: Any = True
+    scope_type: str = "EVENT"
+    operation: Literal["REPLACE", "INCREMENT", "DECREMENT", "UNLOCK"] = "UNLOCK"
+    validity_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    stackable: bool = False
+    max_quantity: Optional[int] = Field(default=None, ge=1)
+
+
+async def _replace_addon_feature_assignments(
+    db: AsyncSession,
+    addon_id: uuid.UUID,
+    assignments: Optional[List[AddonFeatureAssignmentPayload]],
+    compatibility_feature_ids: Optional[List[uuid.UUID]],
+) -> None:
+    """Validate and replace the typed add-on mapping as one atomic unit."""
+    if assignments is None and compatibility_feature_ids is None:
+        return
+
+    requested = assignments or []
+    feature_keys = [item.feature_key.strip().upper() for item in requested]
+    if len(feature_keys) != len(set(feature_keys)):
+        raise HTTPException(status_code=422, detail="Duplicate feature keys are not allowed in an add-on")
+
+    by_key: Dict[str, FeatureCatalog] = {}
+    if feature_keys:
+        features = (await db.execute(
+            select(FeatureCatalog).where(FeatureCatalog.key.in_(feature_keys))
+        )).scalars().all()
+        by_key = {feature.key: feature for feature in features}
+        missing = sorted(set(feature_keys) - set(by_key))
+        if missing:
+            raise HTTPException(status_code=422, detail={"code": "UNKNOWN_FEATURE_KEYS", "keys": missing})
+    elif compatibility_feature_ids:
+        features = (await db.execute(
+            select(FeatureCatalog).where(FeatureCatalog.id.in_(compatibility_feature_ids))
+        )).scalars().all()
+        if len(features) != len(set(compatibility_feature_ids)):
+            raise HTTPException(status_code=422, detail="One or more feature IDs are unknown")
+        requested = [
+            AddonFeatureAssignmentPayload(
+                feature_key=feature.key,
+                value_type=feature.value_type or "BOOLEAN",
+                value=True,
+                scope_type=feature.scope_type or "EVENT",
+                operation="UNLOCK",
+            )
+            for feature in features
+        ]
+        by_key = {feature.key: feature for feature in features}
+
+    normalized: list[tuple[FeatureCatalog, AddonFeatureAssignmentPayload, Any]] = []
+    for item in requested:
+        key = item.feature_key.strip().upper()
+        feature = by_key[key]
+        if not feature.is_active:
+            raise HTTPException(status_code=422, detail={"code": "INACTIVE_FEATURE", "feature_key": key})
+        canonical_type = (feature.value_type or "BOOLEAN").upper()
+        if item.value_type != canonical_type:
+            raise HTTPException(status_code=422, detail={
+                "code": "FEATURE_TYPE_MISMATCH",
+                "feature_key": key,
+                "expected": canonical_type,
+                "received": item.value_type,
+            })
+        value = item.value
+        if canonical_type == "BOOLEAN" and not isinstance(value, bool):
+            raise HTTPException(status_code=422, detail={"code": "INVALID_BOOLEAN_VALUE", "feature_key": key})
+        if canonical_type == "LIMIT" and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
+            raise HTTPException(status_code=422, detail={"code": "INVALID_LIMIT_VALUE", "feature_key": key})
+        if canonical_type in {"TIER", "ENUM"} and value not in (feature.allowed_values or []):
+            raise HTTPException(status_code=422, detail={
+                "code": "INVALID_ENUM_VALUE",
+                "feature_key": key,
+                "allowed_values": feature.allowed_values or [],
+            })
+        if item.operation in {"INCREMENT", "DECREMENT"} and canonical_type != "LIMIT":
+            raise HTTPException(status_code=422, detail={"code": "INVALID_ADDON_OPERATION", "feature_key": key})
+        normalized.append((feature, item, value))
+
+    await db.execute(delete(AddonFeature).where(AddonFeature.addon_id == addon_id))
+    for feature, item, value in normalized:
+        db.add(AddonFeature(
+            addon_id=addon_id,
+            feature_id=feature.id,
+            value_type=feature.value_type,
+            entitlement_value={"value": value},
+            operation=item.operation,
+            scope_type=item.scope_type or feature.scope_type,
+            validity_days=item.validity_days,
+            stackable=item.stackable,
+            max_quantity=item.max_quantity,
+        ))
+
+
 class AddonPostRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     key: str
     description: Optional[str] = None
     addon_type: str = "PLAN"
+    scope_type: Literal["ORGANIZATION", "EVENT"] = "EVENT"
+    consumption_model: Literal["NON_CONSUMABLE", "QUOTA", "METERED"] = "NON_CONSUMABLE"
+    unit_type: Optional[str] = None
     short_description: Optional[str] = None
     image_url: Optional[str] = None
     price_inr: Optional[float] = None
     min_price_inr: Optional[float] = None
     max_price_inr: Optional[float] = None
     billing_unit: str  # 'PER_EVENT' | 'PER_MONTH' | 'CUSTOM'
-    available_for_plans: List[str] = []
+    price_unit: Optional[str] = None
+    available_for_plans: List[str] = Field(default_factory=list)
     is_optional_for_plan: Optional[str] = None
     included_in_plan: Optional[str] = None
     is_active: bool = True
-    feature_ids: List[uuid.UUID] = []
-    features_spec: List[Dict[str, Any]] = []
-    hardware_spec: List[Dict[str, Any]] = []
-    staff_spec: List[Dict[str, Any]] = []
-    inclusions: List[str] = []
-    exclusions: List[str] = []
+    lifecycle_status: Literal["DRAFT", "REVIEW", "PUBLISHED", "RETIRED"] = "DRAFT"
+    feature_ids: List[uuid.UUID] = Field(default_factory=list)
+    feature_assignments: List[AddonFeatureAssignmentPayload] = Field(default_factory=list)
+    features_spec: List[Dict[str, Any]] = Field(default_factory=list)
+    hardware_spec: List[Dict[str, Any]] = Field(default_factory=list)
+    staff_spec: List[Dict[str, Any]] = Field(default_factory=list)
+    inclusions: List[str] = Field(default_factory=list)
+    exclusions: List[str] = Field(default_factory=list)
     consumables_cost: float = 0
-    template_types: List[str] = []
+    template_types: List[str] = Field(default_factory=list)
 
 class AddonPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = None
     key: Optional[str] = None
     description: Optional[str] = None
     addon_type: Optional[str] = None
+    scope_type: Optional[Literal["ORGANIZATION", "EVENT"]] = None
+    consumption_model: Optional[Literal["NON_CONSUMABLE", "QUOTA", "METERED"]] = None
+    unit_type: Optional[str] = None
     short_description: Optional[str] = None
     image_url: Optional[str] = None
     price_inr: Optional[float] = None
     min_price_inr: Optional[float] = None
     max_price_inr: Optional[float] = None
     billing_unit: Optional[str] = None
+    price_unit: Optional[str] = None
     available_for_plans: Optional[List[str]] = None
     is_optional_for_plan: Optional[str] = None
     included_in_plan: Optional[str] = None
     is_active: Optional[bool] = None
+    lifecycle_status: Optional[Literal["DRAFT", "REVIEW", "PUBLISHED", "RETIRED"]] = None
     feature_ids: Optional[List[uuid.UUID]] = None
+    feature_assignments: Optional[List[AddonFeatureAssignmentPayload]] = None
     features_spec: Optional[List[Dict[str, Any]]] = None
     hardware_spec: Optional[List[Dict[str, Any]]] = None
     staff_spec: Optional[List[Dict[str, Any]]] = None
@@ -4099,9 +4823,63 @@ class AddonPatchRequest(BaseModel):
     consumables_cost: Optional[float] = None
     template_types: Optional[List[str]] = None
 
+
+@router.get("/addons/{addon_id}/versions")
+async def list_addon_template_versions(
+    addon_id: uuid.UUID,
+    cursor: Optional[str] = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_platform_admin),
+):
+    del current_user
+    if not await db.get(Addon, addon_id):
+        raise HTTPException(status_code=404, detail="Add-on not found")
+    stmt = select(CommercialTemplateVersion).where(
+        CommercialTemplateVersion.resource_type == "ADDON",
+        CommercialTemplateVersion.resource_id == addon_id,
+    )
+    if cursor:
+        try:
+            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
+            created_raw, version_raw = decoded.split("|", 1)
+            created_before = datetime.fromisoformat(created_raw)
+            version_before = int(version_raw)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_CURSOR"}) from exc
+        stmt = stmt.where(or_(
+            CommercialTemplateVersion.created_at < created_before,
+            and_(
+                CommercialTemplateVersion.created_at == created_before,
+                CommercialTemplateVersion.version < version_before,
+            ),
+        ))
+    rows = (await db.scalars(stmt.order_by(
+        CommercialTemplateVersion.created_at.desc(),
+        CommercialTemplateVersion.version.desc(),
+    ).limit(limit + 1))).all()
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit and page:
+        last = page[-1]
+        next_cursor = base64.urlsafe_b64encode(f"{last.created_at.isoformat()}|{last.version}".encode()).decode()
+    return {
+        "items": [{
+            "id": str(row.id), "version": row.version,
+            "lifecycle_status": row.lifecycle_status, "change_type": row.change_type,
+            "snapshot": row.snapshot_json, "reason": row.reason,
+            "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
+            "created_at": row.created_at,
+        } for row in page],
+        "next_cursor": next_cursor,
+    }
+
 @router.post("/addons", status_code=201)
 async def create_platform_addon(
     payload: AddonPostRequest,
+    step_up: StepUpAuth,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -4109,8 +4887,22 @@ async def create_platform_addon(
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-        
-    
+    del step_up
+    if payload.lifecycle_status in {"PUBLISHED", "RETIRED"}:
+        raise HTTPException(status_code=422, detail={"code": "ADDON_MUST_START_AS_DRAFT_OR_REVIEW"})
+    request_payload = payload.model_dump(mode="json")
+    request_hash = _commercial_request_hash("ADDON", None, request_payload)
+    replay = await _commercial_version_replay(db, "ADDON", idempotency_key, request_hash)
+    if replay:
+        existing_addon = await db.get(Addon, replay.resource_id)
+        return {
+            "message": "Add-on already created",
+            "addon_id": replay.resource_id,
+            "addon": existing_addon.name if existing_addon else None,
+            "version": replay.version,
+            "replayed": True,
+        }
+
     # Check duplicate key
     stmt = select(Addon).where(Addon.key == payload.key)
     existing = (await db.execute(stmt)).scalar_one_or_none()
@@ -4120,7 +4912,6 @@ async def create_platform_addon(
     addon_type = payload.addon_type.upper()
     hardware_spec = payload.hardware_spec if addon_type == "VENUE" else []
     staff_spec = payload.staff_spec if addon_type == "VENUE" else []
-        
     final_price = await calculate_addon_final_price(
         db,
         addon_type=addon_type,
@@ -4142,10 +4933,15 @@ async def create_platform_addon(
         max_price_inr=payload.max_price_inr,
         billing_unit=payload.billing_unit,
         price_unit=getattr(payload, "price_unit", None),
+        scope_type=payload.scope_type,
+        consumption_model=payload.consumption_model,
+        unit_type=payload.unit_type,
         available_for_plans=payload.available_for_plans,
         is_optional_for_plan=payload.is_optional_for_plan,
         included_in_plan=payload.included_in_plan,
-        is_active=payload.is_active,
+        is_active=False,
+        lifecycle_status=payload.lifecycle_status,
+        version=1,
         features_spec=payload.features_spec,
         hardware_spec=hardware_spec,
         staff_spec=staff_spec,
@@ -4158,18 +4954,28 @@ async def create_platform_addon(
     db.add(addon)
     await db.flush()  # To get addon.id
     
-    # Add features mapping
-    if payload.feature_ids:
-        for fid in payload.feature_ids:
-            db.add(AddonFeature(addon_id=addon.id, feature_id=fid))
-            
+    await _replace_addon_feature_assignments(
+        db,
+        addon.id,
+        payload.feature_assignments if payload.feature_assignments else None,
+        payload.feature_ids if payload.feature_ids else None,
+    )
+    await db.flush()
+    await _record_addon_template_version(
+        db, addon, actor=current_user, idempotency_key=idempotency_key,
+        request_hash=request_hash, reason=reason, change_type="CREATED",
+    )
     await db.commit()
-    return {"message": "Add-on created successfully", "addon_id": addon.id}
+    return {"message": "Add-on created successfully", "addon_id": addon.id, "version": addon.version, "replayed": False}
 
 @router.patch("/addons/{addon_id}")
 async def patch_platform_addon(
     addon_id: uuid.UUID,
     payload: AddonPatchRequest,
+    step_up: StepUpAuth,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
@@ -4177,13 +4983,23 @@ async def patch_platform_addon(
     is_super = current_user.platform_role == "SUPER_ADMIN" or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_super:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN required")
-        
-    
+    del step_up
+    request_payload = payload.model_dump(mode="json", exclude_unset=True)
+    request_hash = _commercial_request_hash("ADDON", addon_id, request_payload)
+    replay = await _commercial_version_replay(db, "ADDON", idempotency_key, request_hash)
+    if replay:
+        return {"message": "Add-on update already applied", "version": replay.version, "replayed": True}
+
     addon = await db.get(Addon, addon_id)
     if not addon:
         raise HTTPException(status_code=404, detail="Add-on not found")
-        
-    update_data = payload.model_dump(exclude_unset=True, exclude={"feature_ids"})
+    if addon.version != expected_version:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": addon.version})
+    if addon.lifecycle_status == "RETIRED":
+        raise HTTPException(status_code=409, detail={"code": "RETIRED_ADDON_IMMUTABLE", "message": "Clone a retired add-on to create a new draft."})
+
+    update_data = payload.model_dump(exclude_unset=True, exclude={"feature_ids", "feature_assignments"})
+    previous_lifecycle = addon.lifecycle_status
     addon_type = update_data.get("addon_type", addon.addon_type).upper() if update_data.get("addon_type") else addon.addon_type
     if addon_type != "VENUE":
         update_data["hardware_spec"] = []
@@ -4192,6 +5008,24 @@ async def patch_platform_addon(
         if field == "addon_type" and isinstance(val, str):
             val = val.upper()
         setattr(addon, field, val)
+    target_lifecycle = payload.lifecycle_status or addon.lifecycle_status
+    if target_lifecycle == "PUBLISHED" and addon.addon_type == "PLAN":
+        proposed_assignments = payload.feature_assignments
+        if proposed_assignments is not None:
+            has_assignments = bool(proposed_assignments)
+        else:
+            has_assignments = bool(await db.scalar(select(func.count(AddonFeature.feature_id)).where(AddonFeature.addon_id == addon_id)))
+        if not has_assignments:
+            raise HTTPException(status_code=422, detail={"code": "ADDON_ASSIGNMENTS_REQUIRED"})
+    if target_lifecycle == "PUBLISHED" and previous_lifecycle != "PUBLISHED":
+        addon.effective_at = datetime.now(timezone.utc)
+        addon.is_active = True
+    if target_lifecycle == "RETIRED":
+        addon.retired_at = datetime.now(timezone.utc)
+        addon.is_active = False
+    addon.lifecycle_status = target_lifecycle
+    addon.is_active = bool(update_data.get("is_active", addon.is_active)) and target_lifecycle == "PUBLISHED"
+    addon.version = expected_version + 1
         
     # Recalculate final_price
     addon.final_price = await calculate_addon_final_price(
@@ -4203,48 +5037,54 @@ async def patch_platform_addon(
         staff_spec=addon.staff_spec or []
     )
         
-    # Update feature mappings if provided
-    if payload.feature_ids is not None:
-        # Delete existing mappings
-        await db.execute(delete(AddonFeature).where(AddonFeature.addon_id == addon_id))
-        # Add new mappings
-        for fid in payload.feature_ids:
-            db.add(AddonFeature(addon_id=addon_id, feature_id=fid))
-            
+    await _replace_addon_feature_assignments(
+        db,
+        addon_id,
+        payload.feature_assignments,
+        payload.feature_ids,
+    )
+    await db.flush()
+    await _record_addon_template_version(
+        db, addon, actor=current_user, idempotency_key=idempotency_key,
+        request_hash=request_hash, reason=reason, change_type="UPDATED",
+    )
     await db.commit()
-    return {"message": "Add-on updated successfully", "addon": addon.name}
+    return {"message": "Add-on updated successfully", "addon": addon.name, "version": addon.version, "replayed": False}
 
-@router.delete("/addons/{addon_id}", status_code=204)
+@router.delete("/addons/{addon_id}")
 async def delete_platform_addon(
     addon_id: uuid.UUID,
-    payload: ReasonRequiredRequest,
+    step_up: StepUpAuth,
+    expected_version: int = Header(..., alias="If-Match", ge=1),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
-    """Delete a manually managed add-on."""
+    """Retire an add-on while preserving contracts, lineage, and history."""
+    del step_up
+    request_hash = _commercial_request_hash("ADDON", addon_id, {"lifecycle_status": "RETIRED"})
+    replay = await _commercial_version_replay(db, "ADDON", idempotency_key, request_hash)
+    if replay:
+        return {"message": "Add-on retirement already applied", "version": replay.version, "replayed": True}
     addon = await db.get(Addon, addon_id)
     if not addon:
         raise HTTPException(status_code=404, detail="Add-on not found")
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=None,
-        action_type="ADDON_DELETED",
-        resource_type="addon",
-        resource_id=addon_id,
-        old_state={
-            "id": str(addon.id),
-            "name": addon.name,
-            "key": getattr(addon, "key", None),
-            "is_active": getattr(addon, "is_active", None),
-            "billing_unit": getattr(addon, "billing_unit", None),
-        },
-        new_state=None,
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.delete(addon)
+    if addon.version != expected_version:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "expected": expected_version, "actual": addon.version})
+    if addon.lifecycle_status == "RETIRED":
+        raise HTTPException(status_code=409, detail={"code": "ADDON_ALREADY_RETIRED"})
+    addon.lifecycle_status = "RETIRED"
+    addon.is_active = False
+    addon.retired_at = datetime.now(timezone.utc)
+    addon.version = expected_version + 1
+    await db.flush()
+    await _record_addon_template_version(
+        db, addon, actor=current_user, idempotency_key=idempotency_key,
+        request_hash=request_hash, reason=reason, change_type="RETIRED",
+    )
     await db.commit()
+    return {"message": "Add-on retired", "version": addon.version, "replayed": False}
 
 
 # ── Subscriptions Extensions ───────────────────────────────────
@@ -4261,6 +5101,7 @@ async def bulk_extend_trial(
     current_user: User = Depends(require_platform_admin)
 ):
     """Extend trial period for multiple organization subscriptions (Super Admin)."""
+    _governed_commercial_workflow_required("entitlement-override-request")
     for org_id in payload.org_ids:
         sub = await _get_current_subscription(db, org_id)
         if sub:
@@ -4309,6 +5150,7 @@ async def bulk_change_plan(
     current_user: User = Depends(require_platform_admin)
 ):
     """Migrate multiple organizations to a new subscription plan (Super Admin)."""
+    _governed_commercial_workflow_required("commercial-access-request")
     plan = await db.get(SubscriptionPlan, payload.plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Selected plan not found")
@@ -4364,6 +5206,7 @@ async def cancel_subscription(
     current_user: User = Depends(require_platform_admin)
 ):
     """Flag an active subscription as CANCELLED (Super Admin)."""
+    _governed_commercial_workflow_required("commercial-access-request")
     sub = await db.get(OrganizationSubscription, subscription_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
@@ -4399,6 +5242,7 @@ async def reactivate_subscription(
     current_user: User = Depends(require_platform_admin)
 ):
     """Reactivate a cancelled/expired subscription back to ACTIVE (Super Admin)."""
+    _governed_commercial_workflow_required("commercial-access-request")
     sub = await db.get(OrganizationSubscription, subscription_id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
@@ -5086,9 +5930,9 @@ async def get_impersonation_logs_route(
                 l.started_at,
                 l.ended_at,
                 COALESCE(u1.first_name || ' ' || u1.last_name, 'Super Admin') as impersonator_name,
-                COALESCE(u1.email, 'superadmin@eventx.com') as impersonator_email,
+                COALESCE(u1.email, 'superadmin@Event.com') as impersonator_email,
                 COALESCE(u2.first_name || ' ' || u2.last_name, 'Organizer') as target_user_name,
-                COALESCE(u2.email, 'organizer@eventxos.com') as target_user_email,
+                COALESCE(u2.email, 'organizer@Eventos.com') as target_user_email,
                 COALESCE(o.name, 'Platform') as org_name
             FROM auth.impersonation_logs l
             LEFT JOIN identity.users u1 ON l.impersonator_id = u1.id

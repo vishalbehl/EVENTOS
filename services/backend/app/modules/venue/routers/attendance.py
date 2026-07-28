@@ -1,21 +1,25 @@
 # backend/app/routers/attendance.py
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
+from app.dependencies import get_db, get_current_user, CurrentEvent
+from app.core.dependencies.feature_gate import require_event_operation
 from app.modules.analytics.models.attendance_log import AttendanceLog
-from app.modules.registration.models.check_in import CheckIn
+from app.modules.audit.models.audit_log import AuditLog
+from app.modules.identity.models.user import User
+from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.badge_models import Badge
 from app.modules.events.models.session import Session
-from app.modules.events.models.capacity_rule import CapacityRule
+from app.modules.registration.services.checkin_service import CheckInService
 from app.modules.venue.schemas.attendance import (
     CheckInRequest,
     CheckOutRequest,
@@ -23,7 +27,7 @@ from app.modules.venue.schemas.attendance import (
     AttendanceMetricsResponse,
 )
 
-router = APIRouter(prefix="/events/{event_id}/attendance", tags=["attendance"])
+router = APIRouter(prefix="/events/{event_id}/attendance", tags=["attendance"], dependencies=[require_event_operation("registration.checkin")])
 
 
 async def resolve_participant_id(
@@ -62,8 +66,10 @@ async def resolve_participant_id(
 
 @router.post("/checkin", response_model=AttendanceLogResponse, status_code=status.HTTP_201_CREATED)
 async def check_in_participant(
-    event_id: uuid.UUID,
     payload: CheckInRequest,
+    event: CurrentEvent,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -71,83 +77,76 @@ async def check_in_participant(
     updates both legacy check_ins and new attendance_logs.
     """
     p_id = await resolve_participant_id(
-        db, event_id, payload.participant_id, payload.badge_code, payload.nfc_uid
+        db, event.id, payload.participant_id, payload.badge_code, payload.nfc_uid
     )
 
     if not payload.session_id:
         raise HTTPException(status_code=400, detail="session_id is required for check-in")
 
-    session = await db.get(Session, payload.session_id)
-    if not session or session.event_id != event_id:
-        raise HTTPException(status_code=404, detail="Session not found for this event")
-
-    # 1. Enforce Capacity Rules (Lowest wins)
-    # Check Session Rule
-    q_sess_rule = select(CapacityRule).where(
-        CapacityRule.event_id == event_id,
-        CapacityRule.session_id == session.id
+    request_hash = hashlib.sha256(
+        f"CHECK_IN:{event.id}:{p_id}:{payload.session_id}:{payload.method}:{payload.device_id}".encode("utf-8")
+    ).hexdigest()
+    replay = await CheckInService.acquire_mutation(
+        db,
+        event=event,
+        operation_type="CHECK_IN",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
     )
-    sess_rule = (await db.execute(q_sess_rule)).scalar_one_or_none()
-    if sess_rule:
-        # Check current occupancy in session
-        q_occ = select(func.count(CheckIn.id)).where(CheckIn.session_id == session.id)
-        current_occ = (await db.execute(q_occ)).scalar() or 0
-        if current_occ >= sess_rule.capacity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Check-in failed. Session capacity ({sess_rule.capacity}) exceeded."
-            )
+    if replay:
+        if replay.result_attendance_log_id is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESULT_UNAVAILABLE"})
+        replay_log = await db.get(AttendanceLog, replay.result_attendance_log_id)
+        if replay_log is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESULT_UNAVAILABLE"})
+        return replay_log
 
-    # Check Room Rule
-    if session.room_id:
-        q_room_rule = select(CapacityRule).where(
-            CapacityRule.event_id == event_id,
-            CapacityRule.room_id == session.room_id
-        )
-        room_rule = (await db.execute(q_room_rule)).scalar_one_or_none()
-        if room_rule:
-            # Check room occupancy (all sessions checked in in this room)
-            q_occ = select(func.count(CheckIn.id)).join(Session).where(
-                Session.room_id == session.room_id
-            )
-            current_occ = (await db.execute(q_occ)).scalar() or 0
-            if current_occ >= room_rule.capacity:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Check-in failed. Room capacity ({room_rule.capacity}) exceeded."
-                )
+    legacy, legacy_created = await CheckInService.create(db, event, p_id, payload.session_id)
 
-    # 2. Add to legacy check_ins (idempotent)
-    q_legacy = select(CheckIn).where(
-        CheckIn.event_id == event_id,
-        CheckIn.participant_id == p_id,
-        CheckIn.session_id == session.id
-    )
-    legacy = (await db.execute(q_legacy)).scalar_one_or_none()
-    if not legacy:
-        legacy = CheckIn(
-            event_id=event_id,
-            participant_id=p_id,
-            session_id=session.id
-        )
-        db.add(legacy)
-
-    # 3. Add to attendance_logs (idempotent for active sessions)
+    # Detailed attendance remains idempotent while the participant is checked in.
     q_log = select(AttendanceLog).where(
         AttendanceLog.participant_id == p_id,
-        AttendanceLog.session_id == session.id,
+        AttendanceLog.session_id == payload.session_id,
         AttendanceLog.checkout_time.is_(None)
     )
     log = (await db.execute(q_log)).scalar_one_or_none()
     if not log:
         log = AttendanceLog(
             participant_id=p_id,
-            session_id=session.id,
+            session_id=payload.session_id,
             method=payload.method,
             device_id=payload.device_id,
             checkin_time=datetime.now(timezone.utc)
         )
         db.add(log)
+
+    await db.flush()
+    db.add(AttendanceMutation(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        actor_user_id=actor.id,
+        operation_type="CHECK_IN",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        result_checkin_id=legacy.id,
+        result_attendance_log_id=log.id,
+        result_created=legacy_created,
+    ))
+    db.add(AuditLog(
+        organization_id=event.organization_id,
+        actor_user_id=actor.id,
+        actor_role=actor.platform_role or actor.role,
+        resource_type="attendance_log",
+        resource_id=log.id,
+        action_type="ATTENDANCE_CHECKED_IN" if legacy_created else "ATTENDANCE_CHECKIN_RECORDED",
+        new_state={
+            "event_id": str(event.id),
+            "participant_id": str(p_id),
+            "session_id": str(payload.session_id),
+            "method": payload.method,
+            "device_id": payload.device_id,
+        },
+    ))
 
     await db.commit()
     await db.refresh(log)
@@ -156,26 +155,46 @@ async def check_in_participant(
 
 @router.post("/checkout", response_model=AttendanceLogResponse)
 async def check_out_participant(
-    event_id: uuid.UUID,
     payload: CheckOutRequest,
+    event: CurrentEvent,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Check out a participant from a session, logging duration.
     """
     p_id = await resolve_participant_id(
-        db, event_id, payload.participant_id, payload.badge_code, payload.nfc_uid
+        db, event.id, payload.participant_id, payload.badge_code, payload.nfc_uid
     )
 
     if not payload.session_id:
         raise HTTPException(status_code=400, detail="session_id is required for check-out")
 
-    # Find the active check-in log
+    request_hash = hashlib.sha256(
+        f"CHECK_OUT:{event.id}:{p_id}:{payload.session_id}:{payload.device_id}".encode("utf-8")
+    ).hexdigest()
+    replay = await CheckInService.acquire_mutation(
+        db,
+        event=event,
+        operation_type="CHECK_OUT",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if replay:
+        if replay.result_attendance_log_id is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESULT_UNAVAILABLE"})
+        replay_log = await db.get(AttendanceLog, replay.result_attendance_log_id)
+        if replay_log is None:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_RESULT_UNAVAILABLE"})
+        return replay_log
+
+    # Find and lock the active check-in log.
     q = select(AttendanceLog).where(
         AttendanceLog.participant_id == p_id,
         AttendanceLog.session_id == payload.session_id,
         AttendanceLog.checkout_time.is_(None)
-    )
+    ).with_for_update()
     log = (await db.execute(q)).scalar_one_or_none()
     if not log:
         raise HTTPException(status_code=404, detail="No active check-in found for this participant and session.")
@@ -186,6 +205,34 @@ async def check_out_participant(
 
     log.checkout_time = checkout_time
     log.duration = duration_mins
+
+    db.add(AttendanceMutation(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        actor_user_id=actor.id,
+        operation_type="CHECK_OUT",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        result_attendance_log_id=log.id,
+        result_created=False,
+    ))
+    db.add(AuditLog(
+        organization_id=event.organization_id,
+        actor_user_id=actor.id,
+        actor_role=actor.platform_role or actor.role,
+        resource_type="attendance_log",
+        resource_id=log.id,
+        action_type="ATTENDANCE_CHECKED_OUT",
+        old_state={"checkout_time": None, "duration": None},
+        new_state={
+            "event_id": str(event.id),
+            "participant_id": str(p_id),
+            "session_id": str(payload.session_id),
+            "checkout_time": checkout_time.isoformat(),
+            "duration": duration_mins,
+            "device_id": payload.device_id,
+        },
+    ))
 
     await db.commit()
     await db.refresh(log)

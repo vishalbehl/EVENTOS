@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,13 +19,22 @@ from app.modules.speakers.schemas.session import (
     SessionSpeakerCreate, ReorderSpeakersRequest, SessionSpeakerUpdate,
 )
 from app.schemas.common import MessageResponse
+from app.modules.platform.services.metering_service import MeteringService
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
-router = APIRouter(prefix="/events/{event_id}/sessions", tags=["sessions"])
+router = APIRouter(
+    prefix="/events/{event_id}/sessions",
+    tags=["sessions"],
+    dependencies=[require_event_operation("sessions.manage")],
+)
 
 
-@router.get("/export")
+@router.post("/export")
 async def export_sessions_docx(
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -39,6 +49,24 @@ async def export_sessions_docx(
     from docx.oxml.ns import nsdecls, qn
     from fastapi.responses import StreamingResponse
     
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "exports.create",
+        user_id=current_user.id,
+    )
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_exports_per_event",
+        quantity=1,
+        unit="export",
+        idempotency_key=f"session-export:{idempotency_key}",
+        metadata={"format": "docx", "domain": "sessions"},
+    )
+
     # 1. Fetch all sessions for this event sorted by start time
     stmt = (
         select(Session)
@@ -225,6 +253,13 @@ async def export_sessions_docx(
     buffer.seek(0)
     
     filename = f"agenda-{event.short_code.lower()}-{datetime.now().strftime('%Y%m%d')}.docx"
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.sessions.export",
+        actor_user_id=current_user.id,
+    )
+    await db.commit()
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -327,10 +362,6 @@ async def create_session(
                     detail="You do not have permission to create sessions in this room."
                 )
 
-    # Check limit
-    from app.modules.billing.services.limit_guard import LimitGuard
-    await LimitGuard.check_sessions(db, event.organization_id, event.id)
-
     dup = await db.execute(
         select(Session).where(
             Session.event_id == event.id,
@@ -341,11 +372,28 @@ async def create_session(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Session code '{payload.session_code}' already used.")
 
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_sessions",
+        quantity=1,
+        unit="session",
+        idempotency_key=f"session-create:{uuid.uuid4()}",
+        metadata={"session_code": payload.session_code},
+    )
+
     data = payload.model_dump()
     speakers_data = data.pop("speakers", None) or []
     session = Session(event_id=event.id, **data)
     db.add(session)
     await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.sessions.create",
+        actor_user_id=current_user.id,
+    )
 
     for idx, sp_data in enumerate(speakers_data):
         ss = SessionSpeaker(
@@ -405,9 +453,12 @@ async def delete_session(
     if session.status == "in_progress":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="Cannot delete a session that is in progress.")
-    await db.delete(session)
+    if session.deleted_at is None:
+        session.deleted_at = datetime.now(timezone.utc)
+        session.deleted_by = user.id
+        await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="sessions", quantity=-1, unit="count", source="organizer_portal.sessions.archive", idempotency_key=f"session-archive:{session.id}:{session.deleted_at.isoformat()}", actor_user_id=user.id, metadata={"resource_id": str(session.id)})
     await db.commit()
-    return MessageResponse(message="Session deleted.")
+    return MessageResponse(message="Session archived and remains recoverable.")
 
 
 @router.post("/{session_id}/speakers", response_model=MessageResponse)

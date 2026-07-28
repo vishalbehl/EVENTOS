@@ -1,13 +1,13 @@
 aws_region                = "ap-south-1"
-cost_center               = "eventx-sample"
+cost_center               = "Event-sample"
 deploy_application        = true
 enable_services           = false
 deletion_protection       = true
 api_domain_name           = "api.sample.example.com"
 speaker_portal_url        = "https://speaker.sample.example.com"
 certificate_arn           = "arn:aws:acm:ap-south-1:111122223333:certificate/replace-me"
-backend_image             = "111122223333.dkr.ecr.ap-south-1.amazonaws.com/eventx-nonprod/backend:immutable-tag"
-worker_image              = "111122223333.dkr.ecr.ap-south-1.amazonaws.com/eventx-nonprod/workers:immutable-tag"
+backend_image             = "111122223333.dkr.ecr.ap-south-1.amazonaws.com/Event-nonprod/backend:immutable-tag"
+worker_image              = "111122223333.dkr.ecr.ap-south-1.amazonaws.com/Event-nonprod/workers:immutable-tag"
 alert_email               = "operations@example.com"
 monthly_budget_usd        = 50
 public_demo_signup_enabled = false

@@ -39,6 +39,11 @@ import {
   useSelectAddon,
   useSelectPlan,
 } from "@/hooks/useBilling";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEvents } from "@/hooks/useEvents";
+import { apiPost } from "@/lib/api-client";
+import { PlanActivationTargetModal } from "@/components/organizer/billing/PlanActivationTargetModal";
 import { cn, downloadCSV, formatApiError, formatDateInTZ } from "@/lib/utils";
 
 const LazyAddonFeatureDetails = dynamic(
@@ -265,8 +270,8 @@ function normalizePlan(raw: BillingApiRecord, currentPlanName?: string) {
     name: raw.name ?? raw.plan_name ?? "Unnamed Plan",
     tagline: raw.tagline ?? raw.subtitle,
     description: raw.description,
-    price: toNumber(raw.price ?? raw.price_per_event ?? raw.price_per_event_min ?? raw.base_price),
-    priceMax: toNumber(raw.price_max ?? raw.price_per_event_max),
+    price: toNumber(raw.price ?? raw.price_per_event ?? raw.base_price),
+    priceMax: toNumber(raw.price_max),
     currency: raw.currency ?? "INR",
     billingModel: raw.billing_model ?? raw.billingModel ?? "PER_EVENT",
     color: raw.color_hex ?? raw.plan_color ?? raw.color ?? "var(--pri)",
@@ -550,13 +555,17 @@ function SectionError({
 }
 
 export function PlansAddonsManagement() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const currentPlanQuery = useCurrentPlan();
   const plansQuery = usePlans();
   const featureMatrixQuery = useFeatureMatrix();
   const addonsQuery = useAddons();
   const historyQuery = useBillingHistory();
   const cartQuery = useBillingCart();
+  const { data: userEvents } = useEvents();
 
+  const [targetModalOpen, setTargetModalOpen] = useState(false);
   const selectPlan = useSelectPlan();
   const selectAddon = useSelectAddon();
   const removeAddon = useRemoveAddon();
@@ -1382,11 +1391,15 @@ export function PlansAddonsManagement() {
                   <Button
                     disabled={checkout.isPending || !cart.selectedPlanName}
                     onClick={async () => {
-                      try {
-                        await checkout.mutateAsync({});
-                        toast.success("Checkout request submitted successfully.");
-                      } catch (error) {
-                        toast.error(formatApiError(error, "Checkout failed."));
+                      if (userEvents && userEvents.length > 0) {
+                        setTargetModalOpen(true);
+                      } else {
+                        try {
+                          await checkout.mutateAsync({});
+                          toast.success("Checkout request submitted successfully.");
+                        } catch (error) {
+                          toast.error(formatApiError(error, "Checkout failed."));
+                        }
                       }
                     }}
                     className="h-12 w-full rounded-xl bg-[var(--pri)] font-black uppercase tracking-[0.2em] text-white"
@@ -1398,6 +1411,41 @@ export function PlansAddonsManagement() {
               </Card>
             )}
           </section>
+
+          <PlanActivationTargetModal
+            open={targetModalOpen}
+            onOpenChange={setTargetModalOpen}
+            selectedPlan={{ name: cart.selectedPlanName || "Selected Plan" }}
+            selectedAddonNames={cart.addons.map((a) => a.name)}
+            events={userEvents || []}
+            onApplyToCurrentEvent={async (eventId: string) => {
+              try {
+                await apiPost(`/events/${eventId}/apply-plan`, {
+                  plan_name: cart.selectedPlanName,
+                  addon_keys: cart.addons.map((a) => a.id),
+                });
+                toast.success("Plan entitlements applied to event!");
+                queryClient.invalidateQueries({ queryKey: ["events"] });
+                queryClient.invalidateQueries({ queryKey: ["event", eventId] });
+                queryClient.invalidateQueries({ queryKey: ["billing"] });
+                queryClient.invalidateQueries({ queryKey: ["organization-capabilities"] });
+                queryClient.invalidateQueries({ queryKey: ["event-capabilities"] });
+                queryClient.invalidateQueries({ queryKey: ["me-permissions"] });
+                router.push(`/events/${eventId}/dashboard`);
+              } catch (err: any) {
+                toast.error(err?.message || "Failed to apply plan to event");
+              }
+            }}
+            onCreateNewEvent={async () => {
+              try {
+                await checkout.mutateAsync({});
+                toast.success("Checkout request submitted successfully.");
+                router.push("/events/new");
+              } catch (error) {
+                toast.error(formatApiError(error, "Checkout failed."));
+              }
+            }}
+          />
 
           <section className="space-y-4">
             <SectionHeader

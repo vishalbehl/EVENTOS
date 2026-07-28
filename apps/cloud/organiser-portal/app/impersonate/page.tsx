@@ -11,21 +11,23 @@ function ImpersonateHandler() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const token = searchParams.get("token");
-    const originalToken = searchParams.get("originalToken");
-    const orgName = searchParams.get("orgName") || "Enterprise Org";
-    const userName = searchParams.get("userName") || "Enterprise User";
+    const handoffCode = searchParams.get("code");
 
-    if (!token) {
-      toast.error("No impersonation token provided.");
+    if (!handoffCode) {
+      toast.error("No support handoff code provided.");
       router.push("/login");
       return;
     }
 
     const initImpersonation = async () => {
       try {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const exchange = await fetch(`${apiBase}/api/v1/auth/impersonation/handoff/exchange`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handoff_code: handoffCode }) });
+        if (!exchange.ok) throw new Error("The support handoff is invalid, expired, or already used.");
+        const session = await exchange.json();
+        const token = session.access_token as string;
         // Fetch user profile using the impersonation token to load exact roles and metadata
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/auth/me`, {
+        const response = await fetch(`${apiBase}/api/v1/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -39,20 +41,11 @@ function ImpersonateHandler() {
         }
 
         // Set impersonating details in localStorage (so that dashboard layout matches)
-        localStorage.setItem("eventos_original_token", originalToken || token);
-        localStorage.setItem("eventos_impersonating_org", orgName);
-        localStorage.setItem("impersonated_user_name", userName);
-
         // Update Auth Store
         const store = useAuthStore.getState();
-        store.startImpersonation(userData, token, orgName, userName);
-
-        // Explicitly set original token fields in store state so stopImpersonation() works
-        useAuthStore.setState({
-          originalAccessToken: originalToken || null,
-          impersonatedOrgName: orgName,
-          impersonatedUserName: userName,
-        });
+        const orgName = userData.organization_name || "Selected organization";
+        const userName = userData.full_name || `${userData.first_name || ""} ${userData.last_name || ""}`.trim() || userData.email;
+        store.startImpersonation(userData, token, orgName, userName, session.session_id);
 
         // Set session active to prevent auto-logout
         sessionStorage.setItem("session_active", "true");

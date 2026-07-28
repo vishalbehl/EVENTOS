@@ -20,6 +20,7 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="SET NULL"), index=True)
     event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), index=True)
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), index=True)
     
@@ -46,6 +47,7 @@ class SecurityEvent(Base):
 
     __table_args__ = (
         Index("ix_security_events_ip_at", "ip_address", "occurred_at"),
+        Index("ix_security_events_org_risk_at", "organization_id", "risk_level", "occurred_at"),
     )
 
 

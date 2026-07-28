@@ -41,6 +41,7 @@ class OAuthClientCreatedOut(BaseModel):
     plaintext_client_secret: str
     redirect_uris: List[str]
     is_active: bool
+    version: int
     created_at: datetime
 
     class Config:
@@ -52,6 +53,8 @@ class OAuthClientOut(BaseModel):
     client_id: str
     redirect_uris: List[str]
     is_active: bool
+    version: int
+    revoked_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:

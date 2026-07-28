@@ -2,7 +2,7 @@
 
 ## Summary
 
-Transform EventX OS incrementally into an AWS-hosted, enterprise multi-tenant cloud platform supporting:
+Transform Event OS incrementally into an AWS-hosted, enterprise multi-tenant cloud platform supporting:
 
 - One million monthly active users and up to 100,000 concurrent users.
 - 99.95% availability, RPO of 5 minutes, and RTO of 30 minutes.
@@ -126,7 +126,7 @@ Transform EventX OS incrementally into an AWS-hosted, enterprise multi-tenant cl
 - Implement GDPR and India DPDP workflows for consent, purpose, legal basis, data access, correction, portability, deletion, retention, and breach notification.
 - Store regional data only in India and prevent unsupported cross-region replication or third-party transfer.
 - Maintain a subprocessor register, DPAs, transfer assessments, privacy notices, records of processing, and deletion verification.
-- Keep card data outside EventX OS by using hosted/tokenized payment pages; verify webhook signatures and maintain PCI SAQ-A scope documentation.
+- Keep card data outside Event OS by using hosted/tokenized payment pages; verify webhook signatures and maintain PCI SAQ-A scope documentation.
 - Complete internal audit, management review, corrective actions, evidence sampling, and independent penetration testing before certification assessment.
 
 ## CI/CD and Infrastructure Controls

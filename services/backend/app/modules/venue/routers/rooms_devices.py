@@ -19,8 +19,10 @@ from app.modules.venue.models.room_device import RoomDevice
 from app.modules.identity.models.user import User
 from app.modules.events.models.room import Room
 from app.schemas.common import MessageResponse
+from app.core.dependencies.feature_gate import require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
-router = APIRouter(prefix="/events/{event_id}/rooms/{room_id}/devices", tags=["room-devices"])
+router = APIRouter(prefix="/events/{event_id}/rooms/{room_id}/devices", tags=["room-devices"], dependencies=[require_event_operation("venue.devices.manage")])
 
 
 # ── Inline schemas (device-specific, not worth a separate schema file) ──
@@ -86,7 +88,8 @@ async def register_device(
     room_id: uuid.UUID,
     payload: DeviceRegisterRequest,
     event: CurrentEvent,
-    _: User = Depends(get_current_user),
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ) -> DeviceKeyResponse:
     """
@@ -108,6 +111,17 @@ async def register_device(
         if assignment is None:
             raise HTTPException(status_code=404, detail="Supplier assignment not found.")
 
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_devices_per_event",
+        quantity=1,
+        unit="device",
+        idempotency_key=f"device-register:{idempotency_key}",
+        metadata={"room_id": str(room_id), "device_type": payload.device_type},
+    )
+
     device = RoomDevice(
         organization_id=event.organization_id,
         event_id=event.id,
@@ -123,6 +137,13 @@ async def register_device(
         status="offline",
     )
     db.add(device)
+    await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.devices.register",
+        actor_user_id=actor.id,
+    )
     await db.commit()
     await db.refresh(device)
 

@@ -1,10 +1,10 @@
-# EventX OS Enterprise Target-State Architecture and Production Standards Plan
+# Event OS Enterprise Target-State Architecture and Production Standards Plan
 
 ## Document Status
 
-This is the architecture freeze candidate for EventX OS. It preserves the long-term enterprise direction while separating immediate security work, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
+This is the architecture freeze candidate for Event OS. It preserves the long-term enterprise direction while separating immediate security work, secure production foundations, operational maturity, customer-triggered enterprise capabilities, and future hyperscale architecture.
 
-EventX OS will scale from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
+Event OS will scale from measured demand, observed bottlenecks, and contractual requirements. Target-state technologies are not automatic implementation requirements.
 
 Responsible roles:
 
@@ -130,7 +130,7 @@ Complete first, without waiting for broader architectural cleanup:
 | No latest-subscription or pooled entitlement fallback | Static search and resolver tests |
 | Venue systems never access cloud DB directly | Network architecture and infrastructure policy |
 | Machine identities carry explicit tenant/event scope | Service-identity validation tests |
-| Cardholder data never enters EventX OS | Payment architecture and telemetry tests |
+| Cardholder data never enters Event OS | Payment architecture and telemetry tests |
 | Unverified webhooks cannot change domain state | Signature/replay/idempotency tests |
 | Quarantined files cannot be consumed | File-state constraints and service tests |
 | Only `READY` files enter operational workflows | File lifecycle guard |

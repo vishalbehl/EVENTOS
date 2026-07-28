@@ -56,8 +56,9 @@ export default function AgendaExportPage() {
   const handleWordExport = async () => {
     setIsExporting(true);
     try {
-      const response = await apiClient.get<Blob>(`/events/${eventIdStr}/sessions/export`, {
+      const response = await apiClient.post<Blob>(`/events/${eventIdStr}/sessions/export`, undefined, {
         responseType: "blob",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
       });
       const blob = new Blob([response], {
         type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -291,7 +292,7 @@ export default function AgendaExportPage() {
 
             {/* Footer Notice */}
             <div className="mt-12 pt-6 border-t border-slate-300 text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-              Generated automatically on {new Date().toLocaleDateString('en-IN', { timeZone: getFallbackTimezone() })} via EventX OS Speaker Workspace
+              Generated automatically on {new Date().toLocaleDateString('en-IN', { timeZone: getFallbackTimezone() })} via Event OS Speaker Workspace
             </div>
           </div>
         )}

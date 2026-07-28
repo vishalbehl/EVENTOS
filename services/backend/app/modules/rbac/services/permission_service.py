@@ -4,6 +4,7 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.rbac.models.rbac import Role, Permission, RolePermission, UserRoleAssignment, ScopedPermission, UserAccessNode, RoleInheritanceMap
 from app.modules.identity.models.user import User
+from app.modules.billing.capability_registry import OPERATION_PERMISSIONS
 
 async def get_user_permissions(
     db: AsyncSession, 
@@ -54,7 +55,7 @@ async def get_user_permissions(
         # If still no roles and they are 'organiser' or 'admin', provide basic defaults
         # to prevent complete lockout during migration
         if not role_ids and user_system_role in ["admin", "organiser"]:
-            return [
+            defaults = [
                 "EVENTS:VIEW", "EVENTS:EDIT", "SESSIONS:VIEW", "SPEAKERS:VIEW", "FILES:VIEW", 
                 "ROOMS:MANAGE", "FILES:APPROVE", "FILES:REJECT", "FILES:DOWNLOAD",
                 "ANALYTICS:VIEW", "POSTERS:VIEW", "USERS:VIEW", "SETTINGS:EDIT",
@@ -66,6 +67,12 @@ async def get_user_permissions(
                 "operations:manage", "projects:manage", "resources:manage", 
                 "deployments:manage", "risks:manage", "readiness:manage"
             ]
+            defaults.extend(
+                permission
+                for permission in OPERATION_PERMISSIONS.values()
+                if permission is not None
+            )
+            return sorted(set(defaults))
 
 
     # 2. Expand Inherited Roles

@@ -10,7 +10,7 @@ const dmSans = DM_Sans({
 });
 
 export const metadata = {
-  title: "Speaker Portal | EventX OS",
+  title: "Speaker Portal | Event OS",
   description: "Secure file management for conference speakers.",
 };
 

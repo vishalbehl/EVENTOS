@@ -5,6 +5,9 @@
 
 from .tasks import run_excel_import
 from app.modules.notifications.tasks.email_tasks import process_email_campaign
+from app.modules.notifications.tasks.channel_delivery_tasks import (
+    dispatch_communication_batch,
+)
 from app.modules.presentations.tasks.file_tasks import validate_presentation
 from .audit_tasks import write_audit_log, write_api_request_log
 from .platform_tasks import flush_api_usage

@@ -461,7 +461,7 @@ export default function SpeakerPortalLoginPage() {
         </motion.div>
 
         <div className="mt-8 text-[10px] font-black text-muted uppercase tracking-[0.4em] opacity-30">
-          Powered by EventX OS Platform
+          Powered by Event OS Platform
         </div>
       </div>
     </SpeakerPortalLayout>

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -246,7 +247,7 @@ def _build_quote_proposal_pdf(snapshot: dict, proposal_number: str, proposal_ver
     document = SimpleDocTemplate(
         buffer, pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm,
         topMargin=18 * mm, bottomMargin=18 * mm,
-        title=proposal_number, author="EventX OS",
+        title=proposal_number, author="Event OS",
     )
     styles = getSampleStyleSheet()
     story = [
@@ -322,7 +323,7 @@ def _build_invoice_pdf(snapshot: dict) -> bytes:
         topMargin=18 * mm,
         bottomMargin=18 * mm,
         title=invoice_number,
-        author="EventX OS",
+        author="Event OS",
     )
     styles = getSampleStyleSheet()
     currency = escape(str(snapshot.get("currency") or "INR"))
@@ -369,7 +370,7 @@ def _build_invoice_pdf(snapshot: dict) -> bytes:
         ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#12372A")),
     ]))
     story.extend([table, Spacer(1, 8 * mm), totals, Spacer(1, 12 * mm)])
-    story.append(Paragraph("Generated from an immutable, version-bound EventX OS invoice snapshot.", styles["Italic"]))
+    story.append(Paragraph("Generated from an immutable, version-bound Event OS invoice snapshot.", styles["Italic"]))
     document.build(story)
     return buffer.getvalue()
 
@@ -633,6 +634,89 @@ def generate_audit_log_export(
         raise
 
 
+@app.task(
+    bind=True,
+    name="workers.tasks.report_tasks.generate_organization_console_export",
+    max_retries=2,
+    default_retry_delay=60,
+    soft_time_limit=600,
+)
+def generate_organization_console_export(self, organization_id: str, requested_by_user_id: str, export_id: str) -> dict:
+    organization_uuid = uuid.UUID(organization_id)
+    requester_uuid = uuid.UUID(requested_by_user_id)
+    export_uuid = uuid.UUID(export_id)
+    _set_export_status(organization_uuid, export_uuid, status="RUNNING")
+    try:
+        with get_db_session(organization_uuid) as db:
+            from app.modules.audit.models.audit_domain_tables import DataExport
+            from app.modules.audit.models.audit_log import AuditLog
+            from app.modules.communications.models.email_campaign import EmailCampaign
+            from app.modules.events.models.event import Event
+            from app.modules.events.models.session import Session
+            from app.modules.events.models.speaker import Speaker
+            from app.modules.identity.models.user import User
+            from app.modules.platform.models.organization_console import PrivilegedAccessSession
+            from app.modules.presentations.models.presentation_file import PresentationFile
+            from app.modules.rbac.models.user_assignment import UserEventAssignment
+            from app.modules.registration.models.participant_registration import ParticipantRegistration
+            from app.modules.registration.models.payment_transaction import PaymentTransaction
+
+            export = db.get(DataExport, export_uuid)
+            if not export or export.organization_id != organization_uuid or export.requested_by != requester_uuid or export.source_type != "organization_console_export":
+                raise ValueError("Organization Console export contract mismatch.")
+            metadata = export.request_metadata or {}
+            domains = set(metadata.get("domains") or [])
+            include_sensitive = bool(metadata.get("include_sensitive"))
+            if include_sensitive:
+                session_id = metadata.get("privileged_access_session_id")
+                access = db.get(PrivilegedAccessSession, uuid.UUID(session_id)) if session_id else None
+                now = datetime.now(timezone.utc)
+                if not access or access.organization_id != organization_uuid or access.actor_id != requester_uuid or access.revoked_at is not None or access.expires_at <= now:
+                    raise ValueError("Privileged access expired before sensitive export generation.")
+            event_query = db.query(Event.id).filter(Event.organization_id == organization_uuid)
+            if export.event_id: event_query = event_query.filter(Event.id == export.event_id)
+            event_ids = [row[0] for row in event_query.all()]
+            records: list[dict] = []
+            def add(domain: str, resource_type: str, resource_id, scoped_event_id, title, status_value, details: dict, occurred_at):
+                records.append({"domain": domain, "resource_type": resource_type, "resource_id": resource_id, "event_id": scoped_event_id, "title": title, "status": status_value, "details": json.dumps(details, default=str, separators=(",", ":")), "occurred_at": occurred_at})
+            if "events" in domains:
+                for row in db.query(Event).filter(Event.id.in_(event_ids)).limit(250_000): add("events", "event", row.id, row.id, row.name, row.status, {"short_code": row.short_code, "start_date": row.start_date, "end_date": row.end_date}, row.updated_at)
+            if "speakers" in domains:
+                for row in db.query(Speaker).filter(Speaker.event_id.in_(event_ids), Speaker.deleted_at.is_(None)).limit(250_000): add("speakers", "speaker", row.id, row.event_id, f"{row.first_name} {row.last_name}" if include_sensitive else f"{row.first_name[:1]}*** {row.last_name[:1]}***", row.upload_status, {"email": row.email if include_sensitive else None, "phone": row.phone if include_sensitive else None, "affiliation": row.affiliation}, row.updated_at)
+            if "sessions" in domains:
+                for row in db.query(Session).filter(Session.event_id.in_(event_ids), Session.deleted_at.is_(None)).limit(250_000): add("sessions", "session", row.id, row.event_id, row.name, row.status, {"session_code": row.session_code, "start_time": row.start_time, "end_time": row.end_time, "room_id": row.room_id}, row.updated_at)
+            if "registrations" in domains:
+                for row in db.query(ParticipantRegistration).filter(ParticipantRegistration.event_id.in_(event_ids), ParticipantRegistration.deleted_at.is_(None)).limit(250_000):
+                    source = row.registration_data or {}; safe = source if include_sensitive else {key: value for key, value in source.items() if key not in {"name", "first_name", "last_name", "email", "phone", "address", "custom_fields"}}
+                    add("registrations", "registration", row.id, row.event_id, str(source.get("name", "Registration")) if include_sensitive else "Masked registration", row.registration_status, safe, row.updated_at)
+            if "files" in domains:
+                for row in db.query(PresentationFile).filter(PresentationFile.event_id.in_(event_ids), PresentationFile.deleted_at.is_(None)).limit(250_000): add("files", "presentation_file", row.id, row.event_id, row.original_filename, row.upload_status, {"file_size_bytes": row.file_size_bytes, "file_format": row.file_format, "is_locked": row.is_locked}, row.updated_at)
+            if "campaigns" in domains:
+                for row in db.query(EmailCampaign).filter(EmailCampaign.event_id.in_(event_ids), EmailCampaign.deleted_at.is_(None)).limit(250_000): add("campaigns", "email_campaign", row.id, row.event_id, row.name, row.status, {"target_type": row.target_type, "total_recipients": row.total_recipients, "sent_count": row.sent_count}, row.updated_at)
+            if "payments" in domains:
+                for row in db.query(PaymentTransaction).filter(PaymentTransaction.event_id.in_(event_ids)).limit(250_000): add("payments", "payment", row.id, row.event_id, "Payment transaction", row.status, {"amount": row.amount, "currency": row.currency, "payment_method": row.payment_method, "gateway_payment_id": row.gateway_payment_id if include_sensitive else None}, row.updated_at)
+            if "users" in domains:
+                for assignment, user in db.query(UserEventAssignment, User).join(User, User.id == UserEventAssignment.user_id).filter(User.organization_id == organization_uuid, UserEventAssignment.event_id.in_(event_ids)).limit(250_000): add("users", "user_event_assignment", assignment.id, assignment.event_id, f"{user.first_name or ''} {user.last_name or ''}".strip() if include_sensitive else "Masked user", "active", {"user_id": user.id, "email": user.email if include_sensitive else None, "permissions": assignment.permissions}, assignment.assigned_at)
+            if "audit" in domains:
+                for row in db.query(AuditLog).filter(AuditLog.organization_id == organization_uuid).order_by(AuditLog.occurred_at.desc()).limit(250_000): add("audit", row.resource_type, row.resource_id or row.id, None, row.action_type, "recorded", {"actor_user_id": row.actor_user_id, "actor_role": row.actor_role, "is_sensitive": row.is_sensitive}, row.occurred_at)
+
+        columns = ["domain", "resource_type", "resource_id", "event_id", "title", "status", "details", "occurred_at"]
+        stream = io.StringIO(newline=""); writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n"); writer.writeheader()
+        for record in sorted(records, key=lambda item: str(item.get("occurred_at") or ""), reverse=True): writer.writerow({column: _cell_value(record.get(column)) for column in columns})
+        artifact = stream.getvalue().encode("utf-8-sig")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        storage_key = f"{organization_uuid}/organization-console-exports/console_{export_uuid}_{timestamp}.csv"
+        r2.upload_bytes(bucket=settings.S3_BUCKET_EXPORTS, key=storage_key, data=artifact, content_type="text/csv; charset=utf-8")
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        _set_export_status(organization_uuid, export_uuid, status="COMPLETED", storage_key=storage_key, expires_at=expires_at)
+        return {"generated": True, "export_id": str(export_uuid), "row_count": len(records)}
+    except Exception as exc:
+        logger.exception("[report] Organization Console export failed")
+        _set_export_status(organization_uuid, export_uuid, status="FAILED", failure_reason=str(exc)[:1000])
+        if self.request.retries < self.max_retries: raise self.retry(exc=exc)
+        raise
+
+
 # ── Task 1: Event summary report (Excel) ─────────────────────
 
 @app.task(
@@ -825,7 +909,7 @@ def generate_event_summary_report(
                     subject=f"Your event report is ready — {event.name}",
                     html_body=f"""
                     <p>Your event summary report for <strong>{event.name}</strong> is ready.</p>
-                    <p>Please return to EventX OS to download it securely. The export expires in 24 hours.</p>
+                    <p>Please return to Event OS to download it securely. The export expires in 24 hours.</p>
                     """,
                 )
         except Exception as exc:

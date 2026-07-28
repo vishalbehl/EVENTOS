@@ -9,10 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.events.models.event import Event
 from app.modules.presentations.models.poster import Poster
 from app.modules.identity.models.user import User
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
 
 
 BASE = "/events/{event_id}/posters"
+
+
+@pytest.fixture(autouse=True)
+async def licensed_event(db: AsyncSession, event: Event) -> None:
+    await activate_event_for_test(db, event)
 
 
 @pytest.fixture

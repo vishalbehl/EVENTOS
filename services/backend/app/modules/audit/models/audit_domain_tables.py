@@ -99,6 +99,7 @@ class ImpersonationLog(Base):
     )
     
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    case_reference: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     session_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     terminated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

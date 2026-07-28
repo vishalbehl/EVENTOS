@@ -5,14 +5,17 @@ import re
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_event, CurrentEvent
+from app.dependencies import get_db, get_current_event, get_current_user, CurrentEvent
+from app.modules.identity.models.user import User
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.schemas.common import MessageResponse
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
 router = APIRouter(prefix="/events/{event_id}/registration/roles", tags=["participant-roles"])
 
@@ -105,7 +108,12 @@ def make_role_code(name: str) -> str:
     return (compact[:3] or "REG")
 
 
-async def seed_default_roles(event_id: uuid.UUID, db: AsyncSession) -> None:
+async def seed_default_roles(
+    event_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    commit: bool = True,
+) -> None:
     """Seed only default platform roles for a newly created event."""
     for r in ALL_ROLES:
         if r["is_default"]:
@@ -159,9 +167,17 @@ class UpdateRolePayload(BaseModel):
 @router.get("", response_model=List[ParticipantRoleOut])
 async def list_roles(
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[ParticipantRoleOut]:
-    """Return all participant roles for this event. Auto-seeds if none exist yet."""
+    """Return configured participant roles without mutating state on read."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.ticket_types.read",
+        user_id=current_user.id,
+    )
     result = await db.execute(
         select(ParticipantRole)
         .where(ParticipantRole.event_id == event.id)
@@ -170,14 +186,8 @@ async def list_roles(
     roles = result.scalars().all()
 
     # ── Auto-seed for events created before this feature was added ──
-    if not roles:
-        await seed_default_roles(event.id, db)
-        result = await db.execute(
-            select(ParticipantRole)
-            .where(ParticipantRole.event_id == event.id)
-            .order_by(ParticipantRole.sort_order, ParticipantRole.name)
-        )
-        roles = result.scalars().all()
+    # Legacy events are backfilled by an explicit governed job. Reads never
+    # create commercial resources as a side effect.
 
     return roles
 
@@ -187,11 +197,27 @@ async def list_roles(
 async def add_role(
     payload: AddRolePayload,
     event: CurrentEvent,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantRoleOut:
-    # Check ticket category limit
-    from app.modules.billing.services.limit_guard import LimitGuard
-    await LimitGuard.check_ticket_categories(db, event.organization_id, event.id)
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.ticket_types.manage",
+        user_id=actor.id,
+    )
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="max_ticket_categories",
+        quantity=1,
+        unit="ticket_category",
+        idempotency_key=f"participant-role-create:{idempotency_key}",
+        metadata={"name": payload.name, "category": payload.category},
+    )
 
     role = ParticipantRole(
         event_id=event.id,
@@ -203,12 +229,22 @@ async def add_role(
         sort_order=payload.sort_order,
     )
     db.add(role)
-    await db.commit()
+    await db.flush()
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="organizer_portal.registration.roles.create",
+        actor_user_id=actor.id,
+    )
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(role)
     return role
 
 
-@router.patch("/bulk-toggle", response_model=MessageResponse)
+@router.patch("/bulk-toggle", response_model=MessageResponse, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def bulk_toggle_roles(
     payload: BulkRoleToggle,
     event: CurrentEvent,
@@ -233,7 +269,7 @@ async def bulk_toggle_roles(
     return MessageResponse(message="Roles updated successfully.")
 
 
-@router.patch("/{role_id}", response_model=ParticipantRoleOut)
+@router.patch("/{role_id}", response_model=ParticipantRoleOut, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def update_role(
     role_id: uuid.UUID,
     payload: UpdateRolePayload,
@@ -263,7 +299,7 @@ async def update_role(
     return role
 
 
-@router.delete("/{role_id}", response_model=MessageResponse)
+@router.delete("/{role_id}", response_model=MessageResponse, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def delete_role(
     role_id: uuid.UUID,
     event: CurrentEvent,

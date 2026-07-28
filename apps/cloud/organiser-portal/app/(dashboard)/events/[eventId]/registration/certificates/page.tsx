@@ -11,8 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
-import { apiGet } from "@/lib/api-client";
+import { apiGet, apiPost } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
+import { useOperationAccess } from "@/lib/capabilities";
 
 interface Participant {
   id: string;
@@ -38,6 +39,8 @@ interface PrintTemplate {
 export default function CertificatePrinter() {
   const { eventId } = useParams();
   const { data: event } = useEvent(eventId as string);
+  const generationAccess = useOperationAccess("certificates.generate");
+  const exportAccess = useOperationAccess("exports.create");
   
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [templates, setTemplates] = useState<PrintTemplate[]>([]);
@@ -71,7 +74,7 @@ export default function CertificatePrinter() {
       setParticipants(list);
 
       // Fetch templates
-      const templatesRes = await apiGet<any[]>(`/events/${eventId}/print-templates`);
+      const templatesRes = await apiGet<any[]>(`/events/${eventId}/print-templates?template_type=certificate`);
       const formattedTemplates = templatesRes.map(t => ({
         id: t.id,
         templateName: t.template_name || t.templateName || "Unnamed Template",
@@ -98,7 +101,7 @@ export default function CertificatePrinter() {
       const url = `/events/${eventId}/participants`;
       const [list, templatesRes] = await Promise.all([
         apiGet<Participant[]>(url),
-        apiGet<any[]>(`/events/${eventId}/print-templates`),
+        apiGet<any[]>(`/events/${eventId}/print-templates?template_type=certificate`),
       ]);
       setParticipants(list);
       const formattedTemplates = templatesRes.map(t => ({
@@ -143,8 +146,12 @@ export default function CertificatePrinter() {
   };
 
   // Compile certificates as a single multi-page PDF document
-  const handleBulkPrint = async () => {
-    if (selectedParticipantIds.size === 0) {
+  const handleBulkPrint = async (participantIds: Set<string> = selectedParticipantIds) => {
+    if (!generationAccess.enabled || !exportAccess.enabled) {
+      toast.error("Certificate generation is not available for this event or your role.");
+      return;
+    }
+    if (participantIds.size === 0) {
       toast.error("Please select at least one delegate.");
       return;
     }
@@ -155,10 +162,15 @@ export default function CertificatePrinter() {
     }
 
     setPrinting(true);
-    toast.info(`Compiling ${selectedParticipantIds.size} certificates...`);
+    toast.info(`Compiling ${participantIds.size} certificates...`);
 
     try {
-      const selectedList = participants.filter(p => selectedParticipantIds.has(p.id));
+      await apiPost(
+        `/events/${eventId}/print-templates/certificate-generation-authorizations?participant_count=${participantIds.size}`,
+        undefined,
+        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+      );
+      const selectedList = participants.filter(p => participantIds.has(p.id));
       const pdf = await compileTemplateToPdf(
         selectedList,
         tpl.templateData,
@@ -251,8 +263,8 @@ export default function CertificatePrinter() {
 
             <div className="pt-6 shrink-0">
               <Button 
-                onClick={handleBulkPrint} 
-                disabled={printing || selectedParticipantIds.size === 0} 
+                onClick={() => void handleBulkPrint()} 
+                disabled={printing || selectedParticipantIds.size === 0 || !generationAccess.enabled || !exportAccess.enabled} 
                 className="w-full h-12 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full border-0 hover-lift-3d transition-all duration-300 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_35%,transparent)] disabled:opacity-40"
               >
                 <Printer className="h-4 w-4 mr-2" />
@@ -344,9 +356,11 @@ export default function CertificatePrinter() {
                         <td className="py-5 px-8 text-right">
                           <Button 
                             onClick={() => {
-                              setSelectedParticipantIds(new Set([p.id]));
-                              setTimeout(() => handleBulkPrint(), 50);
+                              const onlyParticipant = new Set([p.id]);
+                              setSelectedParticipantIds(onlyParticipant);
+                              void handleBulkPrint(onlyParticipant);
                             }}
+                            disabled={printing || !generationAccess.enabled || !exportAccess.enabled}
                             className="h-9 px-4 bg-[var(--pri)]/20 hover:bg-[var(--pri)]/35 text-white font-black uppercase tracking-widest text-[9px] rounded-full border border-[var(--pri)]/30 hover-lift-3d"
                           >
                             Generate

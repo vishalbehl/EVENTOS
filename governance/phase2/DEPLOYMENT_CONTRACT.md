@@ -2,7 +2,7 @@
 
 Status: STARTED
 
-This contract defines how EventX OS moves from local/manual deployment toward a
+This contract defines how Event OS moves from local/manual deployment toward a
 repeatable production cloud deployment. It is intentionally stricter than the
 current implementation and becomes the acceptance target for Phase 2.
 

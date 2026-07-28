@@ -190,7 +190,7 @@ export default function SuperAdminDashboard() {
               </defs>
               <CartesianGrid {...chartConfig.grid} />
               <XAxis dataKey="day" {...chartConfig.xAxis} />
-              <YAxis {...chartConfig.yAxis} tickFormatter={v => formatINR(v)} />
+              <YAxis {...chartConfig.yAxis} tickFormatter={v => formatINR(v, false)} />
               <Tooltip {...chartConfig.tooltip}
                 formatter={(v: number) => [formatINR(v), 'MRR']} />
               <Area type="monotone" dataKey="mrr" stroke="var(--chart-4)"

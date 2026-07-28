@@ -97,7 +97,8 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`,
+          'Idempotency-Key': crypto.randomUUID()
         },
         body: JSON.stringify(formData)
       });

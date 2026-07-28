@@ -52,7 +52,7 @@ def test_production_configuration_rejects_development_secrets() -> None:
     with pytest.raises(ValueError, match="Unsafe production configuration"):
         Settings(
             _env_file=None,
-            DATABASE_URL_SYNC="postgresql://user:pass@db/eventx",
+            DATABASE_URL_SYNC="postgresql://user:pass@db/Event",
             environment="production",
         )
 

@@ -182,19 +182,21 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
   const [gstNumber, setGstNumber] = useState("");
-  const [cardholder, setCardholder] = useState("");
-  const [cardNo, setCardNo] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvv, setCvv] = useState("");
   const [successDetails, setSuccessDetails] = useState<any | null>(null);
   const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+  const [currentBillingPlan, setCurrentBillingPlan] = useState<Record<string, any> | null>(null);
 
   const [formData, setFormData] = useState(initialFormData);
 
-  const activePlanName = orgContext?.organization?.plan ?? "";
+  const activePlanName = String(currentBillingPlan?.plan?.name ?? "");
   const currentEventCount = orgContext?.event_count ?? 0;
-  const currentEventLimit = orgContext?.plan_limits?.events ?? 0;
-  const hasActivePlan = Boolean(orgContext?.organization?.is_active && currentEventLimit > 0);
+  const currentEventLimit = Number(currentBillingPlan?.usage?.events?.max ?? orgContext?.plan_limits?.events ?? 0);
+  const billingStatus = String(currentBillingPlan?.status ?? "").toUpperCase();
+  const hasActivePlan = Boolean(
+    orgContext?.organization?.is_active &&
+    ["ACTIVE", "TRIAL"].includes(billingStatus) &&
+    currentEventLimit > 0,
+  );
   const normalizedActivePlan = normalizeComparisonValue(activePlanName);
 
   const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
@@ -287,8 +289,9 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         const addonsRes = addonsResult.value;
         const normalizedPlans = asArray(plansRes).map(normalizePlan);
         const normalizedAddons = asArray(addonsRes).map(normalizeAddon);
+        const billingPlan = billingResult.status === "fulfilled" ? billingResult.value : null;
         const matchedPlan =
-          normalizedPlans.find((plan) => normalizeComparisonValue(plan.name) === normalizeComparisonValue(meRes.organization.plan)) ||
+          normalizedPlans.find((plan) => normalizeComparisonValue(plan.name) === normalizeComparisonValue(String(billingPlan?.plan?.name ?? ""))) ||
           normalizedPlans[0] ||
           null;
 
@@ -296,19 +299,20 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         setPlans(normalizedPlans);
         setAddons(normalizedAddons);
         setSelectedPlan(matchedPlan);
+        setCurrentBillingPlan(billingPlan);
         if (billingResult.status === "fulfilled") {
           setSubscriptionId(billingResult.value?.subscription_id ? String(billingResult.value.subscription_id) : null);
         } else {
           setSubscriptionId(null);
         }
 
-        const isSuperOrg = meRes.organization?.slug === "eventxos";
-        const currentEventLimit = meRes.plan_limits?.events ?? 0;
+        const currentEventLimit = Number(billingPlan?.usage?.events?.max ?? meRes.plan_limits?.events ?? 0);
         const currentEventCount = meRes.event_count ?? 0;
-        const hasActivePlan = Boolean(meRes.organization?.is_active && currentEventLimit > 0);
+        const currentStatus = String(billingPlan?.status ?? "").toUpperCase();
+        const hasActivePlan = Boolean(meRes.organization?.is_active && ["ACTIVE", "TRIAL"].includes(currentStatus) && currentEventLimit > 0);
         const remainingEvents = Math.max(currentEventLimit - currentEventCount, 0);
 
-        if (isSuperOrg || (hasActivePlan && remainingEvents > 0)) {
+        if (hasActivePlan && remainingEvents > 0) {
           setStep(3);
         }
         setBillingName(meRes.organization.name || "");
@@ -387,40 +391,26 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
       toast.error("Add billing contact details.");
       return;
     }
-    if (!cardholder || !cardNo || !expiry || !cvv) {
-      toast.error("Add sandbox card details.");
-      return;
-    }
-
     setLoading(true);
     try {
-      const result = await orgApi.subscribe({
+      const result = await orgApi.requestCommercialAccess({
         plan_name: selectedPlan.name,
         addon_keys: selectedAddons,
-        is_custom: false,
-        custom_limits: null,
-        promo_code: null,
         billing_name: billingName,
         billing_email: billingEmail,
         billing_phone: billingPhone,
         gst_number: gstNumber || null,
-        cardholder_name: cardholder,
-        card_number: cardNo,
-        expiry,
-        cvv,
+        reason: `Request access to ${selectedPlan.name} for a new event workspace`,
       });
 
       setSuccessDetails({
-        transactionId: result.transaction_id,
-        amountPaid: result.amount_paid ?? totalPrice,
+        requestId: result.id,
+        status: result.status,
+        quotedAmount: result.quoted_amount ?? totalPrice,
       });
-      if (result?.subscription_id) {
-        setSubscriptionId(String(result.subscription_id));
-      }
-      toast.success("Plan activated. You can now create the event.");
-      setStep(3);
+      toast.success("Access request submitted for Command Center approval.");
     } catch (error: any) {
-      toast.error(error?.message || "Failed to activate the selected plan.");
+      toast.error(error?.message || "Failed to request the selected plan.");
     } finally {
       setLoading(false);
     }
@@ -441,8 +431,8 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
         return;
       }
 
-      if (requiresPurchase && !successDetails) {
-        toast.error("Activate the selected plan before creating the event.");
+      if (requiresPurchase) {
+        toast.error("This event requires an approved plan request before it can be created.");
         return;
       }
 
@@ -451,6 +441,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
       let resolvedSubscriptionId = subscriptionId;
       if (!resolvedSubscriptionId) {
         const currentPlan = await orgApi.currentBillingPlan();
+        setCurrentBillingPlan(currentPlan);
         resolvedSubscriptionId = currentPlan?.subscription_id ? String(currentPlan.subscription_id) : null;
         if (resolvedSubscriptionId) {
           setSubscriptionId(resolvedSubscriptionId);
@@ -722,16 +713,11 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                               <CreditCard className="h-4 w-4 text-[var(--color-text-primary)]" />
                             </div>
                             <div>
-                              <h4 className="text-[18px] font-semibold text-[var(--color-text-primary)]">Sandbox card</h4>
-                              <p className="text-[12px] text-[var(--color-text-muted)]">This call still writes the selected plan and add-ons to the backend.</p>
+                              <h4 className="text-[18px] font-semibold text-[var(--color-text-primary)]">Command Center approval</h4>
+                              <p className="text-[12px] text-[var(--color-text-muted)]">Submitting this request does not grant access or charge a payment method. An authorized reviewer must approve the plan and add-ons.</p>
                             </div>
                           </div>
-                          <div className="mt-4 grid gap-4 md:grid-cols-2">
-                            <FormField label="Card holder" value={cardholder} onChange={setCardholder} />
-                            <FormField label="Card number" value={cardNo} onChange={setCardNo} />
-                            <FormField label="Expiry" value={expiry} onChange={setExpiry} />
-                            <FormField label="CVV" value={cvv} onChange={setCvv} type="password" />
-                          </div>
+                          {successDetails ? <div className="mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">Request {successDetails.requestId} is {String(successDetails.status).toLowerCase()}. Return after approval to create the event.</div> : null}
                         </div>
                       </div>
                     ) : null}
@@ -741,10 +727,10 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         {!isEditing && successDetails ? (
                           <div className="rounded-[24px] border border-[rgba(224,255,0,0.16)] bg-[rgba(224,255,0,0.06)] p-4">
                             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--color-primary-mid)]">
-                              Entitlement confirmed
+                              Approval required
                             </p>
                             <p className="mt-2 text-[13px] text-[var(--color-text-primary)]">
-                              Transaction {successDetails.transactionId} recorded. You can create the event now.
+                              Request {successDetails.requestId} is pending. The event remains locked until Command Center applies the approved plan.
                             </p>
                           </div>
                         ) : null}
@@ -997,16 +983,16 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                           Skip add-ons
                         </Button>
                         <Button onClick={handleContinueFromAddons}>
-                          {requiresPurchase ? "Activate plan" : "Continue to event"}
+                          {requiresPurchase ? "Request plan access" : "Continue to event"}
                           <ChevronRight className="h-4 w-4" />
                         </Button>
                       </>
                     ) : null}
 
                     {step === 2 ? (
-                      <Button disabled={loading} onClick={handleCheckout}>
+                      <Button disabled={loading || Boolean(successDetails)} onClick={handleCheckout}>
                         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        Activate workspace
+                        {successDetails ? "Approval requested" : "Request approval"}
                       </Button>
                     ) : null}
 

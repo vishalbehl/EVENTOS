@@ -28,8 +28,7 @@ class CommercialPlanResponse(BaseModel):
     description: Optional[str] = None
     billing_model: str
     currency: str
-    price_per_event_min: Optional[float] = None
-    price_per_event_max: Optional[float] = None
+    price_per_event: Optional[float] = None
     max_events: int
     max_users: int
     max_registrations: Optional[int] = None

@@ -15,6 +15,10 @@ from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.badge_models import Badge, BadgeHistory
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.events.models.capacity_rule import CapacityRule
+from app.modules.events.models.event import Event
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.platform.services.metering_service import MeteringService
 from app.modules.registration.schemas.registration import (
     ParticipantRegistrationCreate,
     ParticipantRegistrationUpdate,
@@ -38,7 +42,10 @@ async def submit_registration(
     Submit registration data. If event-level capacity is reached and waitlist is enabled,
     automatically waitlists the registration.
     """
-    # Verify event exists
+    event = await db.scalar(select(Event).where(Event.id == event_id, Event.deleted_at.is_(None)))
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
     q_rule = select(CapacityRule).where(
         CapacityRule.event_id == event_id,
         CapacityRule.session_id.is_(None),
@@ -77,6 +84,8 @@ async def submit_registration(
         waitlist_position=waitlist_pos
     )
     db.add(reg)
+    await db.flush()
+    await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="registration_submissions", quantity=1, unit="count", source="registration.submit", idempotency_key=f"registration-submit:{reg.id}", metadata={"registration_id": str(reg.id), "status": status_str})
     await db.commit()
     await db.refresh(reg)
     return reg
@@ -144,6 +153,10 @@ async def helper_approve_registration(
     event_stmt = select(Event).where(Event.id == reg.event_id)
     event_res = await db.execute(event_stmt)
     event_obj = event_res.scalar_one_or_none()
+    if not event_obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    await enforce_event_operation(db, event_obj.organization_id, event_obj.id, "registration.approve", user_id=reviewer_id)
+    reservation = await UsageReservationService.reserve(db, organization_id=event_obj.organization_id, event_id=reg.event_id, limit_key="max_registrations", quantity=1, unit="registration", idempotency_key=f"registration-approval:{reg.id}", metadata={"registration_id": str(reg.id)})
 
     role_price = 0.0
     if event_obj and event_obj.registration_settings and event_obj.registration_settings.get("payment_enabled", False):
@@ -179,6 +192,7 @@ async def helper_approve_registration(
     )
     db.add(participant)
     await db.flush()  # populate participant.id
+    await UsageReservationService.consume(db, reservation.id, source="registration.approval", actor_user_id=reviewer_id)
 
     # Find default badge template
     q_tmpl = select(PrintTemplate).where(
@@ -221,8 +235,7 @@ async def helper_approve_registration(
     reg.review_notes = review_notes
     reg.waitlist_position = None
 
-    await db.commit()
-    await db.refresh(reg)
+    await db.flush()
     return reg
 
 
@@ -265,10 +278,13 @@ async def approve_registration(
                 detail=f"Cannot approve. Event is at capacity ({rule.capacity})."
             )
 
-    return await helper_approve_registration(db, reg, current_user.id, payload.review_notes)
+    approved = await helper_approve_registration(db, reg, current_user.id, payload.review_notes)
+    await db.commit()
+    await db.refresh(approved)
+    return approved
 
 
-@router.patch("/{id}/reject", response_model=ParticipantRegistrationResponse)
+@router.patch("/{id}/reject", response_model=ParticipantRegistrationResponse, dependencies=[require_event_operation("registration.approve")])
 async def reject_registration(
     id: uuid.UUID,
     event: CurrentEvent,
@@ -319,7 +335,7 @@ async def reject_registration(
     return reg
 
 
-@router.patch("/{id}/waitlist", response_model=ParticipantRegistrationResponse)
+@router.patch("/{id}/waitlist", response_model=ParticipantRegistrationResponse, dependencies=[require_event_operation("registration.approve")])
 async def waitlist_registration(
     id: uuid.UUID,
     event: CurrentEvent,
@@ -397,7 +413,8 @@ async def promote_registration(
             )
             .values(waitlist_position=ParticipantRegistration.waitlist_position - 1)
         )
-        await db.commit()
+    await db.commit()
+    await db.refresh(approved_reg)
 
     return approved_reg
 
@@ -409,26 +426,14 @@ async def reset_registration_data(
     db: AsyncSession = Depends(get_db)
 ) -> MessageResponse:
     """
-    Completely reset/delete all registration-related transaction data for this event.
+    Legacy endpoint retained as an explicit denial. Registration history is
+    financial and audit evidence and may only be purged by the governed
+    Command Center lifecycle workflow.
     """
-    from sqlalchemy import delete
-    from app.modules.registration.models.participant import Participant
-    from app.modules.registration.models.participant_registration import ParticipantRegistration
-    from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
-    from app.modules.registration.models.payment_transaction import PaymentTransaction
-    from app.modules.registration.models.check_in import CheckIn
-    from app.modules.identity.models.portal_otp_token import PortalOtpToken
-    from app.modules.registration.models.import_job import ImportJob
-
-    # Delete in order of dependency
-    await db.execute(delete(CheckIn).where(CheckIn.event_id == event.id))
-    await db.execute(delete(ParticipantRegistration).where(ParticipantRegistration.event_id == event.id))
-    await db.execute(delete(PaymentTransaction).where(PaymentTransaction.event_id == event.id))
-    await db.execute(delete(PortalOtpToken).where(PortalOtpToken.event_id == event.id))
-    await db.execute(delete(ImportJob).where(ImportJob.event_id == event.id))
-    
-    # Cascade deletes Badges, print jobs, badge scans, and badge history logs
-    await db.execute(delete(Participant).where(Participant.event_id == event.id))
-
-    await db.commit()
-    return MessageResponse(message="All registration-related transaction data and logs have been completely reset.")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "GOVERNED_LIFECYCLE_REQUIRED",
+            "message": "Permanent registration-data deletion must be requested and approved in Command Center.",
+        },
+    )

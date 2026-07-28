@@ -151,7 +151,7 @@ export default function PortalDashboardPage() {
   const [tcModalOpen, setTcModalOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string }>>([
-    { sender: "bot", text: "Hello! Welcome to EventX OS support. How can I help you today?" }
+    { sender: "bot", text: "Hello! Welcome to Event OS support. How can I help you today?" }
   ]);
   const [chatInput, setChatInput] = useState("");
   const [connectedStates, setConnectedStates] = useState<Record<number, boolean>>({});
@@ -1367,7 +1367,7 @@ export default function PortalDashboardPage() {
                 <h1>PAYMENT RECEIPT</h1>
                 <span style="font-size: 11px; color: #666;">${event.name}</span>
               </div>
-              <span style="font-size: 20px; font-weight: 900; color: #6366f1;">EventX OS</span>
+              <span style="font-size: 20px; font-weight: 900; color: #6366f1;">Event OS</span>
             </div>
             <div class="details-grid">
               <div class="detail-item">

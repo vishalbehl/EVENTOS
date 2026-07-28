@@ -103,7 +103,7 @@ export default function RegistrationTemplateEditor({ eventId }: { eventId: strin
     const testEmail = window.prompt('Send test to email:', 'admin@example.com')
     if (!testEmail) return
     try {
-      await apiClient.post(`/events/${eventId}/notifications/test-template`, { template_id: selectedId, to_email: testEmail })
+      await apiClient.post(`/events/${eventId}/notifications/test-template`, { template_id: selectedId, to_email: testEmail }, { headers: { "Idempotency-Key": crypto.randomUUID() } })
       toast.success(`Test email sent to ${testEmail}`)
     } catch {
       toast.error('Test dispatch failed.')

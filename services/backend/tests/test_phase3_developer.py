@@ -10,16 +10,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.identity.models.user import User
+from app.modules.events.models.event import Event
 from app.modules.developer.models.developer_registry import ApiKey, OAuthClient, RateLimit
 from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
 from app.modules.developer.models.developer_domain_tables import DeveloperOAuthToken
+from app.modules.integrations.models.integrations_domain_tables import IntegrationProvider
 from app.redis import redis_client
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, activate_event_for_test
 
 
 
 @pytest.mark.asyncio
-async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User, db: AsyncSession):
+async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User, event: Event, db: AsyncSession):
+    await activate_event_for_test(db, event)
     # 1. Create API Key
     payload = {
         "name": "Pipeline Integration",
@@ -28,7 +31,7 @@ async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User,
     resp = await client.post(
         "/developer/api-keys",
         json=payload,
-        headers=auth_headers(organizer)
+        headers={**auth_headers(organizer), "Idempotency-Key": "developer-key-pipeline-create"}
     )
     assert resp.status_code == 201
     data = resp.json()
@@ -72,7 +75,7 @@ async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User,
     # 4. Revoke API Key
     del_resp = await client.delete(
         f"/developer/api-keys/{key_id}",
-        headers=auth_headers(organizer)
+        headers={**auth_headers(organizer), "Idempotency-Key": "developer-key-pipeline-revoke"}
     )
     assert del_resp.status_code == 204
 
@@ -83,17 +86,78 @@ async def test_developer_api_key_lifecycle(client: AsyncClient, organizer: User,
     )
     assert fail_resp.status_code == 401
 
+
 @pytest.mark.asyncio
-async def test_oauth_client_and_authorize_flow(client: AsyncClient, organizer: User, db: AsyncSession):
+async def test_integration_connection_lifecycle_is_versioned_and_idempotent(
+    client: AsyncClient, organizer: User, event: Event, db: AsyncSession
+):
+    await activate_event_for_test(db, event)
+    provider = IntegrationProvider(name=f"Test Provider {uuid.uuid4().hex[:8]}", description="Test-only provider")
+    db.add(provider)
+    await db.commit()
+    await db.refresh(provider)
+
+    providers = await client.get("/developer/integration-providers", headers=auth_headers(organizer))
+    assert providers.status_code == 200
+    assert any(row["id"] == str(provider.id) for row in providers.json())
+
+    create_headers = {**auth_headers(organizer), "Idempotency-Key": f"integration-create-{uuid.uuid4()}"}
+    created = await client.post(
+        "/developer/integration-connections",
+        json={"provider_id": str(provider.id)},
+        headers=create_headers,
+    )
+    assert created.status_code == 201
+    connection = created.json()
+    assert connection["is_active"] is True
+    assert connection["version"] == 1
+
+    replay = await client.post(
+        "/developer/integration-connections",
+        json={"provider_id": str(provider.id)},
+        headers=create_headers,
+    )
+    assert replay.status_code == 201
+    assert replay.json() == connection
+
+    updated = await client.patch(
+        f"/developer/integration-connections/{connection['id']}",
+        json={"is_active": False},
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"integration-update-{uuid.uuid4()}",
+            "If-Match": "1",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["is_active"] is False
+    assert updated.json()["version"] == 2
+
+    stale = await client.patch(
+        f"/developer/integration-connections/{connection['id']}",
+        json={"is_active": True},
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"integration-stale-{uuid.uuid4()}",
+            "If-Match": "1",
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "VERSION_CONFLICT"
+
+@pytest.mark.asyncio
+async def test_oauth_client_and_authorize_flow(client: AsyncClient, organizer: User, event: Event, db: AsyncSession):
+    await activate_event_for_test(db, event)
     # 1. Register OAuth Client
     payload = {
         "name": "Mobile Dashboard Client",
         "redirect_uris": ["https://localhost:3000/callback"]
     }
+    create_key = f"oauth-client-{uuid.uuid4()}"
     resp = await client.post(
         "/developer/oauth/clients",
         json=payload,
-        headers=auth_headers(organizer)
+        headers={**auth_headers(organizer), "Idempotency-Key": create_key}
     )
     assert resp.status_code == 201
     data = resp.json()
@@ -102,6 +166,15 @@ async def test_oauth_client_and_authorize_flow(client: AsyncClient, organizer: U
     client_id = data["client_id"]
     client_secret = data["plaintext_client_secret"]
     app_id = data["id"]
+    assert data["version"] == 1
+
+    secret_replay = await client.post(
+        "/developer/oauth/clients",
+        json=payload,
+        headers={**auth_headers(organizer), "Idempotency-Key": create_key},
+    )
+    assert secret_replay.status_code == 409
+    assert secret_replay.json()["detail"]["code"] == "IDEMPOTENCY_RESULT_NO_LONGER_REPLAYABLE"
 
     # 2. Get list of clients
     list_resp = await client.get(
@@ -112,14 +185,21 @@ async def test_oauth_client_and_authorize_flow(client: AsyncClient, organizer: U
     assert any(c["id"] == app_id for c in list_resp.json())
 
     # 3. Request Authorization Code
+    authorization_key = f"oauth-authorization-{uuid.uuid4()}"
     auth_resp = await client.post(
         f"/developer/oauth/authorize?client_id={client_id}&redirect_uri=https://localhost:3000/callback&response_type=code",
-        headers=auth_headers(organizer)
+        headers={**auth_headers(organizer), "Idempotency-Key": authorization_key}
     )
     assert auth_resp.status_code == 200
     auth_data = auth_resp.json()
     assert "code" in auth_data
     auth_code = auth_data["code"]
+    auth_replay = await client.post(
+        f"/developer/oauth/authorize?client_id={client_id}&redirect_uri=https://localhost:3000/callback&response_type=code",
+        headers={**auth_headers(organizer), "Idempotency-Key": authorization_key},
+    )
+    assert auth_replay.status_code == 200
+    assert auth_replay.json()["code"] == auth_code
 
     # 4. Exchange Auth Code for Access Token
     token_payload = {
@@ -148,22 +228,27 @@ async def test_oauth_client_and_authorize_flow(client: AsyncClient, organizer: U
     # Clean up OAuth client
     del_resp = await client.delete(
         f"/developer/oauth/clients/{app_id}",
-        headers=auth_headers(organizer)
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"oauth-revoke-{uuid.uuid4()}",
+            "If-Match": "1",
+        }
     )
     assert del_resp.status_code == 204
 
 @pytest.mark.asyncio
-async def test_developer_rate_limiting(client: AsyncClient, organizer: User, db: AsyncSession):
-    # Setup test database plan limits
-    plan = SubscriptionPlan(name="TestTier", max_events=5, max_users=5)
-    db.add(plan)
-    await db.flush()
-    
-    sub = OrganizationSubscription(organization_id=organizer.organization_id, plan_id=plan.id, status="ACTIVE")
-    db.add(sub)
+async def test_developer_rate_limiting(client: AsyncClient, organizer: User, event: Event, db: AsyncSession):
+    await activate_event_for_test(db, event)
+    sub = await db.scalar(
+        select(OrganizationSubscription).where(
+            OrganizationSubscription.organization_id == organizer.organization_id,
+            OrganizationSubscription.status == "ACTIVE",
+        )
+    )
+    plan = await db.get(SubscriptionPlan, sub.plan_id)
     
     # Set limit to 2 requests per minute to easily trigger rate limiting
-    lim = RateLimit(plan_tier="TestTier", requests_per_minute=2, requests_per_day=50)
+    lim = RateLimit(plan_tier=plan.name, requests_per_minute=2, requests_per_day=50)
     db.add(lim)
     await db.commit()
 
@@ -171,7 +256,7 @@ async def test_developer_rate_limiting(client: AsyncClient, organizer: User, db:
     key_resp = await client.post(
         "/developer/api-keys",
         json={"name": "Limiter Key"},
-        headers=auth_headers(organizer)
+        headers={**auth_headers(organizer), "Idempotency-Key": "developer-key-limiter-create"}
     )
     key_data = key_resp.json()
     plaintext_key = key_data["plaintext_key"]

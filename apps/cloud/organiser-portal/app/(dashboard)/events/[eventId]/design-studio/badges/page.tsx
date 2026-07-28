@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
 
 const uuidv4 = () => {
   if (typeof window !== "undefined" && window.crypto && window.crypto.randomUUID) {
@@ -47,6 +48,8 @@ const PRESET_BADGE_SIZES = [
 export default function PremiumBadgeDesigner() {
   const { eventId } = useParams();
   const router = useRouter();
+  const customDesignAccess = useOperationAccess("badges.custom_design.manage");
+  const qrDesignAccess = useOperationAccess("badges.qr.manage");
 
   // ----- State Definition -----
   const [templates, setTemplates] = useState<any[]>([]);
@@ -263,11 +266,13 @@ export default function PremiumBadgeDesigner() {
         template_data: template
       };
       if (currentTemplateId === "new") {
-        const res = await apiPost<any>(`/events/${eventId}/print-templates`, payload);
+        const res = await apiPost<any>(`/events/${eventId}/print-templates`, payload, { headers: { "Idempotency-Key": crypto.randomUUID() } });
         toast.success("Badge template created successfully!");
         setCurrentTemplateId(res.id);
       } else {
-        await apiPatch<any>(`/events/${eventId}/print-templates/${currentTemplateId}`, payload);
+        await apiPatch<any>(`/events/${eventId}/print-templates/${currentTemplateId}`, payload, {
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+        });
         toast.success("Badge template updated successfully!");
       }
       await fetchTemplates();
@@ -305,6 +310,11 @@ export default function PremiumBadgeDesigner() {
 
   // ----- Drag/Drop Field Mutators -----
   const addField = (type: string, placeholder: string, customProps: any = {}) => {
+    const access = type === "qr" ? qrDesignAccess : ["image", "shape"].includes(type) ? customDesignAccess : null;
+    if (access && !access.enabled) {
+      toast.error(`This design element is unavailable: ${(access.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+      return;
+    }
     const page = template.pages[activePageIndex];
     const newField = {
       id: `field-${uuidv4().substring(0, 8)}`,
@@ -702,20 +712,24 @@ export default function PremiumBadgeDesigner() {
             <Eye className="h-4 w-4" /> Preview
           </Button>
 
-          <Button
-            onClick={handleSave}
-            disabled={loading}
-            className="h-8 gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold uppercase tracking-wider rounded-lg border border-zinc-700"
-          >
-            <Save className="h-4 w-4" /> Save
-          </Button>
+          <CapabilityAction operation="badges.templates.manage">
+            <Button
+              onClick={handleSave}
+              disabled={loading}
+              className="h-8 gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold uppercase tracking-wider rounded-lg border border-zinc-700"
+            >
+              <Save className="h-4 w-4" /> Save
+            </Button>
+          </CapabilityAction>
 
-          <Button
-            onClick={() => generatePreviewPdf(true)}
-            className="h-8 gap-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-black uppercase tracking-widest rounded-lg shadow-lg shadow-purple-600/10"
-          >
-            <Printer className="h-4 w-4" /> Export PDF
-          </Button>
+          <CapabilityAction operation="badges.export">
+            <Button
+              onClick={() => generatePreviewPdf(true)}
+              className="h-8 gap-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-black uppercase tracking-widest rounded-lg shadow-lg shadow-purple-600/10"
+            >
+              <Printer className="h-4 w-4" /> Export PDF
+            </Button>
+          </CapabilityAction>
         </div>
       </div>
 
@@ -773,6 +787,7 @@ export default function PremiumBadgeDesigner() {
                       <button
                         key={item.label}
                         onClick={() => addField(item.type, item.placeholder, (item as any).customProps)}
+                        disabled={["image", "shape"].includes(item.type) && (customDesignAccess.loading || !customDesignAccess.enabled)}
                         className="p-3 bg-zinc-950 hover:bg-zinc-850 border border-zinc-850 hover:border-zinc-700 rounded-xl flex flex-col items-center justify-center text-center gap-1.5 transition-all"
                       >
                         <item.icon className="h-4 w-4 text-purple-400" />
@@ -792,6 +807,7 @@ export default function PremiumBadgeDesigner() {
                       <button
                         key={item.label}
                         onClick={() => addField(item.type, item.placeholder, (item as any).customProps)}
+                        disabled={item.type === "qr" && (qrDesignAccess.loading || !qrDesignAccess.enabled)}
                         className="p-3 bg-zinc-950 hover:bg-zinc-850 border border-zinc-850 hover:border-zinc-700 rounded-xl flex flex-col items-center justify-center text-center gap-1.5 transition-all"
                       >
                         <item.icon className="h-4 w-4 text-purple-400" />
