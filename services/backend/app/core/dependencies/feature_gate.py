@@ -1,12 +1,14 @@
 import uuid
 
 from fastapi import Depends, HTTPException, Path, status
+from sqlalchemy import select
 
 from app.dependencies import ActiveUser, CurrentEvent, DB
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.billing.capability_registry import OPERATION_PERMISSIONS, feature_for_operation
 from app.modules.identity.models.user import User
+from app.modules.events.models.event import Event
 from app.modules.rbac.services.permission_service import get_user_permissions
 
 
@@ -185,8 +187,6 @@ async def resolve_org_operation(
 
 
 async def require_event_activation(event: CurrentEvent, user: ActiveUser, db: DB):
-    if _is_platform_bypass(user):
-        return event
     activation = await EntitlementResolver.get_event_activation(db, event.organization_id, event.id)
     if not activation or activation.status not in ("ACTIVE", "SUSPENDED", "EXPIRED", "TRANSFER_PENDING"):
         raise HTTPException(
@@ -226,6 +226,32 @@ async def enforce_event_operation(
     user_id: uuid.UUID | None = None,
 ):
     await _enforce_actor_permission(db, user_id, operation, event_id=event_id)
+    actor = await db.get(User, user_id) if user_id else None
+    if not actor or not _is_platform_bypass(actor):
+        event = await db.scalar(
+            select(Event).where(
+                Event.id == event_id,
+                Event.organization_id == organization_id,
+            )
+        )
+        if event is None:
+            raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND"})
+        if event.is_maintenance:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail={
+                    "code": "EVENT_MAINTENANCE",
+                    "message": "This event is temporarily in maintenance mode.",
+                },
+            )
+        if event.is_read_only:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail={
+                    "code": "EVENT_READ_ONLY",
+                    "message": "This event currently allows reads only.",
+                },
+            )
     return await enforce_event_feature(
         db,
         organization_id,

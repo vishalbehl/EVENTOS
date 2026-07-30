@@ -140,7 +140,7 @@ export function PlanUsageWidget() {
             </Badge>
           </div>
           <p className="text-[11px] font-medium text-muted mt-1 uppercase tracking-wider">
-            {plan.tagline || "Access all premium configurations and analytics tools."}
+            {plan.tagline || "Capability details are resolved from the active commercial contract."}
           </p>
         </div>
 
@@ -160,9 +160,13 @@ export function PlanUsageWidget() {
       {/* Usage Progress Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         {meters.map((meter) => {
-          const isUnlimited = meter.max === null || meter.max <= 0;
-          const percentage = isUnlimited ? 0 : Math.min(100, (meter.used / meter.max) * 100);
-          const isNearLimit = !isUnlimited && percentage >= 90;
+          const isUnavailable = meter.max === null || meter.max === undefined;
+          const isBlocked = !isUnavailable && meter.max <= 0;
+          const percentage =
+            !isUnavailable && !isBlocked
+              ? Math.min(100, (meter.used / meter.max) * 100)
+              : 0;
+          const isNearLimit = !isUnavailable && !isBlocked && percentage >= 90;
 
           return (
             <div key={meter.name} className="p-4 border border-default/40 rounded-2xl bg-[color-mix(in_srgb,var(--text)_2%,transparent)] space-y-3">
@@ -180,7 +184,7 @@ export function PlanUsageWidget() {
                   <span className="text-[11px] font-bold text-[var(--text)]">
                     {meter.used.toLocaleString()}
                     <span className="text-muted"> / </span>
-                    {isUnlimited ? "Unlimited" : meter.max.toLocaleString()}
+                    {isUnavailable ? "Not configured" : meter.max.toLocaleString()}
                     {meter.unit && ` ${meter.unit}`}
                   </span>
                   {isNearLimit && (
@@ -191,7 +195,7 @@ export function PlanUsageWidget() {
 
               {/* Progress bar */}
               <div className="w-full h-2 bg-[color-mix(in_srgb,var(--text)_8%,transparent)] rounded-full overflow-hidden relative">
-                {!isUnlimited && (
+                {!isUnavailable && !isBlocked && (
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${percentage}%` }}
@@ -199,16 +203,18 @@ export function PlanUsageWidget() {
                     className={cn("h-full rounded-full bg-gradient-to-r", meter.color)}
                   />
                 )}
-                {isUnlimited && (
-                  <div className="h-full w-full bg-gradient-to-r from-emerald-500/20 to-teal-500/20 rounded-full" />
+                {(isUnavailable || isBlocked) && (
+                  <div className="h-full w-full bg-[color-mix(in_srgb,var(--text)_8%,transparent)] rounded-full" />
                 )}
               </div>
 
               {/* Percentage label or unlimited badge */}
               <div className="flex justify-between items-center text-[9px] font-bold text-muted uppercase">
                 <span>
-                  {isUnlimited ? (
-                    <span className="text-emerald-500/80 font-black">Unlimited Tier</span>
+                  {isUnavailable ? (
+                    <span className="text-muted font-black">Allowance unavailable</span>
+                  ) : isBlocked ? (
+                    <span className="text-red-500/80 font-black">Capability blocked</span>
                   ) : (
                     `${percentage.toFixed(0)}% Consumed`
                   )}
@@ -226,7 +232,7 @@ export function PlanUsageWidget() {
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pt-6 border-t border-default/40 mt-auto">
         <div className="flex items-center gap-2 text-[10px] font-bold text-muted uppercase">
           <CheckCircle className="h-4 w-4 text-emerald-500" />
-          <span>All operational environments healthy & verified</span>
+          <span>Usage and allowances come from canonical capability resolution</span>
         </div>
 
         <Button 

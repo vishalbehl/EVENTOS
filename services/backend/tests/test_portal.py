@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.speaker import Speaker
 from app.modules.speakers.routers.portal import speaker_portal_auth, download_speaker_qr
+from tests.conftest import activate_event_for_test
 
 
 async def test_speaker_portal_auth_by_code(
@@ -21,6 +22,7 @@ async def test_speaker_portal_auth_by_code(
     # Enable speaker portal mode for test
     speaker.event.speaker_mode_enabled = True
     db.add(speaker.event)
+    await activate_event_for_test(db, speaker.event)
     await db.commit()
 
     # Authenticate via access code directly

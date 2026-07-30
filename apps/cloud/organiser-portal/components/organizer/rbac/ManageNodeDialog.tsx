@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/store/use-auth-store";
 import { Trash2, Plus, Shield, Globe, Lock, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRemoteEventLimitAccess } from "@/lib/capabilities";
 
 interface ManageNodeDialogProps {
   user: any;
@@ -38,6 +39,10 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
   const [events, setEvents] = useState<any[]>([]);
   const [isFetchingEvents, setIsFetchingEvents] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState("none");
+  const assignmentLimitAccess = useRemoteEventLimitAccess(
+    selectedEventId === "none" ? undefined : selectedEventId,
+    "max_event_team_members",
+  );
   
   const [formData, setFormData] = useState({
     first_name: "",
@@ -122,7 +127,8 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
+          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`,
+          'Idempotency-Key': crypto.randomUUID(),
         },
         body: JSON.stringify({
           user_id: user.id,
@@ -146,9 +152,9 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
     }
   };
 
-  const handleRemoveAssignment = async (eventId: string) => {
+  const handleRemoveAssignment = async (assignmentId: string) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/users/assignments/${user.id}/${eventId}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/users/assignments/${assignmentId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${useAuthStore.getState().accessToken}`
@@ -261,7 +267,21 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
                     ))}
                   </SelectContent>
                 </Select>
-                <Button onClick={handleAddAssignment} disabled={loading || selectedEventId === "none"} className="bg-[var(--pri)] text-white font-black px-4 rounded-xl h-11">
+                <Button
+                  onClick={handleAddAssignment}
+                  disabled={
+                    loading
+                    || selectedEventId === "none"
+                    || assignmentLimitAccess.loading
+                    || !assignmentLimitAccess.enabled
+                  }
+                  title={
+                    assignmentLimitAccess.enabled
+                      ? undefined
+                      : `Unavailable: ${(assignmentLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+                  }
+                  className="bg-[var(--pri)] text-white font-black px-4 rounded-xl h-11"
+                >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
@@ -278,7 +298,7 @@ export function ManageNodeDialog({ user, open, onOpenChange, roles, onSuccess }:
                       <Button 
                         variant="ghost" 
                         size="icon" 
-                        onClick={() => handleRemoveAssignment(as.event_id)}
+                        onClick={() => handleRemoveAssignment(as.id)}
                         className="h-8 w-8 rounded-lg hover:bg-red-500/10 hover:text-red-500 opacity-0 group-hover:opacity-100"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

@@ -19,7 +19,6 @@ from app.modules.registration.routers.participants import checkin_participant
 from app.modules.registration.schemas.participant import CheckInCreate
 from tests.conftest import activate_event_for_test
 from app.modules.billing.services.event_entitlement_service import EventEntitlementService
-from app.modules.platform.models.platform_domain_tables import FeatureFlag
 
 
 async def _participant(db: AsyncSession, event: Event, suffix: str) -> Participant:
@@ -131,12 +130,6 @@ async def test_canonical_entitlement_flag_resolves_without_legacy_fallback(
     event: Event,
 ):
     await activate_event_for_test(db, event)
-    db.add(FeatureFlag(
-        organization_id=event.organization_id,
-        flag_key="organizer_console_entitlement_enforce",
-        is_enabled=True,
-    ))
-    await db.commit()
     resolved = await asyncio.wait_for(
         EventEntitlementService.resolve(db, event.organization_id, event.id, explain=True),
         timeout=10,

@@ -55,6 +55,23 @@ class EntitlementResolver:
         "max_exports_per_event",
         "max_devices_per_event",
     )
+    # Compatibility source for plans created before typed PlanFeature limit
+    # assignments existed. Activation snapshots must remain deterministic for
+    # those already-published plans; typed assignments always take precedence.
+    # New plan publication rejects missing typed assignments, so this path can
+    # be removed after the legacy-plan migration is complete.
+    LEGACY_PLAN_EVENT_LIMIT_FIELDS = (
+        "max_event_team_members",
+        "max_registrations",
+        "max_speakers",
+        "max_sessions",
+        "max_rooms",
+        "max_ticket_categories",
+        "max_badge_templates",
+        "max_certificate_templates",
+        "max_emails_per_event",
+        "storage_quota_mb",
+    )
 
     @staticmethod
     async def get_active_subscriptions(db: AsyncSession, org_id: uuid.UUID) -> Sequence[OrganizationSubscription]:
@@ -259,6 +276,60 @@ class EntitlementResolver:
         return base_value
 
     @staticmethod
+    async def get_org_limit_policy(
+        db: AsyncSession,
+        org_id: uuid.UUID,
+        limit_key: str,
+    ) -> dict[str, Any]:
+        catalogue_keys = [
+            key
+            for key, canonical in CATALOG_LIMIT_KEYS.items()
+            if canonical == limit_key
+        ]
+        if not catalogue_keys:
+            return {
+                "enforcement_mode": "HARD",
+                "overage_policy": {"action": "DENY"},
+            }
+        subscriptions = await EntitlementResolver.get_active_subscriptions(db, org_id)
+        plan_ids = [row.plan_id for row in subscriptions if row.plan_id]
+        if not plan_ids:
+            return {
+                "enforcement_mode": "HARD",
+                "overage_policy": {"action": "DENY"},
+            }
+        modes = (
+            await db.scalars(
+                select(PlanFeature.enforcement_mode)
+                .join(FeatureCatalog, FeatureCatalog.id == PlanFeature.feature_id)
+                .where(
+                    PlanFeature.plan_id.in_(plan_ids),
+                    PlanFeature.enabled.is_(True),
+                    FeatureCatalog.key.in_(catalogue_keys),
+                )
+            )
+        ).all()
+        # Multiple active commercial sources use the most restrictive policy.
+        rank = {"HARD": 0, "SOFT_WARNING": 1, "METERED_OVERAGE": 2}
+        mode = min(
+            (str(item or "HARD").upper() for item in modes),
+            key=lambda item: rank.get(item, -1),
+            default="HARD",
+        )
+        if mode not in rank:
+            mode = "HARD"
+        return {
+            "enforcement_mode": mode,
+            "overage_policy": (
+                {"action": "BILL"}
+                if mode == "METERED_OVERAGE"
+                else {"action": "WARN"}
+                if mode == "SOFT_WARNING"
+                else {"action": "DENY"}
+            ),
+        }
+
+    @staticmethod
     async def resolve_org_entitlements(
         db: AsyncSession, org_id: uuid.UUID, explain: bool = False
     ) -> Dict[str, Any]:
@@ -345,8 +416,10 @@ class EntitlementResolver:
                 "denial_reason": None if enabled else "Disabled by organization override",
             }
 
-        limits = {
-            key: {
+        limits = {}
+        for key in LIMIT_DEFINITIONS:
+            policy = await EntitlementResolver.get_org_limit_policy(db, org_id, key)
+            limits[key] = {
                 "limit_value": await EntitlementResolver.get_org_limit(db, org_id, key),
                 "scope_type": "ORG_SCOPED" if key in ("max_events", "max_users") else "EVENT_SCOPED",
                 "source_type": "AGGREGATE_SUBSCRIPTIONS" if subs else "CONTRACT_REQUIRED",
@@ -357,9 +430,8 @@ class EntitlementResolver:
                 "grant_id": None,
                 "override_source": None,
                 "denial_reason": None if subs else "CONTRACT_REQUIRED",
+                **policy,
             }
-            for key in LIMIT_DEFINITIONS
-        }
 
         approved_overrides = (await db.scalars(select(EntitlementOverrideRequest).where(
             EntitlementOverrideRequest.organization_id == org_id,
@@ -557,6 +629,21 @@ class EntitlementResolver:
                     "source_ref": str(plan.id),
                     "override_source": None,
                     "denial_reason": None if enabled else "NOT_ENTITLED",
+                }
+
+            for limit_key in EntitlementResolver.LEGACY_PLAN_EVENT_LIMIT_FIELDS:
+                if limit_key in limits:
+                    continue
+                value = getattr(plan, limit_key, None)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                limits[limit_key] = {
+                    "limit_key": limit_key,
+                    "limit_value": int(value),
+                    "scope_type": "EVENT_SCOPED",
+                    "source_type": "PLAN_LEGACY_COMPATIBILITY",
+                    "source_ref": str(plan.id),
+                    "override_source": f"subscription_plans.{limit_key}",
                 }
 
         addon_filters = [

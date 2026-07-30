@@ -5,7 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { 
   X, Mail, Send, TrendingUp, Users, MousePointer2, ShieldCheck, Zap, Globe, 
   FileText, ArrowRight, MapPin, History, Settings, RefreshCw, Monitor,
-  Trash2, Save, LayoutGrid, Clock, CheckCircle2, AlertTriangle, ToggleLeft as Toggle
+  Trash2, Save, LayoutGrid, Clock, CheckCircle2, AlertTriangle, ToggleLeft as Toggle,
+  Building, Calendar, Coffee
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +36,21 @@ export function GlobalModal() {
 
   const { data: event } = useEvent(eventId as string);
   const { data: sessions } = useSessions(eventId as string, { room_id: data?.id });
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      if (isOpen) {
+        document.body.style.overflow = "hidden";
+      } else {
+        document.body.style.overflow = "unset";
+      }
+    }
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.style.overflow = "unset";
+      }
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -94,7 +110,7 @@ export function GlobalModal() {
               initial={{ scale: 0.9, opacity: 0, y: 50 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 50 }}
-              className="w-full max-w-7xl glass-3d border-default rounded-[4rem] p-10 md:p-16 shadow-[0_100px_200px_color-mix(in_srgb,var(--base)_80%,transparent)] overflow-y-auto max-h-[95vh] no-scrollbar pointer-events-auto relative"
+              className="w-full max-w-5xl glass-3d border-default rounded-[3rem] p-8 md:p-12 shadow-[0_100px_200px_color-mix(in_srgb,var(--base)_80%,transparent)] overflow-hidden flex flex-col max-h-[90vh] pointer-events-auto relative"
             >
               {/* Close Button - Moved and styled to not overlap */}
               <button 
@@ -182,191 +198,250 @@ export function GlobalModal() {
               )}
 
               {type === 'ROOM_SETTINGS' && roomData && (
-                <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-20 relative z-10">
-                   <div className="space-y-12">
-                      <div className="space-y-4">
-                         <div className="flex items-center gap-4">
-                            <Badge className="bg-[var(--pri)]/20 text-[var(--pri)] border-0 text-[10px] font-black tracking-widest px-3 py-1 uppercase">ROOM CONFIGURATION</Badge>
-                            <div className="flex items-center gap-2 px-3 py-1 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] rounded-full">
-                               <MapPin className="h-3 w-3 text-muted" />
-                               <span className="text-[10px] font-black text-muted uppercase tracking-widest">
-                                 {event?.venue_name ? `${event.venue_name}${event.location ? `, ${event.location}` : ''}` : (event?.location || "Main Convention Center")}
-                               </span>
-                            </div>
-                         </div>
-                         <h2 className="text-6xl font-black text-[var(--text)] tracking-tighter leading-tight">{roomData.name}</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_350px] relative z-10 flex-1 overflow-hidden min-h-0 bg-[#0A0A0A] rounded-[2rem]">
+                  {/* Left Panel */}
+                  <div className="flex flex-col overflow-hidden min-h-0 p-10 bg-[#0B0C0E]">
+                    {/* Header */}
+                    <div className="flex items-center gap-4 mb-8 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 rounded-lg bg-[#1a2118] flex items-center justify-center">
+                          <Building className="h-4 w-4 text-[#4ADE80]" />
+                        </div>
+                        <span className="text-[12px] font-black tracking-widest uppercase text-white">ROOM CONFIGURATION</span>
+                      </div>
+                      <div className="flex items-center gap-3 px-4 py-2 bg-[#121316] rounded-xl ml-4 border border-[#1f2125]">
+                        <MapPin className="h-4 w-4 text-[#888]" />
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-[#ccc] uppercase tracking-widest leading-tight">
+                            {event?.venue_name || "Main Convention Center"}
+                          </span>
+                          {event?.location && (
+                            <span className="text-[9px] font-bold text-[#888] uppercase tracking-widest leading-tight">
+                              {event.location}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Title */}
+                    <div className="shrink-0 mb-8">
+                      <div className="flex items-center gap-5 mb-2">
+                        <h2 className="text-4xl font-black text-white tracking-tighter leading-none">{roomData.name}</h2>
+                        <div className="flex items-center gap-2 px-3 py-1 bg-transparent border border-[#2e3328] rounded-full">
+                          <div className="h-2 w-2 rounded-full bg-[#4ADE80]" />
+                          <span className="text-[10px] font-black text-[#4ADE80] uppercase tracking-widest">ACTIVE</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[12px] font-medium text-[#888] max-w-sm leading-relaxed">
+                          Manage schedules, capacity, screens and location details for this room.
+                        </p>
+                        <div className="flex items-center gap-3 px-3 py-2 bg-[#111215] border border-[#1f2125] rounded-xl">
+                          <Calendar className="h-4 w-4 text-[#888]" />
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black text-white">{sessions?.length || 0} SESSIONS</span>
+                            <span className="text-[8px] font-bold text-[#4ADE80] tracking-widest uppercase">MAPPED</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Sessions Table */}
+                    <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
+                      <div className="flex items-center gap-2 mb-4 shrink-0">
+                         <Calendar className="h-4 w-4 text-[#888]" />
+                         <h4 className="text-[11px] font-black text-white uppercase tracking-[0.2em]">OPERATIONAL SCHEDULE</h4>
                       </div>
                       
-                      <div className="grid grid-cols-1 gap-12">
-                         <div className="space-y-8">
-                            <div className="flex items-center justify-between">
-                               <h4 className="text-[11px] font-black text-muted uppercase tracking-[0.2em]">Operational Schedule</h4>
-                               <Badge className="bg-[color-mix(in_srgb,var(--text)_5%,transparent)] text-muted border-0 text-[9px] font-black">{sessions?.length || 0} SESSIONS MAPPED</Badge>
-                            </div>
-                            
-                            <div className="glass-3d rounded-[2.5rem] border-default overflow-hidden">
-                               <div className="max-h-[400px] overflow-y-auto no-scrollbar">
-                                  <table className="w-full text-left border-collapse">
-                                     <thead>
-                                        <tr className="border-b border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)]">
-                                           <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Session / Code</th>
-                                           <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest text-center">Timing</th>
-                                           <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest text-center">Readiness</th>
-                                           <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest text-right">Status</th>
-                                        </tr>
-                                     </thead>
-                                     <tbody>
-                                        {sessions?.length ? sessions.map((session) => (
-                                          <tr key={session.id} className="border-b border-default hover:bg-[color-mix(in_srgb,var(--text)_5%,transparent)] transition-colors group">
-                                             <td className="p-6">
-                                                <p className="text-[13px] font-bold text-[var(--text)] mb-1 group-hover:text-[var(--pri)] transition-colors">{session.name}</p>
-                                                <p className="text-[10px] font-mono text-muted uppercase">{session.session_code}</p>
-                                             </td>
-                                             <td className="p-6 text-center">
-                                                <div className="flex flex-col items-center gap-1">
-                                                   <span className="text-[11px] font-bold text-muted">{formatTimeInTZ(session.start_time, (session as any).event_timezone)}</span>
-                                                   <span className="text-[9px] font-black text-muted uppercase tracking-tighter">TO</span>
-                                                   <span className="text-[11px] font-bold text-muted">{formatTimeInTZ(session.end_time, (session as any).event_timezone)}</span>
-                                                </div>
-                                             </td>
-                                             <td className="p-6">
-                                                <div className="flex flex-col items-center gap-2">
-                                                   <span className="text-[11px] font-mono font-black text-[var(--sec)]">{Math.round(session.readiness_pct || 0)}%</span>
-                                                   <div className="h-1 w-16 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] rounded-full overflow-hidden">
-                                                      <div className="h-full bg-[var(--sec)]" style={{ width: `${session.readiness_pct}%` }} />
-                                                   </div>
-                                                </div>
-                                             </td>
-                                             <td className="p-6 text-right">
-                                                <Badge className={cn(
-                                                  "border-0 text-[9px] font-black px-2 py-0.5",
-                                                  session.status === 'confirmed' ? "bg-[var(--success)]/10 text-[var(--success)]" : "bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] text-[var(--warn)]"
-                                                )}>
-                                                  {session.status.toUpperCase()}
-                                                </Badge>
-                                             </td>
-                                          </tr>
-                                        )) : (
-                                          <tr>
-                                             <td colSpan={4} className="p-20 text-center">
-                                                <div className="space-y-3">
-                                                   <AlertTriangle className="h-10 w-10 text-muted mx-auto" />
-                                                   <p className="text-[11px] font-bold text-muted uppercase tracking-widest italic">No operational data detected for this cycle.</p>
-                                                </div>
-                                             </td>
-                                          </tr>
+                      <div className="bg-[#111215] border border-[#1f2125] rounded-2xl overflow-hidden flex-1 flex flex-col min-h-0">
+                        <div className="flex-1 overflow-y-auto no-scrollbar">
+                          <table className="w-full text-left border-collapse">
+                             <thead>
+                                <tr className="border-b border-[#1f2125]">
+                                   <th className="p-3 text-[9px] font-black text-[#888] uppercase tracking-widest">SESSION / CODE</th>
+                                   <th className="p-3 text-[9px] font-black text-[#888] uppercase tracking-widest text-center">TIMING</th>
+                                   <th className="p-3 text-[9px] font-black text-[#888] uppercase tracking-widest text-center">READINESS</th>
+                                   <th className="p-3 text-[9px] font-black text-[#888] uppercase tracking-widest text-right">STATUS</th>
+                                </tr>
+                             </thead>
+                             <tbody>
+                                {sessions?.length ? sessions.map((session, i) => (
+                                  <tr key={session.id} className={cn(
+                                    "border-b border-[#1f2125] transition-colors relative",
+                                    i === 0 ? "bg-[#16181b]" : ""
+                                  )}>
+                                     <td className="p-3 pl-6 relative">
+                                        {i === 0 && (
+                                          <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#4ADE80] shadow-[0_0_15px_rgba(74,222,128,0.5)]" />
                                         )}
-                                     </tbody>
-                                  </table>
-                               </div>
-                            </div>
-                         </div>
+                                        <div className="flex items-center gap-3">
+                                           <div className={cn(
+                                             "h-8 w-8 rounded-lg border flex items-center justify-center shrink-0",
+                                             i === 0 ? "border-[#4ADE80]/30 shadow-[0_0_10px_rgba(74,222,128,0.1)]" : "border-[#2a2c31]"
+                                           )}>
+                                              <Monitor className={cn("h-4 w-4", i === 0 ? "text-[#4ADE80]" : "text-[#4b82f6]")} />
+                                           </div>
+                                           <div>
+                                             <p className="text-[12px] font-black text-white mb-0.5">{session.name}</p>
+                                             <p className="text-[9px] font-bold text-[#888] uppercase">{session.session_code}</p>
+                                           </div>
+                                        </div>
+                                     </td>
+                                     <td className="p-3 text-center">
+                                        <div className="flex flex-col items-center gap-0.5">
+                                           <span className="text-[10px] font-medium text-[#ccc]">{formatTimeInTZ(session.start_time, (session as any).event_timezone)}</span>
+                                           <span className="text-[8px] font-black text-[#666] uppercase tracking-widest">TO</span>
+                                           <span className="text-[10px] font-medium text-[#ccc]">{formatTimeInTZ(session.end_time, (session as any).event_timezone)}</span>
+                                        </div>
+                                     </td>
+                                     <td className="p-3">
+                                        <div className="flex flex-col items-center gap-1.5">
+                                           <span className="text-[10px] font-black text-[#4ADE80]">{Math.round(session.readiness_pct || 100)}%</span>
+                                           <div className="h-[2px] w-12 bg-[#2a2c31] rounded-full overflow-hidden">
+                                              <div className="h-full bg-[#4ADE80]" style={{ width: `${session.readiness_pct || 100}%` }} />
+                                           </div>
+                                        </div>
+                                     </td>
+                                     <td className="p-3 text-right pr-4">
+                                        <Badge className="border-0 text-[8px] font-black px-2 py-0.5 bg-[#1a2e1f] text-[#4ADE80] rounded-full uppercase tracking-widest">
+                                          {session.status.toUpperCase()}
+                                        </Badge>
+                                     </td>
+                                  </tr>
+                                )) : (
+                                  <tr>
+                                     <td colSpan={4} className="p-20 text-center">
+                                        <div className="space-y-3">
+                                           <AlertTriangle className="h-10 w-10 text-muted mx-auto" />
+                                           <p className="text-[11px] font-bold text-muted uppercase tracking-widest italic">No operational data detected for this cycle.</p>
+                                        </div>
+                                     </td>
+                                  </tr>
+                                )}
+                             </tbody>
+                          </table>
+                        </div>
                       </div>
-                   </div>
+                    </div>
+                  </div>
 
-                   <div className="flex flex-col h-full bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border-l border-default p-10 -m-10 rounded-r-[4rem] space-y-8 pt-24">
-                      <div className="flex items-center justify-between">
-                         <h4 className="text-[11px] font-black text-muted uppercase tracking-[0.2em]">Node Settings</h4>
-                         <div className="flex items-center gap-3">
-                            <span className={cn("text-[9px] font-black tracking-widest uppercase", roomData.is_active ? "text-[var(--success)]" : "text-[var(--dan)]")}>
-                               {roomData.is_active ? "ACTIVE" : "INACTIVE"}
-                            </span>
-                            <button 
-                               onClick={() => handleFieldChange('is_active', !roomData.is_active)}
-                               className={cn(
-                                 "h-6 w-11 rounded-full transition-all relative border border-default",
-                                 roomData.is_active ? "bg-[var(--pri)]" : "bg-[color-mix(in_srgb,var(--text)_5%,transparent)]"
-                               )}
-                            >
-                               <motion.div 
-                                 animate={{ x: roomData.is_active ? 22 : 4 }}
-                                 className="absolute top-1 h-3.5 w-3.5 rounded-full bg-[var(--text)] shadow-lg"
-                               />
-                            </button>
-                         </div>
-                      </div>
+                  {/* Right Panel */}
+                  <div className="flex flex-col h-full bg-[#111215] border-l border-[#1f2125] p-8 pt-10 relative overflow-hidden">
+                    {/* Background wave decoration */}
+                    <div className="absolute top-0 right-0 w-full h-40 bg-gradient-to-br from-transparent to-[#1a1b1f] opacity-50 blur-xl pointer-events-none" />
+                    
+                    <div className="flex items-center justify-between mb-8 relative z-10">
+                       <div className="flex items-center gap-3">
+                          <Settings className="h-4 w-4 text-[#888]" />
+                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest">ROOM SETTINGS</h4>
+                       </div>
+                       <div className="flex items-center gap-3">
+                          <span className={cn("text-[9px] font-black tracking-widest uppercase", roomData.is_active ? "text-[#4ADE80]" : "text-[#ef4444]")}>
+                             {roomData.is_active ? "ACTIVE" : "INACTIVE"}
+                          </span>
+                          <button 
+                             onClick={() => handleFieldChange('is_active', !roomData.is_active)}
+                             className={cn(
+                               "h-5 w-9 rounded-full transition-all relative border border-[#1f2125]",
+                               roomData.is_active ? "bg-[#4ADE80]" : "bg-[#0a0a0c]"
+                             )}
+                          >
+                             <motion.div 
+                               animate={{ x: roomData.is_active ? 16 : 2 }}
+                               className="absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-lg"
+                             />
+                          </button>
+                       </div>
+                    </div>
 
-                      <div className="space-y-6 overflow-y-auto no-scrollbar pr-2 pb-10">
-                         <div className="space-y-3">
-                            <Label className="text-[10px] font-black text-muted uppercase tracking-[0.25em] ml-1">Node Name</Label>
-                            <Input 
-                              value={roomData.name ?? ""}
-                              onChange={(e) => handleFieldChange('name', e.target.value)}
-                              className="h-14 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border-default rounded-2xl text-[var(--text)] font-bold focus:border-[var(--pri)]/50 transition-all"
-                            />
-                         </div>
+                    <div className="space-y-6 overflow-y-auto no-scrollbar relative z-10 pr-2">
+                       <div className="space-y-2">
+                          <Label className="text-[9px] font-black text-[#888] uppercase tracking-[0.1em]">ROOM NAME</Label>
+                          <Input 
+                            value={roomData.name ?? ""}
+                            onChange={(e) => handleFieldChange('name', e.target.value)}
+                            className="h-12 bg-[#0a0a0c] border-[#1f2125] rounded-xl text-white font-bold px-4 focus:border-[#4ADE80]/50"
+                          />
+                       </div>
 
-                         <div className="grid grid-cols-2 gap-6">
-                            <div className="space-y-3">
-                               <Label className="text-[10px] font-black text-muted uppercase tracking-[0.25em] ml-1">Max Capacity</Label>
-                               <div className="relative">
-                                  <Input 
-                                    type="number"
-                                    value={roomData.capacity ?? ""}
-                                    onChange={(e) => handleFieldChange('capacity', e.target.value === "" ? 0 : parseInt(e.target.value))}
-                                    className="h-14 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border-default rounded-2xl pl-12 text-[var(--text)] font-bold focus:border-[var(--pri)]/50 transition-all"
-                                  />
-                                  <Users className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted" />
-                                </div>
-                            </div>
-                             <div className="space-y-3">
-                                <Label className="text-[10px] font-black text-muted uppercase tracking-[0.25em] ml-1">Screens</Label>
-                                <div className="relative group">
-                                   <Input 
-                                     type="number"
-                                     min="1"
-                                     value={roomData.screen_count ?? 1}
-                                     onChange={(e) => handleFieldChange('screen_count', e.target.value === "" ? 1 : parseInt(e.target.value))}
-                                     className="h-14 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border-default rounded-2xl pl-12 pr-4 text-[var(--text)] font-bold focus:border-[var(--pri)]/50 transition-all"
-                                   />
-                                   <Monitor className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
-                                </div>
+                       <div className="grid grid-cols-2 gap-5">
+                          <div className="space-y-2">
+                             <Label className="text-[9px] font-black text-[#888] uppercase tracking-[0.1em]">MAX CAPACITY</Label>
+                             <div className="relative">
+                                <Input 
+                                  type="number"
+                                  value={roomData.capacity ?? ""}
+                                  onChange={(e) => handleFieldChange('capacity', e.target.value === "" ? 0 : parseInt(e.target.value))}
+                                  className="h-12 bg-[#0a0a0c] border-[#1f2125] rounded-xl pl-10 text-white font-bold focus:border-[#4ADE80]/50"
+                                />
+                                <Users className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#888]" />
+                              </div>
+                          </div>
+                           <div className="space-y-2">
+                              <Label className="text-[9px] font-black text-[#888] uppercase tracking-[0.1em]">SCREENS</Label>
+                              <div className="relative group">
+                                 <Input 
+                                   type="number"
+                                   min="1"
+                                   value={roomData.screen_count ?? 1}
+                                   onChange={(e) => handleFieldChange('screen_count', e.target.value === "" ? 1 : parseInt(e.target.value))}
+                                   className="h-12 bg-[#0a0a0c] border-[#1f2125] rounded-xl pl-10 pr-4 text-white font-bold focus:border-[#4ADE80]/50"
+                                 />
+                                 <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#888] group-focus-within:text-[#4ADE80] transition-colors" />
+                              </div>
+                           </div>
+                       </div>
+
+                       <div className="space-y-2">
+                          <Label className="text-[9px] font-black text-[#888] uppercase tracking-[0.1em]">LOCATION DETAILS</Label>
+                          <div className="relative group">
+                             <MapPin className="absolute left-3 top-3 h-4 w-4 text-[#888] group-focus-within:text-[#4ADE80] transition-colors" />
+                             <textarea 
+                               value={roomData.location_notes ?? ""}
+                               onChange={(e) => handleFieldChange('location_notes', e.target.value)}
+                               placeholder="e.g. Floor 2, North Wing"
+                               className="w-full min-h-[80px] bg-[#0a0a0c] border border-[#1f2125] rounded-xl p-3 pl-10 text-white font-medium outline-none resize-none text-[12px] focus:border-[#4ADE80]/50 transition-colors"
+                             />
+                          </div>
+                       </div>
+
+                       <div className="space-y-2">
+                          <Label className="text-[9px] font-black text-[#888] uppercase tracking-[0.1em]">ROOM TYPE</Label>
+                          <div className="relative">
+                             <select 
+                               value={roomData.room_type}
+                               onChange={(e) => handleFieldChange('room_type', e.target.value)}
+                               className="w-full h-12 bg-[#0a0a0c] border border-[#1f2125] rounded-xl px-4 pr-10 text-white font-bold outline-none appearance-none cursor-pointer focus:border-[#4ADE80]/50 transition-colors text-[13px]"
+                             >
+                                <option value="" disabled>Select room type</option>
+                                {ROOM_TYPES.map(t => (
+                                  <option key={t.value} value={t.value} className="bg-[#0a0a0c] text-white">{t.label}</option>
+                                ))}
+                             </select>
+                             <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                               <ArrowRight className="h-4 w-4 text-[#888] rotate-90" />
                              </div>
-                         </div>
+                          </div>
+                       </div>
+                    </div>
 
-                         <div className="space-y-3">
-                            <Label className="text-[10px] font-black text-muted uppercase tracking-[0.25em] ml-1">Location Details</Label>
-                            <div className="relative group">
-                               <MapPin className="absolute left-4 top-4 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
-                               <textarea 
-                                 value={roomData.location_notes ?? ""}
-                                 onChange={(e) => handleFieldChange('location_notes', e.target.value)}
-                                 placeholder="e.g. Floor 2, North Wing, near elevator"
-                                 className="w-full min-h-[100px] bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border border-default rounded-2xl p-4 pl-12 text-[var(--text)] font-bold focus:border-[var(--pri)]/50 outline-none transition-all resize-none text-[13px]"
-                               />
-                            </div>
-                         </div>
-
-                         <div className="space-y-3">
-                            <Label className="text-[10px] font-black text-muted uppercase tracking-[0.25em] ml-1">Classification</Label>
-                            <select 
-                              value={roomData.room_type}
-                              onChange={(e) => handleFieldChange('room_type', e.target.value)}
-                              className="w-full h-14 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border border-default rounded-2xl px-6 text-[var(--text)] font-bold focus:border-[var(--pri)]/50 outline-none transition-all appearance-none cursor-pointer"
-                            >
-                               {ROOM_TYPES.map(t => (
-                                 <option key={t.value} value={t.value} className="bg-[var(--card)]">{t.label}</option>
-                               ))}
-                            </select>
-                         </div>
-                      </div>
-
-                      <div className="mt-auto space-y-4">
-                         <Button 
-                           onClick={closeModal}
-                           className="w-full h-14 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-2xl shadow-lg border-0 group"
-                         >
-                            Update Node <Save className="ml-2 h-4 w-4" />
-                         </Button>
-                         <Button 
-                           onClick={handleDelete}
-                           variant="ghost" 
-                           className="w-full h-14 text-[var(--dan)] hover:text-[var(--dan)] hover:bg-[var(--dan)]/5 rounded-2xl text-[11px] font-black uppercase tracking-widest"
-                         >
-                            Decommission Node <Trash2 className="ml-2 h-4 w-4" />
-                         </Button>
-                      </div>
-                   </div>
+                    <div className="mt-auto pt-6 relative z-10 space-y-3">
+                       <Button 
+                         onClick={closeModal}
+                         className="w-full h-12 bg-gradient-to-r from-[#4ADE80] to-[#3B82F6] hover:opacity-90 text-[#0a0a0c] font-black uppercase tracking-widest text-[11px] rounded-xl shadow-[0_10px_30px_rgba(74,222,128,0.3)] border-0 flex items-center justify-center gap-2 transition-all"
+                       >
+                          UPDATE ROOM <ArrowRight className="h-4 w-4" />
+                       </Button>
+                       <Button 
+                         onClick={handleDelete}
+                         variant="ghost" 
+                         className="w-full h-12 text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                       >
+                          DELETE ROOM <Trash2 className="ml-2 h-4 w-4" />
+                       </Button>
+                    </div>
+                  </div>
                 </div>
               )}
             </motion.div>

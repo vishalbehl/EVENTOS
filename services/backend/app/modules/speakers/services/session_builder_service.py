@@ -299,7 +299,7 @@ async def get_builder_snapshot_data(
     # Rooms
     rooms_stmt = (
         select(Room)
-        .where(Room.event_id == event_id, Room.is_active.is_(True))
+        .where(Room.event_id == event_id)
         .order_by(Room.name)
     )
     rooms_result = await db.execute(rooms_stmt)

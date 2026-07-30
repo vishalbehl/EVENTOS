@@ -20,7 +20,14 @@ from app.tasks.tenant_job_scope import parse_required_organization_id, tenant_jo
 from app.worker import celery_app
 
 
-def _values(resolved: dict) -> dict:
+def shadow_access_projection(resolved: dict) -> dict:
+    """Project both resolvers onto decisions the legacy engine can express.
+
+    Legacy activation snapshots only persisted feature enablement, not typed
+    TIER/ENUM values. Shadow rollout therefore compares access decisions for
+    features and exact numeric allowances for limits. Typed contract values
+    are validated independently when contracts are created and resolved.
+    """
     return {
         **{key: bool(value.get("enabled")) for key, value in resolved.get("features", {}).items()},
         **{key: value.get("limit_value") for key, value in resolved.get("limits", {}).items()},
@@ -48,7 +55,7 @@ async def backfill_organization_console_in_session(db, organization_id: uuid.UUI
     report["events"] = len(events)
     for event in events:
             legacy = await EntitlementResolver.resolve_event_entitlements(db, organization_id, event.id, explain=True)
-            legacy_values = _values(legacy)
+            legacy_values = shadow_access_projection(legacy)
             contract = await db.scalar(select(EventCommercialContract).where(EventCommercialContract.organization_id == organization_id, EventCommercialContract.event_id == event.id, EventCommercialContract.status == "ACTIVE").order_by(EventCommercialContract.version.desc()).limit(1))
             if not contract:
                 report["contracts"] += 1
@@ -74,7 +81,7 @@ async def backfill_organization_console_in_session(db, organization_id: uuid.UUI
                             await MeteringService.record(db, organization_id=organization_id, event_id=event.id, metric_key=metric_key, quantity=authoritative, unit="count" if metric_key != "storage_bytes" else "bytes", source="organizer_console.backfill", idempotency_key=f"organizer-backfill:{event.id}:{metric_key}:v1", entry_type="BASELINE", reason="Authoritative Organizer Console rollout baseline", actor_user_id=event.created_by)
             if apply and contract:
                 canonical = await EventEntitlementService.resolve(db, organization_id, event.id, explain=True, ignore_rollout_flag=True)
-                contract_values = canonical["values"]
+                contract_values = shadow_access_projection(canonical)
                 differences = _differences(legacy_values, contract_values)
                 db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=legacy_values, contract_values=contract_values, differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
                 if differences:
@@ -126,10 +133,15 @@ async def shadow_compare_organization(organization_id_str: str) -> dict:
             )
         ).all()
         for event in events:
-            legacy = _values(await EntitlementResolver.resolve_event_entitlements(db, organization_id, event.id, explain=True))
+            legacy = shadow_access_projection(
+                await EntitlementResolver.resolve_event_entitlements(
+                    db, organization_id, event.id, explain=True
+                )
+            )
             canonical = await EventEntitlementService.resolve(db, organization_id, event.id, explain=True, ignore_rollout_flag=True)
-            differences = _differences(legacy, canonical["values"])
-            db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=legacy, contract_values=canonical["values"], differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
+            canonical_access = shadow_access_projection(canonical)
+            differences = _differences(legacy, canonical_access)
+            db.add(EntitlementShadowComparison(organization_id=organization_id, event_id=event.id, legacy_values=legacy, contract_values=canonical_access, differences=differences, resolution_version=canonical["resolution_version"], status="DIVERGED" if differences else "MATCHED"))
             if differences:
                 CapabilityDiagnosticsService.add(
                     db,

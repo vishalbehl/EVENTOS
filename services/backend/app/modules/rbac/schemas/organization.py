@@ -110,13 +110,13 @@ class EnrichedOrgResponse(BaseModel):
     created_at: datetime
 
     # Enriched fields
-    subscription_status: str = "TRIAL"       # ACTIVE | TRIAL | GRACE_PERIOD | SUSPENDED | EXPIRED | CANCELLED
-    health_score: int = 100
-    health_status: str = "HEALTHY"           # HEALTHY | WARNING | CRITICAL
-    user_count: int = 0
-    event_count: int = 0
-    storage_used_bytes: int = 0
-    mrr: float = 0.0                         # latest transaction amount for this org
+    subscription_status: str = "NOT_CONFIGURED"
+    health_score: Optional[int] = None
+    health_status: str = "NOT_MEASURED"
+    user_count: Optional[int] = None
+    event_count: Optional[int] = None
+    storage_used_bytes: Optional[int] = None
+    mrr: Optional[float] = None
 
 
 class PaginatedOrgsResponse(BaseModel):

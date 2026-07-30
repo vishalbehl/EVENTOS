@@ -5,7 +5,7 @@ import { LayoutTemplate, Plus, RefreshCw, Save, Search, Tag, ToggleLeft, ToggleR
 import { apiClient } from '@/lib/api-client'
 import { toast } from 'sonner'
 import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
-import { useOperationAccess } from '@/lib/capabilities'
+import { useLimitAccess, useOperationAccess } from '@/lib/capabilities'
 
 const MASTER_ROLES: Record<string, { name: string; isDefault: boolean }[]> = {
   'General Attendees': [
@@ -101,6 +101,7 @@ interface PrintTemplate {
 export default function RolesTab({ eventId }: { eventId: string }) {
   const roleReadAccess = useOperationAccess('registration.ticket_types.read')
   const roleAccess = useOperationAccess('registration.ticket_types.manage')
+  const roleLimitAccess = useLimitAccess('max_ticket_categories')
   const formAccess = useOperationAccess('registration.forms.manage')
   const badgeTemplateAccess = useOperationAccess('badges.templates.read')
   const { data: event } = useEvent(eventId)
@@ -550,7 +551,21 @@ export default function RolesTab({ eventId }: { eventId: string }) {
           </div>
 
           <div className="flex justify-end pt-2">
-            <button onClick={addRoleToEvent} disabled={adding || !roleAccess.enabled} className="h-11 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2">
+            <button
+              onClick={addRoleToEvent}
+              disabled={
+                adding
+                || !roleAccess.enabled
+                || roleLimitAccess.loading
+                || !roleLimitAccess.enabled
+              }
+              title={
+                roleLimitAccess.enabled
+                  ? undefined
+                  : `Unavailable: ${(roleLimitAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}`
+              }
+              className="h-11 px-6 bg-[var(--pri)] hover:bg-[var(--pri-hover)] disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2"
+            >
               <Plus className="h-4 w-4" /> Add Role to Event
             </button>
           </div>

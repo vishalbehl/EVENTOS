@@ -92,12 +92,13 @@ export const orgApi = {
   addons: () => apiClient.get<any[]>("/organisations/addons"),
   addon: (id: string) => apiClient.get<any>("/organisations/addons/" + id),
   calculatePrice: (data: Record<string, any>) => apiClient.post<any>("/organisations/calculate-price", data),
-  subscribe: (data: Record<string, unknown>) => apiClient.post<any>("/organisations/me/subscribe", data),
   currentBillingPlan: () => apiClient.get<any>("/billing/plan"),
   activateEvent: (eventId: string, subscriptionId: string) =>
     apiClient.post<any>(`/billing/events/${eventId}/activate`, { subscription_id: subscriptionId }),
   requestCommercialAccess: (data: Record<string, unknown>) =>
-    apiClient.post<any>("/organisations/me/request-commercial-access", data),
+    apiClient.post<any>("/organisations/me/commercial-access-requests", data, {
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    }),
 };
 
 export const countries = [

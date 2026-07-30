@@ -3,13 +3,53 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
+from app.modules.platform.models.organization_console import EventCommercialContract
+from app.modules.platform.models.platform_domain_tables import FeatureFlag
 from tests.conftest import auth_headers
 
 
 BASE = "/events/{event_id}/settings"
+
+
+@pytest.fixture(autouse=True)
+async def canonical_settings_contract(
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+):
+    db.add(
+        EventCommercialContract(
+            organization_id=event.organization_id,
+            event_id=event.id,
+            version=1,
+            status="ACTIVE",
+            plan_key="SETTINGS_TEST",
+            plan_version="1",
+            currency="INR",
+            entitlements={
+                "FEAT_EVENT_PLANNING": {"type": "BOOLEAN", "value": True},
+                "FEAT_FILE_UPLOADS": {"type": "BOOLEAN", "value": True},
+                "FEAT_CUSTOM_COLORS": {"type": "BOOLEAN", "value": True},
+                "FEAT_LOGO_BRANDING": {"type": "TIER", "value": "ADVANCED"},
+            },
+            hard_ceilings={},
+            addons=[],
+            source={"type": "TEST"},
+            created_by=organizer.id,
+        )
+    )
+    db.add(
+        FeatureFlag(
+            organization_id=event.organization_id,
+            flag_key="organizer_console_entitlement_enforce",
+            is_enabled=True,
+        )
+    )
+    await db.flush()
 
 
 class TestSettingsGet:
@@ -22,8 +62,10 @@ class TestSettingsGet:
         assert data["event_id"] == str(event.id)
         assert "max_file_size_mb" in data
         assert "allowed_formats" in data
-        assert "feature_toggles" in data
-        assert "license_tier" in data
+        assert data["feature_toggles"] == {}
+        assert data["license_tier"] is None
+        assert data["capability_source"] == "CANONICAL_CAPABILITY_API"
+        assert data["capabilities_url"].endswith(f"/events/{event.id}/capabilities")
 
     async def test_unauthenticated_rejected(self, client: AsyncClient, event: Event):
         resp = await client.get(BASE.format(event_id=event.id))
@@ -94,11 +136,9 @@ class TestSettingsUpdate:
             json={"feature_toggles": {"enable_whatsapp": True}},
             headers=auth_headers(organizer),
         )
-        assert resp.status_code == 200
-        toggles = resp.json()["feature_toggles"]
-        assert toggles["enable_whatsapp"] is True
-        # Other keys should still be present
-        assert "enable_posters" in toggles
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "COMMAND_CENTER_CONTROL_REQUIRED"
+        assert event.feature_toggles["enable_whatsapp"] is False
 
     async def test_license_tier_requires_super_admin(
         self, client: AsyncClient, event: Event, organizer: User
@@ -108,7 +148,8 @@ class TestSettingsUpdate:
             json={"license_tier": "enterprise"},
             headers=auth_headers(organizer),
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "COMMAND_CENTER_CONTROL_REQUIRED"
 
     async def test_license_tier_updated_by_super_admin(
         self, client: AsyncClient, event: Event, super_admin: User
@@ -118,8 +159,9 @@ class TestSettingsUpdate:
             json={"license_tier": "enterprise"},
             headers=auth_headers(super_admin),
         )
-        assert resp.status_code == 200
-        assert resp.json()["license_tier"] == "enterprise"
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "COMMAND_CENTER_CONTROL_REQUIRED"
+        assert event.license_tier != "enterprise"
 
     async def test_live_event_mode_locks_organizer_settings(
         self, client: AsyncClient, event: Event, organizer: User, super_admin: User
@@ -129,16 +171,9 @@ class TestSettingsUpdate:
             json={"event_mode": True},
             headers=auth_headers(super_admin),
         )
-        assert enabled.status_code == 200
-        assert enabled.json()["event_mode"] is True
-
-        resp = await client.patch(
-            BASE.format(event_id=event.id),
-            json={"max_file_size_mb": 200},
-            headers=auth_headers(organizer),
-        )
-        assert resp.status_code == 403
-        assert "live mode" in resp.json()["detail"]
+        assert enabled.status_code == 409
+        assert enabled.json()["detail"]["code"] == "COMMAND_CENTER_CONTROL_REQUIRED"
+        assert event.event_mode is False
 
     async def test_invalid_license_tier_rejected(
         self, client: AsyncClient, event: Event, super_admin: User
@@ -161,25 +196,20 @@ class TestLicenseInfo:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["tier"] in ("basic", "pro", "enterprise")
-        assert "max_events" in data
-        assert "webhooks_enabled" in data
+        assert data["source"] == "CANONICAL_CAPABILITY_RESOLVER"
+        assert data["deprecated_route"] is True
+        assert "features" in data
+        assert "limits" in data
+        assert "tier" not in data
 
 
 class TestResetToggles:
     async def test_reset_feature_toggles(
         self, client: AsyncClient, event: Event, organizer: User
     ):
-        # First set a toggle
-        await client.patch(
-            BASE.format(event_id=event.id),
-            json={"feature_toggles": {"enable_whatsapp": True}},
-            headers=auth_headers(organizer),
-        )
-        # Reset
         resp = await client.post(
             f"{BASE.format(event_id=event.id)}/reset-toggles",
             headers=auth_headers(organizer),
         )
-        assert resp.status_code == 200
-        assert resp.json()["feature_toggles"]["enable_whatsapp"] is False
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "COMMAND_CENTER_CONTROL_REQUIRED"

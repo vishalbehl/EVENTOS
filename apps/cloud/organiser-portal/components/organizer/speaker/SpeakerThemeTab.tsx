@@ -188,7 +188,10 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
         `${apiBase}/api/v1/events/${eventId}/speaker-branding/upload`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
           body: formData,
         }
       )
@@ -321,7 +324,10 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
         `${apiBase}/api/v1/events/${eventId}/speaker-branding/upload?field=${field}`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
           body: formData,
         }
       )

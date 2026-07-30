@@ -122,8 +122,8 @@ export function Header() {
                   className={cn(
                     "text-[10px] font-black uppercase tracking-widest transition-colors truncate",
                     index === breadcrumbs.length - 1
-                      ? "text-[var(--color-text-primary)]"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-primary-mid)]"
+                      ? "text-[var(--pri)]"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--pri)]"
                   )}
                 >
                   {crumb.label}

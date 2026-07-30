@@ -1,6 +1,7 @@
 import ast
+import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -10,13 +11,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing.capability_registry import (
+    CATALOG_LIMIT_KEYS,
     FEATURE_DEFINITIONS,
     LIMIT_DEFINITIONS,
     LIMIT_ENFORCEMENT_SITES,
+    MUTATION_CONTROL_EXEMPTIONS,
     OPERATION_FEATURES,
     OPERATION_ENFORCEMENT_SITES,
     OPERATION_PERMISSIONS,
     PLATFORM_HARD_CEILINGS,
+    PORTAL_LIMIT_CONTROL_SITES,
     feature_for_operation,
     registry_coverage,
 )
@@ -37,9 +41,249 @@ from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.feature import FeatureCatalog
-from app.modules.platform.models.organization_console import UsageLedgerEntry, UsageReservation
+from app.modules.platform.models.organization_console import (
+    EventCommercialContract,
+    UsageLedgerEntry,
+    UsageReservation,
+)
+from app.modules.platform.models.platform_domain_tables import FeatureFlag
 from app.modules.rbac.models.rbac import UserAccessNode
+from app.modules.rbac.routers import events as events_router
+from app.modules.registration.routers import registration_portal as registration_portal_router
 from tests.conftest import activate_event_for_test, auth_headers
+
+
+async def enable_canonical_entitlements_for_test(
+    db: AsyncSession, organization_id: uuid.UUID
+) -> None:
+    """Tests that hand-build contracts must opt into canonical enforcement."""
+    db.add(
+        FeatureFlag(
+            organization_id=organization_id,
+            flag_key="organizer_console_entitlement_enforce",
+            is_enabled=True,
+        )
+    )
+    await db.flush()
+
+
+@pytest.mark.asyncio
+async def test_organizer_cannot_apply_plan_directly(
+    client: AsyncClient,
+    event: Event,
+    organizer: User,
+):
+    response = await client.post(
+        f"/events/{event.id}/apply-plan",
+        headers=auth_headers(organizer),
+        json={"plan_name": "Enterprise", "addon_keys": []},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "COMMAND_CENTER_APPROVAL_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_legacy_superadmin_boolean_override_cannot_bypass_approval(
+    client: AsyncClient,
+    organization: Organization,
+    super_admin: User,
+):
+    response = await client.put(
+        f"/superadmin/organisations/{organization.id}/feature-overrides",
+        headers=auth_headers(super_admin),
+        json={"feature_key": "FEAT_API_ACCESS", "override": True},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "COMMAND_CENTER_APPROVAL_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_event_delete_is_recoverable_and_bulk_clear_requires_command_center(
+    client: AsyncClient,
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+):
+    db.add(
+        EventCommercialContract(
+            organization_id=event.organization_id,
+            event_id=event.id,
+            version=1,
+            status="ACTIVE",
+            plan_key="LIFECYCLE_TEST",
+            plan_version="1",
+            currency="INR",
+            entitlements={
+                "FEAT_EVENT_PLANNING": {"type": "BOOLEAN", "value": True},
+            },
+            hard_ceilings={},
+            addons=[],
+            source={"type": "TEST"},
+            created_by=organizer.id,
+        )
+    )
+    await db.flush()
+    await enable_canonical_entitlements_for_test(db, event.organization_id)
+
+    clear_response = await client.post(
+        f"/events/{event.id}/clear-data",
+        headers=auth_headers(organizer),
+    )
+    assert clear_response.status_code == 409
+    assert (
+        clear_response.json()["detail"]["code"]
+        == "COMMAND_CENTER_LIFECYCLE_JOB_REQUIRED"
+    )
+
+    response = await client.delete(
+        f"/events/{event.id}",
+        headers={
+            **auth_headers(organizer),
+            "X-Change-Reason": "Archive event while retaining its recovery window.",
+            "Idempotency-Key": f"event-soft-delete-{uuid.uuid4()}",
+        },
+    )
+    assert response.status_code == 200, response.text
+    await db.refresh(event)
+    assert event.deleted_at is not None
+    assert event.deleted_by == organizer.id
+    assert event.status == "archived"
+
+
+@pytest.mark.asyncio
+async def test_branding_upload_reserves_and_meters_storage_atomically(
+    client: AsyncClient,
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+    monkeypatch,
+):
+    db.add(
+        EventCommercialContract(
+            organization_id=event.organization_id,
+            event_id=event.id,
+            version=1,
+            status="ACTIVE",
+            plan_key="UPLOAD_TEST",
+            plan_version="1",
+            currency="INR",
+            entitlements={
+                "FEAT_LOGO_BRANDING": {"type": "TIER", "value": "ADVANCED"},
+                "storage_quota_mb": {"type": "LIMIT", "value": 5},
+            },
+            hard_ceilings={},
+            addons=[],
+            source={"type": "TEST"},
+            created_by=organizer.id,
+        )
+    )
+    await db.flush()
+    await enable_canonical_entitlements_for_test(db, event.organization_id)
+    monkeypatch.setattr(
+        events_router._upload_service,
+        "upload_bytes",
+        lambda **_: None,
+    )
+
+    contents = b"brand-image"
+    response = await client.post(
+        f"/events/{event.id}/branding/upload",
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"branding-upload-{uuid.uuid4()}",
+        },
+        data={"field": "logo"},
+        files={"file": ("logo.png", contents, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    reservation = await db.scalar(
+        select(UsageReservation).where(
+            UsageReservation.event_id == event.id,
+            UsageReservation.metric_key == "storage_quota_mb",
+        )
+    )
+    assert reservation is not None
+    assert reservation.status == "CONSUMED"
+    ledger = await db.get(UsageLedgerEntry, reservation.consumed_entry_id)
+    assert ledger is not None
+    assert ledger.metric_key == "storage_bytes"
+    assert ledger.quantity == len(contents)
+
+
+@pytest.mark.asyncio
+async def test_public_registration_upload_is_gated_metered_and_replay_safe(
+    client: AsyncClient,
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+    monkeypatch,
+):
+    db.add(
+        EventCommercialContract(
+            organization_id=event.organization_id,
+            event_id=event.id,
+            version=1,
+            status="ACTIVE",
+            plan_key="PUBLIC_UPLOAD_TEST",
+            plan_version="1",
+            currency="INR",
+            entitlements={
+                "FEAT_REGISTRATION_PORTAL": {"type": "BOOLEAN", "value": True},
+                "storage_quota_mb": {"type": "LIMIT", "value": 5},
+            },
+            hard_ceilings={},
+            addons=[],
+            source={"type": "TEST"},
+            created_by=organizer.id,
+        )
+    )
+    await db.flush()
+    await enable_canonical_entitlements_for_test(db, event.organization_id)
+    monkeypatch.setattr(
+        registration_portal_router.upload_service,
+        "upload_bytes",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        registration_portal_router.settings,
+        "STORAGE_MODE",
+        "local",
+    )
+
+    contents = b"attendee-document"
+    headers = {"Idempotency-Key": f"public-registration-upload-{uuid.uuid4()}"}
+    request = {
+        "headers": headers,
+        "data": {"field_name": "identity_document"},
+        "files": {"file": ("identity.pdf", contents, "application/pdf")},
+    }
+    response = await client.post(
+        f"/portal/registration/{event.id}/upload",
+        **request,
+    )
+    assert response.status_code == 200, response.text
+    replay = await client.post(
+        f"/portal/registration/{event.id}/upload",
+        **request,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["url"] == response.json()["url"]
+
+    reservations = (
+        await db.scalars(
+            select(UsageReservation).where(
+                UsageReservation.event_id == event.id,
+                UsageReservation.idempotency_key
+                == f"registration-upload:{headers['Idempotency-Key']}",
+            )
+        )
+    ).all()
+    assert len(reservations) == 1
+    assert reservations[0].status == "CONSUMED"
+    ledger = await db.get(UsageLedgerEntry, reservations[0].consumed_entry_id)
+    assert ledger is not None
+    assert ledger.metric_key == "storage_bytes"
+    assert ledger.quantity == len(contents)
 
 
 def test_every_registered_feature_has_enforcement_destination():
@@ -376,6 +620,36 @@ def test_coverage_counts_match_registry():
     assert coverage["platform_hard_ceilings"] == PLATFORM_HARD_CEILINGS
     assert coverage["operation_features"] == OPERATION_FEATURES
     assert coverage["limit_enforcement_sites"] == LIMIT_ENFORCEMENT_SITES
+    assert coverage["portal_limit_control_sites"] == PORTAL_LIMIT_CONTROL_SITES
+
+
+@pytest.mark.asyncio
+async def test_business_feature_matrix_is_dynamic_typed_catalogue(
+    client: AsyncClient,
+    db: AsyncSession,
+    super_admin: User,
+):
+    await CapabilityService.sync_catalogue(db)
+    await db.flush()
+
+    response = await client.get(
+        "/api/v1/platform/features/matrix",
+        headers=auth_headers(super_admin),
+    )
+
+    assert response.status_code == 200, response.text
+    rows = [
+        item
+        for category in response.json()
+        for item in category["features"]
+    ]
+    assert {item["key"] for item in rows} == (
+        set(FEATURE_DEFINITIONS) | set(CATALOG_LIMIT_KEYS)
+    )
+    assert all(item["value_type"] in {"BOOLEAN", "LIMIT", "TIER", "ENUM"} for item in rows)
+    assert all("display_basic" not in item for item in rows)
+    assert all("display_professional" not in item for item in rows)
+    assert all("display_enterprise" not in item for item in rows)
 
 
 def test_backend_operations_have_one_canonical_feature():
@@ -426,6 +700,122 @@ def test_every_operation_manifest_site_exists_and_is_called_in_source():
             relative_path = site["site"].split(":", 1)[0]
             assert (app_root / relative_path).is_file(), site
             assert site["mode"] in {"ENFORCE", "POLICY"}
+
+
+def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption():
+    app_root = Path(__file__).resolve().parents[1] / "app"
+    customer_modules = {
+        "analytics",
+        "branding",
+        "communications",
+        "developer",
+        "events",
+        "integrations",
+        "notifications",
+        "presentations",
+        "rbac",
+        "registration",
+        "speakers",
+        "venue",
+    }
+    gate_markers = {
+        "enforce_event_feature",
+        "enforce_event_operation",
+        "enforce_org_feature",
+        "enforce_org_operation",
+        "require_event_feature",
+        "require_event_operation",
+        "require_org_feature",
+        "require_org_operation",
+        "UsageReservationService",
+        "EventMutationService",
+    }
+    mutation_decorators = (".post(", ".put(", ".patch(", ".delete(")
+    uncontrolled: set[str] = set()
+
+    for path in sorted((app_root / "modules").glob("*/routers/*.py")):
+        if path.parts[-3] not in customer_modules:
+            continue
+        source = path.read_text(encoding="utf-8-sig")
+        tree = ast.parse(source, filename=str(path))
+        functions = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        controlled = {
+            name
+            for name, node in functions.items()
+            if any(
+                marker in (ast.get_source_segment(source, node) or "")
+                for marker in gate_markers
+            )
+        }
+        changed = True
+        while changed:
+            changed = False
+            for name, node in functions.items():
+                if name in controlled:
+                    continue
+                references = {
+                    reference.id
+                    for reference in ast.walk(node)
+                    if isinstance(reference, ast.Name)
+                }
+                if references & controlled:
+                    controlled.add(name)
+                    changed = True
+
+        router_controlled = any(
+            "APIRouter" in (ast.get_source_segment(source, node) or "")
+            and any(
+                marker in (ast.get_source_segment(source, node) or "")
+                for marker in gate_markers
+            )
+            for node in tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+        )
+        for name, node in functions.items():
+            decorators = [
+                ast.get_source_segment(source, decorator) or ""
+                for decorator in node.decorator_list
+            ]
+            if not any(
+                mutation in decorator
+                for decorator in decorators
+                for mutation in mutation_decorators
+            ):
+                continue
+            decorator_controlled = any(
+                marker in decorator
+                for decorator in decorators
+                for marker in gate_markers
+            )
+            if router_controlled or decorator_controlled or name in controlled:
+                continue
+            relative = path.relative_to(app_root).as_posix()
+            uncontrolled.add(f"{relative}:{name}")
+
+    assert uncontrolled == set(MUTATION_CONTROL_EXEMPTIONS), {
+        "missing_classification": sorted(
+            uncontrolled - set(MUTATION_CONTROL_EXEMPTIONS)
+        ),
+        "stale_classification": sorted(
+            set(MUTATION_CONTROL_EXEMPTIONS) - uncontrolled
+        ),
+    }
+    allowed_modes = {
+        "AUTH_LIFECYCLE",
+        "COMMAND_CENTER_POLICY",
+        "CORE_GOVERNANCE",
+        "GOVERNED_DENIAL",
+        "NON_GRANTING_COMMERCIAL_WORKFLOW",
+        "SERVICE_ENFORCED",
+        "SIGNED_TRANSPORT",
+    }
+    for control in MUTATION_CONTROL_EXEMPTIONS.values():
+        assert control["mode"] in allowed_modes
+        assert len(control["reason"]) >= 20
 
 
 def test_every_limit_has_an_explicit_enforcement_or_provider_state():
@@ -758,6 +1148,253 @@ async def test_consumed_reservation_cannot_authorize_a_duplicate_domain_write(
 
 
 @pytest.mark.asyncio
+async def test_usage_reservation_honors_soft_warning_metered_overage_and_hard_ceiling(
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+):
+    await activate_event_for_test(db, event)
+    contract = await db.scalar(
+        select(EventCommercialContract).where(
+            EventCommercialContract.event_id == event.id,
+            EventCommercialContract.status == "ACTIVE",
+        )
+    )
+    assert contract is not None
+
+    entitlements = dict(contract.entitlements)
+    entitlements["max_rooms"] = {
+        "type": "LIMIT",
+        "value": 0,
+        "enforcement_mode": "SOFT_WARNING",
+        "overage_policy": {"action": "WARN"},
+    }
+    contract.entitlements = entitlements
+    ceilings = dict(contract.hard_ceilings)
+    ceilings["max_rooms"] = 10
+    contract.hard_ceilings = ceilings
+    await db.commit()
+
+    warning = await UsageReservationService.reserve(
+        db,
+        organization_id=organization.id,
+        event_id=event.id,
+        limit_key="max_rooms",
+        quantity=1,
+        unit="room",
+        idempotency_key=f"soft-warning-{uuid.uuid4()}",
+    )
+    assert warning.metadata_json["quota_state"] == "SOFT_WARNING"
+    assert warning.metadata_json["overage_quantity"] == 1
+    await UsageReservationService.release(db, warning.id)
+
+    entitlements = dict(contract.entitlements)
+    entitlements["max_rooms"] = {
+        "type": "LIMIT",
+        "value": 0,
+        "enforcement_mode": "METERED_OVERAGE",
+        "overage_policy": {"action": "BILL", "unit_price": "2.50"},
+    }
+    contract.entitlements = entitlements
+    await db.commit()
+    metered = await UsageReservationService.reserve(
+        db,
+        organization_id=organization.id,
+        event_id=event.id,
+        limit_key="max_rooms",
+        quantity=2,
+        unit="room",
+        idempotency_key=f"metered-overage-{uuid.uuid4()}",
+    )
+    assert metered.metadata_json["quota_state"] == "METERED_OVERAGE"
+    assert metered.metadata_json["overage_policy"]["action"] == "BILL"
+    await UsageReservationService.release(db, metered.id)
+
+    ceilings = dict(contract.hard_ceilings)
+    ceilings["max_rooms"] = 0
+    contract.hard_ceilings = ceilings
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await UsageReservationService.reserve(
+            db,
+            organization_id=organization.id,
+            event_id=event.id,
+            limit_key="max_rooms",
+            quantity=1,
+            unit="room",
+            idempotency_key=f"hard-ceiling-{uuid.uuid4()}",
+        )
+    assert exc.value.status_code == 402
+    assert exc.value.detail["code"] == "HARD_CEILING_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_resolver_fails_closed_for_dependency_and_conflict_drift(
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+):
+    await activate_event_for_test(db, event)
+    contract = await db.scalar(
+        select(EventCommercialContract).where(
+            EventCommercialContract.event_id == event.id,
+            EventCommercialContract.status == "ACTIVE",
+        )
+    )
+    session_feature = await db.scalar(
+        select(FeatureCatalog).where(
+            FeatureCatalog.key == "FEAT_SESSION_MANAGEMENT"
+        )
+    )
+    speaker_feature = await db.scalar(
+        select(FeatureCatalog).where(
+            FeatureCatalog.key == "FEAT_SPEAKER_PROFILES"
+        )
+    )
+    assert contract and session_feature and speaker_feature
+
+    session_feature.dependencies = ["FEAT_SPEAKER_PROFILES"]
+    entitlements = dict(contract.entitlements)
+    entitlements["FEAT_SESSION_MANAGEMENT"] = {
+        "type": "BOOLEAN",
+        "value": True,
+    }
+    entitlements["FEAT_SPEAKER_PROFILES"] = {
+        "type": "BOOLEAN",
+        "value": False,
+    }
+    contract.entitlements = entitlements
+    await db.commit()
+
+    dependency_result = await CapabilityService.resolve_event(
+        db, organization.id, event.id
+    )
+    assert dependency_result["features"]["FEAT_SESSION_MANAGEMENT"]["enabled"] is False
+    assert (
+        dependency_result["features"]["FEAT_SESSION_MANAGEMENT"]["reason_code"]
+        == "DEPENDENCY_REQUIRED"
+    )
+
+    session_feature.dependencies = []
+    session_feature.conflicts = ["FEAT_SPEAKER_PROFILES"]
+    entitlements = dict(contract.entitlements)
+    entitlements["FEAT_SPEAKER_PROFILES"] = {
+        "type": "BOOLEAN",
+        "value": True,
+    }
+    contract.entitlements = entitlements
+    await db.commit()
+
+    conflict_result = await CapabilityService.resolve_event(
+        db, organization.id, event.id
+    )
+    assert conflict_result["features"]["FEAT_SESSION_MANAGEMENT"]["enabled"] is False
+    assert conflict_result["features"]["FEAT_SPEAKER_PROFILES"]["enabled"] is False
+    assert {
+        conflict_result["features"]["FEAT_SESSION_MANAGEMENT"]["reason_code"],
+        conflict_result["features"]["FEAT_SPEAKER_PROFILES"]["reason_code"],
+    } == {"FEATURE_CONFLICT"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reservations_cannot_overshoot_event_allowance(
+    committed_session_factory,
+):
+    """The event row lock must serialize capacity decisions across sessions."""
+
+    async with committed_session_factory() as setup_session:
+        organization = Organization(
+            name="Reservation Concurrency Test",
+            slug=f"reservation-concurrency-{uuid.uuid4().hex[:10]}",
+            plan="pro",
+        )
+        setup_session.add(organization)
+        await setup_session.flush()
+        organizer = User(
+            organization_id=organization.id,
+            email=f"reservation-concurrency-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash="not-used-by-this-test",
+            first_name="Reservation",
+            last_name="Tester",
+            role="organiser",
+            is_active=True,
+        )
+        setup_session.add(organizer)
+        await setup_session.flush()
+        event = Event(
+            organization_id=organization.id,
+            created_by=organizer.id,
+            name="Reservation Concurrency Event",
+            short_code=f"RC{uuid.uuid4().hex[:6].upper()}",
+            location="Test City",
+            venue_name="Test Hall",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 2),
+            timezone="UTC",
+            status="draft",
+            max_file_size_mb=500,
+            allowed_formats=["pptx", "pdf"],
+        )
+        setup_session.add(event)
+        await setup_session.flush()
+        setup_session.add(EventCommercialContract(
+            organization_id=organization.id,
+            event_id=event.id,
+            version=1,
+            status="ACTIVE",
+            plan_key="CONCURRENCY_TEST",
+            plan_version="1",
+            currency="INR",
+            entitlements={
+                "max_rooms": {"type": "LIMIT", "value": 3},
+            },
+            hard_ceilings={},
+            addons=[],
+            source={"type": "TEST"},
+            created_by=organizer.id,
+        ))
+        setup_session.add(
+            FeatureFlag(
+                organization_id=organization.id,
+                flag_key="organizer_console_entitlement_enforce",
+                is_enabled=True,
+            )
+        )
+        await setup_session.commit()
+        organization_id = organization.id
+        event_id = event.id
+
+    async def attempt_reservation(key: str) -> str:
+        async with committed_session_factory() as session:
+            try:
+                await UsageReservationService.reserve(
+                    session,
+                    organization_id=organization_id,
+                    event_id=event_id,
+                    limit_key="max_rooms",
+                    quantity=1,
+                    unit="room",
+                    idempotency_key=key,
+                )
+                await session.commit()
+                return "RESERVED"
+            except HTTPException as exc:
+                await session.rollback()
+                assert exc.status_code == 402
+                assert exc.detail["code"] == "QUOTA_EXHAUSTED"
+                return "QUOTA_EXHAUSTED"
+
+    outcomes = await asyncio.gather(
+        *(
+            attempt_reservation(f"concurrent-room-{index}-{uuid.uuid4()}")
+            for index in range(12)
+        )
+    )
+    assert outcomes.count("RESERVED") == 3
+    assert outcomes.count("QUOTA_EXHAUSTED") == 9
+
+
+@pytest.mark.asyncio
 async def test_catalogue_sync_preserves_operations_for_limit_features(db: AsyncSession):
     await CapabilityService.sync_catalogue(db)
     badge_feature = await db.scalar(
@@ -804,6 +1441,32 @@ async def test_plan_templates_are_versioned_and_published_only_after_assignments
     )
     assert publish_without_assignments.status_code == 422
     assert publish_without_assignments.json()["detail"]["code"] == "PLAN_ASSIGNMENTS_REQUIRED"
+
+    event_planning = await db.scalar(
+        select(FeatureCatalog).where(FeatureCatalog.key == "FEAT_EVENT_PLANNING")
+    )
+    assert event_planning is not None
+    event_planning.dependencies = ["FEAT_SPEAKER_PROFILES"]
+    await db.commit()
+    assignment_missing_dependency = await client.put(
+        f"/api/v1/platform/subscription-plans/{plan_id}/features",
+        headers={
+            **auth_headers(super_admin), "If-Match": "1",
+            "Idempotency-Key": f"plan-feature-dependency-{uuid.uuid4()}",
+            "X-Admin-Reason": "Verify dependent capabilities cannot be published alone",
+        },
+        json={"assignments": [{
+            "feature_key": "FEAT_EVENT_PLANNING", "value_type": "BOOLEAN",
+            "value": True, "scope_type": "EVENT", "enforcement_mode": "HARD",
+        }]},
+    )
+    assert assignment_missing_dependency.status_code == 422
+    assert (
+        assignment_missing_dependency.json()["detail"]["code"]
+        == "FEATURE_DEPENDENCIES_REQUIRED"
+    )
+    event_planning.dependencies = []
+    await db.commit()
 
     assignment_response = await client.put(
         f"/api/v1/platform/subscription-plans/{plan_id}/features",

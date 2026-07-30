@@ -14,6 +14,9 @@ import {
   Plus,
   Search,
   Calendar as CalendarIcon,
+  Clock,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSessionBuilderStore, ViewMode } from "@/store/useSessionBuilderStore";
@@ -45,6 +48,8 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps) {
   const future = useSessionBuilderStore((s) => s.future);
   const undo = useSessionBuilderStore((s) => s.undo);
   const redo = useSessionBuilderStore((s) => s.redo);
+  const zoomLevel = useSessionBuilderStore((s) => s.zoomLevel);
+  const setZoomLevel = useSessionBuilderStore((s) => s.setZoomLevel);
 
   const sessions = useSessionBuilderStore((s) => s.sessions);
 
@@ -79,7 +84,7 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps) {
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all",
                 viewMode === mode
-                  ? "bg-[var(--pri)] text-white shadow-md font-black"
+                  ? "bg-[var(--pri)] text-black shadow-md font-black"
                   : "text-muted hover:text-[var(--text)]"
               )}
             >
@@ -88,6 +93,27 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps) {
             </button>
           ))}
         </div>
+
+        {/* Time Scale Selector */}
+        {viewMode === "timeline" && (
+          <div className="flex items-center gap-1.5 bg-[color-mix(in_srgb,var(--text)_5%,transparent)] rounded-2xl px-3 py-1.5 border border-default text-[11px] font-bold text-muted">
+            <Clock className="h-3.5 w-3.5 text-[var(--pri)]" />
+            <select
+              value={zoomLevel >= 1.8 ? "15" : zoomLevel >= 0.9 ? "30" : "60"}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "15") setZoomLevel(2);
+                else if (val === "30") setZoomLevel(1);
+                else setZoomLevel(0.5);
+              }}
+              className="bg-transparent text-[var(--text)] font-black outline-none cursor-pointer border-0 text-[11px]"
+            >
+              <option value="15" className="bg-zinc-950 text-white">15 min view</option>
+              <option value="30" className="bg-zinc-950 text-white">30 min view</option>
+              <option value="60" className="bg-zinc-950 text-white">60 min view</option>
+            </select>
+          </div>
+        )}
 
         {/* Date Selector */}
         {availableDates.length > 0 && (
@@ -99,24 +125,13 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps) {
               className="bg-transparent text-[var(--text)] font-black outline-none cursor-pointer"
             >
               {availableDates.map((d) => (
-                <option key={d} value={d} className="bg-background text-[var(--text)]">
+                <option key={d} value={d} className="bg-zinc-950 text-white">
                   {d}
                 </option>
               ))}
             </select>
           </div>
         )}
-
-        {/* Search Bar */}
-        <div className="relative flex-1 md:w-56">
-          <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-muted" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search sessions..."
-            className="pl-8 h-9 text-[11px] rounded-2xl bg-[color-mix(in_srgb,var(--text)_3%,transparent)] border-default"
-          />
-        </div>
       </div>
 
       {/* Right Group: Undo/Redo + Conflicts + Save Status + New Session */}
@@ -178,7 +193,7 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps) {
         {onNewSession && (
           <Button
             onClick={onNewSession}
-            className="h-9 px-4 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black text-[11px] uppercase tracking-wider rounded-2xl shadow-md border-0"
+            className="h-9 px-4 bg-[var(--pri)] hover:bg-[var(--sec)] text-black font-black text-[11px] uppercase tracking-wider rounded-2xl shadow-md border-0"
           >
             <Plus className="mr-1.5 h-4 w-4" /> Add Session
           </Button>
@@ -187,3 +202,4 @@ export function BuilderToolbar({ onNewSession }: BuilderToolbarProps) {
     </div>
   );
 }
+

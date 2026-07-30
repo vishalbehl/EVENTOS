@@ -488,13 +488,29 @@ class EventWorkspaceMutation(StrictWriteModel):
     case_reference: str = Field(min_length=2, max_length=160)
 
 
+class EventOperationalControlUpdate(StrictWriteModel):
+    is_maintenance: Optional[bool] = None
+    is_read_only: Optional[bool] = None
+    reason: str = Field(min_length=12, max_length=2000)
+    case_reference: str = Field(min_length=2, max_length=160)
+
+    @model_validator(mode="after")
+    def requires_change(self):
+        if (
+            self.is_maintenance is None
+            and self.is_read_only is None
+        ):
+            raise ValueError("At least one operational control must be supplied")
+        return self
+
+
 class EventWorkspaceDelete(StrictWriteModel):
     reason: str = Field(min_length=12, max_length=2000)
     case_reference: str = Field(min_length=2, max_length=160)
 
 
 class EventWorkspaceAction(StrictWriteModel):
-    action: Literal["APPROVE", "REJECT", "LOCK", "UNLOCK", "RETRY_PROCESSING", "SEND", "RESEND_FAILED", "CANCEL", "RECORD_REFUND", "SET_PRICING", "CHECK_IN", "REMOVE_CHECK_IN", "ASSIGN_USER", "UNASSIGN_USER", "START_REVIEW", "REQUEST_REVISION", "ISSUE_CONFIRMATION_QR", "ROTATE_CONFIRMATION_QR"]
+    action: Literal["APPROVE", "REJECT", "LOCK", "UNLOCK", "RETRY_PROCESSING", "RETRY_JOB", "SEND", "RESEND_FAILED", "CANCEL", "RECORD_REFUND", "SET_PRICING", "CHECK_IN", "REMOVE_CHECK_IN", "ASSIGN_USER", "UNASSIGN_USER", "START_REVIEW", "REQUEST_REVISION", "ISSUE_CONFIRMATION_QR", "ROTATE_CONFIRMATION_QR"]
     reason: str = Field(min_length=12, max_length=2000)
     case_reference: str = Field(min_length=2, max_length=160)
     approved_request_id: Optional[uuid.UUID] = None

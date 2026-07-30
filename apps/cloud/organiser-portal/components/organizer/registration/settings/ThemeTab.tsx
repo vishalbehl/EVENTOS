@@ -240,7 +240,10 @@ export default function ThemeTab({ eventId }: { eventId: string }) {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
       const res = await fetch(`${apiBase}/api/v1/events/${eventId}/branding/upload`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Idempotency-Key": crypto.randomUUID(),
+        },
         body: form,
       })
 

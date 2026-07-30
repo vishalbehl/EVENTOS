@@ -9,7 +9,7 @@ from app.modules.events.models.event import Event
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.identity.models.user import User
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
 
 
 BASE = "/events/{event_id}/bundles"
@@ -50,6 +50,7 @@ class TestPresentationBundles:
         organizer: User,
         session_speaker: SessionSpeaker,
     ):
+        await activate_event_for_test(db, event)
         first = await _file(db, event, session_speaker, "part-1.pptx", 0)
         second = await _file(db, event, session_speaker, "part-2.pptx", 1)
 
@@ -81,6 +82,7 @@ class TestPresentationBundles:
         organizer: User,
         session_speaker: SessionSpeaker,
     ):
+        await activate_event_for_test(db, event)
         other_slot = SessionSpeaker(
             session_id=session_speaker.session_id,
             speaker_id=session_speaker.speaker_id,

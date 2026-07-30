@@ -359,13 +359,19 @@ async def test_member_event_assignment_is_tenant_scoped_limited_and_removed_with
     reason = "Assigning approved organizer to event workspace"
     assigned = await client.put(
         f"/api/v1/platform/organisations/{organization.id}/members/{member.id}/events/{event.id}",
-        headers=auth_headers(super_admin),
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"member-event-assign-{uuid.uuid4()}",
+        },
         json={"permissions": {"can_manage_sessions": True}, "reason": reason},
     )
     assert assigned.status_code == 200, assigned.text
     updated = await client.put(
         f"/api/v1/platform/organisations/{organization.id}/members/{member.id}/events/{event.id}",
-        headers=auth_headers(super_admin),
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"member-event-update-{uuid.uuid4()}",
+        },
         json={"permissions": {"can_manage_sessions": False}, "reason": "Reducing approved event workspace permissions"},
     )
     assert updated.status_code == 200, updated.text
@@ -396,7 +402,10 @@ async def test_member_event_assignment_is_tenant_scoped_limited_and_removed_with
     await db.commit()
     concealed = await client.put(
         f"/api/v1/platform/organisations/{organization.id}/members/{member.id}/events/{hidden_event.id}",
-        headers=auth_headers(super_admin),
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"member-event-cross-tenant-{uuid.uuid4()}",
+        },
         json={"permissions": {}, "reason": "Testing cross tenant assignment concealment"},
     )
     assert concealed.status_code == 404

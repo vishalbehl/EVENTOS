@@ -722,7 +722,7 @@ export default function PremiumBadgeDesigner() {
             </Button>
           </CapabilityAction>
 
-          <CapabilityAction operation="badges.export">
+          <CapabilityAction operation="badges.export" limitKey="max_exports_per_event">
             <Button
               onClick={() => generatePreviewPdf(true)}
               className="h-8 gap-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-black uppercase tracking-widest rounded-lg shadow-lg shadow-purple-600/10"

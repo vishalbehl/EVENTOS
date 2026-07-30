@@ -8,6 +8,7 @@ from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.rbac.models.organization_member import OrganizationMember as UserOrganizationMembership
 from app.modules.rbac.models.rbac import UserAccessNode
+from app.modules.rbac.models.user_assignment import UserEventAssignment
 from tests.conftest import auth_headers, hash_password
 
 @pytest.fixture
@@ -145,3 +146,48 @@ class TestTenantIsolation:
         event_ids = [uuid.UUID(e["id"]) for e in data]
         assert event.id in event_ids
         assert event_b.id not in event_ids
+
+    @pytest.mark.asyncio
+    async def test_event_assignment_rejects_cross_tenant_user_and_event(
+        self,
+        client: AsyncClient,
+        organizer: User,
+        event_b: Event,
+    ):
+        response = await client.post(
+            "/users/assignments",
+            json={
+                "user_id": str(organizer.id),
+                "event_id": str(event_b.id),
+                "permissions": {"level": "full"},
+            },
+            headers={
+                **auth_headers(organizer),
+                "Idempotency-Key": f"cross-tenant-{uuid.uuid4()}",
+            },
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_event_assignment_update_is_tenant_scoped(
+        self,
+        client: AsyncClient,
+        db: AsyncSession,
+        organizer: User,
+        organizer_b: User,
+        event_b: Event,
+    ):
+        assignment = UserEventAssignment(
+            user_id=organizer_b.id,
+            event_id=event_b.id,
+            permissions={"level": "full"},
+        )
+        db.add(assignment)
+        await db.flush()
+
+        response = await client.patch(
+            f"/users/assignments/{assignment.id}",
+            json={"permissions": {"level": "partial"}},
+            headers=auth_headers(organizer),
+        )
+        assert response.status_code == 404

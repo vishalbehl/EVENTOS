@@ -83,11 +83,11 @@ const emptyForm = (kind: Kind): FormState => ({
 })
 
 export default function AddonsManagementPage() {
-  const { data: addons = [], isLoading } = useAddons()
-  const { data: plans = [] } = useSubscriptionPlans()
-  const { data: featureCatalog = [] } = useFeaturesCatalog()
-  const { data: hardwareData } = useHardwareCatalog({ limit: 200 })
-  const { data: staffData } = useStaffCatalog({ limit: 200 })
+  const { data: addons = [], isLoading, isError, refetch } = useAddons()
+  const { data: plans = [], isError: plansError, refetch: refetchPlans } = useSubscriptionPlans()
+  const { data: featureCatalog = [], isError: catalogError, refetch: refetchCatalog } = useFeaturesCatalog()
+  const { data: hardwareData, isError: hardwareError, refetch: refetchHardware } = useHardwareCatalog({ limit: 200 })
+  const { data: staffData, isError: staffError, refetch: refetchStaff } = useStaffCatalog({ limit: 200 })
   const createAddon = useCreateAddon()
   const updateAddon = useUpdateAddon()
   const deleteAddon = useDeleteAddon()
@@ -249,6 +249,37 @@ export default function AddonsManagementPage() {
     } catch (error: any) {
       toast.error(error?.response?.data?.detail || "Could not save add-on")
     }
+  }
+
+  if (isLoading) {
+    return (
+      <PageContainer>
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-8 text-sm text-[var(--text-secondary)]">
+          Loading authoritative add-on catalogue…
+        </div>
+      </PageContainer>
+    )
+  }
+  if (isError || plansError || catalogError || hardwareError || staffError) {
+    return (
+      <PageContainer>
+        <div className="rounded-2xl border border-[var(--status-danger)]/30 bg-[var(--bg-surface)] p-8">
+          <p className="font-semibold text-[var(--status-danger)]">Add-on configuration is unavailable</p>
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+            Plans, add-ons, feature definitions, hardware, or staffing data could not be verified. No empty catalogue is being inferred.
+          </p>
+          <Button
+            className="mt-5"
+            variant="outline"
+            onClick={() => {
+              void Promise.all([refetch(), refetchPlans(), refetchCatalog(), refetchHardware(), refetchStaff()])
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      </PageContainer>
+    )
   }
 
   return (

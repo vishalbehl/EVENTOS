@@ -74,12 +74,13 @@ async def activate_event_for_test(db: AsyncSession, event: Event) -> None:
     from app.modules.billing.services.activation_service import ActivationService
     from app.modules.billing.services.capability_service import CapabilityService
     from app.modules.platform.models.feature import FeatureCatalog
+    from app.modules.platform.models.platform_domain_tables import FeatureFlag
 
     await CapabilityService.sync_catalogue(db)
 
     plan = SubscriptionPlan(
         name=f"Test Licensed Plan {uuid.uuid4().hex[:8]}",
-        max_events=1,
+        max_events=100,
         max_event_team_members=100,
         max_registrations=10000,
         max_speakers=1000,
@@ -129,6 +130,22 @@ async def activate_event_for_test(db: AsyncSession, event: Event) -> None:
         idempotency_key=f"test-activation-{event.id}",
         actor_id=event.created_by,
     )
+    enforcement_flag = await db.scalar(
+        select(FeatureFlag).where(
+            FeatureFlag.organization_id == event.organization_id,
+            FeatureFlag.flag_key == "organizer_console_entitlement_enforce",
+        )
+    )
+    if enforcement_flag is None:
+        db.add(
+            FeatureFlag(
+                organization_id=event.organization_id,
+                flag_key="organizer_console_entitlement_enforce",
+                is_enabled=True,
+            )
+        )
+    else:
+        enforcement_flag.is_enabled = True
     await db.commit()
 
 
@@ -279,6 +296,13 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
 
 # ── FastAPI test client ───────────────────────────────────────
 
+@pytest.fixture
+def committed_session_factory():
+    """Separate sessions for tests that prove real transaction concurrency."""
+
+    return _TestSessionLocal
+
+
 @pytest_asyncio.fixture
 async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """
@@ -287,7 +311,7 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     Overrides the `get_db` dependency to use the test session so
     route handlers operate within the per-test transaction.
     """
-    from app.main import app as fastapi_app
+    from app.main import app as asgi_app
     from fastapi import Depends
     from app.dependencies import get_current_user, get_db, get_token_data
     from app.routers import api_router
@@ -295,6 +319,10 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     from app.database import async_engine
     await async_engine.dispose()
 
+    # Production wraps FastAPI with Socket.IO. Dependency overrides and router
+    # registration belong to the inner FastAPI application, while requests
+    # should still traverse the real outer ASGI stack.
+    fastapi_app = getattr(asgi_app, "other_asgi_app", asgi_app)
     fastapi_app.state.test_db_session = db
 
     async def _override_get_db():
@@ -329,7 +357,7 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     try:
         async with AsyncClient(
-            transport=ASGITransport(app=fastapi_app),
+            transport=ASGITransport(app=asgi_app),
             base_url="http://testserver",
         ) as ac:
             yield ac

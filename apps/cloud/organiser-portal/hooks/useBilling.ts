@@ -4,6 +4,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api-client";
 
 export type BillingApiRecord = Record<string, any>;
+export type CommercialAccessRequestPayload = {
+  event_id?: string;
+  plan_name: string;
+  addon_keys: string[];
+  billing_name: string;
+  billing_email: string;
+  billing_phone: string;
+  gst_number?: string | null;
+  reason: string;
+};
 
 const billingKeys = {
   currentPlan: ["billing", "current-plan"] as const,
@@ -93,7 +103,10 @@ export function useRemoveAddon() {
 export function useCheckout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: BillingApiRecord) => apiPost("/organisations/me/subscribe", payload),
+    mutationFn: (payload: CommercialAccessRequestPayload) =>
+      apiPost("/organisations/me/commercial-access-requests", payload, {
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      }),
     onSuccess: () => invalidateBilling(qc),
   });
 }

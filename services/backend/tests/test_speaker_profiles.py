@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.events.models.speaker import Speaker
 from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
+from tests.conftest import activate_event_for_test
 
 
 def make_dummy_profile_dict(
@@ -130,6 +131,7 @@ async def test_speaker_profile_crud_endpoints(
     # Enable speaker portal
     speaker.event.speaker_mode_enabled = True
     db.add(speaker.event)
+    await activate_event_for_test(db, speaker.event)
     await db.commit()
 
     event_id = speaker.event_id

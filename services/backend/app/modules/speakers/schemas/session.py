@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, computed_field
+from pydantic import BaseModel, Field, ConfigDict, model_validator, computed_field, field_validator
 from app.modules.presentations.schemas.poster import PosterResponse
 
 
@@ -71,8 +71,16 @@ class SessionCreate(BaseModel):
             raise ValueError("end_time must be after start_time")
         return self
 
+    @field_validator("session_code", mode="before")
+    @classmethod
+    def uppercase_session_code(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.upper()
+        return v
+
 
 class SessionUpdate(BaseModel):
+    session_code: Optional[str] = Field(None, min_length=1, max_length=50)
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     room_id: Optional[uuid.UUID] = None
     session_type: Optional[str] = None
@@ -82,6 +90,13 @@ class SessionUpdate(BaseModel):
     moderator_name: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = None
     status: Optional[str] = Field(None, pattern="^(scheduled|in_progress|completed|cancelled)$")
+
+    @field_validator("session_code", mode="before")
+    @classmethod
+    def uppercase_session_code(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.upper()
+        return v
 
 
 class SessionResponse(BaseModel):

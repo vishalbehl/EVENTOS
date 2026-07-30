@@ -38,6 +38,7 @@ from app.modules.registration.routers.portal_auth import (
     _issue_portal_jwt,
 )
 from app.modules.notifications.services.email_service import send_email
+from app.core.dependencies.feature_gate import enforce_event_operation
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,12 @@ async def patch_attendee_details(
     event = event_result.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.submit",
+    )
 
     from app.modules.registration.models.registration_form_config import RegistrationFormConfig
     config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == portal_user.event_id)
@@ -353,6 +360,12 @@ async def request_email_update(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration is not open for this event.",
         )
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.submit",
+    )
 
     # Check if the user is already registered (block email update requests)
     reg_stmt = (
@@ -459,6 +472,12 @@ async def attendee_payment_checkout(
     event = (await db.execute(event_stmt)).scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.payments.manage",
+    )
 
     reg_settings = event.registration_settings or {}
     payment_enabled = reg_settings.get("payment_enabled", False)

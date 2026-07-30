@@ -171,7 +171,7 @@ export function Sidebar() {
         { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/sessions/dashboard` },
         { label: "Session Builder", icon: GanttChart, href: `/events/${eventId}/sessions/builder`, permission: PERMISSIONS.SESSIONS_VIEW },
         { label: "Agenda", icon: Calendar, href: `/events/${eventId}/sessions/agenda`, permission: PERMISSIONS.SESSIONS_VIEW },
-        { label: "Rooms & Devices", icon: MapPin, href: `/events/${eventId}/sessions/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
+        { label: "Rooms Management", icon: MapPin, href: `/events/${eventId}/sessions/rooms`, permission: PERMISSIONS.ROOMS_MANAGE },
       ],
     },
     {
@@ -217,9 +217,9 @@ export function Sidebar() {
   const bottomRoutes = isPlatformWorkspace
     ? []
     : [
-        { label: "Settings", icon: Settings, href: `/events/${eventId}/speaker/settings` },
-        { label: "Documentation", icon: FileText, href: "/docs" },
-      ];
+      { label: "Settings", icon: Settings, href: `/events/${eventId}/speaker/settings` },
+      { label: "Documentation", icon: FileText, href: "/docs" },
+    ];
 
   useEffect(() => {
     if (!pathname) return;
@@ -349,7 +349,13 @@ export function Sidebar() {
             </div>
           ) : null}
 
-          {!isCollapsed && isEventWorkspace && event && !event.licensing_details?.activated_at && user?.role !== "super_admin" && !user?.is_platform_admin ? (
+          {!isCollapsed &&
+          isEventWorkspace &&
+          event &&
+          !event.licensing_details?.activated_at &&
+          String(event.status).toUpperCase() !== "ACTIVE" &&
+          !["admin", "organiser", "organizer", "super_admin"].includes(user?.role || "") &&
+          !user?.is_platform_admin ? (
             <div className="hex-panel overflow-hidden mt-3 rounded-[20px] p-4 border border-dashed border-yellow-500/30 bg-yellow-500/5">
               <p className="text-[12px] font-bold text-yellow-500">Dummy Event (Unactivated)</p>
               <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">

@@ -352,6 +352,24 @@ def _build_portal_poster(p: Poster, event: Event) -> PortalPoster:
     )
 
 
+async def _resolve_abstract_access(
+    db: AsyncSession,
+    event: Event,
+) -> tuple[bool, Optional[str]]:
+    try:
+        capability = await CapabilityService.resolve_event(
+            db,
+            event.organization_id,
+            event.id,
+        )
+    except Exception:
+        return False, "RESOLUTION_UNAVAILABLE"
+    feature = capability.get("features", {}).get("FEAT_ABSTRACT_SUBMISSION")
+    if not feature:
+        return False, "NOT_ENTITLED"
+    return bool(feature.get("enabled")), feature.get("reason_code")
+
+
 @router.get("/auth/{event_id}/{token_or_code}", response_model=SpeakerPortalAuthResponse)
 async def speaker_portal_auth(
     event_id: uuid.UUID,
@@ -390,6 +408,12 @@ async def speaker_portal_auth(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Speaker portal is currently closed."
         )
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "speakers.manage",
+    )
         
     talks = []
     for ss in speaker.session_speakers:
@@ -407,25 +431,6 @@ async def speaker_portal_auth(
         event_id=event.id,
         audiences=["all", "speakers"],
     )
-
-
-async def _resolve_abstract_access(
-    db: AsyncSession,
-    event: Event,
-) -> tuple[bool, Optional[str]]:
-    try:
-        capability = await CapabilityService.resolve_event(
-            db,
-            event.organization_id,
-            event.id,
-        )
-    except Exception:
-        return False, "RESOLUTION_UNAVAILABLE"
-    feature = capability.get("features", {}).get("FEAT_ABSTRACT_SUBMISSION")
-    if not feature:
-        return False, "NOT_ENTITLED"
-    return bool(feature.get("enabled")), feature.get("reason_code")
-
     announcements_list = [
         {
             "id": str(ann.id),
@@ -1041,6 +1046,12 @@ async def portal_confirm_upload(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Speaker portal is currently closed."
         )
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "presentations.upload",
+    )
 
     # Get file and verify it belongs to this speaker
     pf_q = select(PresentationFile).where(
@@ -1125,7 +1136,8 @@ async def portal_poster_upload_url(
     poster_id: uuid.UUID,
     payload: PosterUploadRequest,
     token: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ) -> PresignedPosterUploadResponse:
     """Speaker-facing poster upload URL request. Requires valid token."""
     speaker_q = select(Speaker).where(
@@ -1138,6 +1150,12 @@ async def portal_poster_upload_url(
         raise HTTPException(status_code=401, detail="Invalid token.")
 
     # Verify the poster belongs to this speaker
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "eposters.manage",
+    )
     poster_q = select(Poster).where(
         Poster.id == poster_id,
         Poster.speaker_id == speaker.id
@@ -1157,6 +1175,66 @@ async def portal_poster_upload_url(
         )
 
     event = speaker.event
+    request_fingerprint = hashlib.sha256(
+        f"{poster.id}|{payload.filename}|{payload.file_size_bytes}|{payload.mime_type}|{payload.recording_rights}".encode()
+    ).hexdigest()
+    reservation_key = f"speaker-poster-upload:{poster.id}:{idempotency_key}"
+    existing_reservation = await db.scalar(
+        select(UsageReservation).where(
+            UsageReservation.organization_id == event.organization_id,
+            UsageReservation.idempotency_key == reservation_key,
+        )
+    )
+    if existing_reservation:
+        metadata = existing_reservation.metadata_json or {}
+        if metadata.get("request_fingerprint") != request_fingerprint:
+            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+        if existing_reservation.status == "CONSUMED":
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "IDEMPOTENCY_ALREADY_CONSUMED"},
+            )
+        upload_info = upload_service.create_presigned_upload(
+            bucket=settings.S3_BUCKET_POSTERS,
+            storage_path=metadata["storage_path"],
+            content_type=payload.mime_type or "application/pdf",
+            max_size_bytes=payload.file_size_bytes,
+        )
+        return PresignedPosterUploadResponse(
+            poster_id=poster.id,
+            upload_url=upload_info["url"],
+            expires_in=settings.S3_PRESIGNED_EXPIRY_SECONDS,
+        )
+
+    # Reserve before rotating the previous object so a quota denial cannot
+    # produce an external storage side effect.
+    storage_path, stored_filename = upload_service.build_poster_path(
+        event.id,
+        speaker.id,
+        payload.filename,
+        event_name=event.name,
+        hall_name=poster.session.room.name if (poster.session and poster.session.room) else None,
+        session_name=poster.session.name if poster.session else None,
+        speaker_name=speaker.full_name,
+        version=None,
+    )
+    await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="storage_quota_mb",
+        quantity=max(1, (payload.file_size_bytes + 1024 * 1024 - 1) // (1024 * 1024)),
+        unit="megabyte",
+        idempotency_key=reservation_key,
+        ttl_seconds=settings.S3_PRESIGNED_EXPIRY_SECONDS,
+        metadata={
+            "poster_id": str(poster.id),
+            "storage_path": storage_path,
+            "request_fingerprint": request_fingerprint,
+            "consumption_quantity": payload.file_size_bytes,
+            "consumption_unit": "byte",
+        },
+    )
     
     if poster.storage_path:
         # Move the current poster to a versioned path
@@ -1197,18 +1275,6 @@ async def portal_poster_upload_url(
             logger.error(f"Failed to move old poster version for {poster.id}: {e}")
             raise HTTPException(status_code=500, detail="Could not rotate previous poster version.")
 
-    # Build the path for the NEW upload (clean name)
-    storage_path, stored_filename = upload_service.build_poster_path(
-        event.id,
-        speaker.id,
-        payload.filename,
-        event_name=event.name,
-        hall_name=poster.session.room.name if (poster.session and poster.session.room) else None,
-        session_name=poster.session.name if poster.session else None,
-        speaker_name=speaker.full_name,
-        version=None
-    )
-    
     poster.storage_path = storage_path
     poster.original_filename = payload.filename
     poster.file_size_bytes = payload.file_size_bytes
@@ -1266,6 +1332,12 @@ async def portal_confirm_poster_upload(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Speaker portal is currently closed."
         )
+    await enforce_event_operation(
+        db,
+        speaker.event.organization_id,
+        speaker.event_id,
+        "eposters.manage",
+    )
 
     poster_q = select(Poster).where(
         Poster.id == poster_id,
@@ -1276,6 +1348,19 @@ async def portal_confirm_poster_upload(
     
     if not poster:
         raise HTTPException(status_code=404, detail="Poster not found.")
+    reservation = await db.scalar(
+        select(UsageReservation)
+        .where(
+            UsageReservation.organization_id == speaker.event.organization_id,
+            UsageReservation.event_id == speaker.event_id,
+            UsageReservation.idempotency_key.like(f"speaker-poster-upload:{poster.id}:%"),
+            UsageReservation.status == "RESERVED",
+        )
+        .order_by(UsageReservation.created_at.desc())
+        .limit(1)
+    )
+    if reservation is None:
+        raise HTTPException(status_code=409, detail={"code": "RESERVATION_UNAVAILABLE"})
 
     poster.status = "submitted"
     poster.submitted_at = datetime.now(timezone.utc)
@@ -1284,6 +1369,11 @@ async def portal_confirm_poster_upload(
     
     # Update speaker intake status
     speaker.upload_status = "uploaded"
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="speaker_portal.confirm_poster_upload",
+    )
     
     # Log poster upload confirmation
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -1455,6 +1545,12 @@ async def speaker_request_otp(
         
     target_speaker = otp_allowed_speakers[0]
     event = target_speaker.event
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "speakers.manage",
+    )
     
     # Throttle check
     await _throttle_check(body.email, event.id, db)
@@ -1537,6 +1633,12 @@ async def speaker_verify_otp(
         
     target_speaker = active_speakers[0]
     event_id = target_speaker.event_id
+    await enforce_event_operation(
+        db,
+        target_speaker.event.organization_id,
+        event_id,
+        "speakers.manage",
+    )
     
     # 2. Verify OTP
     from app.modules.identity.models.portal_otp_token import PortalOtpToken
@@ -1643,7 +1745,6 @@ async def get_profile_template(
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=401, detail="Invalid token.")
-
     await enforce_event_operation(
         db,
         speaker.event.organization_id,

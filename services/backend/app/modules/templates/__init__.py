@@ -1,0 +1,1 @@
+"""Template marketplace domain models."""

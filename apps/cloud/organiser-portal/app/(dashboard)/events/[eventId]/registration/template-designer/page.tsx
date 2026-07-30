@@ -521,6 +521,9 @@ export default function PrintDesigner() {
   const { state, dispatch, loadState, undo, redo, canUndo, canRedo } = useHistoryReducer(initialState);
   const { template, meta } = state;
   const { activePageIndex, selectedFieldId, zoom, design_mode, currentTemplateId } = meta;
+  const templateLimitKey = template.template_type === "certificate"
+    ? "max_certificate_templates"
+    : "max_badge_templates";
 
   const [previewData, setPreviewData] = useState<Record<string, string>>({
     name: "John Doe",
@@ -2299,12 +2302,18 @@ export default function PrintDesigner() {
                         <option value="certificate">🏅 Certificate</option>
                         <option value="custom">⚙️ Custom</option>
                       </select>
-                      <CapabilityAction operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}>
+                      <CapabilityAction
+                        operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}
+                        limitKey={currentTemplateId === "new" ? templateLimitKey : undefined}
+                      >
                         <Button onClick={handleSaveTemplate} className="w-full h-9 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl shadow-lg border-0">
                           <Save className="h-3.5 w-3.5 mr-2" /> Save Design
                         </Button>
                       </CapabilityAction>
-                      <CapabilityAction operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}>
+                      <CapabilityAction
+                        operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}
+                        limitKey={templateLimitKey}
+                      >
                         <Button onClick={handleSaveAsNew} disabled={currentTemplateId === "new"} className="w-full h-9 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl disabled:opacity-40">
                           <Copy className="h-3.5 w-3.5 mr-2 text-zinc-500" /> Save As Copy
                         </Button>

@@ -15,7 +15,7 @@ import { GovernedActionButton } from "./GovernedActionButton";
 type Field = {
   key: string;
   label: string;
-  type?: "text" | "email" | "number" | "datetime-local" | "textarea" | "select";
+  type?: "text" | "email" | "number" | "datetime-local" | "textarea" | "json" | "select";
   required?: boolean;
   options?: string[];
 };
@@ -28,6 +28,35 @@ type Config = {
 };
 
 const CONFIG: Record<string, Config> = {
+  attendees: {
+    singular: "attendee",
+    collection: "items",
+    fields: [
+      { key: "first_name", label: "First name", required: true },
+      { key: "last_name", label: "Last name" },
+      { key: "email", label: "Email", type: "email" },
+      { key: "phone", label: "Phone" },
+      { key: "role", label: "Registration role", required: true },
+      { key: "company", label: "Company" },
+      { key: "designation", label: "Designation" },
+      { key: "country", label: "Country" },
+      {
+        key: "paid_status",
+        label: "Payment status",
+        type: "select",
+        options: ["Paid", "Unpaid", "Refunded", "Pending Refund"],
+      },
+      { key: "regno", label: "Registration number" },
+      { key: "source", label: "Source" },
+      { key: "custom_fields", label: "Custom fields (JSON)", type: "json" },
+    ],
+    createDefaults: {
+      role: "Delegate",
+      paid_status: "Unpaid",
+      source: "command_center",
+      custom_fields: {},
+    },
+  },
   speakers: {
     singular: "speaker",
     collection: "items",
@@ -154,6 +183,8 @@ function normalizeInput(field: Field, value: unknown) {
     return Array.isArray(value) ? value.join(", ") : String(value ?? "");
   if (field.type === "datetime-local" && value)
     return String(value).slice(0, 16);
+  if (field.type === "json")
+    return JSON.stringify(value ?? {}, null, 2);
   return value == null ? "" : String(value);
 }
 
@@ -166,6 +197,7 @@ function payloadValue(field: Field, value: string) {
   if (field.type === "number") return value === "" ? undefined : Number(value);
   if (field.type === "datetime-local")
     return value ? new Date(value).toISOString() : undefined;
+  if (field.type === "json") return value ? JSON.parse(value) : {};
   return value === "" ? undefined : value;
 }
 
@@ -223,6 +255,8 @@ export function EventResourceControlPanel({
     [config, data],
   );
   if (!config) return null;
+  const sensitiveEditAllowed =
+    workspace !== "attendees" || data.sensitive_edit_allowed === true;
 
   const open = (
     nextMode: "create" | "edit",
@@ -249,15 +283,15 @@ export function EventResourceControlPanel({
       .filter((field) => field.required)
       .every((field) => values[field.key]?.trim());
   const submit = async () => {
-    const domainData = Object.fromEntries(
-      config.fields
-        .map((field) => [
-          field.key,
-          payloadValue(field, values[field.key] ?? ""),
-        ])
-        .filter(([, value]) => value !== undefined),
-    );
     try {
+      const domainData = Object.fromEntries(
+        config.fields
+          .map((field) => [
+            field.key,
+            payloadValue(field, values[field.key] ?? ""),
+          ])
+          .filter(([, value]) => value !== undefined),
+      );
       if (mode === "create")
         await createMutation.mutateAsync({
           data: domainData,
@@ -267,6 +301,8 @@ export function EventResourceControlPanel({
       else if (selected?.id)
         await updateMutation.mutateAsync({
           resourceId: String(selected.id),
+          version:
+            typeof selected.version === "number" ? selected.version : undefined,
           data: domainData,
           reason,
           case_reference: caseReference,
@@ -292,6 +328,10 @@ export function EventResourceControlPanel({
     try {
       await archiveMutation.mutateAsync({
         resourceId: String(archiveTarget.id),
+        version:
+          typeof archiveTarget.version === "number"
+            ? archiveTarget.version
+            : undefined,
         reason,
         case_reference: caseReference,
       });
@@ -317,6 +357,7 @@ export function EventResourceControlPanel({
     try {
       await restoreMutation.mutateAsync({
         resourceId: String(item.id),
+        version: typeof item.version === "number" ? item.version : undefined,
         reason,
         case_reference: caseReference,
       });
@@ -340,6 +381,12 @@ export function EventResourceControlPanel({
             All writes require step-up authentication, a case reference, and an
             audit reason.
           </p>
+          {workspace === "attendees" && !sensitiveEditAllowed && (
+            <p className="mt-1 text-[10px] text-[var(--status-warning)]">
+              Existing attendee PII is masked. Start privileged data access in
+              Security before editing a record.
+            </p>
+          )}
         </div>
         <button
           onClick={() => open("create")}
@@ -389,12 +436,14 @@ export function EventResourceControlPanel({
                   />
                 ) : (
                   <>
-                    <button
-                      onClick={() => open("edit", item)}
-                      className="text-[10px] font-bold text-[var(--brand-primary)]"
-                    >
-                      Edit
-                    </button>
+                    {sensitiveEditAllowed && (
+                      <button
+                        onClick={() => open("edit", item)}
+                        className="text-[10px] font-bold text-[var(--brand-primary)]"
+                      >
+                        Edit
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         setArchiveTarget(item);
@@ -449,7 +498,7 @@ export function EventResourceControlPanel({
                     {field.label}
                     {field.required ? " *" : ""}
                   </span>
-                  {field.type === "textarea" ? (
+                  {field.type === "textarea" || field.type === "json" ? (
                     <textarea
                       value={values[field.key] ?? ""}
                       onChange={(event) =>

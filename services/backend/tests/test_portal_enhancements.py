@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 import pytest
+import pytest_asyncio
 from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -14,6 +15,13 @@ from app.modules.registration.models.participant_registration import Participant
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.registration.routers.portal_auth import _issue_portal_jwt
+from tests.conftest import activate_event_for_test
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _licensed_event(db: AsyncSession, event: Event):
+    await activate_event_for_test(db, event)
+    yield
 
 
 @pytest.mark.asyncio

@@ -11,10 +11,10 @@ test.describe("Command Center shell & layout", () => {
     
     // Viewport responsiveness checks
     await page.setViewportSize({ width: 375, height: 667 }); // mobile
-    await expect(page.getByRole("heading", { name: /Platform Control Panel/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Command Center Access/i })).toBeVisible();
 
     await page.setViewportSize({ width: 1280, height: 800 }); // desktop
-    await expect(page.getByRole("heading", { name: /Platform Control Panel/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Command Center Access/i })).toBeVisible();
   });
 
   test("runs basic accessibility audit on auth entry page", async ({ page }) => {

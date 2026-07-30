@@ -23,8 +23,6 @@ import {
   Search,
   Settings,
   Shield,
-  ToggleLeft,
-  Trash2,
   Upload,
   User,
   Zap,
@@ -102,7 +100,6 @@ export function EventConfigurationWorkspace() {
   const [isSaving, setIsSaving] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importType, setImportType] = useState<"schedule" | "eposter">("schedule");
@@ -113,30 +110,6 @@ export function EventConfigurationWorkspace() {
   const router = useRouter();
   const autoInvite = useAutoInvite(eventIdValue);
 
-  const handleClearData = async () => {
-    if (!window.confirm("ARE YOU SURE? This will PERMANENTLY DELETE all sessions, speakers, rooms, and import history for this event. This cannot be undone.")) {
-      return;
-    }
-
-    setIsClearing(true);
-    try {
-      await apiClient.post(`/events/${eventIdValue}/clear-data`);
-      toast.success("All event data has been cleared.");
-      // Reset preview if open
-      setPreview(null);
-      setSelectedFile(null);
-      
-      // Force a full page reload to clear all React Query caches and reset the workspace UI
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-    } catch (error) {
-      toast.error("Failed to clear event data.");
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
   const [form, setForm] = useState({
     name: "",
     short_code: "",
@@ -146,21 +119,14 @@ export function EventConfigurationWorkspace() {
     start_date: "",
     end_date: "",
     status: "draft" as ProgramStatus,
-    enable_posters: true,
     upload_deadline: "",
     max_file_size_mb: 500,
     allowed_formats: "pptx, pdf, mp4, zip, folder",
-    enable_moderator: true,
-    enable_whatsapp: false,
-    enable_srr: true,
-    enable_signage: true,
-    enable_webhooks: false,
     timezone: "UTC",
   });
 
   useEffect(() => {
     if (!event) return;
-    const toggles = (event as any).feature_toggles || {};
     setForm((current) => ({
       ...current,
       name: event.name || "",
@@ -175,13 +141,6 @@ export function EventConfigurationWorkspace() {
       max_file_size_mb: event.max_file_size_mb || 500,
       allowed_formats: (event.allowed_formats?.length ? event.allowed_formats : ["pptx", "pdf", "mp4", "zip", "folder"]).join(", "),
       timezone: event.timezone || "UTC",
-      // Feature Toggles
-      enable_posters: toggles.enable_posters ?? true,
-      enable_moderator: toggles.enable_moderator ?? true,
-      enable_whatsapp: toggles.enable_whatsapp ?? false,
-      enable_srr: toggles.enable_srr ?? true,
-      enable_signage: toggles.enable_signage ?? true,
-      enable_webhooks: toggles.enable_webhooks ?? false,
     }));
   }, [event]);
 
@@ -217,14 +176,6 @@ export function EventConfigurationWorkspace() {
         upload_deadline: form.upload_deadline || null,
         max_file_size_mb: Number(form.max_file_size_mb),
         allowed_formats: allowedFormats,
-        feature_toggles: {
-          enable_posters: form.enable_posters,
-          enable_moderator: form.enable_moderator,
-          enable_whatsapp: form.enable_whatsapp,
-          enable_srr: form.enable_srr,
-          enable_signage: form.enable_signage,
-          enable_webhooks: form.enable_webhooks,
-        },
       };
       if (form.start_date) eventPayload.start_date = form.start_date;
       if (form.end_date) eventPayload.end_date = form.end_date;
@@ -376,7 +327,7 @@ export function EventConfigurationWorkspace() {
                   <SummaryLine label="Upload cap" value={`${form.max_file_size_mb} MB`} />
                   <SummaryLine label="Formats" value={allowedFormats.join(", ") || "-"} />
                   <SummaryLine label="Deadline" value={form.upload_deadline || "Not set"} />
-                  <SummaryLine label="ePosters" value={form.enable_posters ? "Enabled" : "Disabled"} />
+                  <SummaryLine label="Commercial capabilities" value="Managed in Command Center" />
                 </div>
               </div>
             </aside>
@@ -737,35 +688,19 @@ export function EventConfigurationWorkspace() {
                 </div>
               </SettingsPanel>
 
-              <SettingsPanel title="Workflow Controls" icon={ToggleLeft}>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <ToggleRow label="Moderation Flow" value={form.enable_moderator} onChange={(value) => setForm({ ...form, enable_moderator: value })} />
-                  <ToggleRow label="Speaker Ready Room" value={form.enable_srr} onChange={(value) => setForm({ ...form, enable_srr: value })} />
-                  <ToggleRow label="WhatsApp Reminders" value={form.enable_whatsapp} onChange={(value) => setForm({ ...form, enable_whatsapp: value })} />
-                  <ToggleRow label="Venue Signage" value={form.enable_signage} onChange={(value) => setForm({ ...form, enable_signage: value })} />
-                  <ToggleRow label="Webhook Triggers" value={form.enable_webhooks} onChange={(value) => setForm({ ...form, enable_webhooks: value })} />
-                  <ToggleRow label="ePoster Workflow" value={form.enable_posters} onChange={(value) => setForm({ ...form, enable_posters: value })} />
-                </div>
+              <SettingsPanel title="Commercial capabilities" icon={Shield}>
+                <p className="text-[11px] font-medium leading-relaxed text-muted">
+                  Moderation, speaker-ready-room, messaging, signage, webhook, and ePoster access are resolved from the event contract. They can be granted, restricted, suspended, or amended only through Command Center.
+                </p>
               </SettingsPanel>
             </div>
 
-            {/* Right: Info & Danger Zone */}
+            {/* Right: governance and policy information */}
             <div className="space-y-8">
-              <SettingsPanel title="Danger Zone" icon={Trash2}>
-                <div className="space-y-4">
-                  <p className="text-[11px] font-medium leading-relaxed text-muted">
-                    Permanently delete all data associated with this event (files, databases, logs, sessions, speakers, etc.) except the core event and user profiles. Use this for a complete factory reset.
-                    <span className="mt-1 block font-black text-[var(--dan)]">NON-REVERSIBLE.</span>
-                  </p>
-                  <Button 
-                    onClick={() => void handleClearData()} 
-                    disabled={isClearing}
-                    className="h-14 w-full rounded-3xl bg-[var(--dan)] text-[10px] font-black uppercase tracking-widest text-[var(--text)] hover:opacity-90 shadow-xl shadow-[var(--dan)]/20"
-                  >
-                    {isClearing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-                    Delete All Event Data
-                  </Button>
-                </div>
+              <SettingsPanel title="Lifecycle governance" icon={Shield}>
+                <p className="text-[11px] font-medium leading-relaxed text-muted">
+                  Event archival, restoration, data correction, and purge requests are managed from Command Center. Destructive jobs require a dry-run manifest, retention and legal-hold checks, independent approval, and an auditable recovery plan.
+                </p>
               </SettingsPanel>
 
               <Card className="glass-3d rounded-[2.5rem] border-default p-8 bg-gradient-to-br from-[var(--pri)]/5 to-transparent">
@@ -824,32 +759,6 @@ function SettingsPanel({ title, icon: Icon, children }: { title: string; icon: t
       </div>
       {children}
     </Card>
-  );
-}
-
-function ToggleRow({ label, value, onChange }: { label: string; value: boolean; onChange: (value: boolean) => void }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl border border-default bg-[color-mix(in_srgb,var(--text)_3%,transparent)] p-5 group hover:bg-[color-mix(in_srgb,var(--text)_5%,transparent)] transition-all">
-      <div className="space-y-1">
-        <span className="text-[13px] font-bold text-[var(--text)]">{label}</span>
-        <p className="text-[9px] font-black text-muted uppercase tracking-widest">{value ? 'Active' : 'Disabled'}</p>
-      </div>
-      <button 
-        type="button" 
-        onClick={() => onChange(!value)} 
-        aria-pressed={value} 
-        className={cn(
-          "relative h-8 w-14 rounded-full border-2 p-1 transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] shadow-inner", 
-          value ? "border-[var(--pri)] bg-[var(--pri)] shadow-[0_0_15px_color-mix(in_srgb,var(--pri)_40%,transparent)]" : "border-default bg-[color-mix(in_srgb,var(--text)_10%,transparent)]"
-        )}
-      >
-        <motion.span 
-          animate={{ x: value ? 24 : 0, scale: value ? 1.1 : 1 }} 
-          transition={{ type: "spring", stiffness: 500, damping: 30 }}
-          className="block h-5 w-5 rounded-full bg-[var(--text)] shadow-[0_2px_5px_rgba(0,0,0,0.3)]" 
-        />
-      </button>
-    </div>
   );
 }
 

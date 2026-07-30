@@ -1442,26 +1442,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/events/venue-images/upload-temp": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Upload Temp Venue Image
-         * @description Upload a venue image before an event is created (associated with the organization).
-         */
-        post: operations["upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/events/{event_id}": {
         parameters: {
             query?: never;
@@ -1478,7 +1458,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Event
-         * @description Nuclear Delete: Deletes the event and ALL associated data in other tables atomically.
+         * @description Soft-delete an event; permanent purge is a governed lifecycle job.
          */
         delete: operations["delete_event_api_v1_events__event_id__delete"];
         options?: never;
@@ -1854,27 +1834,6 @@ export interface paths {
          * @description Delete an announcement.
          */
         delete: operations["delete_announcement_api_v1_events__event_id__announcements__announcement_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/events/{event_id}/apply-plan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Apply Plan To Event
-         * @description Apply a newly purchased or selected plan and commercial entitlements
-         *     directly to an existing trial/demo event, unlocking its features and activating it.
-         */
-        post: operations["apply_plan_to_event_api_v1_events__event_id__apply_plan_post"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2332,26 +2291,6 @@ export interface paths {
          * @description Update a capacity rule.
          */
         patch: operations["update_capacity_rule_api_v1_events__event_id__capacity__id__patch"];
-        trace?: never;
-    };
-    "/api/v1/events/{event_id}/clear-data": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Clear Event Data
-         * @description DANGEROUS: Deletes all schedule-related data for this event but preserves the event settings.
-         */
-        post: operations["clear_event_data_api_v1_events__event_id__clear_data_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/v1/events/{event_id}/emails/send-single": {
@@ -4449,9 +4388,7 @@ export interface paths {
         head?: never;
         /**
          * Update Settings
-         * @description Update event settings.
-         *     - license_tier: super_admin ONLY.
-         *     - All other settings: organizer and above.
+         * @description Update organizer-configurable event settings.
          */
         patch: operations["update_settings_api_v1_events__event_id__settings_patch"];
         trace?: never;
@@ -5584,26 +5521,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organisations/me/subscribe": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Subscribe Organization
-         * @description Subscribe current organization to a plan with custom limits, addons, and invoice logging.
-         */
-        post: operations["subscribe_organization_api_v1_organisations_me_subscribe_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/organisations/plans": {
         parameters: {
             query?: never;
@@ -6300,7 +6217,7 @@ export interface paths {
         };
         /**
          * Get Features Matrix
-         * @description Get grouped feature catalog matrix for plan comparison.
+         * @description Return the canonical catalogue grouped for typed plan assignment.
          */
         get: operations["get_features_matrix_api_v1_platform_features_matrix_get"];
         put?: never;
@@ -13303,26 +13220,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/superadmin/organisations/me/subscribe": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Subscribe Organization
-         * @description Subscribe current organization to a plan with custom limits, addons, and invoice logging.
-         */
-        post: operations["subscribe_organization_api_v1_superadmin_organisations_me_subscribe_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/superadmin/organisations/plans": {
         parameters: {
             query?: never;
@@ -13383,16 +13280,7 @@ export interface paths {
          *       billing.organization_feature_overrides (for org-specific override)
          */
         get: operations["superadmin_get_feature_overrides_api_v1_superadmin_organisations__org_id__feature_overrides_get"];
-        /**
-         * Super Admin — Upsert a feature override for an organization
-         * @description Upsert a feature override for a specific organization.
-         *
-         *     Body: { feature_key, override: true | false | null }
-         *     - null → removes override, restores plan default
-         *     - true → force-enables regardless of plan
-         *     - false → force-disables regardless of plan
-         */
-        put: operations["superadmin_upsert_feature_override_api_v1_superadmin_organisations__org_id__feature_overrides_put"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -13806,16 +13694,7 @@ export interface paths {
          *       billing.organization_feature_overrides (for org-specific override)
          */
         get: operations["superadmin_get_feature_overrides_api_v1_superadmin_superadmin_organisations__org_id__feature_overrides_get"];
-        /**
-         * Super Admin — Upsert a feature override for an organization
-         * @description Upsert a feature override for a specific organization.
-         *
-         *     Body: { feature_key, override: true | false | null }
-         *     - null → removes override, restores plan default
-         *     - true → force-enables regardless of plan
-         *     - false → force-disables regardless of plan
-         */
-        put: operations["superadmin_upsert_feature_override_api_v1_superadmin_superadmin_organisations__org_id__feature_overrides_put"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -15414,15 +15293,6 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** ApplyPlanRequest */
-        ApplyPlanRequest: {
-            /** Addon Keys */
-            addon_keys?: string[] | null;
-            /** Plan Id */
-            plan_id?: string | null;
-            /** Plan Name */
-            plan_name?: string | null;
-        };
         /** ApprovalDecision */
         ApprovalDecision: {
             /**
@@ -16009,11 +15879,6 @@ export interface components {
         Body_upload_speaker_branding_image_api_v1_events__event_id__speaker_branding_upload_post: {
             /** Field */
             field: string;
-            /** File */
-            file: string;
-        };
-        /** Body_upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post */
-        Body_upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post: {
             /** File */
             file: string;
         };
@@ -18159,19 +18024,13 @@ export interface components {
             created_at: string;
             /** Custom Domain */
             custom_domain?: string | null;
-            /**
-             * Event Count
-             * @default 0
-             */
-            event_count: number;
-            /**
-             * Health Score
-             * @default 100
-             */
-            health_score: number;
+            /** Event Count */
+            event_count?: number | null;
+            /** Health Score */
+            health_score?: number | null;
             /**
              * Health Status
-             * @default HEALTHY
+             * @default NOT_MEASURED
              */
             health_status: string;
             /**
@@ -18186,25 +18045,19 @@ export interface components {
             is_active: boolean;
             /** Logo Url */
             logo_url?: string | null;
-            /**
-             * Mrr
-             * @default 0
-             */
-            mrr: number;
+            /** Mrr */
+            mrr?: number | null;
             /** Name */
             name: string;
             /** Plan */
             plan: string;
             /** Slug */
             slug: string;
-            /**
-             * Storage Used Bytes
-             * @default 0
-             */
-            storage_used_bytes: number;
+            /** Storage Used Bytes */
+            storage_used_bytes?: number | null;
             /**
              * Subscription Status
-             * @default TRIAL
+             * @default NOT_CONFIGURED
              */
             subscription_status: string;
             /** Suspension Reason */
@@ -18214,11 +18067,8 @@ export interface components {
              * @default Asia/Kolkata
              */
             timezone: string;
-            /**
-             * User Count
-             * @default 0
-             */
-            user_count: number;
+            /** User Count */
+            user_count?: number | null;
         };
         /** EntitlementGrantAdminResponse */
         EntitlementGrantAdminResponse: {
@@ -18909,7 +18759,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "APPROVE" | "REJECT" | "LOCK" | "UNLOCK" | "RETRY_PROCESSING" | "SEND" | "RESEND_FAILED" | "CANCEL" | "RECORD_REFUND" | "SET_PRICING" | "CHECK_IN" | "REMOVE_CHECK_IN" | "ASSIGN_USER" | "UNASSIGN_USER" | "START_REVIEW" | "REQUEST_REVISION" | "ISSUE_CONFIRMATION_QR" | "ROTATE_CONFIRMATION_QR";
+            action: "APPROVE" | "REJECT" | "LOCK" | "UNLOCK" | "RETRY_PROCESSING" | "RETRY_JOB" | "SEND" | "RESEND_FAILED" | "CANCEL" | "RECORD_REFUND" | "SET_PRICING" | "CHECK_IN" | "REMOVE_CHECK_IN" | "ASSIGN_USER" | "UNASSIGN_USER" | "START_REVIEW" | "REQUEST_REVISION" | "ISSUE_CONFIRMATION_QR" | "ROTATE_CONFIRMATION_QR";
             /** Approved Request Id */
             approved_request_id?: string | null;
             /** Case Reference */
@@ -19098,16 +18948,6 @@ export interface components {
             is_enabled: boolean;
             /** Reason */
             reason: string;
-        };
-        /**
-         * FeatureOverrideUpsert
-         * @description Body for PUT /organisations/{org_id}/feature-overrides.
-         */
-        FeatureOverrideUpsert: {
-            /** Feature Key */
-            feature_key: string;
-            /** Override */
-            override: boolean | null;
         };
         /** FeatureToggles */
         FeatureToggles: {
@@ -20495,28 +20335,6 @@ export interface components {
         LegalHoldRelease: {
             /** Reason */
             reason: string;
-        };
-        /**
-         * LicenseInfo
-         * @description Summary of what the current license tier unlocks.
-         */
-        LicenseInfo: {
-            /** Dedicated Support */
-            dedicated_support: boolean;
-            /** Max Events */
-            max_events: number;
-            /** Max Speakers Per Event */
-            max_speakers_per_event: number;
-            /** Max Storage Gb */
-            max_storage_gb: number;
-            /** Posters Enabled */
-            posters_enabled: boolean;
-            /** Tier */
-            tier: string;
-            /** Webhooks Enabled */
-            webhooks_enabled: boolean;
-            /** Whatsapp Enabled */
-            whatsapp_enabled: boolean;
         };
         /** LifecycleApprovalDecision */
         LifecycleApprovalDecision: {
@@ -25818,6 +25636,8 @@ export interface components {
             name?: string | null;
             /** Room Id */
             room_id?: string | null;
+            /** Session Code */
+            session_code?: string | null;
             /** Session Type */
             session_type?: string | null;
             /** Start Time */
@@ -25838,6 +25658,13 @@ export interface components {
             branding_settings: {
                 [key: string]: unknown;
             };
+            /** Capabilities Url */
+            capabilities_url: string;
+            /**
+             * Capability Source
+             * @default CANONICAL_CAPABILITY_API
+             */
+            capability_source: string;
             /**
              * Event Id
              * Format: uuid
@@ -25845,12 +25672,15 @@ export interface components {
             event_id: string;
             /** Event Mode */
             event_mode: boolean;
-            /** Feature Toggles */
+            /**
+             * Feature Toggles
+             * @default {}
+             */
             feature_toggles: {
                 [key: string]: boolean;
             };
             /** License Tier */
-            license_tier: string;
+            license_tier?: string | null;
             /** Logo Url */
             logo_url?: string | null;
             /** Max File Size Mb */
@@ -26805,43 +26635,6 @@ export interface components {
              * @default
              */
             secret_key: string;
-        };
-        /** SubscribeRequest */
-        SubscribeRequest: {
-            /** Addon Keys */
-            addon_keys?: string[] | null;
-            /**
-             * Billing Email
-             * Format: email
-             */
-            billing_email: string;
-            /** Billing Name */
-            billing_name: string;
-            /** Billing Phone */
-            billing_phone: string;
-            /** Card Number */
-            card_number?: string | null;
-            /** Cardholder Name */
-            cardholder_name?: string | null;
-            /** Custom Limits */
-            custom_limits?: {
-                [key: string]: number;
-            } | null;
-            /** Cvv */
-            cvv?: string | null;
-            /** Expiry */
-            expiry?: string | null;
-            /** Gst Number */
-            gst_number?: string | null;
-            /**
-             * Is Custom
-             * @default false
-             */
-            is_custom: boolean;
-            /** Plan Name */
-            plan_name: string;
-            /** Promo Code */
-            promo_code?: string | null;
         };
         /** SubscriptionItem */
         SubscriptionItem: {
@@ -31999,41 +31792,6 @@ export interface operations {
             };
         };
     };
-    upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_event_api_v1_events__event_id__get: {
         parameters: {
             query?: never;
@@ -32069,7 +31827,10 @@ export interface operations {
     delete_event_api_v1_events__event_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "X-Change-Reason": string;
+                "Idempotency-Key": string;
+            };
             path: {
                 /** @description Event UUID */
                 event_id: string;
@@ -32820,42 +32581,6 @@ export interface operations {
             };
         };
     };
-    apply_plan_to_event_api_v1_events__event_id__apply_plan_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Event UUID */
-                event_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApplyPlanRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     archive_event_api_v1_events__event_id__archive_post: {
         parameters: {
             query?: never;
@@ -33381,7 +33106,9 @@ export interface operations {
     upload_branding_image_api_v1_events__event_id__branding_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 /** @description Event UUID */
                 event_id: string;
@@ -33672,38 +33399,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapacityRuleResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clear_event_data_api_v1_events__event_id__clear_data_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Event UUID */
-                event_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageResponse"];
                 };
             };
             /** @description Validation Error */
@@ -36698,7 +36393,9 @@ export interface operations {
     register_printer_api_v1_events__event_id__printers_register_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 /** @description Event UUID */
                 event_id: string;
@@ -38540,7 +38237,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LicenseInfo"];
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -38572,7 +38271,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SettingsResponse"];
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -38589,7 +38290,9 @@ export interface operations {
     upload_speaker_branding_image_api_v1_events__event_id__speaker_branding_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 /** @description Event UUID */
                 event_id: string;
@@ -38947,7 +38650,9 @@ export interface operations {
             query?: {
                 token?: string | null;
             };
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 event_id: string;
                 speaker_id: string;
@@ -38985,7 +38690,9 @@ export interface operations {
             query?: {
                 token?: string | null;
             };
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 event_id: string;
                 speaker_id: string;
@@ -39156,6 +38863,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description Event UUID */
                 event_id: string;
             };
             cookie?: never;
@@ -39531,7 +39239,9 @@ export interface operations {
     upload_venue_image_api_v1_events__event_id__venue_images_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 /** @description Event UUID */
                 event_id: string;
@@ -41144,41 +40854,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    subscribe_organization_api_v1_organisations_me_subscribe_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubscribeRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -50698,7 +50373,9 @@ export interface operations {
             query: {
                 token: string;
             };
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 poster_id: string;
             };
@@ -51080,7 +50757,9 @@ export interface operations {
     public_registration_upload_api_v1_portal_registration__event_id__upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 event_id: string;
             };
@@ -58387,41 +58066,6 @@ export interface operations {
             };
         };
     };
-    subscribe_organization_api_v1_superadmin_organisations_me_subscribe_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubscribeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_available_plans_api_v1_superadmin_organisations_plans_get: {
         parameters: {
             query?: never;
@@ -58495,41 +58139,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeatureOverrideItem-Output"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    superadmin_upsert_feature_override_api_v1_superadmin_organisations__org_id__feature_overrides_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                org_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeatureOverrideUpsert"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeatureOverrideItem-Output"];
                 };
             };
             /** @description Validation Error */
@@ -59487,41 +59096,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeatureOverrideItem-Output"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    superadmin_upsert_feature_override_api_v1_superadmin_superadmin_organisations__org_id__feature_overrides_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                org_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeatureOverrideUpsert"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeatureOverrideItem-Output"];
                 };
             };
             /** @description Validation Error */

@@ -69,6 +69,8 @@ def on_task_publish(headers=None, body=None, **kwargs):
         if headers is not None:
             headers["tenant_org_id"] = str(org_id)
 
+_tenant_tokens = {}
+
 @task_prerun.connect
 def on_task_prerun(task_id, task, args, kwargs, **signature):
     request = task.request
@@ -83,12 +85,12 @@ def on_task_prerun(task_id, task, args, kwargs, **signature):
         if org_id_str:
             try:
                 org_id = uuid.UUID(org_id_str)
-                task._tenant_token = tenant_org_id.set(org_id)
+                _tenant_tokens[task_id] = tenant_org_id.set(org_id)
             except ValueError:
                 pass
 
 @task_postrun.connect
 def on_task_postrun(task_id, task, args, kwargs, retval, state, **signature):
-    token = getattr(task, "_tenant_token", None)
+    token = _tenant_tokens.pop(task_id, None)
     if token:
         tenant_org_id.reset(token)

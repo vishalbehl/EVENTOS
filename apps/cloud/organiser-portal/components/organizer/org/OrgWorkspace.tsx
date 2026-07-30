@@ -22,6 +22,7 @@ import { countries, Organization, OrgMember, orgApi, OrgMe, OrgRole, timezones, 
 import { apiClient } from "@/lib/api-client";
 import { useAuthStore } from "@/store/use-auth-store";
 import { cn } from "@/lib/utils";
+import { useOrganizationLimitAccess } from "@/lib/capabilities";
 
 export { OnboardingWizard } from "@/components/organizer/onboarding/OnboardingWizard";
 
@@ -34,6 +35,7 @@ export function OrgSettingsPage() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
   const user = useAuthStore((state) => state.user);
+  const userLimitAccess = useOrganizationLimitAccess("max_users");
 
   useEffect(() => {
     const tab = searchParams?.get("tab");
@@ -88,7 +90,18 @@ export function OrgSettingsPage() {
           <DialogHeader><DialogTitle>Invite Member</DialogTitle></DialogHeader>
           <Input placeholder="name@company.com" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} className="h-12 rounded-xl bg-white/5 border-default" />
           <RoleSelect value={invite.org_role} onChange={(org_role) => setInvite({ ...invite, org_role })} />
-          <Button onClick={sendInvite} className="h-12 rounded-xl bg-[var(--pri)]">Send Invitation</Button>
+          <Button
+            onClick={sendInvite}
+            disabled={userLimitAccess.loading || !userLimitAccess.enabled}
+            title={
+              userLimitAccess.enabled
+                ? undefined
+                : `Unavailable: ${(userLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+            }
+            className="h-12 rounded-xl bg-[var(--pri)]"
+          >
+            Send Invitation
+          </Button>
         </DialogContent>
       </Dialog>
       <Dialog open={upgradeOpen} onOpenChange={setUpgradeOpen}>

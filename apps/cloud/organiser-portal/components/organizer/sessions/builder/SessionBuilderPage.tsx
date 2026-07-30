@@ -22,6 +22,7 @@ export function SessionBuilderPage() {
   const viewMode = useSessionBuilderStore((s) => s.viewMode);
   const setSelectedSessionId = useSessionBuilderStore((s) => s.setSelectedSessionId);
   const sessions = useSessionBuilderStore((s) => s.sessions);
+  const rooms = useSessionBuilderStore((s) => s.rooms);
   const eventTimezone = useSessionBuilderStore((s) => s.eventTimezone);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -104,6 +105,7 @@ export function SessionBuilderPage() {
           setSelectedRoomIdForCreate(null);
         }}
         eventId={eventIdStr}
+        preloadedRooms={rooms}
       />
     </div>
   );

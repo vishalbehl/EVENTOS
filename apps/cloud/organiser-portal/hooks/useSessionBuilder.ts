@@ -2,9 +2,13 @@
 
 import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
+import { apiGet, apiPatch, apiPost, apiDelete } from "@/lib/api-client";
 import { toast } from "sonner";
-import { useSessionBuilderStore, BuilderSession } from "@/store/useSessionBuilderStore";
+import {
+  useSessionBuilderStore,
+  type BuilderSession,
+  type BuilderSpeaker,
+} from "@/store/useSessionBuilderStore";
 
 export function useSessionBuilderSnapshot(eventId: string) {
   const setSnapshot = useSessionBuilderStore((s) => s.setSnapshot);
@@ -81,13 +85,15 @@ export function useAutoSaveSessionBuilder(eventId: string) {
     if (timerRef.current) clearTimeout(timerRef.current);
 
     timerRef.current = setTimeout(() => {
-      const items = sessions.map((s) => ({
-        session_id: s.id,
-        room_id: s.room_id || null,
-        start_time: s.start_time,
-        end_time: s.end_time,
-        sort_order: s.sort_order || 0,
-      }));
+      const items = sessions
+        .filter((s) => !s.id.startsWith("temp_"))
+        .map((s) => ({
+          session_id: s.id,
+          room_id: s.room_id || null,
+          start_time: s.start_time,
+          end_time: s.end_time,
+          sort_order: s.sort_order || 0,
+        }));
 
       if (items.length > 0) {
         bulkReorder.mutate(items);
@@ -99,3 +105,54 @@ export function useAutoSaveSessionBuilder(eventId: string) {
     };
   }, [isDirty, sessions, eventId]);
 }
+
+export function useAssignSpeakerToSession(eventId: string) {
+  const queryClient = useQueryClient();
+  const assignSpeakerToSessionStore = useSessionBuilderStore((s) => s.assignSpeakerToSession);
+
+  return useMutation({
+    mutationFn: ({ sessionId, speaker }: { sessionId: string; speaker: BuilderSpeaker }) =>
+      apiPost(`/events/${eventId}/sessions/${sessionId}/speakers`, {
+        speaker_id: speaker.id,
+      }),
+    onMutate: async ({ sessionId, speaker }) => {
+      // Optimistic update
+      assignSpeakerToSessionStore(sessionId, speaker);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      toast.success("Speaker assigned to session");
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail || "Failed to assign speaker");
+      // Ideally rollback optimistic update here
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+    },
+  });
+}
+
+export function useRemoveSpeakerFromSession(eventId: string) {
+  const queryClient = useQueryClient();
+  const removeSpeakerStore = useSessionBuilderStore((s) => s.removeSpeakerFromSession);
+
+  return useMutation({
+    mutationFn: async ({ sessionId, speakerId }: { sessionId: string; speakerId: string }) => {
+      // Backend now accepts either speaker_id or session_speaker_id
+      return apiDelete(`/events/${eventId}/sessions/${sessionId}/speakers/${speakerId}`);
+    },
+    onMutate: async ({ sessionId, speakerId }) => {
+      removeSpeakerStore(sessionId, speakerId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail || "Failed to remove speaker");
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+    },
+  });
+}
+
+

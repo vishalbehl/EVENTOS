@@ -14,6 +14,10 @@ import {
 import { Label } from "../../ui/label";
 import { toast } from "sonner";
 import { useAuthStore } from "@/store/use-auth-store";
+import {
+  useOrganizationLimitAccess,
+  useRemoteEventLimitAccess,
+} from "@/lib/capabilities";
 
 interface CreateUserDialogProps {
   open: boolean;
@@ -24,6 +28,7 @@ interface CreateUserDialogProps {
 
 export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: CreateUserDialogProps) {
   const [loading, setLoading] = useState(false);
+  const userLimitAccess = useOrganizationLimitAccess("max_users");
   const { user: currentUser } = useAuthStore();
   const [events, setEvents] = useState<any[]>([]);
   const [isFetchingEvents, setIsFetchingEvents] = useState(false);
@@ -37,6 +42,12 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
     role: currentUser?.role === 'super_admin' ? "organiser" : "admin",
     assigned_event_id: "none",
   });
+  const assignmentLimitAccess = useRemoteEventLimitAccess(
+    formData.assigned_event_id === "none"
+      ? undefined
+      : formData.assigned_event_id,
+    "max_event_team_members",
+  );
 
   const [superAdminCount, setSuperAdminCount] = useState(0);
 
@@ -113,7 +124,7 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
 
       // 2. Create Assignment if event selected
       if (formData.assigned_event_id !== "none") {
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/users/assignments`, {
+        const assignmentResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/users/assignments`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -126,6 +137,16 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
             permissions: { level: formData.role === 'session_manager' ? "partial" : "full" }
           })
         });
+        if (!assignmentResponse.ok) {
+          const assignmentError = await assignmentResponse.json().catch(() => null);
+          throw new Error(
+            `User account was created, but event assignment failed: ${
+              assignmentError?.detail?.code
+              || assignmentError?.detail
+              || "assignment unavailable"
+            }`,
+          );
+        }
       }
 
       toast.success("User account created successfully");
@@ -258,7 +279,22 @@ export function CreateUserDialog({ open, onOpenChange, roles, onSuccess }: Creat
 
           <Button 
             type="submit" 
-            disabled={loading}
+            disabled={
+              loading
+              || userLimitAccess.loading
+              || !userLimitAccess.enabled
+              || assignmentLimitAccess.loading
+              || !assignmentLimitAccess.enabled
+            }
+            title={
+              userLimitAccess.enabled && assignmentLimitAccess.enabled
+                ? undefined
+                : `Unavailable: ${(
+                  userLimitAccess.reason
+                  || assignmentLimitAccess.reason
+                  || "RESOLUTION_UNAVAILABLE"
+                ).replaceAll("_", " ").toLowerCase()}`
+            }
             className="w-full h-14 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-2xl shadow-xl mt-4"
           >
             {loading ? "Creating Account..." : "Create User Account"}

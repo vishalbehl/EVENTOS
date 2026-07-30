@@ -5,6 +5,8 @@ from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.analytics.models.usage import OrganizationUsage
+from app.modules.audit.models.audit_domain_tables import DataExport
+from app.modules.communications.models.channel_delivery import CommunicationDelivery
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.events.models.room import Room
 from app.modules.events.models.session import Session
@@ -17,6 +19,7 @@ from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.venue.models.room_device import RoomDevice
+from app.modules.venue.models.printer import Printer
 
 
 class UsageService:
@@ -34,6 +37,10 @@ class UsageService:
         "max_badge_templates": LIVE_COUNT,
         "max_certificate_templates": LIVE_COUNT,
         "max_devices_per_event": LIVE_COUNT,
+        "max_sms_per_event": LIVE_COUNT,
+        "max_whatsapp_per_event": LIVE_COUNT,
+        "max_push_per_event": LIVE_COUNT,
+        "max_exports_per_event": LIVE_COUNT,
         "max_emails_per_event": LEDGER,
         "storage_quota_mb": METER,
     }
@@ -118,8 +125,44 @@ class UsageService:
             )
             return int(await db.scalar(select(func.count()).select_from(event_nodes.subquery())) or 0)
         if metric_key == "max_devices_per_event":
-            return int(
+            room_devices = int(
                 await db.scalar(select(func.count(RoomDevice.id)).where(RoomDevice.event_id == event_id))
+                or 0
+            )
+            printers = int(
+                await db.scalar(
+                    select(func.count(Printer.id)).where(
+                        Printer.event_id == event_id,
+                        Printer.retired_at.is_(None),
+                    )
+                )
+                or 0
+            )
+            return room_devices + printers
+        channel_by_limit = {
+            "max_sms_per_event": "SMS",
+            "max_whatsapp_per_event": "WHATSAPP",
+            "max_push_per_event": "PUSH",
+        }
+        if metric_key in channel_by_limit:
+            return int(
+                await db.scalar(
+                    select(func.count(CommunicationDelivery.id)).where(
+                        CommunicationDelivery.event_id == event_id,
+                        CommunicationDelivery.channel == channel_by_limit[metric_key],
+                        CommunicationDelivery.status == "ACCEPTED",
+                    )
+                )
+                or 0
+            )
+        if metric_key == "max_exports_per_event":
+            return int(
+                await db.scalar(
+                    select(func.count(DataExport.id)).where(
+                        DataExport.event_id == event_id,
+                        DataExport.status.notin_(["FAILED", "EXPIRED", "CANCELLED"]),
+                    )
+                )
                 or 0
             )
         return 0

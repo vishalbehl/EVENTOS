@@ -115,44 +115,15 @@ class SettingsResponse(BaseModel):
     branding_settings: Dict = {}
     timezone: str
     upload_deadline: Optional[datetime] = None
-    license_tier: str
+    # Deprecated compatibility fields are deliberately non-authoritative.
+    # Customer-facing access is returned by /events/{event_id}/capabilities.
+    license_tier: Optional[str] = None
     event_mode: bool
-    feature_toggles: Dict[str, bool]
+    feature_toggles: Dict[str, bool] = {}
+    capability_source: str = "CANONICAL_CAPABILITY_API"
+    capabilities_url: str
 
     model_config = {"from_attributes": True}
-
-
-class LicenseInfo(BaseModel):
-    """Summary of what the current license tier unlocks."""
-    tier: str
-    max_events: int
-    max_speakers_per_event: int
-    max_storage_gb: int
-    whatsapp_enabled: bool
-    posters_enabled: bool
-    webhooks_enabled: bool
-    dedicated_support: bool
-
-    @classmethod
-    def for_tier(cls, tier: str) -> "LicenseInfo":
-        tiers = {
-            "basic": cls(
-                tier="basic", max_events=1, max_speakers_per_event=30,
-                max_storage_gb=10, whatsapp_enabled=False, posters_enabled=False,
-                webhooks_enabled=False, dedicated_support=False,
-            ),
-            "pro": cls(
-                tier="pro", max_events=1, max_speakers_per_event=100,
-                max_storage_gb=50, whatsapp_enabled=True, posters_enabled=True,
-                webhooks_enabled=True, dedicated_support=False,
-            ),
-            "enterprise": cls(
-                tier="enterprise", max_events=1, max_speakers_per_event=500,
-                max_storage_gb=200, whatsapp_enabled=True, posters_enabled=True,
-                webhooks_enabled=True, dedicated_support=True,
-            ),
-        }
-        return tiers.get(tier, tiers["basic"])
 
 
 class GlobalSettingsResponse(BaseModel):

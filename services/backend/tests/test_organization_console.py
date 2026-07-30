@@ -9,31 +9,149 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant_context import TenantContextGuard
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
-from app.modules.platform.models.organization_console import CapabilityDiagnosticEvent, CapabilityRestriction, EntitlementOverrideRequest, EntitlementShadowComparison, EventCommercialContract, OrganizationLifecycleJob, OrganizationLocation, OrganizationTeam, OrganizationTeamEvent, OrganizationTeamMember, UsageReservation
+from app.modules.platform.models.organization_console import CapabilityDiagnosticEvent, CapabilityRestriction, EntitlementOverrideRequest, EntitlementShadowComparison, EventCommercialContract, OrganizationLifecycleJob, OrganizationLocation, OrganizationTeam, OrganizationTeamEvent, OrganizationTeamMember, UsageReconciliationRun, UsageReservation
 from app.modules.events.models.event import Event
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.events.models.speaker import Speaker
 from app.modules.events.models.session import Session
+from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.events.models.room import Room
 from app.modules.registration.models.participant import Participant
+from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.check_in import CheckIn
 from app.modules.registration.models.ticket_type import TicketType
+from app.modules.registration.models.import_job import ImportJob
 from app.modules.rbac.models.user_assignment import UserEventAssignment
 from app.modules.rbac.models.organization_member import OrganizationMember
 from app.modules.integrations.models.integrations_domain_tables import IntegrationConnection, IntegrationProvider
 from app.modules.developer.models.developer_registry import ApiKey
 from app.modules.integrations.models.webhook import Webhook
+from app.modules.communications.models.email_template import EmailTemplate
+from app.modules.communications.models.email_campaign import EmailCampaign
+from app.modules.registration.models.print_template import PrintTemplate
+from app.modules.presentations.models.presentation_file import PresentationFile
+from app.modules.presentations.models.presentations_domain_tables import (
+    PresentationProcessingJob,
+)
+from app.modules.venue.models.venue_sync_job import VenueSyncJob
+from app.modules.operations_control.models import JobControlRequest
 from app.modules.billing.services.usage_service import UsageService
 from app.modules.platform.services.metering_service import MeteringService
 from app.modules.billing.services.capability_diagnostics_service import CapabilityDiagnosticsService
 from app.modules.platform.services.lifecycle_service import OrganizationLifecycleService
 from app.modules.platform.models.platform_domain_tables import FeatureFlag
-from app.tasks.organization_console_rollout_tasks import backfill_organization_console_in_session
+from app.tasks.organization_console_rollout_tasks import (
+    backfill_organization_console_in_session,
+    shadow_access_projection,
+)
 from app.tasks.organization_console_tasks import expire_tenant_capability_controls_in_session
+from app.modules.platform.organization_console_router import _selected_organization_scope
 from tests.conftest import activate_event_for_test, auth_headers
+
+
+@pytest.mark.asyncio
+async def test_organization_console_enters_selected_tenant_context(
+    db: AsyncSession,
+    organization: Organization,
+):
+    dependency = _selected_organization_scope(organization.id, db)
+    await anext(dependency)
+    try:
+        assert TenantContextGuard.current() == organization.id
+    finally:
+        await dependency.aclose()
+
+    assert TenantContextGuard.current() is None
+
+
+@pytest.mark.asyncio
+async def test_command_center_event_directory_and_provisioning_are_tenant_scoped_and_replay_safe(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    headers = {
+        **auth_headers(super_admin),
+        "Idempotency-Key": f"provision-{uuid.uuid4()}",
+    }
+    short_code = f"CC{uuid.uuid4().hex[:6].upper()}"
+    body = {
+        "data": {
+            "name": "Command Center Provisioned Event",
+            "short_code": short_code,
+            "status": "draft",
+            "start_date": "2027-02-10",
+            "end_date": "2027-02-12",
+            "timezone": "Asia/Kolkata",
+            "location": "Mumbai",
+            "venue_name": "Convention Centre",
+            "country": "India",
+            "currency": "INR",
+        },
+        "reason": "Provision the approved organization event from Command Center.",
+        "case_reference": "OPS-2027-001",
+    }
+    base = f"/api/v1/platform/organizations/{organization.id}/console/events"
+
+    created = await client.post(base, headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    created_data = created.json()
+    assert created_data["organization_id"] == str(organization.id)
+    assert created_data["short_code"] == short_code
+
+    replay = await client.post(base, headers=headers, json=body)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == created_data["id"]
+
+    changed_replay = await client.post(
+        base,
+        headers=headers,
+        json={**body, "reason": "Attempt to reuse the key for a different approved event request."},
+    )
+    assert changed_replay.status_code == 409
+    assert changed_replay.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+    directory = await client.get(base, headers=auth_headers(super_admin))
+    assert directory.status_code == 200, directory.text
+    assert directory.json()["source"] == "events.events"
+    assert any(item["id"] == created_data["id"] for item in directory.json()["items"])
+
+    created_row = await db.get(Event, uuid.UUID(created_data["id"]))
+    assert created_row is not None
+    assert created_row.organization_id == organization.id
+    assert created_row.created_by == super_admin.id
+    assert created_row.registration_theme_setting is not None
+    assert created_row.speaker_theme_setting is not None
+
+    duplicate_from_portal = await client.post(
+        "/api/v1/events",
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"portal-create-{uuid.uuid4()}",
+        },
+        json=body["data"],
+    )
+    assert duplicate_from_portal.status_code == 409
+
+    audit = await db.scalar(
+        select(AuditLog).where(
+            AuditLog.organization_id == organization.id,
+            AuditLog.resource_id == created_row.id,
+            AuditLog.action_type == "EVENT_PROVISIONED",
+        )
+    )
+    assert audit is not None
+    assert audit.actor_user_id == super_admin.id
+    assert audit.new_state["case_reference"] == "OPS-2027-001"
 
 
 @pytest.mark.asyncio
@@ -329,10 +447,173 @@ async def test_rollout_backfill_is_dry_run_safe_and_enforcement_is_evidence_gate
     status_response = await client.get(base, headers=auth_headers(super_admin))
     assert status_response.status_code == 200 and status_response.json()["comparisons"]["diverged"] == 0
     assert status_response.json()["missing_contracts"] == 0
+    assert status_response.json()["preflight"]["ready_for_enforcement"] is False
+    assert {
+        issue["code"] for issue in status_response.json()["preflight"]["blockers"]
+    } == {"USAGE_RECONCILIATION_NOT_RUN"}
+    assert {
+        issue["code"] for issue in status_response.json()["preflight"]["warnings"]
+    } >= {"PROVIDER_NOT_READY"}
+
+    # A matching authoritative reconciliation is mandatory before promotion.
+    await MeteringService.reconcile_event(db, organization.id, event.id)
+    await db.flush()
+    reconciled_status = await client.get(base, headers=auth_headers(super_admin))
+    assert reconciled_status.status_code == 200
+    assert reconciled_status.json()["preflight"]["ready_for_enforcement"] is True
+
+    drift = UsageReconciliationRun(
+        organization_id=organization.id,
+        event_id=event.id,
+        metric_key="registrations",
+        ledger_value=4,
+        authoritative_value=5,
+        drift=1,
+        status="DRIFTED",
+        source="test.rollout_preflight",
+        details={},
+    )
+    db.add(drift)
+    await db.flush()
+    drift_blocked = await client.patch(
+        base,
+        headers=auth_headers(super_admin),
+        json={
+            "shadow_enabled": True,
+            "enforcement_enabled": True,
+            "reason": "Attempt promotion while reconciliation drift is unresolved.",
+        },
+    )
+    assert drift_blocked.status_code == 409
+    assert drift_blocked.json()["detail"]["code"] == "ROLLOUT_PREFLIGHT_FAILED"
+    assert {
+        issue["code"] for issue in drift_blocked.json()["detail"]["blockers"]
+    } == {"METERING_DRIFT"}
+    drift.status = "MATCHED"
+    drift.authoritative_value = 4
+    drift.drift = 0
+    await db.flush()
     enabled = await client.patch(base, headers=auth_headers(super_admin), json={"shadow_enabled": True, "enforcement_enabled": True, "reason": "Enable enforcement after the complete matching shadow comparison"})
     assert enabled.status_code == 200, enabled.text
     await db.refresh(enforce_flag)
     assert enforce_flag.is_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_event_settings_share_portal_validation_and_operational_controls_block_portal_mutations(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    base = f"/api/v1/platform/organizations/{organization.id}/console/events/{event.id}"
+    updated = await client.patch(
+        f"{base}/settings",
+        headers=auth_headers(super_admin),
+        json={
+            "data": {
+                "name": "Governed Event Configuration",
+                "start_date": "2027-03-10",
+                "end_date": "2027-03-12",
+            },
+            "reason": "Correct the approved event identity and service dates.",
+            "case_reference": "OPS-SETTINGS-101",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    await db.refresh(event)
+    assert event.name == "Governed Event Configuration"
+
+    invalid_dates = await client.patch(
+        f"{base}/settings",
+        headers=auth_headers(super_admin),
+        json={
+            "data": {
+                "start_date": "2027-04-15",
+                "end_date": "2027-04-10",
+            },
+            "reason": "Verify shared event date validation rejects invalid dates.",
+            "case_reference": "OPS-SETTINGS-102",
+        },
+    )
+    assert invalid_dates.status_code == 422
+
+    maintenance = await client.patch(
+        f"{base}/operations",
+        headers=auth_headers(super_admin),
+        json={
+            "is_maintenance": True,
+            "reason": "Place this event into scheduled platform maintenance.",
+            "case_reference": "OPS-MAINT-101",
+        },
+    )
+    assert maintenance.status_code == 200, maintenance.text
+    assert maintenance.json()["is_maintenance"] is True
+
+    lifecycle_bypass = await client.patch(
+        f"{base}/operations",
+        headers=auth_headers(super_admin),
+        json={
+            "status": "suspended",
+            "reason": "Verify lifecycle suspension cannot bypass governed restrictions.",
+            "case_reference": "OPS-MAINT-101B",
+        },
+    )
+    assert lifecycle_bypass.status_code == 422
+
+    portal_mutation = await client.patch(
+        f"/events/{event.id}",
+        headers=auth_headers(organizer),
+        json={"name": "Must not change during maintenance"},
+    )
+    assert portal_mutation.status_code == 423
+    assert portal_mutation.json()["detail"]["code"] == "EVENT_MAINTENANCE"
+
+    restored = await client.patch(
+        f"{base}/operations",
+        headers=auth_headers(super_admin),
+        json={
+            "is_maintenance": False,
+            "is_read_only": False,
+            "reason": "Restore normal event operations after maintenance validation.",
+            "case_reference": "OPS-MAINT-102",
+        },
+    )
+    assert restored.status_code == 200, restored.text
+
+
+def test_shadow_access_projection_compares_typed_features_by_access_decision():
+    projection = shadow_access_projection(
+        {
+            "features": {
+                "FEAT_TIERED": {
+                    "enabled": True,
+                    "value": "ADVANCED",
+                    "value_type": "TIER",
+                },
+                "FEAT_DISABLED": {
+                    "enabled": False,
+                    "value": "NONE",
+                    "value_type": "ENUM",
+                },
+            },
+            "limits": {
+                "max_registrations": {
+                    "limit_value": 750,
+                    "value_type": "LIMIT",
+                }
+            },
+        }
+    )
+
+    assert projection == {
+        "FEAT_TIERED": True,
+        "FEAT_DISABLED": False,
+        "max_registrations": 750,
+    }
 
 
 @pytest.mark.asyncio
@@ -1125,6 +1406,478 @@ async def test_event_domain_workspaces_mask_contacts_and_never_expose_secrets(
 
 
 @pytest.mark.asyncio
+async def test_command_center_webhook_creation_is_one_time_secret_versioned_and_recoverable(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    base = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/integrations"
+    )
+    create_key = f"console-webhook-{uuid.uuid4()}"
+    create_payload = {
+        "data": {
+            "url": "https://hooks.example.com/eventos",
+            "description": "Governed delivery endpoint",
+            "subscribed_events": ["speaker.created"],
+        },
+        "reason": "Create the approved event webhook from Command Center.",
+        "case_reference": "DEV-WEBHOOK-101",
+    }
+    created = await client.post(
+        base,
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": create_key,
+        },
+        json=create_payload,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["secret_available_once"] is True
+    assert len(body["secret"]) >= 32
+    assert body["version"] == 1
+    webhook_id = body["id"]
+    create_replay = await client.post(
+        base,
+        headers={**auth_headers(super_admin), "Idempotency-Key": create_key},
+        json=create_payload,
+    )
+    assert create_replay.status_code == 201
+    assert create_replay.json()["id"] == webhook_id
+    assert create_replay.json()["secret"] is None
+    assert create_replay.json()["secret_available_once"] is False
+
+    read_back = await client.get(base, headers=auth_headers(super_admin))
+    webhook = next(
+        item
+        for item in read_back.json()["data"]["webhooks"]
+        if item["id"] == webhook_id
+    )
+    assert webhook["secret_configured"] is True
+    assert "secret" not in webhook
+
+    resource_url = f"{base}/{webhook_id}"
+    missing_concurrency = await client.patch(
+        resource_url,
+        headers=auth_headers(super_admin),
+        json={
+            "data": {"description": "Must not update"},
+            "reason": "Verify webhook updates require concurrency safeguards.",
+            "case_reference": "DEV-WEBHOOK-102",
+        },
+    )
+    assert missing_concurrency.status_code == 428
+
+    update_key = f"console-webhook-update-{uuid.uuid4()}"
+    update_payload = {
+        "data": {"description": "Reviewed delivery endpoint"},
+        "reason": "Apply the reviewed webhook endpoint description.",
+        "case_reference": "DEV-WEBHOOK-103",
+    }
+    updated = await client.patch(
+        resource_url,
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "1",
+            "Idempotency-Key": update_key,
+        },
+        json=update_payload,
+    )
+    assert updated.status_code == 200, updated.text
+    update_replay = await client.patch(
+        resource_url,
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "1",
+            "Idempotency-Key": update_key,
+        },
+        json=update_payload,
+    )
+    assert update_replay.status_code == 200
+    assert update_replay.json() == updated.json()
+    row = await db.get(Webhook, uuid.UUID(webhook_id))
+    assert row and row.version == 2
+
+    stale = await client.patch(
+        resource_url,
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "1",
+            "Idempotency-Key": f"console-webhook-stale-{uuid.uuid4()}",
+        },
+        json={
+            "data": {"description": "Stale overwrite"},
+            "reason": "Verify stale webhook writes cannot overwrite current state.",
+            "case_reference": "DEV-WEBHOOK-104",
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "VERSION_CONFLICT"
+
+    archive_key = f"console-webhook-archive-{uuid.uuid4()}"
+    archive_payload = {
+        "reason": "Pause the webhook through its recoverable lifecycle.",
+        "case_reference": "DEV-WEBHOOK-105",
+    }
+    archived = await client.request(
+        "DELETE",
+        resource_url,
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "2",
+            "Idempotency-Key": archive_key,
+        },
+        json=archive_payload,
+    )
+    assert archived.status_code == 200, archived.text
+    archived_replay = await client.request(
+        "DELETE",
+        resource_url,
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "2",
+            "Idempotency-Key": archive_key,
+        },
+        json=archive_payload,
+    )
+    assert archived_replay.status_code == 200
+    assert archived_replay.json() == archived.json()
+    await db.refresh(row)
+    assert row.status == "paused" and row.version == 3
+    restore_key = f"console-webhook-restore-{uuid.uuid4()}"
+    restore_payload = {
+        "reason": "Restore the webhook after reviewing the delivery configuration.",
+        "case_reference": "DEV-WEBHOOK-106",
+    }
+    restored = await client.post(
+        f"{resource_url}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "3",
+            "Idempotency-Key": restore_key,
+        },
+        json=restore_payload,
+    )
+    assert restored.status_code == 200, restored.text
+    restored_replay = await client.post(
+        f"{resource_url}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "If-Match": "3",
+            "Idempotency-Key": restore_key,
+        },
+        json=restore_payload,
+    )
+    assert restored_replay.status_code == 200
+    assert restored_replay.json() == restored.json()
+    await db.refresh(row)
+    assert row.status == "active" and row.version == 4
+
+
+@pytest.mark.asyncio
+async def test_event_templates_share_cross_portal_metadata_gates_and_recoverable_lifecycle(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    console_base = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/templates"
+    )
+
+    global_template = EmailTemplate(
+        event_id=None,
+        created_by=super_admin.id,
+        name=f"Participant Reminder {uuid.uuid4().hex[:6]}",
+        template_type="reminder",
+        target_type="participant",
+        subject="Original reminder",
+        body_html="<p>Original reminder</p>",
+        body_text="Original reminder",
+        is_default=True,
+    )
+    db.add(global_template)
+    await db.flush()
+
+    cloned = await client.patch(
+        f"/api/v1/events/{event.id}/notifications/templates/{global_template.id}",
+        headers=auth_headers(organizer),
+        json={
+            "subject": "Event-specific participant reminder",
+            "body_html": "<p>Event-specific participant reminder</p>",
+        },
+    )
+    assert cloned.status_code == 200, cloned.text
+    clone_data = cloned.json()
+    assert clone_data["event_id"] == str(event.id)
+    assert clone_data["target_type"] == "participant"
+    assert clone_data["template_type"] == "reminder"
+    clone_row = await db.get(EmailTemplate, uuid.UUID(clone_data["id"]))
+    assert clone_row is not None and clone_row.created_by == organizer.id
+
+    updated_email = await client.patch(
+        f"{console_base}/{clone_row.id}",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-email-template-{uuid.uuid4()}",
+        },
+        json={
+            "data": {
+                "kind": "email",
+                "subject": "Governed participant reminder",
+            },
+            "reason": "Apply the reviewed participant reminder wording.",
+            "case_reference": "COMMS-2201",
+        },
+    )
+    assert updated_email.status_code == 200, updated_email.text
+    assert "subject" in updated_email.json()["updated"]
+
+    archived_email = await client.delete(
+        f"/api/v1/events/{event.id}/notifications/templates/{clone_row.id}",
+        headers=auth_headers(organizer),
+    )
+    assert archived_email.status_code == 204, archived_email.text
+    restored_email = await client.post(
+        f"{console_base}/{clone_row.id}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"restore-email-template-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Restore the reviewed participant reminder template.",
+            "case_reference": "COMMS-2201",
+        },
+    )
+    assert restored_email.status_code == 200, restored_email.text
+    await db.refresh(clone_row)
+    assert clone_row.deleted_at is None
+
+    print_created = await client.post(
+        f"/api/v1/events/{event.id}/print-templates",
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"portal-print-template-{uuid.uuid4()}",
+        },
+        json={
+            "template_name": "Attendee QR Badge",
+            "template_type": "badge",
+            "template_data": {
+                "width": 400,
+                "height": 600,
+                "elements": [{"type": "qr_code", "x": 24, "y": 24}],
+            },
+        },
+    )
+    assert print_created.status_code == 201, print_created.text
+    print_id = print_created.json()["id"]
+
+    print_updated = await client.patch(
+        f"{console_base}/{print_id}",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-print-template-{uuid.uuid4()}",
+        },
+        json={
+            "data": {
+                "kind": "print",
+                "template_name": "Governed Attendee QR Badge",
+                "template_data": {
+                    "width": 400,
+                    "height": 600,
+                    "elements": [{"type": "qr_code", "x": 32, "y": 32}],
+                },
+            },
+            "reason": "Apply the approved badge design correction.",
+            "case_reference": "DESIGN-3101",
+        },
+    )
+    assert print_updated.status_code == 200, print_updated.text
+    assert set(print_updated.json()["updated"]) == {
+        "template_data",
+        "template_name",
+    }
+
+    archived_print = await client.request(
+        "DELETE",
+        f"{console_base}/{print_id}",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"archive-print-template-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Archive the badge template during the approved redesign.",
+            "case_reference": "DESIGN-3101",
+        },
+    )
+    assert archived_print.status_code == 200, archived_print.text
+    assert archived_print.json()["outcome"] == "SOFT_DELETED"
+
+    restored_print = await client.post(
+        f"/api/v1/events/{event.id}/print-templates/{print_id}/restore",
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"portal-restore-print-{uuid.uuid4()}",
+        },
+    )
+    assert restored_print.status_code == 200, restored_print.text
+    print_row = await db.get(PrintTemplate, uuid.UUID(print_id))
+    assert print_row is not None and print_row.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_event_campaigns_share_cross_portal_recipient_validation_and_lifecycle(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    other_event = Event(
+        organization_id=organization.id,
+        created_by=organizer.id,
+        name="Recipient Isolation Event",
+        short_code=f"RI{uuid.uuid4().hex[:6].upper()}",
+        start_date=date(2027, 4, 10),
+        end_date=date(2027, 4, 11),
+        timezone="UTC",
+        status="draft",
+    )
+    db.add(other_event)
+    await db.flush()
+    local_speaker = Speaker(
+        event_id=event.id,
+        first_name="Local",
+        last_name="Speaker",
+        email=f"local-{uuid.uuid4().hex[:6]}@example.com",
+        upload_token=f"token-{uuid.uuid4()}",
+        speaker_code=uuid.uuid4().hex[:10],
+        upload_status="pending",
+    )
+    foreign_speaker = Speaker(
+        event_id=other_event.id,
+        first_name="Foreign",
+        last_name="Speaker",
+        email=f"foreign-{uuid.uuid4().hex[:6]}@example.com",
+        upload_token=f"token-{uuid.uuid4()}",
+        speaker_code=uuid.uuid4().hex[:10],
+        upload_status="pending",
+    )
+    template = EmailTemplate(
+        event_id=event.id,
+        created_by=organizer.id,
+        name=f"Campaign Template {uuid.uuid4().hex[:6]}",
+        template_type="custom",
+        target_type="speaker",
+        subject="Campaign subject",
+        body_html="<p>Campaign body</p>",
+        is_default=False,
+    )
+    db.add_all([local_speaker, foreign_speaker, template])
+    await db.flush()
+
+    portal_base = f"/api/v1/events/{event.id}/notifications/campaigns"
+    invalid_payload = {
+        "template_id": str(template.id),
+        "name": "Mixed event recipient campaign",
+        "recipient_filter": "specific_speakers",
+        "speaker_ids": [str(local_speaker.id), str(foreign_speaker.id)],
+        "target_type": "speaker",
+    }
+    invalid_portal = await client.post(
+        portal_base,
+        headers=auth_headers(organizer),
+        json=invalid_payload,
+    )
+    assert invalid_portal.status_code == 404
+    console_base = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/communications"
+    )
+    invalid_console = await client.post(
+        console_base,
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"invalid-campaign-{uuid.uuid4()}",
+        },
+        json={
+            "data": invalid_payload,
+            "reason": "Verify mixed-event recipients are rejected consistently.",
+            "case_reference": "COMMS-3301",
+        },
+    )
+    assert invalid_console.status_code == 404
+    assert invalid_console.json()["detail"] == invalid_portal.json()["detail"]
+
+    created = await client.post(
+        portal_base,
+        headers=auth_headers(organizer),
+        json={
+            **invalid_payload,
+            "name": "Approved local speaker campaign",
+            "speaker_ids": [str(local_speaker.id)],
+        },
+    )
+    assert created.status_code == 201, created.text
+    campaign_id = created.json()["id"]
+    assert created.json()["total_recipients"] == 1
+
+    updated_console = await client.patch(
+        f"{console_base}/{campaign_id}",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-campaign-update-{uuid.uuid4()}",
+        },
+        json={
+            "data": {"name": "Governed local speaker campaign"},
+            "reason": "Apply the approved campaign naming correction.",
+            "case_reference": "COMMS-3302",
+        },
+    )
+    assert updated_console.status_code == 200, updated_console.text
+    assert updated_console.json()["updated"] == ["name"]
+
+    updated_portal = await client.patch(
+        f"{portal_base}/{campaign_id}",
+        headers=auth_headers(organizer),
+        json={"name": "Portal and Command Center parity campaign"},
+    )
+    assert updated_portal.status_code == 200, updated_portal.text
+
+    archived = await client.delete(
+        f"{portal_base}/{campaign_id}",
+        headers=auth_headers(organizer),
+    )
+    assert archived.status_code == 200, archived.text
+    restored = await client.post(
+        f"{console_base}/{campaign_id}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-campaign-restore-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Restore the reviewed campaign after archival verification.",
+            "case_reference": "COMMS-3302",
+        },
+    )
+    assert restored.status_code == 200, restored.text
+    campaign = await db.get(EmailCampaign, uuid.UUID(campaign_id))
+    assert campaign is not None and campaign.deleted_at is None
+    assert campaign.name == "Portal and Command Center parity campaign"
+
+
+@pytest.mark.asyncio
 async def test_event_workspace_mutation_is_audited_soft_deleted_and_restorable(
     client: AsyncClient,
     db: AsyncSession,
@@ -1159,6 +1912,223 @@ async def test_event_workspace_mutation_is_audited_soft_deleted_and_restorable(
     assert speaker.deleted_at is None and speaker.deleted_by is None
     audit = await db.scalar(select(AuditLog).where(AuditLog.resource_id == speaker.id, AuditLog.action_type == "EVENT_SPEAKER_RESTORED"))
     assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_core_event_resource_mutations_have_cross_portal_validation_and_lifecycle_parity(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    portal_speaker = await client.post(
+        f"/events/{event.id}/speakers/manual-register",
+        headers=auth_headers(organizer),
+        json={
+            "first_name": "Shared",
+            "last_name": "Speaker",
+            "email": f"shared-speaker-{uuid.uuid4().hex[:8]}@example.com",
+            "designation": "Initial designation",
+            "talks": [],
+            "send_invite": False,
+        },
+    )
+    assert portal_speaker.status_code == 200, portal_speaker.text
+    speaker_id = portal_speaker.json()["id"]
+    console_speaker_url = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/speakers/{speaker_id}"
+    )
+    updated_console_speaker = await client.patch(
+        console_speaker_url,
+        headers=auth_headers(super_admin),
+        json={
+            "data": {"designation": "Approved designation"},
+            "reason": "Apply the approved speaker correction from Command Center.",
+            "case_reference": "OPS-PARITY-SPEAKER-1",
+        },
+    )
+    assert updated_console_speaker.status_code == 200, updated_console_speaker.text
+    archived_console_speaker = await client.request(
+        "DELETE",
+        console_speaker_url,
+        headers=auth_headers(super_admin),
+        json={
+            "reason": "Archive the speaker to validate shared recovery behavior.",
+            "case_reference": "OPS-PARITY-SPEAKER-2",
+        },
+    )
+    assert archived_console_speaker.status_code == 200
+    archived_portal_speaker = await client.get(
+        f"/events/{event.id}/speakers/{speaker_id}",
+        headers=auth_headers(organizer),
+    )
+    assert archived_portal_speaker.status_code == 404
+    restored_console_speaker = await client.post(
+        f"{console_speaker_url}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"restore-speaker-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Restore the speaker after validating shared recovery behavior.",
+            "case_reference": "OPS-PARITY-SPEAKER-3",
+        },
+    )
+    assert restored_console_speaker.status_code == 200
+    restored_portal_speaker = await client.get(
+        f"/events/{event.id}/speakers/{speaker_id}",
+        headers=auth_headers(organizer),
+    )
+    assert restored_portal_speaker.status_code == 200
+
+    portal_room = await client.post(
+        f"/events/{event.id}/rooms",
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"portal-room-{uuid.uuid4()}",
+        },
+        json={
+            "name": "Shared Validation Hall",
+            "capacity": 180,
+            "screen_count": 2,
+            "room_type": "presentation",
+        },
+    )
+    assert portal_room.status_code == 201, portal_room.text
+    room_id = portal_room.json()["id"]
+    console_room_url = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/rooms/{room_id}"
+    )
+
+    invalid_console_room = await client.patch(
+        console_room_url,
+        headers=auth_headers(super_admin),
+        json={
+            "data": {"room_type": "unsupported"},
+            "reason": "Verify the shared room type validator rejects invalid values.",
+            "case_reference": "OPS-PARITY-ROOM-1",
+        },
+    )
+    assert invalid_console_room.status_code == 422
+    updated_console_room = await client.patch(
+        console_room_url,
+        headers=auth_headers(super_admin),
+        json={
+            "data": {"room_type": "plenary", "capacity": 220},
+            "reason": "Apply the approved room configuration through Command Center.",
+            "case_reference": "OPS-PARITY-ROOM-2",
+        },
+    )
+    assert updated_console_room.status_code == 200, updated_console_room.text
+
+    invalid_portal_room = await client.patch(
+        f"/events/{event.id}/rooms/{room_id}",
+        headers=auth_headers(organizer),
+        json={"room_type": "unsupported"},
+    )
+    assert invalid_portal_room.status_code == 422
+
+    starts_at = datetime.now(timezone.utc) + timedelta(days=30)
+    portal_session = await client.post(
+        f"/events/{event.id}/sessions",
+        headers=auth_headers(organizer),
+        json={
+            "session_code": f"SHARED-{uuid.uuid4().hex[:6]}",
+            "name": "Shared Domain Session",
+            "room_id": room_id,
+            "start_time": starts_at.isoformat(),
+            "end_time": (starts_at + timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert portal_session.status_code == 201, portal_session.text
+    session_id = portal_session.json()["id"]
+    console_session_url = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/sessions/{session_id}"
+    )
+    invalid_console_session = await client.patch(
+        console_session_url,
+        headers=auth_headers(super_admin),
+        json={
+            "data": {
+                "start_time": (starts_at + timedelta(hours=2)).isoformat(),
+                "end_time": (starts_at + timedelta(hours=1)).isoformat(),
+            },
+            "reason": "Verify shared session chronology validation in Command Center.",
+            "case_reference": "OPS-PARITY-SESSION-1",
+        },
+    )
+    assert invalid_console_session.status_code == 422
+
+    archived_session = await client.delete(
+        f"/events/{event.id}/sessions/{session_id}",
+        headers=auth_headers(organizer),
+    )
+    assert archived_session.status_code == 200, archived_session.text
+    portal_archived_session = await client.get(
+        f"/events/{event.id}/sessions/{session_id}",
+        headers=auth_headers(organizer),
+    )
+    assert portal_archived_session.status_code == 404
+    restored_session = await client.post(
+        f"{console_session_url}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"restore-session-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Restore the session after the organizer lifecycle validation.",
+            "case_reference": "OPS-PARITY-SESSION-2",
+        },
+    )
+    assert restored_session.status_code == 200, restored_session.text
+    portal_session_after_restore = await client.get(
+        f"/events/{event.id}/sessions/{session_id}",
+        headers=auth_headers(organizer),
+    )
+    assert portal_session_after_restore.status_code == 200
+
+    archived_room = await client.request(
+        "DELETE",
+        console_room_url,
+        headers=auth_headers(super_admin),
+        json={
+            "reason": "Archive the room after the shared lifecycle parity test.",
+            "case_reference": "OPS-PARITY-ROOM-3",
+        },
+    )
+    assert archived_room.status_code == 200, archived_room.text
+    portal_room_after_archive = await client.get(
+        f"/events/{event.id}/rooms/{room_id}",
+        headers=auth_headers(organizer),
+    )
+    assert portal_room_after_archive.status_code == 404
+    active_rooms_after_archive = await client.get(
+        f"/events/{event.id}/rooms",
+        headers=auth_headers(organizer),
+    )
+    assert active_rooms_after_archive.status_code == 200
+    assert all(item["id"] != room_id for item in active_rooms_after_archive.json())
+    restored_room = await client.post(
+        f"{console_room_url}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"restore-room-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Restore the room after the shared lifecycle parity test.",
+            "case_reference": "OPS-PARITY-ROOM-4",
+        },
+    )
+    assert restored_room.status_code == 200, restored_room.text
+    assert await db.scalar(
+        select(Room.is_active).where(Room.id == uuid.UUID(room_id))
+    ) is True
 
 
 @pytest.mark.asyncio
@@ -1300,6 +2270,493 @@ async def test_ticket_checkin_and_event_user_actions_share_scoped_domain_rules(
 
     audit = await db.scalar(select(AuditLog).where(AuditLog.organization_id == organization.id, AuditLog.action_type == "EVENT_USERS_UNASSIGN_USER"))
     assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_attendee_confirmation_qr_actions_are_wired_to_privileged_dispatcher(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    participant = Participant(
+        event_id=event.id,
+        first_name="QR",
+        last_name="Attendee",
+        email=f"qr-{uuid.uuid4().hex[:8]}@example.com",
+    )
+    foreign_event = Event(
+        organization_id=organization.id,
+        created_by=organizer.id,
+        name="QR Isolation Event",
+        short_code=f"QR{uuid.uuid4().hex[:6].upper()}",
+        start_date=date(2027, 8, 1),
+        end_date=date(2027, 8, 2),
+        timezone="UTC",
+        status="draft",
+    )
+    db.add_all([participant, foreign_event])
+    await db.flush()
+    foreign_participant = Participant(
+        event_id=foreign_event.id,
+        first_name="Foreign",
+        last_name="Attendee",
+        email=f"foreign-qr-{uuid.uuid4().hex[:8]}@example.com",
+    )
+    db.add(foreign_participant)
+    await db.flush()
+
+    base = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/attendees"
+    )
+    issue_key = f"issue-attendee-qr-{uuid.uuid4()}"
+    issue_payload = {
+        "action": "ISSUE_CONFIRMATION_QR",
+        "reason": "Issue the approved attendee confirmation credential.",
+        "case_reference": "REG-QR-1001",
+        "data": {"version": 0},
+    }
+    issued = await client.post(
+        f"{base}/{participant.id}/actions",
+        headers={**auth_headers(super_admin), "Idempotency-Key": issue_key},
+        json=issue_payload,
+    )
+    assert issued.status_code == 200, issued.text
+    assert issued.json()["outcome"] == "ISSUED"
+    assert issued.json()["qr_version"] == 1
+    assert "/registration-confirmations/" in issued.json()["qr_image_url"]
+
+    replayed = await client.post(
+        f"{base}/{participant.id}/actions",
+        headers={**auth_headers(super_admin), "Idempotency-Key": issue_key},
+        json=issue_payload,
+    )
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["outcome"] == "REPLAYED"
+    assert replayed.json()["qr_version"] == 1
+
+    rotated = await client.post(
+        f"{base}/{participant.id}/actions",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"rotate-attendee-qr-{uuid.uuid4()}",
+        },
+        json={
+            "action": "ROTATE_CONFIRMATION_QR",
+            "reason": "Rotate the attendee credential after approved exposure review.",
+            "case_reference": "REG-QR-1002",
+            "data": {"version": 1},
+        },
+    )
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["outcome"] == "ROTATED"
+    assert rotated.json()["qr_version"] == 2
+
+    cross_event = await client.post(
+        f"{base}/{foreign_participant.id}/actions",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"foreign-attendee-qr-{uuid.uuid4()}",
+        },
+        json=issue_payload,
+    )
+    assert cross_event.status_code == 404
+
+    read_workspace = await client.get(base, headers=auth_headers(super_admin))
+    assert read_workspace.status_code == 200, read_workspace.text
+    item = next(
+        row
+        for row in read_workspace.json()["data"]["items"]
+        if row["id"] == str(participant.id)
+    )
+    assert item["qr_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_event_attendees_share_cross_portal_crud_and_recoverable_lifecycle(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+):
+    await activate_event_for_test(db, event)
+    delegate_role = ParticipantRole(
+        event_id=event.id,
+        category="General",
+        name="Delegate",
+        role_code="DEL",
+        is_active=True,
+        is_default=True,
+    )
+    other_event = Event(
+        organization_id=organization.id,
+        created_by=organizer.id,
+        name="Attendee Isolation Event",
+        short_code=f"AI{uuid.uuid4().hex[:6].upper()}",
+        start_date=date(2027, 9, 1),
+        end_date=date(2027, 9, 2),
+        timezone="UTC",
+        status="draft",
+    )
+    db.add_all([delegate_role, other_event])
+    await db.flush()
+    foreign_role = ParticipantRole(
+        event_id=other_event.id,
+        category="Foreign",
+        name="Foreign Delegate",
+        role_code="FOR",
+        is_active=True,
+        is_default=True,
+    )
+    db.add(foreign_role)
+    await db.flush()
+
+    portal_base = f"/api/v1/events/{event.id}/participants"
+    console_base = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/attendees"
+    )
+    portal_created = await client.post(
+        portal_base,
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"portal-attendee-{uuid.uuid4()}",
+        },
+        json={
+            "first_name": "Portal",
+            "last_name": "Attendee",
+            "email": f"portal-attendee-{uuid.uuid4().hex[:6]}@example.com",
+            "phone": "+91 99999 00001",
+            "role": "Delegate",
+            "company": "Original Company",
+        },
+    )
+    assert portal_created.status_code == 201, portal_created.text
+    portal_id = portal_created.json()["id"]
+
+    console_updated = await client.patch(
+        f"{console_base}/{portal_id}",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-attendee-update-{uuid.uuid4()}",
+        },
+        json={
+            "data": {
+                "company": "Governed Company",
+                "designation": "Reviewed Delegate",
+            },
+            "reason": "Correct the attendee profile from the approved support case.",
+            "case_reference": "REG-CRUD-1001",
+        },
+    )
+    assert console_updated.status_code == 200, console_updated.text
+    portal_row = await db.get(Participant, uuid.UUID(portal_id))
+    assert portal_row is not None
+    assert portal_row.company == "Governed Company"
+    assert portal_row.designation == "Reviewed Delegate"
+
+    portal_archived = await client.delete(
+        f"{portal_base}/{portal_id}",
+        headers=auth_headers(organizer),
+    )
+    assert portal_archived.status_code == 200, portal_archived.text
+    archived_snapshot = await client.get(
+        f"{console_base}?include_archived=true",
+        headers=auth_headers(super_admin),
+    )
+    assert archived_snapshot.status_code == 200, archived_snapshot.text
+    archived_item = next(
+        item
+        for item in archived_snapshot.json()["data"]["items"]
+        if item["id"] == portal_id
+    )
+    assert archived_item["lifecycle_state"] == "archived"
+    assert archived_item["email"] != portal_row.email
+    assert archived_snapshot.json()["data"]["sensitive_edit_allowed"] is False
+
+    console_restored = await client.post(
+        f"{console_base}/{portal_id}/restore",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-attendee-restore-{uuid.uuid4()}",
+        },
+        json={
+            "reason": "Restore the attendee after the approved recovery review.",
+            "case_reference": "REG-CRUD-1001",
+        },
+    )
+    assert console_restored.status_code == 200, console_restored.text
+    assert console_restored.json()["outcome"] == "RESTORED"
+
+    console_created = await client.post(
+        console_base,
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"console-attendee-create-{uuid.uuid4()}",
+        },
+        json={
+            "data": {
+                "first_name": "Command",
+                "last_name": "Attendee",
+                "email": f"command-attendee-{uuid.uuid4().hex[:6]}@example.com",
+                "role": "Delegate",
+                "source": "command_center",
+            },
+            "reason": "Create the attendee from the approved registration case.",
+            "case_reference": "REG-CRUD-1002",
+        },
+    )
+    assert console_created.status_code == 201, console_created.text
+    console_id = console_created.json()["id"]
+    portal_updated = await client.patch(
+        f"{portal_base}/{console_id}",
+        headers=auth_headers(organizer),
+        json={"country": "India"},
+    )
+    assert portal_updated.status_code == 200, portal_updated.text
+    assert portal_updated.json()["country"] == "India"
+
+    console_archived = await client.request(
+        "DELETE",
+        f"{console_base}/{console_id}",
+        headers=auth_headers(super_admin),
+        json={
+            "reason": "Archive the duplicate attendee through the governed console.",
+            "case_reference": "REG-CRUD-1002",
+        },
+    )
+    assert console_archived.status_code == 200, console_archived.text
+    portal_restored = await client.post(
+        f"{portal_base}/{console_id}/restore",
+        headers={
+            **auth_headers(organizer),
+            "Idempotency-Key": f"portal-attendee-restore-{uuid.uuid4()}",
+        },
+    )
+    assert portal_restored.status_code == 200, portal_restored.text
+    assert portal_restored.json()["country"] == "India"
+
+    foreign_role_create = await client.post(
+        console_base,
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"foreign-attendee-role-{uuid.uuid4()}",
+        },
+        json={
+            "data": {
+                "first_name": "Wrong",
+                "last_name": "Role",
+                "email": f"wrong-role-{uuid.uuid4().hex[:6]}@example.com",
+                "role": "Foreign Delegate",
+                "role_id": str(foreign_role.id),
+            },
+            "reason": "Verify cross-event participant roles cannot be assigned.",
+            "case_reference": "REG-CRUD-1003",
+        },
+    )
+    assert foreign_role_create.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_event_jobs_expose_truthful_capabilities_and_lineage_preserving_retries(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    organizer: User,
+    super_admin: User,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await activate_event_for_test(db, event)
+    failed_import = ImportJob(
+        event_id=event.id,
+        uploaded_by=organizer.id,
+        filename="failed-schedule.xlsx",
+        storage_path=f"imports/{event.id}/failed-schedule.xlsx",
+        job_type="schedule",
+        status="failed",
+        error_summary=[{"row": 0, "error": "Transient worker failure"}],
+    )
+    speaker = Speaker(
+        event_id=event.id,
+        first_name="Sync",
+        last_name="Speaker",
+        email=f"sync-{uuid.uuid4().hex[:6]}@example.com",
+        upload_token=f"token-{uuid.uuid4()}",
+        speaker_code=uuid.uuid4().hex[:10],
+        upload_status="uploaded",
+    )
+    session = Session(
+        event_id=event.id,
+        session_code=f"SYNC-{uuid.uuid4().hex[:6]}",
+        name="Venue sync session",
+        start_time=event.start_date,
+        end_time=event.end_date,
+    )
+    db.add_all([failed_import, speaker, session])
+    await db.flush()
+    slot = SessionSpeaker(
+        session_id=session.id,
+        speaker_id=speaker.id,
+        presentation_title="Governed retries",
+    )
+    db.add(slot)
+    await db.flush()
+    presentation_file = PresentationFile(
+        event_id=event.id,
+        speaker_id=speaker.id,
+        session_speaker_id=slot.id,
+        original_filename="governed-retry.pptx",
+        stored_filename=f"{uuid.uuid4()}.pptx",
+        storage_path=f"presentations/{event.id}/governed-retry.pptx",
+        file_size_bytes=1024,
+        mime_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "presentationml.presentation"
+        ),
+        file_format="pptx",
+        upload_source="web",
+        upload_status="invalid",
+    )
+    db.add(presentation_file)
+    await db.flush()
+    failed_sync = VenueSyncJob(
+        event_id=event.id,
+        file_id=presentation_file.id,
+        sync_type="download",
+        priority=2,
+        status="failed",
+        retry_count=1,
+        error_message="Venue node temporarily unavailable",
+        storage_provider="R2",
+    )
+    processing = PresentationProcessingJob(
+        file_id=presentation_file.id,
+        status="FAILED",
+        logs="Validation worker failed",
+    )
+    db.add_all([failed_sync, processing])
+    await db.flush()
+
+    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.tasks.run_excel_import.delay",
+        lambda job_id, organization_id: dispatched.append(
+            (job_id, organization_id)
+        ),
+    )
+    base = (
+        f"/api/v1/platform/organizations/{organization.id}/console/events/"
+        f"{event.id}/workspace/jobs"
+    )
+    snapshot = await client.get(base, headers=auth_headers(super_admin))
+    assert snapshot.status_code == 200, snapshot.text
+    items = snapshot.json()["data"]["items"]
+    import_item = next(item for item in items if item["id"] == str(failed_import.id))
+    sync_item = next(item for item in items if item["id"] == str(failed_sync.id))
+    processing_item = next(item for item in items if item["id"] == str(processing.id))
+    assert import_item["capabilities"]["retry"] is True
+    assert sync_item["capabilities"]["retry"] is True
+    assert processing_item["capabilities"]["retry"] is False
+    assert processing_item["capabilities"]["retry_workspace"] == "files"
+
+    retry_key = f"retry-import-job-{uuid.uuid4()}"
+    retry_payload = {
+        "action": "RETRY_JOB",
+        "reason": "Retry the failed import after confirming worker recovery.",
+        "case_reference": "OPS-JOB-1001",
+        "data": {"source": "IMPORT"},
+    }
+    import_retry = await client.post(
+        f"{base}/{failed_import.id}/actions",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": retry_key,
+        },
+        json=retry_payload,
+    )
+    assert import_retry.status_code == 200, import_retry.text
+    assert import_retry.json()["status"] == "SUCCEEDED"
+    assert import_retry.json()["replayed"] is False
+    import_successor_id = uuid.UUID(import_retry.json()["successor_job_id"])
+    import_successor = await db.get(ImportJob, import_successor_id)
+    assert import_successor is not None
+    assert import_successor.status == "uploaded"
+    assert import_successor.storage_path == failed_import.storage_path
+    assert dispatched == [(str(import_successor_id), str(organization.id))]
+    await db.refresh(failed_import)
+    assert failed_import.status == "failed"
+
+    import_replay = await client.post(
+        f"{base}/{failed_import.id}/actions",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": retry_key,
+        },
+        json=retry_payload,
+    )
+    assert import_replay.status_code == 200, import_replay.text
+    assert import_replay.json()["replayed"] is True
+    assert import_replay.json()["successor_job_id"] == str(import_successor_id)
+    assert len(dispatched) == 1
+
+    sync_retry = await client.post(
+        f"{base}/{failed_sync.id}/actions",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"retry-sync-job-{uuid.uuid4()}",
+        },
+        json={
+            "action": "RETRY_JOB",
+            "reason": "Retry the failed venue sync after node recovery review.",
+            "case_reference": "OPS-JOB-1002",
+            "data": {"source": "VENUE_SYNC"},
+        },
+    )
+    assert sync_retry.status_code == 200, sync_retry.text
+    sync_successor = await db.get(
+        VenueSyncJob, uuid.UUID(sync_retry.json()["successor_job_id"])
+    )
+    assert sync_successor is not None
+    assert sync_successor.status == "pending"
+    assert sync_successor.retry_count == failed_sync.retry_count + 1
+    assert (
+        sync_successor.worker_metadata["predecessor_job_id"]
+        == str(failed_sync.id)
+    )
+
+    unsupported_processing = await client.post(
+        f"{base}/{processing.id}/actions",
+        headers={
+            **auth_headers(super_admin),
+            "Idempotency-Key": f"retry-processing-job-{uuid.uuid4()}",
+        },
+        json={
+            "action": "RETRY_JOB",
+            "reason": "Verify processing retries use the governed file adapter.",
+            "case_reference": "OPS-JOB-1003",
+            "data": {"source": "PROCESSING"},
+        },
+    )
+    assert unsupported_processing.status_code == 409
+    assert unsupported_processing.json()["detail"]["workspace"] == "files"
+
+    controls = (
+        await db.scalars(
+            select(JobControlRequest).where(
+                JobControlRequest.organization_id == organization.id,
+                JobControlRequest.event_id == event.id,
+            )
+        )
+    ).all()
+    assert len(controls) == 2
+    assert all(control.status == "SUCCEEDED" for control in controls)
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiDelete, apiPost } from "@/lib/api-client";
+import { apiGet, apiDelete, apiPost, apiPatch } from "@/lib/api-client";
 import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -52,6 +52,7 @@ export function useDeleteSession(eventId: string) {
     mutationFn: (sessionId: string) => apiDelete(`/events/${eventId}/sessions/${sessionId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
       toast.success("Session deleted successfully");
     },
     onError: () => {
@@ -66,10 +67,27 @@ export function useCreateSession(eventId: string) {
     mutationFn: (data: any) => apiPost(`/events/${eventId}/sessions`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
       toast.success("Session created successfully");
     },
     onError: (error: any) => {
       toast.error(formatApiError(error, "Failed to create session"));
+    }
+  });
+}
+
+export function useUpdateSession(eventId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, data }: { sessionId: string; data: any }) =>
+      apiPatch(`/events/${eventId}/sessions/${sessionId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+      toast.success("Session updated successfully");
+    },
+    onError: (error: any) => {
+      toast.error(formatApiError(error, "Failed to update session"));
     }
   });
 }

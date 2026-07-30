@@ -1,6 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8000';
+const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:8000';
 
 class SocketService {
   public socket: Socket | null = null;
@@ -18,9 +18,10 @@ class SocketService {
     console.log(`[Socket.IO] Connecting to ${SOCKET_URL} (Standard Path)`);
     
     this.socket = io(SOCKET_URL, {
+      path: '/socket.io',
       auth: { token },
       reconnectionAttempts: 5,
-      transports: ['websocket'],
+      transports: ['polling', 'websocket'],
       timeout: 20000,
     });
 

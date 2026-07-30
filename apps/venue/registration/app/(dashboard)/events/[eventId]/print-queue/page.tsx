@@ -117,6 +117,8 @@ export default function PrintQueuePage() {
         ip_address: ipAddress,
         location: location,
         status: "idle"
+      }, {
+        headers: { "Idempotency-Key": crypto.randomUUID() }
       });
       toast.success(`Registered printer: ${printerName}`);
       setRegisterModalOpen(false);

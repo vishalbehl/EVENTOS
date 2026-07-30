@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
 from app.modules.identity.models.user import User
+from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
 from app.modules.audit.models.audit_log import AuditLog
@@ -33,10 +34,9 @@ from app.modules.registration.schemas.participant import (
 )
 from app.schemas.common import MessageResponse
 from app.modules.registration.services.portal_service import (
-    verify_and_resolve_registration,
-    normalize_phone,
     phone_numbers_match,
 )
+from app.modules.events.services import EventParticipantMutationService
 from app.core.dependencies.feature_gate import (
     enforce_event_feature,
     enforce_event_operation,
@@ -559,94 +559,16 @@ async def create_participant(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
-    from app.modules.events.models.event import Event
-    from app.modules.registration.services.pricing_service import get_active_prices_for_event
-
     event_obj = await db.get(Event, event.id)
-    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
-
-    active_prices = {}
-    if payment_enabled:
-        active_prices = await get_active_prices_for_event(db, event_obj)
-
-    # Check duplicate email and verify merging logic
-    if payload.email:
-        merged_participant = await verify_and_resolve_registration(
-            db=db,
-            event_id=event.id,
-            email=payload.email,
-            name=payload.name,
-            phone=payload.phone,
-            confirm_merge=payload.confirm_merge
-        )
-        if merged_participant:
-            resp = ParticipantResponse.model_validate(merged_participant)
-            resp.is_free = not payment_enabled or (active_prices.get(merged_participant.role, 0.0) <= 0.0)
-            return resp
-
-    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
-
-    role_price = active_prices.get(payload.role, 0.0) if payment_enabled else 0.0
-
-    paid_status = payload.paid_status
-    if role_price <= 0.0:
-        paid_status = "Paid"
-
-    # Ensure sequential regno is calculated under pricing rules
-    regno = payload.regno
-    if not regno:
-        should_generate = False
-        if role_price <= 0.0:
-            should_generate = True
-        elif paid_status == "Paid":
-            should_generate = True
-
-        if should_generate:
-            regno = await generate_next_regno(db, event.id, payload.role)
-
-    # Resolve role_id and role_rel from payload.role_id or payload.role name
-    role_id = payload.role_id
-    role_obj = None
-    if role_id:
-        role_obj = await db.get(ParticipantRole, role_id)
-    else:
-        role_obj = await get_role_by_name(db, event.id, payload.role)
-        role_id = role_obj.id if role_obj else None
-
-    reservation = await UsageReservationService.reserve(
+    if event_obj is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    participant, is_free, _ = await EventParticipantMutationService.create(
         db,
-        organization_id=event.organization_id,
-        event_id=event.id,
-        limit_key="max_registrations",
-        quantity=1,
-        unit="registration",
-        idempotency_key=f"participant-create:{idempotency_key}",
-        metadata={"email": payload.email, "source": payload.source},
-    )
-
-    participant = Participant(
-        event_id=event.id,
-        regno=regno,
-        first_name=payload.first_name or "",
-        last_name=payload.last_name or "",
-        email=payload.email,
-        phone=payload.phone,
-        role_id=role_id,
-        role_rel=role_obj,
-        company=payload.company,
-        designation=payload.designation,
-        country=payload.country,
-        paid_status=paid_status,
-        source=payload.source,
-        custom_fields=payload.custom_fields or {},
-    )
-    db.add(participant)
-    await db.flush()
-    await UsageReservationService.consume(
-        db,
-        reservation.id,
-        source="registration.participant_create",
+        event=event_obj,
+        payload=payload,
         actor_user_id=current_user.id,
+        idempotency_key=idempotency_key,
+        source="organizer_portal",
     )
     await db.commit()
     res = await db.execute(
@@ -657,7 +579,7 @@ async def create_participant(
     p = res.scalar_one()
 
     resp = ParticipantResponse.model_validate(p)
-    resp.is_free = not payment_enabled or (role_price <= 0.0)
+    resp.is_free = is_free
     return resp
 
 
@@ -1270,91 +1192,16 @@ async def update_participant(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantResponse:
-    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
-    if "paid_status" in payload.model_fields_set:
-        await enforce_event_operation(db, event.organization_id, event.id, "registration.payments.manage", user_id=current_user.id)
-    q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id, Participant.deleted_at.is_(None))
-    result = await db.execute(q)
-    p = result.scalar_one_or_none()
-    if not p:
-        raise HTTPException(status_code=404, detail="Participant not found.")
-
-    update_data = payload.model_dump(exclude_unset=True)
-    
-    # Rebuild name if name fields are updated (except when name is directly set and pre-split by schema validator)
-    if "name" in update_data:
-        pass
-    elif "first_name" in update_data or "last_name" in update_data:
-        new_fn = update_data.get("first_name", p.first_name) or ""
-        new_ln = update_data.get("last_name", p.last_name) or ""
-        update_data["first_name"] = new_fn
-        update_data["last_name"] = new_ln
-        update_data["name"] = f"{new_fn} {new_ln}".strip()
-
-    # Check if the role is changing and if it resolves to a different prefix
-    role_changed = False
-    if "role_id" in update_data:
-        new_role_id = update_data["role_id"]
-        if new_role_id != p.role_id:
-            if new_role_id:
-                new_role_obj = await db.get(ParticipantRole, new_role_id)
-                new_role = new_role_obj.name if new_role_obj else "Delegate"
-                old_prefix = await get_role_prefix_for_event(db, event.id, p.role)
-                new_prefix = await get_role_prefix_for_event(db, event.id, new_role)
-                if old_prefix != new_prefix:
-                    role_changed = True
-                p.role_id = new_role_id
-                p.role_rel = new_role_obj
-            else:
-                p.role_id = None
-                p.role_rel = None
-    elif "role" in update_data:
-        new_role = update_data["role"]
-        if new_role != p.role:
-            if new_role:
-                old_prefix = await get_role_prefix_for_event(db, event.id, p.role)
-                new_prefix = await get_role_prefix_for_event(db, event.id, new_role)
-                if old_prefix != new_prefix:
-                    role_changed = True
-                # Lookup role_id
-                role_obj = await get_role_by_name(db, event.id, new_role)
-                if role_obj:
-                    p.role_id = role_obj.id
-                    p.role_rel = role_obj
-            else:
-                p.role_id = None
-                p.role_rel = None
-
-    for field, value in update_data.items():
-        if field not in ("role", "role_id"):
-            setattr(p, field, value)
-
-    # Check ticket pricing rules to set paid_status automatically if role is free
-    from app.modules.events.models.event import Event
-    from app.modules.registration.services.pricing_service import get_active_prices_for_event
-
     event_obj = await db.get(Event, event.id)
-    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
-
-    active_prices = {}
-    if payment_enabled:
-        active_prices = await get_active_prices_for_event(db, event_obj)
-
-    current_role = p.role or "Delegate"
-    role_price = active_prices.get(current_role, 0.0) if payment_enabled else 0.0
-
-    if role_price <= 0.0:
-        if p.paid_status not in {"Cancelled", "Canceled", "Refunded", "Refund Requested", "Pending Refund"}:
-            p.paid_status = "Paid"
-
-    # Regenerate regno if role prefix changed and new regno was not explicitly provided
-    if role_changed and "regno" not in update_data:
-        p.regno = await generate_next_regno(db, event.id, p.role)
-
-    # Generate regno if paid_status changed to Paid and they don't have a regno
-    if (("paid_status" in update_data and update_data["paid_status"] == "Paid") or p.paid_status == "Paid") and not p.regno:
-        p.regno = await generate_next_regno(db, event.id, p.role)
-
+    if event_obj is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    p, is_free, _, _ = await EventParticipantMutationService.update(
+        db,
+        event=event_obj,
+        participant_id=participant_id,
+        payload=payload,
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     res = await db.execute(
         select(Participant)
@@ -1363,10 +1210,8 @@ async def update_participant(
     )
     p_updated = res.scalar_one()
 
-    role_price = active_prices.get(p_updated.role, 0.0) if payment_enabled else 0.0
-
     resp = ParticipantResponse.model_validate(p_updated)
-    resp.is_free = not payment_enabled or (role_price <= 0.0)
+    resp.is_free = is_free
     return resp
 
 
@@ -1377,17 +1222,61 @@ async def delete_participant(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
-    q = select(Participant).where(Participant.id == participant_id, Participant.event_id == event.id, Participant.deleted_at.is_(None))
-    result = await db.execute(q)
-    p = result.scalar_one_or_none()
-    if not p:
-        raise HTTPException(status_code=404, detail="Participant not found.")
-
-    p.deleted_at = datetime.now(timezone.utc)
-    p.deleted_by = current_user.id
+    event_obj = await db.get(Event, event.id)
+    if event_obj is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    await EventParticipantMutationService.archive(
+        db,
+        event=event_obj,
+        participant_id=participant_id,
+        actor_user_id=current_user.id,
+        source="organizer_portal",
+    )
     await db.commit()
     return MessageResponse(message="Participant registration archived and remains recoverable through Command Center.")
+
+
+@router.post("/{participant_id}/restore", response_model=ParticipantResponse)
+async def restore_participant(
+    participant_id: uuid.UUID,
+    event: CurrentEvent,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ParticipantResponse:
+    event_obj = await db.get(Event, event.id)
+    if event_obj is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    participant, _ = await EventParticipantMutationService.restore(
+        db,
+        event=event_obj,
+        participant_id=participant_id,
+        actor_user_id=current_user.id,
+        idempotency_key=idempotency_key,
+        source="organizer_portal",
+    )
+    await db.commit()
+    refreshed = await db.scalar(
+        select(Participant)
+        .options(selectinload(Participant.role_rel))
+        .where(Participant.id == participant.id)
+    )
+    response = ParticipantResponse.model_validate(refreshed)
+    payment_enabled = bool(
+        (event_obj.registration_settings or {}).get("payment_enabled", False)
+    )
+    if payment_enabled:
+        from app.modules.registration.services.pricing_service import (
+            get_active_prices_for_event,
+        )
+
+        prices = await get_active_prices_for_event(db, event_obj)
+        response.is_free = prices.get(refreshed.role, 0.0) <= 0
+    else:
+        response.is_free = True
+    return response
 
 
 @router.post("/{participant_id}/checkin", response_model=CheckInResponse)

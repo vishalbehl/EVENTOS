@@ -209,7 +209,7 @@ export function CommercialDetailsDialog({
                 icon: Users,
                 title: "Team Members",
                 prefix: "Collaborate with up to",
-                value: data.max_users ? data.max_users.toLocaleString() : "Unlimited",
+                value: typeof data.max_users === "number" ? data.max_users.toLocaleString() : "Not configured",
                 suffix: "team members",
                 show: true,
               },
@@ -217,7 +217,7 @@ export function CommercialDetailsDialog({
                 icon: UserCheck,
                 title: "Registrations",
                 prefix: "Accept and manage up to",
-                value: data.max_registrations ? data.max_registrations.toLocaleString() : "Unlimited",
+                value: typeof data.max_registrations === "number" ? data.max_registrations.toLocaleString() : "Not configured",
                 suffix: "event registrations",
                 show: true,
               },
@@ -225,7 +225,7 @@ export function CommercialDetailsDialog({
                 icon: User,
                 title: "Speakers",
                 prefix: "Add and showcase up to",
-                value: data.max_speakers ? data.max_speakers.toLocaleString() : "Unlimited",
+                value: typeof data.max_speakers === "number" ? data.max_speakers.toLocaleString() : "Not configured",
                 suffix: "speakers",
                 show: true,
               },
@@ -233,7 +233,7 @@ export function CommercialDetailsDialog({
                 icon: CalendarDays,
                 title: "Sessions",
                 prefix: "Create and organize up to",
-                value: data.max_sessions ? data.max_sessions.toLocaleString() : "Unlimited",
+                value: typeof data.max_sessions === "number" ? data.max_sessions.toLocaleString() : "Not configured",
                 suffix: "event sessions",
                 show: true,
               },
@@ -241,7 +241,7 @@ export function CommercialDetailsDialog({
                 icon: DoorOpen,
                 title: "Rooms",
                 prefix: "Schedule sessions across",
-                value: data.max_rooms ? data.max_rooms.toLocaleString() : "Unlimited",
+                value: typeof data.max_rooms === "number" ? data.max_rooms.toLocaleString() : "Not configured",
                 suffix: "rooms",
                 show: true,
               },
@@ -249,7 +249,7 @@ export function CommercialDetailsDialog({
                 icon: Ticket,
                 title: "Ticket Categories",
                 prefix: "Offer up to",
-                value: data.max_ticket_categories ? data.max_ticket_categories.toLocaleString() : "Unlimited",
+                value: typeof data.max_ticket_categories === "number" ? data.max_ticket_categories.toLocaleString() : "Not configured",
                 suffix: "ticket categories",
                 show: !!data.max_ticket_categories,
               },
@@ -308,7 +308,7 @@ export function CommercialDetailsDialog({
                 {/* Bottom Info Banner */}
                 <div className="flex items-center gap-2.5 rounded-xl border border-white/5 bg-white/[0.01] p-3.5 text-[10px] text-white/40 mt-6">
                   <Info className="w-4 h-4 text-white/30 shrink-0" />
-                  <span>Limits are per event. Need more? Upgrade to Enterprise or add-on packs.</span>
+                  <span>Limits are contract-scoped. Additional capacity requires an approved plan, add-on, or allocation request.</span>
                 </div>
               </div>
             );

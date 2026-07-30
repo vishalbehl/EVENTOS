@@ -121,7 +121,23 @@ class EventEntitlementService:
                 if value_type in {"BOOLEAN", "TIER", "ENUM"}:
                     features[key] = {"enabled": EventEntitlementService._feature_enabled(value), "value": value, "value_type": value_type, "scope_type": "EVENT_SCOPED", "source_type": "CONTRACT_SNAPSHOT", "source_ref": str(contract.id)}
                 else:
-                    limits[key] = {"limit_value": value, "value_type": "LIMIT", "scope_type": "EVENT_SCOPED", "source_type": "CONTRACT_SNAPSHOT", "source_ref": str(contract.id)}
+                    limits[key] = {
+                        "limit_value": value,
+                        "value_type": "LIMIT",
+                        "scope_type": "EVENT_SCOPED",
+                        "source_type": "CONTRACT_SNAPSHOT",
+                        "source_ref": str(contract.id),
+                        "enforcement_mode": (
+                            str(raw.get("enforcement_mode") or "HARD").upper()
+                            if isinstance(raw, dict)
+                            else "HARD"
+                        ),
+                        "overage_policy": (
+                            raw.get("overage_policy")
+                            if isinstance(raw, dict)
+                            else {"action": "DENY"}
+                        ) or {"action": "DENY"},
+                    }
                 contract_lineage.setdefault(key, []).append({"source": "CONTRACT_SNAPSHOT", "source_ref": str(contract.id), "contract_version": contract.version, "value": value})
             baseline_features = {key: value.get("value", bool(value.get("enabled"))) for key, value in features.items()}
             baseline_limits = {key: value.get("limit_value") for key, value in limits.items()}
@@ -148,7 +164,15 @@ class EventEntitlementService:
                     else:
                         current = limits.get(key, {}).get("limit_value")
                         value = EventEntitlementService._apply(current, operation, requested, baseline_limits.get(key))
-                        limits[key] = {"limit_value": value, "scope_type": "EVENT_SCOPED", "source_type": "PURCHASED_ADDON", "source_ref": str(addon.get("id") or addon.get("key") or contract.id)}
+                        previous_limit = limits.get(key, {})
+                        limits[key] = {
+                            "limit_value": value,
+                            "scope_type": "EVENT_SCOPED",
+                            "source_type": "PURCHASED_ADDON",
+                            "source_ref": str(addon.get("id") or addon.get("key") or contract.id),
+                            "enforcement_mode": previous_limit.get("enforcement_mode", "HARD"),
+                            "overage_policy": previous_limit.get("overage_policy", {"action": "DENY"}),
+                        }
                     contract_lineage.setdefault(key, []).append({"source": "PURCHASED_ADDON", "source_ref": str(addon.get("id") or addon.get("key") or contract.id), "operation": operation, "quantity": quantity, "value": value})
 
         override_rows = (
@@ -253,6 +277,7 @@ class EventEntitlementService:
                     "source": ceiling_sources.get(key, "HARD_PLATFORM_CEILING"),
                     "value": ceiling,
                 })
+            limits[key]["hard_ceiling"] = ceiling
 
         values = {
             **{key: value.get("value", bool(value.get("enabled"))) for key, value in features.items()},
@@ -267,7 +292,9 @@ class EventEntitlementService:
             ]),
         ))).all()
         rollout_values = {row.flag_key: row.is_enabled for row in rollout_flags}
-        enforcement_enabled = bool(rollout_values.get("organizer_console_entitlement_enforce", True))
+        # Canonical enforcement is tenant opt-in. A missing rollout record must
+        # never silently promote an organization that has not passed preflight.
+        enforcement_enabled = bool(rollout_values.get("organizer_console_entitlement_enforce", False))
         shadow_enabled = bool(rollout_values.get("organizer_console_entitlement_shadow", False))
         compatibility_mode = not enforcement_enabled and not ignore_rollout_flag
         if compatibility_mode:

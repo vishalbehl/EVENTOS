@@ -260,6 +260,7 @@ async def capability_coverage(db: AsyncSession = Depends(get_db)):
             "key": key,
             **definition,
             **registry["limit_enforcement_sites"][key],
+            "portal_control": registry["portal_limit_control_sites"][key],
             "catalogue_key": next(
                 catalogue_key
                 for catalogue_key, mapped_limit in registry["catalog_limit_keys"].items()

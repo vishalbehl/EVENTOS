@@ -43,18 +43,6 @@ import {
   type TypedFeatureAssignment,
 } from "@/services/super-admin-service";
 
-const fields: { key: keyof SubscriptionPlan; label: string }[] = [
-  { key: "max_users", label: "Team members" },
-  { key: "max_registrations", label: "Registrations" },
-  { key: "max_speakers", label: "Speakers" },
-  { key: "max_sessions", label: "Sessions" },
-  { key: "max_rooms", label: "Rooms" },
-  { key: "max_ticket_categories", label: "Ticket categories" },
-  { key: "max_badge_templates", label: "Badge templates" },
-  { key: "max_certificate_templates", label: "Certificate templates" },
-  { key: "max_emails_per_event", label: "Emails / event" },
-];
-
 const blank: Partial<SubscriptionPlan> = {
   name: "",
   tagline: "",
@@ -62,11 +50,6 @@ const blank: Partial<SubscriptionPlan> = {
   billing_model: "PER_EVENT",
   currency: "INR",
   price_per_event: 0,
-  max_users: 5,
-  max_registrations: 500,
-  max_rooms: 2,
-  max_emails_per_event: 10000,
-  storage_quota_mb: 5120,
   display_order: 0,
   is_popular: false,
   is_active: false,
@@ -75,8 +58,17 @@ const blank: Partial<SubscriptionPlan> = {
 };
 
 export default function PlansPage() {
-  const { data: plans = [], isLoading } = useSubscriptionPlans();
-  const { data: matrix = [] } = useFeatureMatrix();
+  const {
+    data: plans = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useSubscriptionPlans();
+  const {
+    data: matrix = [],
+    isError: matrixError,
+    refetch: refetchMatrix,
+  } = useFeatureMatrix();
   const createPlan = useCreatePlan();
   const updatePlan = useUpdatePlan();
   const updateFeatures = useUpdateTypedPlanFeatures();
@@ -207,7 +199,23 @@ export default function PlansPage() {
   );
   const open = (plan?: SubscriptionPlan) => {
     setEditing(plan || null);
-    setForm(plan ? { ...plan } : { ...blank, display_order: plans.length });
+    setForm(
+      plan
+        ? {
+            name: plan.name,
+            tagline: plan.tagline,
+            description: plan.description,
+            billing_model: plan.billing_model,
+            currency: plan.currency,
+            price_per_event: plan.price_per_event,
+            display_order: plan.display_order,
+            is_popular: plan.is_popular,
+            is_active: plan.is_active,
+            lifecycle_status: plan.lifecycle_status,
+            color_hex: plan.color_hex,
+          }
+        : { ...blank, display_order: plans.length },
+    );
     setPlanReason("");
   };
   const openFeatures = (plan: SubscriptionPlan) => {
@@ -227,6 +235,37 @@ export default function PlansPage() {
       toast.error(e?.response?.data?.detail || "Could not save plan");
     }
   };
+
+  if (isLoading) {
+    return (
+      <PageContainer>
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-8 text-sm text-[var(--text-secondary)]">
+          Loading authoritative plan templates…
+        </div>
+      </PageContainer>
+    );
+  }
+  if (isError || matrixError) {
+    return (
+      <PageContainer>
+        <div className="rounded-2xl border border-[var(--status-danger)]/30 bg-[var(--bg-surface)] p-8">
+          <p className="font-semibold text-[var(--status-danger)]">Plan configuration is unavailable</p>
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+            The catalogue request failed. No empty plan list or feature matrix is being shown.
+          </p>
+          <Button
+            className="mt-5"
+            variant="outline"
+            onClick={() => {
+              void Promise.all([refetch(), refetchMatrix()]);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>
@@ -368,38 +407,8 @@ export default function PlansPage() {
                 </Field>
               </div>
             </div>
-            <div>
-              <h3 className="mb-3 text-sm font-semibold">Capacity limits</h3>
-              <div className="grid gap-3 md:grid-cols-3">
-                {fields.map((f) => (
-                  <Field key={f.key} label={f.label}>
-                    <Input
-                      type="number"
-                      min={0}
-                      placeholder="Unlimited"
-                      value={(form[f.key] as number) ?? ""}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          // null = Unlimited (sent explicitly to backend to clear the column).
-                          // undefined would be stripped by JSON.stringify and the old value retained.
-                          [f.key]: e.target.value === "" ? null : +e.target.value,
-                        })
-                      }
-                    />
-                  </Field>
-                ))}
-                <Field label="Storage (MB)">
-                  <Input
-                    type="number"
-                    min={0}
-                    value={form.storage_quota_mb ?? 0}
-                    onChange={(e) =>
-                      setForm({ ...form, storage_quota_mb: +e.target.value })
-                    }
-                  />
-                </Field>
-              </div>
+            <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface-2)]/40 p-4 text-sm text-[var(--text-secondary)]">
+              Feature access, tiers, quotas, enforcement modes, and hard ceilings are managed in the typed <b className="text-[var(--text-primary)]">Entitlements</b> editor. Legacy scalar plan columns are not commercial authority.
             </div>
             <div className="flex flex-wrap items-center gap-6 border-t border-[var(--border-default)] pt-5">
               <Toggle
@@ -755,18 +764,16 @@ function PlanCard({
   onHistory: () => void;
 }) {
   const Icon = index === 0 ? Layers3 : index === 1 ? Sparkles : Crown;
-  const highlights = [
-    `${plan.max_users ?? "Unlimited"} team members`,
-    `${plan.max_registrations ?? "Unlimited"} registrations`,
-    `${plan.max_speakers ?? "Unlimited"} speakers`,
-    `${plan.max_sessions ?? "Unlimited"} sessions`,
-    `${plan.max_rooms ?? "Unlimited"} rooms`,
-    `${plan.max_ticket_categories ?? "Unlimited"} ticket categories`,
-    `${plan.max_badge_templates ?? "Unlimited"} badge templates`,
-    `${plan.max_certificate_templates ?? "Unlimited"} certificate templates`,
-    `${plan.max_emails_per_event ?? "Unlimited"} emails / event`,
-    `${Math.round((plan.storage_quota_mb || 0) / 1024)} GB storage`,
-  ];
+  const typedEntitlements = useTypedPlanFeatures(plan.id);
+  const highlights = (typedEntitlements.data?.items || [])
+    .filter((item) => item.value !== false && item.value !== null && item.value !== undefined)
+    .slice(0, 10)
+    .map((item) => {
+      const label = item.name || item.feature_key;
+      if (item.value_type === "BOOLEAN") return label;
+      const unit = item.unit ? ` ${item.unit}` : "";
+      return `${label}: ${String(item.value)}${unit}`;
+    });
   return (
     <article
       className={cn(
@@ -807,7 +814,11 @@ function PlanCard({
           </span>
         </div>
         <ul className="space-y-3">
-          {highlights.map((x) => (
+          {typedEntitlements.isLoading ? (
+            <li className="text-sm text-[var(--text-tertiary)]">Loading typed entitlements…</li>
+          ) : highlights.length === 0 ? (
+            <li className="text-sm text-[var(--text-tertiary)]">No typed entitlements configured. This plan cannot be published.</li>
+          ) : highlights.map((x) => (
             <li
               key={x}
               className="flex items-center gap-2.5 text-sm text-[var(--text-secondary)]"

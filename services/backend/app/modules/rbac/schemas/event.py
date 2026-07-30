@@ -36,7 +36,7 @@ class BrandingSettings(BaseModel):
 # ── Request schemas ─────────────────────────────────────────
 
 class EventCreate(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=2, max_length=255)
     short_code: str = Field(
@@ -130,6 +130,19 @@ class EventUpdate(BaseModel):
     registration_settings: Optional[RegistrationSettings] = None
     branding_settings: Optional[BrandingSettings] = None
 
+    @model_validator(mode="after")
+    def validate_explicit_modes(self) -> "EventUpdate":
+        if (
+            self.speaker_settings is not None
+            and self.registration_settings is not None
+            and not self.speaker_settings.enabled
+            and not self.registration_settings.enabled
+        ):
+            raise ValueError(
+                "At least one mode (Speaker or Registration) must be enabled."
+            )
+        return self
+
 
 class ApplyPlanRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -161,6 +174,8 @@ class EventResponse(BaseModel):
     currency: str
     status: str
     is_active: bool = True
+    is_maintenance: bool = False
+    is_read_only: bool = False
 
     tagline: Optional[str] = None
     description: Optional[str] = None
@@ -196,6 +211,7 @@ class EventSummary(BaseModel):
     currency: str
     status: str
     is_active: bool = True
+    is_maintenance: bool = False
+    is_read_only: bool = False
     created_at: datetime
     updated_at: datetime
-

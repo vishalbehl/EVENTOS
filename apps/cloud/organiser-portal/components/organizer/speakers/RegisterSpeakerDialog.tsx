@@ -22,11 +22,12 @@ import { CapabilityAction } from "@/lib/capabilities";
 interface RegisterSpeakerDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  eventId?: string;
 }
 
-export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialogProps) {
-  const { eventId } = useParams();
-  const eventIdStr = eventId as string;
+export function RegisterSpeakerDialog({ isOpen, onClose, eventId: explicitEventId }: RegisterSpeakerDialogProps) {
+  const params = useParams();
+  const eventIdStr = explicitEventId ?? String(params.eventId ?? "");
   const queryClient = useQueryClient();
   const { data: templates } = useEmailTemplates(eventIdStr);
   const { data: sessions } = useSessions(eventIdStr);
@@ -623,7 +624,7 @@ export function RegisterSpeakerDialog({ isOpen, onClose }: RegisterSpeakerDialog
                 >
                   Cancel
                 </Button>
-                <CapabilityAction operation="speakers.manage">
+                <CapabilityAction operation="speakers.manage" limitKey="max_speakers">
                   <Button
                     disabled={loading || talks.length === 0 || talks.some(t => !t.session_id)}
                     onClick={handleSubmit}

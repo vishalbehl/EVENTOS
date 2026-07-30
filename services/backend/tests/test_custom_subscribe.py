@@ -21,8 +21,7 @@ async def seed_billing_data(db: AsyncSession):
         description="Perfect for small events and basic registration.",
         billing_model="PER_EVENT",
         currency="INR",
-        price_per_event_min=15000.0,
-        price_per_event_max=25000.0,
+        price_per_event=15000.0,
         max_events=1,
         max_users=2,
         max_registrations=150,
@@ -46,8 +45,7 @@ async def seed_billing_data(db: AsyncSession):
         description="For scaling events needing advanced workflows and badge printing.",
         billing_model="PER_EVENT",
         currency="INR",
-        price_per_event_min=60000.0,
-        price_per_event_max=120000.0,
+        price_per_event=60000.0,
         max_events=1,
         max_users=10,
         max_registrations=1000,
@@ -118,9 +116,9 @@ async def test_billing_metadata_endpoints(client: AsyncClient, organizer, db: As
     
     # Check that basic pricing columns are included
     basic_plan = next(p for p in plans if p["name"].lower() == "basic")
-    assert "price_per_event_min" in basic_plan
+    assert "price_per_event" in basic_plan
     assert "currency" in basic_plan
-    assert basic_plan["price_per_event_min"] == 15000.0
+    assert basic_plan["price_per_event"] == 15000.0
     
     # Check addons list endpoint
     response_addons = await client.get("/organisations/addons", headers=headers)
@@ -176,9 +174,11 @@ async def test_pricing_calculator(client: AsyncClient, organizer, db: AsyncSessi
     assert data_custom["total"] == 45225.0
 
 @pytest.mark.asyncio
-async def test_subscribe_custom_plan(client: AsyncClient, organizer, db: AsyncSession):
-    headers = auth_headers(organizer)
-    
+async def test_organizer_subscription_mutation_requires_command_center(
+    client: AsyncClient,
+    organizer,
+    db: AsyncSession,
+):
     payload = {
         "plan_name": "Basic",
         "is_custom": True,
@@ -186,7 +186,7 @@ async def test_subscribe_custom_plan(client: AsyncClient, organizer, db: AsyncSe
             "max_events": 3,
             "max_users": 5,
             "max_registrations": 200,
-            "max_storage_gb": 12
+            "max_storage_gb": 12,
         },
         "addon_keys": ["ADDON_WHATSAPP"],
         "promo_code": "EVENTOS50",
@@ -197,87 +197,46 @@ async def test_subscribe_custom_plan(client: AsyncClient, organizer, db: AsyncSe
         "cardholder_name": "John Doe",
         "card_number": "4000123456789010",
         "expiry": "12/29",
-        "cvv": "123"
+        "cvv": "123",
     }
-    
-    response = await client.post("/organisations/me/subscribe", json=payload, headers=headers)
-    assert response.status_code == 200
-    res_data = response.json()
-    assert res_data["amount_paid"] == 45225.0
-    assert "transaction_id" in res_data
-    
-    # Verify transaction record exists in DB
-    tx_id = uuid.UUID(res_data["transaction_id"])
-    tx_stmt = select(SubscriptionTransaction).where(SubscriptionTransaction.id == tx_id)
-    tx = (await db.execute(tx_stmt)).scalar_one_or_none()
-    assert tx is not None
-    assert tx.billing_name == "Acme Corp"
-    assert tx.gst_number == "27AAPCS1081F1Z1"
-    assert tx.amount == 45225.0
-    
-    # Verify TenantLimit overrides are applied in DB
-    limits_stmt = select(TenantLimit).where(TenantLimit.organization_id == organizer.organization_id)
-    limits = (await db.execute(limits_stmt)).scalars().all()
-    limit_keys = {l.limit_key: l.limit_value for l in limits}
-    assert limit_keys["max_events"] == 3
-    assert limit_keys["max_users"] == 5
-    assert limit_keys["max_registrations"] == 200
-    assert limit_keys["max_storage_gb"] == 12
+
+    response = await client.post(
+        "/organisations/me/subscribe",
+        json=payload,
+        headers=auth_headers(organizer),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "COMMAND_CENTER_APPROVAL_REQUIRED"
+    assert await db.scalar(
+        select(SubscriptionTransaction).where(
+            SubscriptionTransaction.organization_id == organizer.organization_id
+        )
+    ) is None
+    assert await db.scalar(
+        select(OrganizationSubscription).where(
+            OrganizationSubscription.organization_id == organizer.organization_id
+        )
+    ) is None
+    assert (
+        await db.scalars(
+            select(TenantLimit).where(
+                TenantLimit.organization_id == organizer.organization_id
+            )
+        )
+    ).all() == []
+
 
 @pytest.mark.asyncio
-async def test_remove_subscription_plan(client: AsyncClient, organizer, super_admin, db: AsyncSession):
-    # First, let's subscribe to a plan to set up a subscription and overrides
-    headers_org = auth_headers(organizer)
-    payload = {
-        "plan_name": "Basic",
-        "is_custom": True,
-        "custom_limits": {
-            "max_events": 3,
-            "max_users": 5,
-            "max_registrations": 200,
-            "max_storage_gb": 12
-        },
-        "addon_keys": ["ADDON_WHATSAPP"],
-        "promo_code": "EVENTOS50",
-        "billing_name": "Acme Corp",
-        "billing_email": "billing@acme.org",
-        "billing_phone": "+919988776655",
-        "gst_number": "27AAPCS1081F1Z1",
-        "cardholder_name": "John Doe",
-        "card_number": "4000123456789010",
-        "expiry": "12/29",
-        "cvv": "123"
-    }
-    sub_response = await client.post("/organisations/me/subscribe", json=payload, headers=headers_org)
-    assert sub_response.status_code == 200
-    
-    # Verify DB has active subscription and overrides
-    org_id = organizer.organization_id
-    sub_stmt = select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
-    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
-    assert sub is not None
-    
-    limits_stmt = select(TenantLimit).where(TenantLimit.organization_id == org_id)
-    limits_count = len((await db.execute(limits_stmt)).scalars().all())
-    assert limits_count > 0
-    
-    # Now, let's call DELETE /platform/organizations/{org_id}/subscription as super admin
-    headers_admin = auth_headers(super_admin)
-    del_response = await client.delete(f"/platform/organizations/{org_id}/subscription", headers=headers_admin)
-    assert del_response.status_code == 200
-    
-    # Re-fetch database state to verify deletion
-    db.expire_all()
-    sub_deleted = (await db.execute(sub_stmt)).scalar_one_or_none()
-    assert sub_deleted is None
-    
-    limits_deleted = (await db.execute(limits_stmt)).scalars().all()
-    assert len(limits_deleted) == 0
-    
-    # Verify Organization base plan fields have reset
-    org_stmt = select(Organization).where(Organization.id == org_id)
-    org = (await db.execute(org_stmt)).scalar_one()
-    assert org.plan == "trial"
-    assert org.max_events == 1
-    assert org.max_users == 2
-
+async def test_subscription_deletion_requires_governed_workflow(
+    client: AsyncClient,
+    organizer,
+    super_admin,
+):
+    response = await client.request(
+        "DELETE",
+        f"/platform/organizations/{organizer.organization_id}/subscription",
+        headers=auth_headers(super_admin),
+        json={"reason": "Attempt an unapproved direct commercial mutation."},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "DUAL_APPROVAL_REQUIRED"

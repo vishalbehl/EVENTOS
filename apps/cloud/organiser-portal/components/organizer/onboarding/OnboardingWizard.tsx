@@ -22,6 +22,7 @@ import { useAuthStore } from "@/store/use-auth-store";
 import { cn } from "@/lib/utils";
 import { CommercialPlanCard, CommercialAddonCard } from "@/components/organizer/platform/CommercialCards";
 import { CommercialDetailsDialog } from "@/components/organizer/platform/CommercialDetailsDialog";
+import { useOrganizationLimitAccess } from "@/lib/capabilities";
 import logoImage from "../../../../../../public/logo/1.png";
 
 // Module catalog definitions
@@ -60,6 +61,8 @@ function formatCurrency(amount: number | null | undefined, currency = "INR") {
 }
 
 export function OnboardingWizard() {
+  const userLimitAccess = useOrganizationLimitAccess("max_users");
+  const eventLimitAccess = useOrganizationLimitAccess("max_events");
   const router = useRouter();
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -169,12 +172,12 @@ export function OnboardingWizard() {
         isActive: plan.is_active !== false,
         subscribersLabel: plan.subscribers_count ? `${plan.subscribers_count} subscribers` : "Workspace ready",
         highlights: [
-          plan.max_users == null || plan.max_users === -1 ? "Unlimited team members" : `${plan.max_users} team members`,
-          plan.max_registrations == null || plan.max_registrations === -1 ? "Unlimited registrations" : `${plan.max_registrations} registrations`,
-          plan.max_speakers == null || plan.max_speakers === -1 ? "Unlimited speakers" : `${plan.max_speakers} speakers`,
-          plan.max_sessions == null || plan.max_sessions === -1 ? "Unlimited sessions" : `${plan.max_sessions} sessions`,
-          plan.max_rooms == null || plan.max_rooms === -1 ? "Unlimited parallel rooms" : `${plan.max_rooms} parallel rooms`,
-          plan.storage_quota_mb == null || plan.storage_quota_mb === -1 ? "Unlimited storage" : `${Math.round(plan.storage_quota_mb / 1024)} GB storage`,
+          plan.limits?.max_users == null ? "Team members not configured" : `${plan.limits.max_users} team members`,
+          plan.limits?.max_registrations == null ? "Registrations not configured" : `${plan.limits.max_registrations} registrations`,
+          plan.limits?.max_speakers == null ? "Speakers not configured" : `${plan.limits.max_speakers} speakers`,
+          plan.limits?.max_sessions == null ? "Sessions not configured" : `${plan.limits.max_sessions} sessions`,
+          plan.limits?.max_rooms == null ? "Rooms not configured" : `${plan.limits.max_rooms} parallel rooms`,
+          plan.limits?.storage_quota_mb == null ? "Storage not configured" : `${Math.round(plan.limits.storage_quota_mb / 1024)} GB storage`,
         ],
         tierIndex: i,
         raw: plan,
@@ -1194,7 +1197,18 @@ export function OnboardingWizard() {
                           <SelectItem value="billing_only">Billing Only</SelectItem>
                         </SelectContent>
                       </Select>
-                      <Button onClick={handleAddTeamMember} className="h-12 px-4 rounded-xl bg-[#e0ff00] text-black font-bold text-xs"><Plus className="h-4 w-4" /> Add</Button>
+                      <Button
+                        onClick={handleAddTeamMember}
+                        disabled={userLimitAccess.loading || !userLimitAccess.enabled}
+                        title={
+                          userLimitAccess.enabled
+                            ? undefined
+                            : `Unavailable: ${(userLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+                        }
+                        className="h-12 px-4 rounded-xl bg-[#e0ff00] text-black font-bold text-xs"
+                      >
+                        <Plus className="h-4 w-4" /> Add
+                      </Button>
                     </div>
                   </div>
 
@@ -1477,7 +1491,16 @@ export function OnboardingWizard() {
                       >
                         Skip for now →
                       </Button>
-                      <Button onClick={handleCreateEvent} disabled={saving} className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2">
+                      <Button
+                        onClick={handleCreateEvent}
+                        disabled={saving || eventLimitAccess.loading || !eventLimitAccess.enabled}
+                        title={
+                          eventLimitAccess.enabled
+                            ? undefined
+                            : `Unavailable: ${(eventLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+                        }
+                        className="h-12 px-6 bg-[#e0ff00] hover:bg-[#c8e600] text-black font-black uppercase tracking-wider text-xs rounded-xl flex items-center gap-2"
+                      >
                         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Save & Next <ChevronRight className="h-4 w-4 stroke-[3]" /></>}
                       </Button>
                     </div>
@@ -1558,7 +1581,7 @@ export function OnboardingWizard() {
                       <div className="flex justify-between">
                         <span>Subscription Status:</span>
                         <span className="text-emerald-400 font-bold">
-                          {hasActivePlan ? `Active Subscription (${currentBillingPlan?.plan?.name || "Pro Plan"})` : (skippedPlan ? "Free Trial" : (currentSelectedPlanObj?.name || "Selected Plan"))}
+                          {hasActivePlan ? `Active Subscription (${currentBillingPlan?.plan?.name || "Plan unavailable"})` : (skippedPlan ? "Free Trial" : (currentSelectedPlanObj?.name || "Selected Plan"))}
                         </span>
                       </div>
                       {!hasActivePlan && (

@@ -21,7 +21,7 @@ from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
 from app.modules.notifications.schemas.notification import (
     EmailTemplateCreate, EmailTemplateUpdate, EmailTemplateResponse,
-    CampaignCreate, CampaignResponse, InviteSpeakersRequest,
+    CampaignCreate, CampaignUpdate, CampaignResponse, InviteSpeakersRequest,
     SendToSpeakersRequest,
     PaginatedEmailLogResponse, TestTemplateRequest
 )
@@ -46,6 +46,12 @@ from app.modules.notifications.tasks.channel_delivery_tasks import (
 )
 from app.modules.platform.models.organization_console import (
     OrganizationNotificationChannelConfig,
+)
+from app.modules.events.services.event_template_mutation_service import (
+    EventTemplateMutationService,
+)
+from app.modules.events.services.event_campaign_mutation_service import (
+    EventCampaignMutationService,
 )
 
 router = APIRouter(prefix="/events/{event_id}/notifications", tags=["notifications"])
@@ -600,13 +606,15 @@ async def track_open(
 async def create_template(
     event: CurrentEvent,
     data: EmailTemplateCreate,
+    actor: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    template = EmailTemplate(
-        event_id=event.id,
-        **data.model_dump()
+    template = await EventTemplateMutationService.create_email(
+        db,
+        event=event,
+        payload=data,
+        actor_user_id=actor.id,
     )
-    db.add(template)
     await db.commit()
     await db.refresh(template)
     return EmailTemplateResponse.model_validate(template)
@@ -624,58 +632,13 @@ async def update_template(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(EmailTemplate).where(
-            EmailTemplate.id == template_id,
-            or_(EmailTemplate.event_id == event.id, EmailTemplate.event_id.is_(None)),
-            EmailTemplate.deleted_at.is_(None),
-        )
+    template, _, _, _ = await EventTemplateMutationService.update_email(
+        db,
+        event=event,
+        template_id=template_id,
+        payload=data,
+        actor_user_id=current_user.id,
     )
-    template = result.scalar_one_or_none()
-    if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
-    
-    # If editing a global system template, clone it as an event-specific template
-    if template.event_id is None:
-        # Check if an event-specific template of this name already exists to prevent duplicate clones!
-        existing_clone = None
-        if template.template_type != "custom":
-            existing_res = await db.execute(
-                select(EmailTemplate).where(
-                    EmailTemplate.event_id == event.id,
-                    EmailTemplate.name == template.name
-                )
-            )
-            existing_clone = existing_res.scalar_one_or_none()
-            
-        if existing_clone:
-            # Update the existing event-specific template instead of cloning again!
-            for key, value in data.model_dump(exclude_unset=True).items():
-                setattr(existing_clone, key, value)
-            await db.commit()
-            await db.refresh(existing_clone)
-            return EmailTemplateResponse.model_validate(existing_clone)
-            
-        cloned_template = EmailTemplate(
-            event_id=event.id,
-            name=template.name,
-            template_type=template.template_type,
-            subject=template.subject,
-            body_html=template.body_html,
-            body_text=template.body_text,
-            is_default=False,
-        )
-        for key, value in data.model_dump(exclude_unset=True).items():
-            setattr(cloned_template, key, value)
-        db.add(cloned_template)
-        await db.commit()
-        await db.refresh(cloned_template)
-        return EmailTemplateResponse.model_validate(cloned_template)
-    
-    # Otherwise, update the event-specific template directly
-    for key, value in data.model_dump(exclude_unset=True).items():
-        setattr(template, key, value)
-    
     await db.commit()
     await db.refresh(template)
     return EmailTemplateResponse.model_validate(template)
@@ -692,19 +655,36 @@ async def delete_template(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(EmailTemplate).where(
-            EmailTemplate.id == template_id,
-            EmailTemplate.event_id == event.id,
-            EmailTemplate.deleted_at.is_(None),
-        )
+    await EventTemplateMutationService.archive_email(
+        db,
+        event=event,
+        template_id=template_id,
+        actor_user_id=current_user.id,
     )
-    template = result.scalar_one_or_none()
-    if template:
-        template.deleted_at = datetime.now(timezone.utc)
-        template.deleted_by = current_user.id
-        await db.commit()
+    await db.commit()
     return None
+
+
+@router.post(
+    "/templates/{template_id}/restore",
+    response_model=EmailTemplateResponse,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
+async def restore_template(
+    template_id: uuid.UUID,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    template, _ = await EventTemplateMutationService.restore_email(
+        db,
+        event=event,
+        template_id=template_id,
+        actor_user_id=current_user.id,
+    )
+    await db.commit()
+    await db.refresh(template)
+    return EmailTemplateResponse.model_validate(template)
 
 
 async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign) -> int:
@@ -828,87 +808,36 @@ async def create_campaign(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await enforce_event_feature(db, event.organization_id, event.id, "FEAT_CAMPAIGN_MGMT", user_id=current_user.id)
-    template = await db.scalar(
-        select(EmailTemplate).where(
-            EmailTemplate.id == data.template_id,
-            or_(
-                EmailTemplate.event_id == event.id,
-                EmailTemplate.event_id.is_(None),
-            ),
-            EmailTemplate.deleted_at.is_(None),
-        )
+    campaign = await EventCampaignMutationService.create(
+        db,
+        event=event,
+        payload=data,
+        actor=current_user,
     )
-    if template is None:
-        raise HTTPException(status_code=404, detail="Email template not found for this event.")
-    if data.scheduled_at is not None or template.template_type in {"reminder", "deadline"}:
-        await enforce_event_operation(
-            db,
-            event.organization_id,
-            event.id,
-            "communications.reminders.manage",
-            user_id=current_user.id,
-        )
-    # Enforce restrictions for non-admin roles
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
-        if data.recipient_filter not in ["specific_session", "specific_room"]:
-            raise HTTPException(
-                status_code=403, 
-                detail="Your role is only allowed to send campaigns to specific assigned sessions or rooms."
-            )
-        
-        from app.modules.rbac.models.rbac import UserAccessNode
-        node_id_to_check = data.session_id_filter if data.recipient_filter == "specific_session" else data.room_id_filter
-        node_type = "SESSION" if data.recipient_filter == "specific_session" else "ROOM"
-        
-        if not node_id_to_check:
-            raise HTTPException(status_code=400, detail=f"Missing {node_type.lower()} ID for filter.")
-            
-        check = await db.execute(
-            select(UserAccessNode).where(
-                UserAccessNode.user_id == current_user.id,
-                UserAccessNode.node_id == node_id_to_check,
-                UserAccessNode.node_type == node_type
-            )
-        )
-        if not check.scalar_one_or_none():
-            raise HTTPException(status_code=403, detail=f"You are not assigned to this {node_type.lower()}.")
+    await db.commit()
+    await db.refresh(campaign)
+    return CampaignResponse.model_validate(campaign)
 
-    campaign_data = data.model_dump(exclude={"speaker_ids"})
-    if data.speaker_ids:
-        if data.target_type == "participant":
-            from app.modules.registration.models.participant import Participant
-            recipient_count_result = await db.execute(
-                select(func.count(Participant.id)).where(
-                    Participant.event_id == event.id,
-                    Participant.deleted_at.is_(None),
-                    Participant.id.in_(data.speaker_ids)
-                )
-            )
-            valid_count: int = recipient_count_result.scalar_one()
-            if valid_count == 0:
-                raise HTTPException(status_code=400, detail="No valid participants found for this event.")
-        else:
-            from app.modules.events.models.speaker import Speaker
-            recipient_count_result = await db.execute(
-                select(func.count(Speaker.id)).where(
-                    Speaker.event_id == event.id,
-                    Speaker.deleted_at.is_(None),
-                    Speaker.id.in_(data.speaker_ids)
-                )
-            )
-            valid_count: int = recipient_count_result.scalar_one()
-            if valid_count == 0:
-                raise HTTPException(status_code=400, detail="No valid speakers found for this event.")
-        campaign_data["speaker_id_list"] = ",".join(str(sid) for sid in data.speaker_ids)
-        campaign_data["total_recipients"] = valid_count
 
-    campaign = EmailCampaign(
-        event_id=event.id,
-        created_by=current_user.id,
-        **campaign_data
+@router.patch(
+    "/campaigns/{campaign_id}",
+    response_model=CampaignResponse,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
+async def update_campaign(
+    campaign_id: uuid.UUID,
+    data: CampaignUpdate,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CampaignResponse:
+    campaign, _, _ = await EventCampaignMutationService.update(
+        db,
+        event=event,
+        campaign_id=campaign_id,
+        payload=data,
+        actor=current_user,
     )
-    db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
     return CampaignResponse.model_validate(campaign)
@@ -966,25 +895,42 @@ async def delete_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an email campaign."""
-    result = await db.execute(
-        select(EmailCampaign).where(
-            EmailCampaign.id == campaign_id,
-            EmailCampaign.event_id == event.id,
-            EmailCampaign.deleted_at.is_(None),
+    _, outcome = await EventCampaignMutationService.archive(
+        db,
+        event=event,
+        campaign_id=campaign_id,
+        actor=current_user,
+    )
+    await db.commit()
+    return MessageResponse(
+        message=(
+            "Campaign is already archived."
+            if outcome == "ALREADY_ARCHIVED"
+            else "Campaign archived and remains recoverable."
         )
     )
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-        
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
-        if campaign.created_by != current_user.id:
-            raise HTTPException(status_code=403, detail="You do not have permission to delete this campaign.")
-            
-    campaign.deleted_at = datetime.now(timezone.utc)
-    campaign.deleted_by = current_user.id
+
+
+@router.post(
+    "/campaigns/{campaign_id}/restore",
+    response_model=CampaignResponse,
+    dependencies=[require_event_operation("communications.campaign.manage")],
+)
+async def restore_campaign(
+    campaign_id: uuid.UUID,
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CampaignResponse:
+    campaign, _ = await EventCampaignMutationService.restore(
+        db,
+        event=event,
+        campaign_id=campaign_id,
+        actor=current_user,
+    )
     await db.commit()
-    return MessageResponse(message="Campaign archived and remains recoverable.")
+    await db.refresh(campaign)
+    return CampaignResponse.model_validate(campaign)
 
 
 @router.get("/recipients", dependencies=[require_event_operation("communications.email.read")])
@@ -1299,7 +1245,11 @@ class SendSingleEmailRequest(BaseModel):
 
 email_router = APIRouter(prefix="/events/{event_id}/emails", tags=["emails"], dependencies=[require_event_feature("FEAT_EMAIL_NOTIFICATIONS")])
 
-@email_router.post("/send-single", response_model=MessageResponse)
+@email_router.post(
+    "/send-single",
+    response_model=MessageResponse,
+    dependencies=[require_event_operation("communications.email.send")],
+)
 async def send_single_email(
     event_id: uuid.UUID,
     payload: SendSingleEmailRequest,

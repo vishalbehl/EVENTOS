@@ -39,6 +39,7 @@ from app.modules.events.models.event import Event
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, FEATURE_DEFINITIONS
 from app.modules.billing.services.capability_service import CapabilityService
+from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.core.dependencies.feature_gate import enforce_org_operation
 from app.core.tenant_context import TenantContextGuard
 from app.modules.presentations.services import upload_service as presentation_upload_service
@@ -567,38 +568,61 @@ async def list_organizations(db: AsyncSession = Depends(get_db), current_user: U
 @router.get("/organizations/{org_id}")
 async def get_organization_detail(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Get full details for CRM Overview tab."""
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-        
-    sub = await _get_current_subscription(db, org_id, with_plan=True)
-    
-    health_stmt = select(OrganizationHealth).where(OrganizationHealth.organization_id == org_id)
-    health = (await db.execute(health_stmt)).scalar_one_or_none()
-    
-    return {
-        "id": org.id,
-        "name": org.name,
-        "slug": org.slug,
-        "domain": org.custom_domain,
-        "created_at": org.created_at,
-        "max_events": org.max_events,
-        "max_users": org.max_users,
-        "max_storage_gb": org.max_storage_gb,
-        "country": org.country,
-        "timezone": org.timezone,
-        "subscription": {
-            "plan": sub.plan.name if sub and sub.plan else "NONE",
-            "status": sub.status if sub else "TRIAL",
-            "current_period_end": sub.current_period_end if sub else None,
-            "stripe_customer_id": sub.stripe_customer_id if sub else None
-        },
-        "health": {
-            "score": health.health_score if health else None,
-            "status": health.status if health else "NOT_MEASURED",
-            "warnings": health.warnings if health else []
+    del current_user
+    async with TenantContextGuard.scoped(db, org_id):
+        org = await db.get(Organization, org_id)
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        sub = await _get_current_subscription(db, org_id, with_plan=True)
+        health_stmt = select(OrganizationHealth).where(OrganizationHealth.organization_id == org_id)
+        health = (await db.execute(health_stmt)).scalar_one_or_none()
+        max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")
+        max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
+        storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
+        resolved_limits = (max_events, max_users, storage_quota_mb)
+        availability = (
+            "AVAILABLE"
+            if all(value is not None for value in resolved_limits)
+            else "UNAVAILABLE"
+            if all(value is None for value in resolved_limits)
+            else "PARTIAL"
+        )
+
+        return {
+            "id": org.id,
+            "name": org.name,
+            "slug": org.slug,
+            "domain": org.custom_domain,
+            "created_at": org.created_at,
+            "max_events": max_events,
+            "max_users": max_users,
+            "max_storage_gb": (
+                storage_quota_mb / 1024 if storage_quota_mb is not None else None
+            ),
+            "commercial": {
+                "source": "CANONICAL_ENTITLEMENT_RESOLVER",
+                "availability": availability,
+                "limits": {
+                    "max_events": max_events,
+                    "max_users": max_users,
+                    "storage_quota_mb": storage_quota_mb,
+                },
+            },
+            "country": org.country,
+            "timezone": org.timezone,
+            "subscription": {
+                "plan": sub.plan.name if sub and sub.plan else None,
+                "status": sub.status if sub else "NOT_CONFIGURED",
+                "current_period_end": sub.current_period_end if sub else None,
+                "stripe_customer_id": sub.stripe_customer_id if sub else None
+            },
+            "health": {
+                "score": health.health_score if health else None,
+                "status": health.status if health else "NOT_MEASURED",
+                "warnings": health.warnings if health else []
+            }
         }
-    }
 
 
 @router.get("/organizations/{org_id}/features")
@@ -1079,69 +1103,36 @@ async def get_features_matrix(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_platform_admin)
 ):
-    """Get grouped feature catalog matrix for plan comparison."""
+    """Return the canonical catalogue grouped for typed plan assignment."""
+    del current_user
     stmt = select(FeatureCatalog).where(FeatureCatalog.is_active == True).order_by(
         FeatureCatalog.category_order.asc(),
         FeatureCatalog.feature_order.asc()
     )
     features = (await db.execute(stmt)).scalars().all()
-    
-    # Load default plans and enabled plan features to resolve limits/features dynamically
-    from app.modules.billing.models.subscription import SubscriptionPlan, PlanFeature
-    plans_stmt = select(SubscriptionPlan).where(SubscriptionPlan.name.in_(["Basic", "Professional", "Enterprise"]))
-    plans = (await db.execute(plans_stmt)).scalars().all()
-    plans_map = {p.name.upper(): p for p in plans}
-    
-    pf_stmt = select(PlanFeature).where(PlanFeature.enabled == True)
-    pf_results = (await db.execute(pf_stmt)).scalars().all()
-    enabled_plan_features = {(pf.plan_id, pf.feature_id) for pf in pf_results}
-    
-    categories = {}
+
+    categories: dict[str, dict[str, Any]] = {}
     for f in features:
-        cat = f.category
+        cat = f.category or "GENERAL"
         if cat not in categories:
             categories[cat] = {
                 "category": cat,
                 "category_name": cat.replace("_", " ").title(),
                 "features": []
             }
-            
-        def get_display_val(plan_name_key: str) -> str:
-            p = plans_map.get(plan_name_key)
-            if not p:
-                return fallback_val or "❌"
-            
-            # Resolve numerical limits dynamically
-            if f.key == "LIMIT_ORGANIZER_USERS":
-                return str(p.max_users) if p.max_users is not None else "Unlimited"
-            elif f.key == "LIMIT_REGISTRATIONS":
-                return f"Up to {p.max_registrations:,}" if p.max_registrations is not None else "Unlimited"
-            elif f.key == "LIMIT_SPEAKERS":
-                return f"Up to {p.max_speakers}" if p.max_speakers is not None else "Unlimited"
-            elif f.key == "LIMIT_SESSIONS":
-                return f"Up to {p.max_sessions}" if p.max_sessions is not None else "Unlimited"
-            elif f.key == "LIMIT_ROOMS":
-                return f"Up to {p.max_rooms}" if p.max_rooms is not None else "Unlimited"
-            elif f.key == "LIMIT_STORAGE":
-                return f"{p.storage_quota_mb // 1024} GB" if p.storage_quota_mb is not None else "Unlimited"
-            elif f.key == "FEAT_TICKET_CATEGORIES":
-                return str(p.max_ticket_categories) if p.max_ticket_categories is not None else "Unlimited"
-            elif f.key == "FEAT_BADGE_TEMPLATES":
-                return str(p.max_badge_templates) if p.max_badge_templates is not None else "Unlimited"
-            elif f.key == "FEAT_CERTIFICATE_TEMPLATES":
-                return str(p.max_certificate_templates) if p.max_certificate_templates is not None else "Unlimited"
-            
-            # Check toggled plan features
-            is_enabled = (p.id, f.id) in enabled_plan_features
-            return "✅" if is_enabled else "❌"
-            
+
         categories[cat]["features"].append({
             "key": f.key,
             "name": f.name,
             "description": f.description,
-            "display_basic": get_display_val("BASIC"),
-            "display_professional": get_display_val("PROFESSIONAL"),
-            "display_enterprise": get_display_val("ENTERPRISE")
+            "value_type": f.value_type,
+            "scope_type": f.scope_type,
+            "enforcement_mode": f.enforcement_mode,
+            "default_value": f.default_value,
+            "allowed_values": f.allowed_values or [],
+            "unit": f.unit,
+            "period": f.period,
+            "version": f.version,
         })
     return list(categories.values())
 
@@ -3608,87 +3599,6 @@ async def delete_organization_subscription(
 ):
     """Delete the active subscription, addons, and limits override for an organization (Super Admin)."""
     _governed_commercial_workflow_required("commercial-access-request")
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    subscriptions = (await db.execute(select(OrganizationSubscription).where(
-        OrganizationSubscription.organization_id == org_id
-    ))).scalars().all()
-    addons = (await db.execute(select(OrganizationAddon).where(
-        OrganizationAddon.organization_id == org_id
-    ))).scalars().all()
-    limits = (await db.execute(select(TenantLimit).where(
-        TenantLimit.organization_id == org_id
-    ))).scalars().all()
-    old_state = {
-        "organization": {
-            "plan": org.plan,
-            "plan_expires_at": org.plan_expires_at.isoformat() if org.plan_expires_at else None,
-            "max_events": org.max_events,
-            "max_users": org.max_users,
-            "max_storage_gb": org.max_storage_gb,
-        },
-        "subscriptions": [
-            {
-                "id": str(sub.id),
-                "plan_id": str(sub.plan_id) if sub.plan_id else None,
-                "status": sub.status,
-            }
-            for sub in subscriptions
-        ],
-        "addon_ids": [str(addon.id) for addon in addons],
-        "limits": {limit.limit_key: limit.limit_value for limit in limits},
-    }
-
-    # 1. Delete active subscription
-    await db.execute(delete(OrganizationSubscription).where(
-        OrganizationSubscription.organization_id == org_id
-    ))
-    
-    # 2. Delete organization addons
-    await db.execute(delete(OrganizationAddon).where(
-        OrganizationAddon.organization_id == org_id
-    ))
-    
-    # 3. Delete tenant limits overrides
-    await db.execute(delete(TenantLimit).where(
-        TenantLimit.organization_id == org_id
-    ))
-    
-    # 4. Reset Organization fields
-    org.plan = "trial"
-    org.plan_expires_at = None
-    org.max_events = 1
-    org.max_users = 2
-    org.max_storage_gb = 10
-        
-    db.add(ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="SUBSCRIPTION_REMOVED",
-        metadata_data={"reason": payload.reason, "by": str(current_user.id)}
-    ))
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="SUBSCRIPTION_REMOVED",
-        resource_type="organization",
-        resource_id=org_id,
-        old_state=old_state,
-        new_state={
-            "plan": org.plan,
-            "plan_expires_at": org.plan_expires_at.isoformat() if org.plan_expires_at else None,
-            "max_events": org.max_events,
-            "max_users": org.max_users,
-            "max_storage_gb": org.max_storage_gb,
-        },
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.commit()
-    return {"message": "Subscription removed successfully"}
 
 
 # ── Extend Organization Trial ─────────────────────────────────
@@ -4430,7 +4340,7 @@ class TypedFeatureAssignmentPayload(BaseModel):
     value_type: str = "BOOLEAN"
     value: Any = True
     scope_type: str = "EVENT"
-    enforcement_mode: str = "HARD"
+    enforcement_mode: Literal["HARD", "SOFT_WARNING", "METERED_OVERAGE"] = "HARD"
     hard_ceiling: Optional[int] = None
     allowed_values: Optional[List[str]] = None
     unit: Optional[str] = None
@@ -4571,6 +4481,55 @@ async def bulk_update_plan_features(
         unenforced = sorted(set(feature_keys) - valid_keys)
         if unenforced:
             raise HTTPException(status_code=422, detail={"code": "UNENFORCED_FEATURE_KEYS", "keys": unenforced})
+
+        requested_assignments = {
+            assignment.feature_key: assignment
+            for assignment in (payload.assignments or [])
+        }
+        def assignment_is_enabled(key: str) -> bool:
+            assignment = requested_assignments.get(key)
+            if assignment is None:
+                return True
+            value = assignment.value
+            if value is None or value is False or value == 0:
+                return False
+            if isinstance(value, str):
+                return value.upper() not in {
+                    "",
+                    "NONE",
+                    "DISABLED",
+                    "NOT_INCLUDED",
+                }
+            return True
+
+        enabled_keys = {key for key in feature_keys if assignment_is_enabled(key)}
+        dependency_errors = {
+            key: sorted(set(by_key[key].dependencies or []) - enabled_keys)
+            for key in enabled_keys
+            if set(by_key[key].dependencies or []) - enabled_keys
+        }
+        if dependency_errors:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "FEATURE_DEPENDENCIES_REQUIRED",
+                    "features": dependency_errors,
+                },
+            )
+        conflict_pairs = sorted({
+            tuple(sorted((key, conflict)))
+            for key in enabled_keys
+            for conflict in (by_key[key].conflicts or [])
+            if conflict in enabled_keys
+        })
+        if conflict_pairs:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "FEATURE_CONFLICT",
+                    "conflicts": [list(pair) for pair in conflict_pairs],
+                },
+            )
         
         plan_defaults = {
             "LIMIT_ORGANIZER_USERS": plan.max_users,

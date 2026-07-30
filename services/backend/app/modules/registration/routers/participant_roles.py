@@ -126,7 +126,10 @@ async def seed_default_roles(
                 is_active=True,
                 sort_order=r["sort_order"],
             ))
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────

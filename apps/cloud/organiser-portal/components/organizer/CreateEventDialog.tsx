@@ -27,6 +27,7 @@ import { useCreateEvent, useUpdateEvent } from "@/hooks/useEvents";
 import { CountryStateEntry, fetchCountryStates, getStatesForCountry } from "@/lib/country-states";
 import { EventSummary } from "@/types/backend";
 import { orgApi } from "@/components/organizer/org/org-api";
+import { useOrganizationLimitAccess } from "@/lib/capabilities";
 
 interface CreateEventDialogProps {
   isOpen: boolean;
@@ -111,10 +112,10 @@ function normalizePlan(plan: Record<string, any>): BillingPlan {
     tagline: String(plan.tagline ?? plan.subtitle ?? plan.description ?? ""),
     price: toNumber(plan.price ?? plan.amount ?? plan.base_price),
     currency: String(plan.currency ?? "INR"),
-    maxEvents: Number(plan.max_events ?? plan.limits?.max_events ?? plan.limits?.events ?? 1),
-    maxUsers: Number(plan.max_users ?? plan.limits?.max_users ?? plan.limits?.users ?? 0),
-    maxRegistrations: Number(plan.max_registrations ?? plan.limits?.max_registrations ?? plan.limits?.registrations ?? 0),
-    maxSpeakers: Number(plan.max_speakers ?? plan.limits?.max_speakers ?? plan.limits?.speakers ?? 0),
+    maxEvents: Number(plan.limits?.max_events ?? 0),
+    maxUsers: Number(plan.limits?.max_users ?? 0),
+    maxRegistrations: Number(plan.limits?.max_registrations ?? plan.max_registrations ?? 0),
+    maxSpeakers: Number(plan.limits?.max_speakers ?? plan.max_speakers ?? 0),
     features: [
       ...asArray<string>(plan.feature_highlights),
       ...asArray<string>(plan.features_preview),
@@ -163,6 +164,9 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
   const createEvent = useCreateEvent();
   const updateEvent = useUpdateEvent(eventToEdit?.id || "");
   const isEditing = Boolean(eventToEdit);
+  const eventLimitAccess = useOrganizationLimitAccess(
+    isEditing ? undefined : "max_events",
+  );
 
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0);
   const [loading, setLoading] = useState(false);
@@ -997,7 +1001,19 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                     ) : null}
 
                     {step === 3 ? (
-                      <Button disabled={loading} onClick={handleSaveEvent}>
+                      <Button
+                        disabled={
+                          loading
+                          || eventLimitAccess.loading
+                          || !eventLimitAccess.enabled
+                        }
+                        title={
+                          eventLimitAccess.enabled
+                            ? undefined
+                            : `Unavailable: ${(eventLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+                        }
+                        onClick={handleSaveEvent}
+                      >
                         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                         {isEditing ? "Save changes" : "Create event"}
                       </Button>

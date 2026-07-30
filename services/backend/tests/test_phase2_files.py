@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,9 +7,21 @@ from fastapi.testclient import TestClient
 
 from app.modules.files.models.file import Asset, AssetVersion, AssetTag, VirusScan
 from app.modules.files.services.file_service import FileService
+from app.core.tenant_context import TenantContextGuard
+
+
+@pytest_asyncio.fixture
+async def verified_tenant_context(db: AsyncSession, organization):
+    async with TenantContextGuard.scoped(db, organization.id):
+        yield
 
 @pytest.mark.asyncio
-async def test_file_upload_and_tagging(db: AsyncSession, organization, organizer):
+async def test_file_upload_and_tagging(
+    db: AsyncSession,
+    organization,
+    organizer,
+    verified_tenant_context,
+):
     org_id = organization.id
     user_id = organizer.id
     

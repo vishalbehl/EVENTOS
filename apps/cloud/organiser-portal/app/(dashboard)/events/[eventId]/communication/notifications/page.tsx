@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { apiGet, apiPost } from "@/lib/api-client";
-import { useEventCapabilities, useFeatureAccess, useOperationAccess } from "@/lib/capabilities";
+import { useEventCapabilities, useFeatureAccess, useLimitAccess, useOperationAccess } from "@/lib/capabilities";
 
 type EmailAnalytics = {
   total_campaigns: number;
@@ -76,6 +76,19 @@ export default function NotificationChannelsPage() {
   const [caseReference, setCaseReference] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
+  const recipientCount = recipients
+    .split(/[\n,]/)
+    .map(value => value.trim())
+    .filter(Boolean).length;
+  const deliveryLimitKey = sendChannel === "SMS"
+    ? "max_sms_per_event"
+    : sendChannel === "WHATSAPP"
+      ? "max_whatsapp_per_event"
+      : "max_push_per_event";
+  const deliveryLimit = useLimitAccess(
+    deliveryLimitKey,
+    Math.max(recipientCount, 1),
+  );
 
   const load = async () => {
     if (!email.enabled || !emailRead.enabled) {
@@ -145,6 +158,12 @@ export default function NotificationChannelsPage() {
   const queueDelivery = async () => {
     const values = recipients.split(/[\n,]/).map(value => value.trim()).filter(Boolean);
     if (!values.length || !message.trim() || reason.trim().length < 5) return;
+    if (!deliveryLimit.enabled) {
+      toast.error(
+        `Delivery capacity is unavailable: ${(deliveryLimit.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`,
+      );
+      return;
+    }
     setSending(true);
     try {
       await apiPost(`/events/${eventId}/notifications/channels/${sendChannel}/deliveries`, {
@@ -260,8 +279,28 @@ export default function NotificationChannelsPage() {
           </div>
           {(() => {
             const operation = sendChannel === "SMS" ? smsSend : sendChannel === "WHATSAPP" ? whatsappSend : pushSend;
-            const ready = Boolean(providerStatus?.channels[sendChannel]?.available && operation.enabled);
-            return <Button onClick={() => void queueDelivery()} disabled={!ready || sending || !recipients.trim() || !message.trim() || reason.trim().length < 5} className="mt-4">
+            const ready = Boolean(
+              providerStatus?.channels[sendChannel]?.available
+              && operation.enabled
+              && deliveryLimit.enabled
+            );
+            return <Button
+              onClick={() => void queueDelivery()}
+              disabled={
+                !ready
+                || deliveryLimit.loading
+                || sending
+                || !recipients.trim()
+                || !message.trim()
+                || reason.trim().length < 5
+              }
+              title={
+                deliveryLimit.enabled
+                  ? undefined
+                  : `Unavailable: ${(deliveryLimit.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+              }
+              className="mt-4"
+            >
               <Send className="mr-2 h-4 w-4" />{sending ? "Queuing…" : `Queue ${sendChannel}`}
             </Button>;
           })()}

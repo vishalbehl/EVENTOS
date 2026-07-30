@@ -288,7 +288,12 @@ export default function EventSettingsPage() {
       const res = await apiClient.post<{ url: string; venue_images?: string[] }>(
         `/events/${eventIdValue}/venue-images/upload`,
         formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+        }
       );
       
       const newImages = res.venue_images || [...form.venue_images, res.url];

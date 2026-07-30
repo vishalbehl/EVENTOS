@@ -3,8 +3,10 @@
 import { useMemo, useState } from "react";
 import { parseISO, format, differenceInMinutes, addMinutes, startOfDay } from "date-fns";
 import { Clock, MapPin, Users, AlertTriangle } from "lucide-react";
+import { useParams } from "next/navigation";
 import { cn, formatTimeInTZ } from "@/lib/utils";
 import { useSessionBuilderStore, BuilderSession } from "@/store/useSessionBuilderStore";
+import { useAssignSpeakerToSession } from "@/hooks/useSessionBuilder";
 import { Badge } from "@/components/ui/badge";
 
 const HOUR_WIDTH = 120; // px per hour
@@ -12,6 +14,9 @@ const ROW_HEIGHT = 86; // px per room row
 const LABEL_WIDTH = 200; // px for room name column
 
 export function TimelineBuilderView() {
+  const { eventId } = useParams();
+  const eventIdStr = eventId as string;
+  const { mutate: assignSpeaker } = useAssignSpeakerToSession(eventIdStr);
   const sessions = useSessionBuilderStore((s) => s.sessions);
   const rooms = useSessionBuilderStore((s) => s.rooms);
   const selectedDate = useSessionBuilderStore((s) => s.selectedDate);
@@ -83,6 +88,7 @@ export function TimelineBuilderView() {
                 key={room.id}
                 style={{ height: ROW_HEIGHT }}
                 className="flex border-b border-default/50 hover:bg-[color-mix(in_srgb,var(--text)_2%,transparent)] transition-colors relative group"
+                onDragOver={(e) => e.preventDefault()}
               >
                 {/* Room Label */}
                 <div
@@ -127,6 +133,17 @@ export function TimelineBuilderView() {
                       <div
                         key={session.id}
                         onClick={() => setSelectedSessionId(session.id)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          try {
+                            const payload = JSON.parse(e.dataTransfer.getData("application/json"));
+                            if (payload.type === "speaker") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              assignSpeaker({ sessionId: session.id, speaker: payload.data });
+                            }
+                          } catch (err) {}
+                        }}
                         style={{
                           left: leftPx,
                           width: widthPx,
@@ -173,3 +190,4 @@ export function TimelineBuilderView() {
     </div>
   );
 }
+

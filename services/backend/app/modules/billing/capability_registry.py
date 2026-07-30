@@ -105,10 +105,10 @@ FEATURE_DEFINITIONS: dict[str, dict[str, Any]] = {
     "FEAT_WEBHOOK_ACCESS": _feature("BOTH", ["/events/:eventId/developer"], operations=["developer.webhooks.manage"], metric="webhook_deliveries", owner="DEVELOPER"),
     "FEAT_THIRD_PARTY_INTEGRATIONS": _feature("BOTH", ["/events/:eventId/developer"], operations=["integrations.manage"], metric="integration_operations", owner="DEVELOPER", page_gate=False),
     "FEAT_SESSION_QUEUE": _feature("EVENT", ["/events/:eventId/sessions"], operations=["presentations.queue.manage"], page_gate=False),
-    "FEAT_SESSION_MANAGEMENT": _feature("EVENT", ["/events/:eventId/sessions"], operations=["sessions.manage"], metric="sessions"),
+    "FEAT_SESSION_MANAGEMENT": _feature("EVENT", ["/events/:eventId/sessions"], operations=["sessions.manage", "venue.rooms.manage"], metric="sessions"),
     "FEAT_COMMUNICATION_CENTER": _feature("EVENT", ["/events/:eventId/communication"], backend_mode="COMPOSITE", availability_note="The communication hub contains independently enforced email, campaign, announcement, and provider capabilities."),
     "FEAT_DATA_EXPORTS": _feature("EVENT", ["/events/:eventId/speakers/export"], operations=["exports.create"], metric="exports"),
-    "FEAT_VENUE_SYNC": _feature("EVENT", ["/events/:eventId/sessions/rooms"], operations=["venue.sync", "venue.rooms.manage", "venue.devices.manage"], metric="integration_operations", owner="OPERATIONS"),
+    "FEAT_VENUE_SYNC": _feature("EVENT", ["/events/:eventId/sessions/rooms"], operations=["venue.sync", "venue.devices.manage"], metric="integration_operations", owner="OPERATIONS", page_gate=False),
     "FEAT_DEDICATED_MANAGER": _feature("ORGANIZATION", ["/help-support"], operations=["support.dedicated_manager"], owner="SUPPORT"),
     "FEAT_SLA": _feature("ORGANIZATION", ["/help-support"], value_type="TIER", values=["STANDARD", "PRIORITY", "MISSION_CRITICAL"], operations=["support.sla.apply"], owner="SUPPORT"),
 }
@@ -146,7 +146,10 @@ OPERATION_ENFORCEMENT_SITES: dict[str, list[dict[str, str]]] = {
     "registration.import": [{"site": "modules/registration/routers/participants.py:participant_imports", "mode": "ENFORCE"}],
     "registration.confirmation_qr.manage": [{"site": "modules/registration/routers/participants.py:registration_confirmation_qr", "mode": "ENFORCE"}],
     "registration.checkin": [{"site": "modules/venue/routers/attendance.py:attendance_router", "mode": "ENFORCE"}],
-    "speakers.manage": [{"site": "modules/speakers/routers/speakers.py:speakers_router", "mode": "ENFORCE"}],
+    "speakers.manage": [
+        {"site": "modules/speakers/routers/speakers.py:speakers_router", "mode": "ENFORCE"},
+        {"site": "modules/speakers/routers/portal.py:speaker_portal_auth", "mode": "ENFORCE"},
+    ],
     "abstracts.submit": [{"site": "modules/speakers/routers/portal.py:abstract_submission_mutations", "mode": "ENFORCE"}],
     "abstracts.review": [{"site": "modules/speakers/routers/speakers.py:abstract_review_mutations", "mode": "ENFORCE"}],
     "communications.speaker.send": [{"site": "modules/speakers/routers/speakers.py:speaker_invitation_mutations", "mode": "ENFORCE"}],
@@ -154,13 +157,19 @@ OPERATION_ENFORCEMENT_SITES: dict[str, list[dict[str, str]]] = {
         {"site": "modules/speakers/routers/speakers.py:update_speaker", "mode": "ENFORCE"},
         {"site": "modules/speakers/routers/portal.py:speaker_profile_mutations", "mode": "ENFORCE"},
     ],
-    "presentations.upload": [{"site": "modules/presentations/routers/files.py:request_upload_url", "mode": "ENFORCE"}],
+    "presentations.upload": [
+        {"site": "modules/presentations/routers/files.py:request_upload_url", "mode": "ENFORCE"},
+        {"site": "modules/speakers/routers/portal.py:portal_upload_lifecycle", "mode": "ENFORCE"},
+    ],
     "presentations.versions.create": [
         {"site": "modules/presentations/routers/files.py:request_upload_url", "mode": "ENFORCE"},
         {"site": "modules/speakers/routers/portal.py:portal_request_upload_url", "mode": "ENFORCE"},
     ],
     "presentations.validate": [{"site": "modules/presentations/routers/files.py:file_review_mutations", "mode": "ENFORCE"}],
-    "eposters.manage": [{"site": "modules/presentations/routers/posters.py:posters_router", "mode": "ENFORCE"}],
+    "eposters.manage": [
+        {"site": "modules/presentations/routers/posters.py:posters_router", "mode": "ENFORCE"},
+        {"site": "modules/speakers/routers/portal.py:portal_poster_upload_lifecycle", "mode": "ENFORCE"},
+    ],
     "badges.templates.read": [{"site": "modules/registration/routers/print_templates.py:list_print_templates", "mode": "ENFORCE"}],
     "badges.templates.manage": [{"site": "modules/registration/routers/print_templates.py:_enforce_template_operation", "mode": "ENFORCE"}],
     "certificates.templates.read": [{"site": "modules/registration/routers/print_templates.py:list_print_templates", "mode": "ENFORCE"}],
@@ -184,7 +193,11 @@ OPERATION_ENFORCEMENT_SITES: dict[str, list[dict[str, str]]] = {
     "branding.colors.manage": [{"site": "modules/rbac/routers/events.py:update_event", "mode": "ENFORCE"}],
     "branding.fonts.manage": [{"site": "modules/rbac/routers/events.py:update_event", "mode": "ENFORCE"}],
     "branding.logo.manage": [{"site": "modules/rbac/routers/events.py:branding_uploads", "mode": "ENFORCE"}],
-    "developer.api.use": [{"site": "modules/developer/routers/developer.py:developer_router", "mode": "ENFORCE"}],
+    "developer.api.use": [
+        {"site": "modules/developer/routers/developer.py:developer_router", "mode": "ENFORCE"},
+        {"site": "modules/developer/services/developer_service.py:api_authentication", "mode": "ENFORCE"},
+        {"site": "modules/developer/services/developer_service.py:exchange_oauth_code", "mode": "ENFORCE"},
+    ],
     "developer.webhooks.manage": [{"site": "modules/notifications/routers/webhooks.py:webhooks_router", "mode": "ENFORCE"}],
     "integrations.manage": [{"site": "modules/platform/organization_console_router.py:integration_connection_mutations", "mode": "ENFORCE"}],
     "presentations.queue.manage": [{"site": "modules/presentations/routers/queue.py:queue_router", "mode": "ENFORCE"}],
@@ -367,6 +380,13 @@ LIMIT_ENFORCEMENT_SITES: dict[str, dict[str, Any]] = {
         "sites": [
             {"site": "modules/presentations/routers/files.py:request_upload_url", "mode": "RESERVE_CONSUME"},
             {"site": "modules/speakers/routers/portal.py:request_upload", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/rbac/routers/events.py:branding_uploads", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/rbac/routers/events.py:speaker_branding_uploads", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/rbac/routers/events.py:venue_image_uploads", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/speakers/routers/speaker_profiles.py:parse_cv", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/speakers/routers/speaker_profiles.py:parse_profile_template", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/registration/routers/registration_portal.py:public_registration_upload", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/speakers/routers/portal.py:portal_poster_upload_lifecycle", "mode": "RESERVE_CONSUME"},
         ],
     },
     "max_sms_per_event": {
@@ -402,12 +422,171 @@ LIMIT_ENFORCEMENT_SITES: dict[str, dict[str, Any]] = {
     },
     "max_devices_per_event": {
         "status": "ENFORCED",
-        "sites": [{"site": "modules/venue/routers/rooms_devices.py:create_device", "mode": "RESERVE_CONSUME"}],
+        "sites": [
+            {"site": "modules/venue/routers/rooms_devices.py:create_device", "mode": "RESERVE_CONSUME"},
+            {"site": "modules/registration/routers/printers.py:register_printer", "mode": "RESERVE_CONSUME"},
+        ],
     },
 }
 
 if set(LIMIT_ENFORCEMENT_SITES) != set(LIMIT_DEFINITIONS):
     raise RuntimeError("Canonical limit enforcement manifest is incomplete")
+
+# Portal quota controls are declared independently from authoritative backend
+# reservations. ACTION_GATE points to controls disabled from resolved remaining
+# capacity. SERVER_ONLY has no customer action, while READ_ONLY exposes status.
+PORTAL_LIMIT_CONTROL_SITES: dict[str, dict[str, Any]] = {
+    "max_events": {"mode": "ACTION_GATE", "sites": ["components/organizer/CreateEventDialog.tsx"]},
+    "max_users": {"mode": "ACTION_GATE", "sites": ["components/organizer/rbac/CreateUserDialog.tsx"]},
+    "max_event_team_members": {"mode": "ACTION_GATE", "sites": ["components/organizer/rbac/UserManagement.tsx"]},
+    "max_registrations": {"mode": "ACTION_GATE", "sites": ["components/organizer/registration/AddParticipantModal.tsx"]},
+    "max_speakers": {"mode": "ACTION_GATE", "sites": ["components/organizer/speakers/RegisterSpeakerDialog.tsx"]},
+    "max_sessions": {"mode": "ACTION_GATE", "sites": ["components/organizer/sessions/CreateSessionDialog.tsx"]},
+    "max_rooms": {"mode": "ACTION_GATE", "sites": ["components/organizer/rooms/CreateRoomDialog.tsx"]},
+    "max_ticket_categories": {"mode": "ACTION_GATE", "sites": ["components/organizer/registration/settings/RolesTab.tsx"]},
+    "max_badge_templates": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/registration/template-designer/page.tsx"]},
+    "max_certificate_templates": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/registration/template-designer/page.tsx"]},
+    "max_emails_per_event": {"mode": "ACTION_GATE", "sites": ["components/organizer/emails/campaign/CampaignList.tsx"]},
+    "storage_quota_mb": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/speakers/files/page.tsx"]},
+    "max_sms_per_event": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/communication/notifications/page.tsx"]},
+    "max_whatsapp_per_event": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/communication/notifications/page.tsx"]},
+    "max_push_per_event": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/communication/notifications/page.tsx"]},
+    "max_api_calls_per_month": {
+        "mode": "SERVER_ONLY",
+        "sites": [],
+        "reason": "API authentication reserves and consumes each request before dispatch.",
+    },
+    "max_webhook_deliveries_per_month": {
+        "mode": "SERVER_ONLY",
+        "sites": [],
+        "reason": "Webhook dispatch reserves each asynchronous delivery server-side.",
+    },
+    "max_integrations": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/developer/page.tsx"]},
+    "max_exports_per_event": {"mode": "ACTION_GATE", "sites": ["app/(dashboard)/events/[eventId]/design-studio/badges/page.tsx"]},
+    "max_devices_per_event": {
+        "mode": "READ_ONLY",
+        "sites": [],
+        "reason": "Organizer Portal exposes device readiness; creation is an Operations workflow.",
+    },
+}
+
+if set(PORTAL_LIMIT_CONTROL_SITES) != set(LIMIT_DEFINITIONS):
+    raise RuntimeError("Organizer Portal limit control manifest is incomplete")
+
+# Mutation routes that intentionally do not evaluate a commercial capability
+# must be explicit. This prevents new customer-domain writes from silently
+# bypassing the operation and limit registries while preserving authentication,
+# non-granting request, and Command Center policy workflows.
+MUTATION_CONTROL_EXEMPTIONS: dict[str, dict[str, str]] = {
+    "modules/developer/routers/developer.py:oauth_token_exchange": {
+        "mode": "SERVICE_ENFORCED",
+        "reason": "The one-time code exchange calls DeveloperService, which enforces developer.api.use.",
+    },
+    "modules/presentations/routers/storage.py:local_upload": {
+        "mode": "SIGNED_TRANSPORT",
+        "reason": "Internal local-storage transport accepts only a signed upload capability created after reservation.",
+    },
+    "modules/rbac/routers/events.py:clear_event_data": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Legacy bulk clear always directs operators to an approved lifecycle job.",
+    },
+    "modules/rbac/routers/events.py:upload_temp_venue_image": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Pre-contract storage is retired; event creation now uploads only after activation.",
+    },
+    "modules/rbac/routers/events.py:apply_plan_to_event": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Organizer Portal cannot grant plans or add-ons.",
+    },
+    "modules/rbac/routers/global_settings.py:update_global_settings": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Global platform configuration is super-admin policy, not a tenant entitlement.",
+    },
+    "modules/rbac/routers/organisations.py:signup": {
+        "mode": "AUTH_LIFECYCLE",
+        "reason": "Organization identity bootstrap precedes commercial activation.",
+    },
+    "modules/rbac/routers/organisations.py:accept_invite": {
+        "mode": "AUTH_LIFECYCLE",
+        "reason": "Accepts an existing tenant-scoped invitation and grants no commercial capability.",
+    },
+    "modules/rbac/routers/organisations.py:update_my_org": {
+        "mode": "CORE_GOVERNANCE",
+        "reason": "Organization identity metadata is a baseline tenant function.",
+    },
+    "modules/rbac/routers/organisations.py:update_member": {
+        "mode": "CORE_GOVERNANCE",
+        "reason": "Owner-authorized member governance does not create an additional seat.",
+    },
+    "modules/rbac/routers/organisations.py:remove_member": {
+        "mode": "CORE_GOVERNANCE",
+        "reason": "Owner-authorized removal reduces usage and cannot grant access.",
+    },
+    "modules/rbac/routers/organisations.py:platform_provision_org": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Super-admin tenant provisioning is a platform lifecycle operation.",
+    },
+    "modules/rbac/routers/organisations.py:platform_invite_org_member": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Command Center organization administration is privileged platform policy.",
+    },
+    "modules/rbac/routers/organisations.py:platform_update_org_member": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Command Center organization administration is privileged platform policy.",
+    },
+    "modules/rbac/routers/organisations.py:platform_remove_org_member": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Command Center organization administration is privileged platform policy.",
+    },
+    "modules/rbac/routers/organisations.py:platform_unassign_member_event": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "The privileged removal path reduces access and usage.",
+    },
+    "modules/rbac/routers/organisations.py:platform_update_org": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Super-admin organization lifecycle administration is platform policy.",
+    },
+    "modules/rbac/routers/organisations.py:impersonate": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Impersonation is governed privileged access, not a commercial capability.",
+    },
+    "modules/rbac/routers/organisations.py:calculate_price": {
+        "mode": "NON_GRANTING_COMMERCIAL_WORKFLOW",
+        "reason": "Pricing preview does not activate a plan, add-on, grant, or contract.",
+    },
+    "modules/rbac/routers/organisations.py:request_commercial_access": {
+        "mode": "NON_GRANTING_COMMERCIAL_WORKFLOW",
+        "reason": "Creates a pending request and cannot grant access without Command Center approval.",
+    },
+    "modules/rbac/routers/organisations.py:subscribe_organization": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Legacy self-subscription always directs the organizer to an approval request.",
+    },
+    "modules/rbac/routers/organisations.py:superadmin_upsert_feature_override": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Legacy Boolean override writes are retired in favor of typed dual approval.",
+    },
+    "modules/rbac/routers/rbac.py:create_role": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Global role definitions are super-admin platform policy.",
+    },
+    "modules/rbac/routers/rbac.py:toggle_role_permission": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Global permission definitions are super-admin platform policy.",
+    },
+    "modules/rbac/routers/rbac.py:delete_role": {
+        "mode": "COMMAND_CENTER_POLICY",
+        "reason": "Global role definitions are super-admin platform policy.",
+    },
+    "modules/rbac/routers/settings.py:reset_feature_toggles": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Event-local commercial toggles are retired.",
+    },
+    "modules/registration/routers/registrations.py:reset_registration_data": {
+        "mode": "GOVERNED_DENIAL",
+        "reason": "Registration deletion requires a previewed, approved lifecycle job.",
+    },
+}
 
 # Absolute safety bounds are code-owned enforcement policy, not commercial
 # allocations. Plans, add-ons, and overrides may grant less, but never more.
@@ -463,6 +642,8 @@ def registry_coverage() -> dict[str, Any]:
         "features": FEATURE_DEFINITIONS,
         "limits": LIMIT_DEFINITIONS,
         "limit_enforcement_sites": LIMIT_ENFORCEMENT_SITES,
+        "portal_limit_control_sites": PORTAL_LIMIT_CONTROL_SITES,
+        "mutation_control_exemptions": MUTATION_CONTROL_EXEMPTIONS,
         "platform_hard_ceilings": PLATFORM_HARD_CEILINGS,
         "catalog_limit_keys": CATALOG_LIMIT_KEYS,
         "operation_features": OPERATION_FEATURES,

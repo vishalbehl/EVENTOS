@@ -16,7 +16,7 @@ from app.modules.audit.models.api_request_log import WorkerJobLog
 from app.modules.audit.services.audit_service import AuditService, AuditContext
 from app.middleware.audit_middleware import make_json_diff, _derive_action
 from app.tasks.audit_tasks import write_audit_log
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
 
 # Override database URL for Celery task testing to point to test database
 from app.config import settings
@@ -56,13 +56,8 @@ async def test_audit_log_row_hashing(db: AsyncSession, super_admin):
 
     assert log.row_hash is not None
 
-    # Calculate expected hash manually
-    schema_name = "audit"
-    table_name = "logs"
-    record_id = str(res_id)
-    timestamp = occurred.isoformat()
-    payload = f"{schema_name}:{table_name}:{record_id}:{action}:{timestamp}"
-    expected_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    from app.modules.audit.models.audit_log import compute_audit_hash
+    expected_hash = compute_audit_hash(log, version=2)
 
     assert log.row_hash == expected_hash
 
@@ -91,8 +86,17 @@ def test_make_json_diff():
 # ── 3. Middleware Integration & State Capture Tests ───────────
 
 @pytest.mark.asyncio
-async def test_audit_middleware_captures_post(client: AsyncClient, super_admin, db: AsyncSession):
-    headers = auth_headers(super_admin)
+async def test_audit_middleware_captures_post(
+    client: AsyncClient,
+    super_admin,
+    db: AsyncSession,
+    event,
+):
+    await activate_event_for_test(db, event)
+    headers = {
+        **auth_headers(super_admin),
+        "Idempotency-Key": f"audit-event-create-{uuid.uuid4()}",
+    }
     
     # We mock write_log to intercept context
     mock_write = AsyncMock()

@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures/authenticated";
 
 test.describe("Phase 1 design system and shell", () => {
-  test("supports command search, density, theme, and accessible catalogue", async ({ authenticatedPage: page }) => {
+  test("supports command search, theme, and accessible catalogue", async ({ authenticatedPage: page }) => {
     await page.goto("/design-system");
     await expect(page.getByRole("heading", { name: "Command Center interface standards" })).toBeVisible();
     await page.getByRole("button", { name: "Open command search" }).first().click();
@@ -10,12 +10,10 @@ test.describe("Phase 1 design system and shell", () => {
     await expect(page.getByRole("option", { name: /Entitlements/ })).toBeVisible();
     await page.keyboard.press("Escape");
 
-    await page.getByRole("button", { name: "Appearance settings" }).click();
-    await page.getByRole("menuitemradio", { name: "Compact" }).click();
-    await expect(page.locator("html")).toHaveAttribute("data-density", "compact");
-
-    await page.getByRole("button", { name: "Appearance settings" }).click();
-    await page.getByRole("menuitemradio", { name: "Light" }).click();
+    const themeSwitch = page.getByRole("switch", { name: /Switch to (dark|light) theme/ });
+    await themeSwitch.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await page.getByRole("switch", { name: /Switch to light theme/ }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
     const results = await new AxeBuilder({ page }).analyze();

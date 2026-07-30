@@ -42,9 +42,9 @@ import {
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEvents } from "@/hooks/useEvents";
-import { apiPost } from "@/lib/api-client";
 import { PlanActivationTargetModal } from "@/components/organizer/billing/PlanActivationTargetModal";
 import { cn, downloadCSV, formatApiError, formatDateInTZ } from "@/lib/utils";
+import { useAuthStore } from "@/store/use-auth-store";
 
 const LazyAddonFeatureDetails = dynamic(
   () =>
@@ -203,7 +203,9 @@ function formatCurrency(amount: number | null | undefined, currency = "INR") {
 function formatMetricValue(metric: UsageMetric) {
   const used = metric.used ?? 0;
   if (metric.limit === null || metric.limit === undefined) {
-    return metric.unit ? `${used.toLocaleString()} ${metric.unit} / Unlimited` : "Unlimited";
+    return metric.unit
+      ? `${used.toLocaleString()} ${metric.unit} / Not configured`
+      : `${used.toLocaleString()} / Not configured`;
   }
 
   if (metric.unit) {
@@ -214,11 +216,18 @@ function formatMetricValue(metric: UsageMetric) {
 }
 
 function usageTone(used: number | null, limit: number | null) {
-  if (limit === null || limit === undefined || limit <= 0) {
+  if (limit === null || limit === undefined) {
     return {
-      bar: "from-emerald-400 to-teal-400",
-      text: "text-emerald-300",
+      bar: "from-slate-500 to-slate-400",
+      text: "text-[var(--muted)]",
       pct: 0,
+    };
+  }
+  if (limit <= 0) {
+    return {
+      bar: "from-red-500 to-rose-400",
+      text: "text-red-400",
+      pct: 100,
     };
   }
 
@@ -443,7 +452,9 @@ function normalizeAddon(raw: BillingApiRecord, cart: CartSummary) {
 }
 
 function normalizeCart(data: BillingApiRecord | undefined) {
-  const items = asArray<any>(data?.selected_addons ?? data?.addons ?? data?.line_items).filter(
+  const items = asArray<any>(
+    data?.selected_addons ?? data?.addons ?? data?.addons_breakdown ?? data?.line_items
+  ).filter(
     (item) => item?.type !== "plan"
   );
   return {
@@ -454,7 +465,7 @@ function normalizeCart(data: BillingApiRecord | undefined) {
       data?.plan_name,
     basePrice: toNumber(data?.base_price ?? data?.plan_price ?? data?.subtotal_before_addons) ?? 0,
     addons: items.map((item, index) => ({
-      id: String(item.id ?? item.key ?? item.name ?? index),
+      id: String(item.key ?? item.id ?? item.name ?? index),
       name: item.name ?? item.label ?? item.key ?? "Add-on",
       price: toNumber(item.price ?? item.amount ?? item.price_inr) ?? 0,
     })),
@@ -564,12 +575,34 @@ export function PlansAddonsManagement() {
   const historyQuery = useBillingHistory();
   const cartQuery = useBillingCart();
   const { data: userEvents } = useEvents();
+  const user = useAuthStore((state) => state.user);
 
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const selectPlan = useSelectPlan();
   const selectAddon = useSelectAddon();
   const removeAddon = useRemoveAddon();
   const checkout = useCheckout();
+
+  const commercialRequestPayload = (eventId?: string) => {
+    if (!cart.selectedPlanName) {
+      throw new Error("Select a plan before requesting access.");
+    }
+    if (!user?.email || !user.phone) {
+      throw new Error("Add an email and phone number to your profile before requesting commercial access.");
+    }
+    return {
+      event_id: eventId,
+      plan_name: cart.selectedPlanName,
+      addon_keys: cart.addons.map((addon) => addon.id),
+      billing_name: user.full_name || `${user.first_name} ${user.last_name}`.trim(),
+      billing_email: user.email,
+      billing_phone: user.phone,
+      gst_number: null,
+      reason: eventId
+        ? `Request selected commercial access for event ${eventId}`
+        : "Request selected commercial access for a new event",
+    };
+  };
 
   const currentPlan = useMemo(
     () => normalizeCurrentPlan(currentPlanQuery.data ?? {}),
@@ -783,8 +816,8 @@ export function PlansAddonsManagement() {
                               <p className={cn("mt-1 text-sm font-semibold", tone.text)}>{formatMetricValue(metric)}</p>
                             </div>
                             {metric.limit === null || metric.limit === undefined ? (
-                              <Badge variant="success" className="uppercase tracking-[0.16em]">
-                                Unlimited
+                              <Badge variant="outline" className="uppercase tracking-[0.16em]">
+                                Not configured
                               </Badge>
                             ) : (
                               <span className="text-[11px] font-black text-[var(--muted)]">
@@ -795,7 +828,7 @@ export function PlansAddonsManagement() {
                           <div className="mt-4 h-2 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--text)_8%,transparent)]">
                             <div
                               className={cn("h-full rounded-full bg-gradient-to-r", tone.bar)}
-                              style={{ width: metric.limit === null || metric.limit === undefined ? "100%" : `${tone.pct}%` }}
+                              style={{ width: metric.limit === null || metric.limit === undefined ? "0%" : `${tone.pct}%` }}
                             />
                           </div>
                         </div>
@@ -907,7 +940,7 @@ export function PlansAddonsManagement() {
                               </p>
                               <p className="mt-2 text-sm font-black text-[var(--text)]">
                                 {plan.limits[item.key] === null || plan.limits[item.key] === undefined
-                                  ? "Unlimited"
+                                  ? "Not configured"
                                   : `${plan.limits[item.key]?.toLocaleString()}${item.key === "storage" ? " GB" : ""}`}
                               </p>
                             </div>
@@ -1395,8 +1428,8 @@ export function PlansAddonsManagement() {
                         setTargetModalOpen(true);
                       } else {
                         try {
-                          await checkout.mutateAsync({});
-                          toast.success("Checkout request submitted successfully.");
+                          await checkout.mutateAsync(commercialRequestPayload());
+                          toast.success("Access request submitted for Command Center approval.");
                         } catch (error) {
                           toast.error(formatApiError(error, "Checkout failed."));
                         }
@@ -1420,11 +1453,8 @@ export function PlansAddonsManagement() {
             events={userEvents || []}
             onApplyToCurrentEvent={async (eventId: string) => {
               try {
-                await apiPost(`/events/${eventId}/apply-plan`, {
-                  plan_name: cart.selectedPlanName,
-                  addon_keys: cart.addons.map((a) => a.id),
-                });
-                toast.success("Plan entitlements applied to event!");
+                await checkout.mutateAsync(commercialRequestPayload(eventId));
+                toast.success("Access request submitted for Command Center approval.");
                 queryClient.invalidateQueries({ queryKey: ["events"] });
                 queryClient.invalidateQueries({ queryKey: ["event", eventId] });
                 queryClient.invalidateQueries({ queryKey: ["billing"] });
@@ -1438,8 +1468,8 @@ export function PlansAddonsManagement() {
             }}
             onCreateNewEvent={async () => {
               try {
-                await checkout.mutateAsync({});
-                toast.success("Checkout request submitted successfully.");
+                await checkout.mutateAsync(commercialRequestPayload());
+                toast.success("Access request submitted for Command Center approval.");
                 router.push("/events/new");
               } catch (error) {
                 toast.error(formatApiError(error, "Checkout failed."));

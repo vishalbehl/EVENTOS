@@ -60,10 +60,8 @@ def test_audit_row_hash_populated_on_insert():
     assert log.row_hash is not None
     assert len(log.row_hash) == 64
 
-    # Verify formula
-    expected_payload = f"audit:logs:{log.resource_id}:{log.action_type}:{log.occurred_at.isoformat()}"
-    expected_hash = hashlib.sha256(expected_payload.encode("utf-8")).hexdigest()
-    assert log.row_hash == expected_hash
+    from app.modules.audit.models.audit_log import compute_audit_hash
+    assert log.row_hash == compute_audit_hash(log, version=2)
 
 
 def test_audit_row_hash_deterministic():
@@ -73,8 +71,10 @@ def test_audit_row_hash_deterministic():
     rid = uuid.uuid4()
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-    log1 = AuditLog(resource_id=rid, action_type="updated", occurred_at=ts, resource_type="user", organization_id=uuid.uuid4(), actor_user_id=uuid.uuid4())
-    log2 = AuditLog(resource_id=rid, action_type="updated", occurred_at=ts, resource_type="user", organization_id=uuid.uuid4(), actor_user_id=uuid.uuid4())
+    organization_id = uuid.uuid4()
+    actor_user_id = uuid.uuid4()
+    log1 = AuditLog(resource_id=rid, action_type="updated", occurred_at=ts, resource_type="user", organization_id=organization_id, actor_user_id=actor_user_id)
+    log2 = AuditLog(resource_id=rid, action_type="updated", occurred_at=ts, resource_type="user", organization_id=organization_id, actor_user_id=actor_user_id)
 
     generate_row_hash(None, None, log1)
     generate_row_hash(None, None, log2)

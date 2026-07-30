@@ -1140,12 +1140,10 @@ async def ensure_admin_user():
                 if target_org.slug != "Eventos":
                     continue
                 
-                # Keep Organization legacy columns in sync with Enterprise plan (unlimited for super org)
+                # Platform status does not grant commercial capacity. The
+                # seeded subscription and its typed plan assignments are the
+                # authority used by the canonical resolver.
                 if ent_plan:
-                    target_org.plan = ent_plan.name.lower()
-                    target_org.max_events = 9999
-                    target_org.max_users = 9999
-                    target_org.max_storage_gb = 9999
                     target_org.is_platform_org = True
                 
                 sub_res = await db.execute(select(OrganizationSubscription).where(OrganizationSubscription.organization_id == target_org.id))
@@ -1163,9 +1161,6 @@ async def ensure_admin_user():
                     db.add(org_sub)
                     await db.flush()
                     
-                if org_sub:
-                    target_org.plan_expires_at = org_sub.current_period_end
-
             # 2. Check if any Super Admin exists
             result = await db.execute(select(User).where(User.role == "super_admin"))
             super_admin = result.first()

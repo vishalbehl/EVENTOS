@@ -101,6 +101,8 @@ export function EventTemplateControlPanel({
       else
         await updateMutation.mutateAsync({
           resourceId: String(editing.id),
+          version:
+            typeof editing.version === "number" ? editing.version : undefined,
           data: payload,
           reason,
           case_reference: caseReference,
@@ -123,6 +125,7 @@ export function EventTemplateControlPanel({
       const mutation = restore ? restoreMutation : archiveMutation;
       await mutation.mutateAsync({
         resourceId: String(item.id),
+        version: typeof item.version === "number" ? item.version : undefined,
         reason: why,
         case_reference: caseRef,
       });

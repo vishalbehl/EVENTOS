@@ -84,7 +84,9 @@ async def test_update_global_settings_super_admin_success(
     assert resp_reset.status_code == 200
 
     audit_result = await db.execute(
-        select(AuditLog).where(AuditLog.action_type == "GLOBAL_SETTINGS_UPDATED")
+        select(AuditLog)
+        .where(AuditLog.action_type == "GLOBAL_SETTINGS_UPDATED")
+        .order_by(AuditLog.occurred_at.asc())
     )
     audits = list(audit_result.scalars().all())
     assert len(audits) == 2

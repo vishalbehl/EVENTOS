@@ -137,13 +137,14 @@ export default function InternalAdminPageScreen() {
       <OrgCard>
         <OrgSectionTitle>Production rollout gate</OrgSectionTitle>
         <p className="mt-1 text-xs text-[var(--text-tertiary)]">
-          Shadow mode backfills immutable contracts for activated events and compares legacy activation results with canonical resolution. Enforcement requires a contract and a fresh matching comparison for every activated event.
+          Shadow mode backfills immutable contracts and compares legacy activation results with canonical resolution. The backend preflight also verifies catalogue coverage, current resolution, metering reconciliation, and provider readiness evidence.
         </p>
         {rollout.isError ? (
           <p className="mt-3 text-xs text-[var(--status-danger)]">Rollout evidence is unavailable. Enforcement controls remain unavailable.</p>
         ) : (
-          <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
+          <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-9">
             <OrgMetricCard label="Mode" value={rollout.data?.enforcement_enabled ? "ENFORCED" : rollout.data?.shadow_enabled ? "SHADOW" : "LEGACY"} />
+            <OrgMetricCard label="Preflight" value={rollout.data?.preflight.ready_for_enforcement ? "READY" : "BLOCKED"} />
             <OrgMetricCard label="Activated" value={rollout.data?.activated_events ?? 0} />
             <OrgMetricCard label="Contracts" value={rollout.data?.contracted_events ?? 0} />
             <OrgMetricCard label="Missing contracts" value={rollout.data?.missing_contracts ?? 0} />
@@ -170,10 +171,7 @@ export default function InternalAdminPageScreen() {
             disabled={
               updateRollout.isPending
               || rollout.data?.enforcement_enabled
-              || Boolean(rollout.data?.missing_contracts)
-              || (rollout.data?.activated_events ?? 0) !== (rollout.data?.comparisons.sample_size ?? 0)
-              || Boolean(rollout.data?.comparisons.diverged)
-              || Boolean(rollout.data?.comparisons.stale)
+              || !rollout.data?.preflight.ready_for_enforcement
             }
             className="rounded-lg bg-[var(--brand-primary)] px-3 py-2 text-xs font-bold text-[var(--primary-contrast)] disabled:opacity-40"
             onConfirm={({ reason }) => updateRollout.mutateAsync({ shadow_enabled: true, enforcement_enabled: true, reason }).then(() => undefined)}
@@ -191,6 +189,30 @@ export default function InternalAdminPageScreen() {
                 {item.event_id}: {!item.fresh ? "STALE COMPARISON" : JSON.stringify(item.differences)}
               </p>
             ))}
+          </div>
+        ) : null}
+        {rollout.data?.preflight.blockers.length ? (
+          <div className="mt-3 rounded-xl border border-[var(--status-danger)]/25 bg-[var(--status-danger-muted)] p-3">
+            <p className="text-xs font-bold text-[var(--status-danger)]">Promotion blockers</p>
+            <div className="mt-2 space-y-1">
+              {rollout.data.preflight.blockers.map((issue, index) => (
+                <p key={`${issue.code}-${issue.event_id ?? index}`} className="text-[11px] text-[var(--status-danger)]">
+                  <span className="font-mono font-bold">{issue.code}</span>: {issue.message}
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {rollout.data?.preflight.warnings.length ? (
+          <div className="mt-3 rounded-xl border border-[var(--status-warning)]/25 bg-[var(--status-warning-muted)] p-3">
+            <p className="text-xs font-bold text-[var(--status-warning)]">Operational warnings</p>
+            <div className="mt-2 space-y-1">
+              {rollout.data.preflight.warnings.map((issue, index) => (
+                <p key={`${issue.code}-${issue.event_id ?? index}`} className="text-[11px] text-[var(--status-warning)]">
+                  <span className="font-mono font-bold">{issue.code}</span>: {issue.message}
+                </p>
+              ))}
+            </div>
           </div>
         ) : null}
       </OrgCard>

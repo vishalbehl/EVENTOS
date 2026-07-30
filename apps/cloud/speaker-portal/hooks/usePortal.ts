@@ -194,7 +194,8 @@ export function useRequestPosterUploadUrl() {
   return useMutation({
     mutationFn: async ({ token, posterId, data }: { token: string; posterId: string; data: any }) => {
       const response = await apiClient.post(`/portal/poster/${posterId}/upload-url`, data, {
-        params: { token }
+        params: { token },
+        headers: { "Idempotency-Key": crypto.randomUUID() },
       });
       return response.data;
     },

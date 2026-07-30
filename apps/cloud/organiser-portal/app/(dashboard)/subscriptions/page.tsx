@@ -17,9 +17,8 @@ import {
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useAddons, useCurrentPlan, usePlans } from "@/hooks/useBilling";
+import { useAddons, useCheckout, useCurrentPlan, usePlans } from "@/hooks/useBilling";
 import { useEvents } from "@/hooks/useEvents";
-import { apiPost } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { orgApi } from "@/components/organizer/org/org-api";
@@ -36,6 +35,7 @@ import {
   CommercialPlanCard,
   type PlanActionVariant,
 } from "@/components/organizer/platform/CommercialCards";
+import { useAuthStore } from "@/store/use-auth-store";
 
 function asArray<T = Record<string, any>>(value: any): T[] {
   if (Array.isArray(value)) return value;
@@ -80,6 +80,7 @@ function formatDate(dateStr: string | null | undefined) {
 function ActivePlanPanel({ currentPlan }: { currentPlan: Record<string, any> | null }) {
   const plan = currentPlan?.plan ?? null;
   const usage = currentPlan?.usage ?? null;
+  const limits = currentPlan?.limits ?? {};
 
   const status = String(currentPlan?.status ?? "").toUpperCase();
   const isTrial = status === "TRIAL" || currentPlan?.status_reason === "PUBLIC_DEMO_SIGNUP" || status !== "ACTIVE";
@@ -91,17 +92,17 @@ function ActivePlanPanel({ currentPlan }: { currentPlan: Record<string, any> | n
     : (plan?.tagline ?? plan?.description ?? null);
 
   const eventsUsed = usage?.events?.used ?? 0;
-  const eventsMax = usage?.events?.max ?? plan?.max_events ?? 0;
+  const eventsMax = limits.max_events ?? usage?.events?.max ?? 0;
   const usagePercent = eventsMax > 0 ? Math.min((eventsUsed / eventsMax) * 100, 100) : 0;
   const isActive = status === "ACTIVE";
 
   const highlights: string[] = [
-    plan?.max_users !== undefined && plan?.max_users !== null ? `${plan.max_users} Team Member` : null,
-    plan?.max_registrations !== undefined && plan?.max_registrations !== null ? `${plan.max_registrations} Registrations` : null,
-    plan?.max_speakers !== undefined && plan?.max_speakers !== null ? `${plan.max_speakers} Speakers` : null,
-    plan?.max_sessions !== undefined && plan?.max_sessions !== null ? `${plan.max_sessions} Sessions` : null,
-    plan?.max_rooms !== undefined && plan?.max_rooms !== null ? `${plan.max_rooms} Room` : null,
-    plan?.storage_quota_mb !== undefined && plan?.storage_quota_mb !== null ? `${plan.storage_quota_mb >= 1024 ? Math.round(plan.storage_quota_mb / 1024) + " GB" : plan.storage_quota_mb + " MB"} Storage` : null,
+    limits.max_users != null ? `${limits.max_users} Team Member` : null,
+    limits.max_registrations != null ? `${limits.max_registrations} Registrations` : null,
+    limits.max_speakers != null ? `${limits.max_speakers} Speakers` : null,
+    limits.max_sessions != null ? `${limits.max_sessions} Sessions` : null,
+    limits.max_rooms != null ? `${limits.max_rooms} Room` : null,
+    limits.storage_quota_mb != null ? `${limits.storage_quota_mb >= 1024 ? Math.round(limits.storage_quota_mb / 1024) + " GB" : limits.storage_quota_mb + " MB"} Storage` : null,
   ].filter(Boolean) as string[];
 
   if (!currentPlan) return null;
@@ -254,10 +255,16 @@ function StickySummaryBar({
 export default function SubscriptionsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { data: currentPlan } = useCurrentPlan();
-  const { data: plansData } = usePlans();
-  const { data: addonsData } = useAddons();
-  const { data: userEvents } = useEvents();
+  const currentPlanQuery = useCurrentPlan();
+  const plansQuery = usePlans();
+  const addonsQuery = useAddons();
+  const eventsQuery = useEvents();
+  const currentPlan = currentPlanQuery.data;
+  const plansData = plansQuery.data;
+  const addonsData = addonsQuery.data;
+  const userEvents = eventsQuery.data;
+  const checkout = useCheckout();
+  const user = useAuthStore((state) => state.user);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailType, setDetailType] = useState<"plan" | "addon" | null>(null);
@@ -274,6 +281,7 @@ export default function SubscriptionsPage() {
       setDetailOpen(true);
     } catch (err) {
       console.error("Failed to fetch plan details", err);
+      toast.error("Plan details are unavailable. Please retry.");
     }
   };
 
@@ -285,6 +293,7 @@ export default function SubscriptionsPage() {
       setDetailOpen(true);
     } catch (err) {
       console.error("Failed to fetch addon details", err);
+      toast.error("Add-on details are unavailable. Please retry.");
     }
   };
 
@@ -313,12 +322,14 @@ export default function SubscriptionsPage() {
         isActive: plan.is_active !== false,
         subscribersLabel: plan.subscribers_count ? `${plan.subscribers_count} subscribers` : "Workspace ready",
         highlights: [
-          `${plan.max_users ?? "Unlimited"} team members`,
-          `${plan.max_registrations ?? "Unlimited"} registrations`,
-          `${plan.max_speakers ?? "Unlimited"} speakers`,
-          `${plan.max_sessions ?? "Unlimited"} sessions`,
-          `${plan.max_rooms ?? "Unlimited"} rooms`,
-          `${Math.round((Number(plan.storage_quota_mb ?? 0) || 0) / 1024) || 5} GB storage`,
+          `${plan.limits?.max_users ?? "Not configured"} team members`,
+          `${plan.limits?.max_registrations ?? "Not configured"} registrations`,
+          `${plan.limits?.max_speakers ?? "Not configured"} speakers`,
+          `${plan.limits?.max_sessions ?? "Not configured"} sessions`,
+          `${plan.limits?.max_rooms ?? "Not configured"} rooms`,
+          plan.limits?.storage_quota_mb != null
+            ? `${Math.round(Number(plan.limits.storage_quota_mb) / 1024)} GB storage`
+            : "Storage not configured",
         ],
         tierIndex: 0, // will be set by map index
       })).map((p, i) => ({ ...p, tierIndex: i })),
@@ -331,6 +342,7 @@ export default function SubscriptionsPage() {
         .filter((addon) => String(addon.addon_type || "PLAN").toUpperCase() === "PLAN")
         .map((addon) => ({
           id: String(addon.id ?? addon.key ?? addon.name),
+          key: String(addon.key ?? addon.id ?? addon.name),
           name: String(addon.name ?? "Add-on"),
           description: addon.short_description || addon.description || undefined,
           imageUrl: addon.image_url || undefined,
@@ -381,6 +393,25 @@ export default function SubscriptionsPage() {
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const selectedAddonItems = planAddons.filter((a) => selectedAddonIds.includes(a.id));
 
+  const commercialRequestPayload = (eventId?: string) => {
+    if (!selectedPlan) throw new Error("Select a plan before requesting access.");
+    if (!user?.email || !user.phone) {
+      throw new Error("Add an email and phone number to your profile before requesting commercial access.");
+    }
+    return {
+      event_id: eventId,
+      plan_name: selectedPlan.name,
+      addon_keys: selectedAddonItems.map((addon) => addon.key),
+      billing_name: user.full_name || `${user.first_name} ${user.last_name}`.trim(),
+      billing_email: user.email,
+      billing_phone: user.phone,
+      gst_number: null,
+      reason: eventId
+        ? `Request selected commercial access for event ${eventId}`
+        : "Request selected commercial access for a new event",
+    };
+  };
+
   const handleCreateNewEvent = () => {
     const params = new URLSearchParams();
     if (selectedPlanId) params.set("plan", selectedPlanId);
@@ -398,12 +429,8 @@ export default function SubscriptionsPage() {
 
   const handleApplyToCurrentEvent = async (eventId: string) => {
     try {
-      await apiPost(`/events/${eventId}/apply-plan`, {
-        plan_id: selectedPlanId,
-        plan_name: selectedPlan?.name,
-        addon_keys: selectedAddonIds,
-      });
-      toast.success("Plan entitlements applied successfully to event!");
+      await checkout.mutateAsync(commercialRequestPayload(eventId));
+      toast.success("Access request submitted for Command Center approval.");
       queryClient.invalidateQueries({ queryKey: ["events"] });
       queryClient.invalidateQueries({ queryKey: ["event", eventId] });
       queryClient.invalidateQueries({ queryKey: ["billing"] });
@@ -427,6 +454,43 @@ export default function SubscriptionsPage() {
       prev.includes(addonId) ? prev.filter((id) => id !== addonId) : [...prev, addonId]
     );
   };
+
+  const commercialQueries = [
+    currentPlanQuery,
+    plansQuery,
+    addonsQuery,
+    eventsQuery,
+  ];
+  if (commercialQueries.some((query) => query.isPending)) {
+    return (
+      <EnterprisePanel className="mt-4 p-8">
+        <div className="flex items-center gap-3 text-sm text-[var(--color-text-secondary)]">
+          <Activity className="h-5 w-5 animate-pulse text-[#C2F542]" />
+          Loading authoritative subscription, catalogue, and event data…
+        </div>
+      </EnterprisePanel>
+    );
+  }
+  if (commercialQueries.some((query) => query.isError)) {
+    return (
+      <EnterprisePanel className="mt-4 p-8">
+        <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+          Commercial data is unavailable
+        </p>
+        <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+          The portal could not verify your current plan, available plans, add-ons, or event targets. Nothing has been inferred as trial or empty.
+        </p>
+        <Button
+          className="mt-5"
+          onClick={() => {
+            void Promise.all(commercialQueries.map((query) => query.refetch()));
+          }}
+        >
+          Retry all commercial data
+        </Button>
+      </EnterprisePanel>
+    );
+  }
 
   return (
     <div className="space-y-8 pb-32 pt-4">

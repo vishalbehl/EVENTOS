@@ -16,7 +16,7 @@ import { useSessions } from "@/hooks/useSessions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
+import { CapabilityAction, useLimitAccess, useOperationAccess } from "@/lib/capabilities";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,7 @@ export default function FileMonitoringPage() {
   const eventIdStr = eventId as string;
   const uploadAccess = useOperationAccess("presentations.upload");
   const versionAccess = useOperationAccess("presentations.versions.create");
+  const storageAccess = useLimitAccess("storage_quota_mb");
 
   const [view, setView] = useState<FileReviewView>("dashboard");
   const [searchQuery, setSearchQuery] = useState("");
@@ -226,6 +227,22 @@ export default function FileMonitoringPage() {
 
     if (!selectedSpeakerId) {
       toast.error("Please select a session and speaker slot first.");
+      return;
+    }
+    const requiredMegabytes = Math.max(1, Math.ceil(file.size / (1024 * 1024)));
+    if (
+      !storageAccess.enabled
+      || (
+        storageAccess.limit?.remaining !== null
+        && (storageAccess.limit?.remaining ?? 0) < requiredMegabytes
+      )
+    ) {
+      toast.error(
+        storageAccess.reason === "QUOTA_EXHAUSTED"
+          ? `Storage quota exhausted. This upload requires ${requiredMegabytes} MB.`
+          : `Storage allowance is unavailable: ${(storageAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`,
+      );
+      event.target.value = "";
       return;
     }
     if (currentUploadedFileForUploadForm && !versionAccess.enabled) {
@@ -792,7 +809,14 @@ export default function FileMonitoringPage() {
                           onChange={handleFileUpload}
                           className="hidden"
                           accept=".pptx,.ppt,.pdf,.mp4,.mov"
-                          disabled={!selectedSpeakerId || uploading || uploadAccess.loading || !uploadAccess.enabled}
+                          disabled={
+                            !selectedSpeakerId
+                            || uploading
+                            || uploadAccess.loading
+                            || !uploadAccess.enabled
+                            || storageAccess.loading
+                            || !storageAccess.enabled
+                          }
                         />
                       </label>
                       
@@ -965,7 +989,15 @@ export default function FileMonitoringPage() {
                             onChange={handleFileUpload}
                             className="hidden"
                             accept=".pptx,.ppt,.pdf,.mp4,.mov"
-                            disabled={uploading || uploadAccess.loading || !uploadAccess.enabled || versionAccess.loading || !versionAccess.enabled}
+                            disabled={
+                              uploading
+                              || uploadAccess.loading
+                              || !uploadAccess.enabled
+                              || versionAccess.loading
+                              || !versionAccess.enabled
+                              || storageAccess.loading
+                              || !storageAccess.enabled
+                            }
                           />
                         </label>
                       </div>

@@ -112,7 +112,7 @@ async def test_require_feature_decorator_forbidden(db: AsyncSession, organizer):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.dependencies import get_current_user, get_db
-    from app.main import app as main_app
+    from app.main import fastapi_app as main_app
 
     app = FastAPI()
     # Register the main app exception handler

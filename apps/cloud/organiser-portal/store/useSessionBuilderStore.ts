@@ -18,6 +18,13 @@ export interface BuilderSpeaker {
   end_time?: string;
 }
 
+export interface BuilderTalk {
+  id: string;
+  title: string;
+  duration_minutes?: number;
+  speaker_names?: string[];
+}
+
 export interface BuilderSession {
   id: string;
   event_id: string;
@@ -35,6 +42,8 @@ export interface BuilderSession {
   speaker_count?: number;
   readiness_pct?: number;
   speakers?: BuilderSpeaker[];
+  talks?: BuilderTalk[];
+  registered_attendees?: number;
   track_id?: string | null;
   display_color?: string | null;
   sort_order?: number;
@@ -64,7 +73,7 @@ export interface BuilderTrack {
 }
 
 export interface SchedulingConflict {
-  type: "room_overlap" | "speaker_conflict" | "out_of_bounds";
+  type: "room_overlap" | "speaker_conflict" | "out_of_bounds" | "capacity_mismatch" | "travel_time" | "session_overflow" | "unassigned_moderator";
   session_ids: string[];
   speaker_id?: string | null;
   room_id?: string | null;
@@ -98,6 +107,7 @@ interface SessionBuilderState {
   isDirty: boolean;
   isSaving: boolean;
   lastSavedAt: Date | null;
+  zoomLevel: number; // 1 = 120px/hr, 0.5 = 60px/hr, 2 = 240px/hr
 
   // Undo / Redo history stacks (max 50)
   history: SnapshotState[];
@@ -130,6 +140,11 @@ interface SessionBuilderState {
   removeSpeakerFromSession: (sessionId: string, speakerId: string) => void;
   deleteSession: (sessionId: string) => void;
   addSession: (session: BuilderSession) => void;
+  updateSpeaker: (speakerId: string, patch: Partial<BuilderSpeaker>) => void;
+  deleteSpeaker: (speakerId: string) => void;
+  addRoom: (room: BuilderRoom) => void;
+  updateRoom: (roomId: string, patch: Partial<BuilderRoom>) => void;
+  deleteRoom: (roomId: string) => void;
 
   // History & Save
   pushHistory: () => void;
@@ -138,6 +153,7 @@ interface SessionBuilderState {
   markSaved: () => void;
   setIsSaving: (saving: boolean) => void;
   recomputeConflicts: () => void;
+  setZoomLevel: (zoom: number) => void;
 }
 
 const MAX_HISTORY = 50;
@@ -162,13 +178,17 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
   isDirty: false,
   isSaving: false,
   lastSavedAt: null,
+  zoomLevel: 1,
 
   history: [],
   future: [],
 
   setSnapshot: (data) => {
-    const dates = data.sessions.map((s) => s.start_time.split("T")[0]).sort();
-    const defaultDate = dates[0] || data.event_start_date?.split("T")[0] || formatLocalDate(new Date());
+    const dates = data.sessions
+      .filter((s) => s.start_time)
+      .map((s) => s.start_time.split("T")[0].split(" ")[0])
+      .sort();
+    const defaultDate = dates[0] || data.event_start_date?.split("T")[0]?.split(" ")[0] || formatLocalDate(new Date());
 
     set({
       sessions: data.sessions,
@@ -351,6 +371,50 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
     get().recomputeConflicts();
   },
 
+  addRoom: (room) => {
+    set((state) => ({
+      rooms: [...state.rooms, room],
+    }));
+  },
+
+  updateRoom: (roomId, patch) => {
+    set((state) => ({
+      rooms: state.rooms.map((r) =>
+        r.id === roomId ? { ...r, ...patch } : r
+      ),
+    }));
+  },
+
+  updateSpeaker: (speakerId, patch) => {
+    set((state) => ({
+      unscheduledSpeakers: state.unscheduledSpeakers.map((sp) =>
+        sp.id === speakerId ? { ...sp, ...patch } : sp
+      ),
+      sessions: state.sessions.map(s => ({
+        ...s,
+        speakers: (s.speakers || []).map(sp => sp.id === speakerId ? { ...sp, ...patch } : sp)
+      }))
+    }));
+  },
+
+  deleteSpeaker: (speakerId) => {
+    set((state) => ({
+      unscheduledSpeakers: state.unscheduledSpeakers.filter((sp) => sp.id !== speakerId),
+      sessions: state.sessions.map(s => ({
+        ...s,
+        speakers: (s.speakers || []).filter(sp => sp.id !== speakerId),
+        speaker_count: (s.speakers || []).filter(sp => sp.id !== speakerId).length
+      }))
+    }));
+  },
+
+  deleteRoom: (roomId) => {
+    set((state) => ({
+      rooms: state.rooms.filter((r) => r.id !== roomId),
+      sessions: state.sessions.map(s => s.room_id === roomId ? { ...s, room_id: null, room_name: null } : s)
+    }));
+  },
+
   markSaved: () =>
     set({
       isDirty: false,
@@ -359,6 +423,8 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
     }),
 
   setIsSaving: (isSaving) => set({ isSaving }),
+  
+  setZoomLevel: (zoom) => set({ zoomLevel: zoom }),
 
   recomputeConflicts: () => {
     const { sessions } = get();
@@ -396,7 +462,7 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
       }
     });
 
-    // Speaker double booking check
+    // Speaker double booking check & Travel Time
     const speakerSessionsMap: Record<string, BuilderSession[]> = {};
     sessions.forEach((s) => {
       (s.speakers || []).forEach((spk) => {
@@ -406,6 +472,9 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
     });
 
     Object.entries(speakerSessionsMap).forEach(([speakerId, spkSess]) => {
+      // Sort sessions by start time
+      spkSess.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
       for (let i = 0; i < spkSess.length; i++) {
         for (let j = i + 1; j < spkSess.length; j++) {
           const a = spkSess[i];
@@ -415,18 +484,71 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
           const startB = new Date(b.start_time).getTime();
           const endB = new Date(b.end_time).getTime();
 
+          const speakerName = a.speakers?.find((sp) => sp.id === speakerId)?.full_name || 'Speaker';
+
           if (startA < endB && endA > startB) {
-            const speakerName = a.speakers?.find((sp) => sp.id === speakerId)?.full_name || "Speaker";
             conflicts.push({
-              type: "speaker_conflict",
+              type: 'speaker_conflict',
               session_ids: [a.id, b.id],
               speaker_id: speakerId,
-              description: `${speakerName} double-booked between '${a.name}' and '${b.name}'`,
-              severity: "error",
+              description: `${speakerName} is double-booked between '${a.name}' and '${b.name}'`,
+              severity: 'error',
+            });
+          } else if (a.room_id !== b.room_id && startB - endA < 15 * 60000 && startB >= endA) {
+            // Less than 15 mins travel time between different rooms
+            conflicts.push({
+              type: 'travel_time',
+              session_ids: [a.id, b.id],
+              speaker_id: speakerId,
+              description: `${speakerName} has less than 15m to travel between '${a.name}' and '${b.name}'`,
+              severity: 'warning',
             });
           }
         }
       }
+    });
+
+    // Session overflow & Capacity & Moderator
+    const rooms = get().rooms;
+    sessions.forEach(s => {
+       // Session overflow
+       const start = new Date(s.start_time).getTime();
+       const end = new Date(s.end_time).getTime();
+       const totalTalkMins = (s.talks || []).reduce((acc, t) => acc + (t.duration_minutes || 0), 0);
+       const sessionMins = (end - start) / 60000;
+       
+       if (totalTalkMins > sessionMins) {
+          conflicts.push({
+             type: 'session_overflow',
+             session_ids: [s.id],
+             description: `Total talk time (${totalTalkMins}m) exceeds session duration (${sessionMins}m)`,
+             severity: 'warning'
+          });
+       }
+
+       // Capacity mismatch
+       if (s.room_id) {
+          const room = rooms.find(r => r.id === s.room_id);
+          if (room && room.capacity && s.registered_attendees && s.registered_attendees > room.capacity) {
+             conflicts.push({
+                type: 'capacity_mismatch',
+                session_ids: [s.id],
+                room_id: s.room_id,
+                description: `Registered attendees (${s.registered_attendees}) exceeds room capacity (${room.capacity})`,
+                severity: 'warning'
+             });
+          }
+       }
+
+       // Unassigned moderator
+       if (s.session_type === 'PANEL' && (!s.speakers || s.speakers.length === 0)) {
+           conflicts.push({
+               type: 'unassigned_moderator',
+               session_ids: [s.id],
+               description: `Panel session '${s.name}' requires at least one speaker/moderator`,
+               severity: 'warning'
+           });
+       }
     });
 
     set({ conflicts });

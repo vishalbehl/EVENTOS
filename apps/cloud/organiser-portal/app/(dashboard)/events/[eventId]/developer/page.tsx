@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { apiClient, apiGet } from "@/lib/api-client";
-import { useOperationAccess } from "@/lib/capabilities";
+import { useLimitAccess, useOperationAccess } from "@/lib/capabilities";
 
 const WEBHOOK_EVENTS = [
   "file.uploaded", "file.approved", "file.rejected", "speaker.created", "speaker.checked_in",
@@ -47,6 +47,7 @@ export default function EventDeveloperPage() {
   const queryClient = useQueryClient();
   const webhookAccess = useOperationAccess("developer.webhooks.manage");
   const integrationAccess = useOperationAccess("integrations.manage");
+  const integrationLimit = useLimitAccess("max_integrations");
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
   const [secret, setSecret] = useState("");
@@ -170,8 +171,28 @@ export default function EventDeveloperPage() {
               <option value="">Select a provider</option>
               {(providers.data ?? []).filter(provider => !(connections.data ?? []).some(connection => connection.provider_id === provider.id)).map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
             </select>
-            <Button onClick={() => createConnection.mutate()} disabled={!selectedProviderId || createConnection.isPending}><Plus className="mr-2 h-4 w-4" />Activate provider</Button>
+            <Button
+              onClick={() => createConnection.mutate()}
+              disabled={
+                !selectedProviderId
+                || createConnection.isPending
+                || integrationLimit.loading
+                || !integrationLimit.enabled
+              }
+              title={
+                integrationLimit.enabled
+                  ? undefined
+                  : `Unavailable: ${(integrationLimit.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+              }
+            >
+              <Plus className="mr-2 h-4 w-4" />Activate provider
+            </Button>
           </div>
+          {!integrationLimit.loading && !integrationLimit.enabled ? (
+            <p className="text-xs text-amber-200">
+              Integration capacity is unavailable: {reasonLabel(integrationLimit.reason)}.
+            </p>
+          ) : null}
           {(providers.isError || connections.isError) ? <p className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-xs text-rose-100">Integration records are unavailable; this is not an empty state.</p> : null}
           <div className="space-y-3">{(connections.data ?? []).map(connection => <div key={connection.id} className="flex items-center justify-between rounded-2xl border border-white/10 p-4"><div><p className="font-semibold">{connection.provider_name}</p><p className="mt-1 text-xs text-muted">{connection.is_active ? "Active" : "Inactive"} · version {connection.version}</p></div><Button variant="outline" size="sm" onClick={() => void toggleConnection(connection)}>{connection.is_active ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}{connection.is_active ? "Deactivate" : "Reactivate"}</Button></div>)}</div>
           {!connections.isLoading && !connections.isError && (connections.data?.length ?? 0) === 0 ? <p className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs text-muted">No integration connections configured.</p> : null}

@@ -26,6 +26,15 @@ class OrganizationSetting(Base):
 
 class FeatureFlag(Base):
     __tablename__ = "feature_flags"
+    __table_args__ = (
+        Index(
+            "uq_platform_feature_flags_org_key",
+            "organization_id",
+            "flag_key",
+            unique=True,
+        ),
+        {"schema": "platform"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)

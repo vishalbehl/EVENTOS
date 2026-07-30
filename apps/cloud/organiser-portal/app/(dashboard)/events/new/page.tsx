@@ -38,6 +38,7 @@ import {
   CommercialAddonCard,
   type PlanActionVariant,
 } from "@/components/organizer/platform/CommercialCards";
+import { useOrganizationLimitAccess } from "@/lib/capabilities";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -134,10 +135,10 @@ function normalizePlan(plan: Record<string, any>): BillingPlan {
     tagline: String(plan.tagline ?? plan.subtitle ?? plan.description ?? ""),
     price: toNumber(plan.price ?? plan.amount ?? plan.base_price),
     currency: String(plan.currency ?? "INR"),
-    maxEvents: Number(plan.max_events ?? plan.limits?.max_events ?? plan.limits?.events ?? 1),
-    maxUsers: Number(plan.max_users ?? plan.limits?.max_users ?? plan.limits?.users ?? 0),
-    maxRegistrations: Number(plan.max_registrations ?? plan.limits?.max_registrations ?? plan.limits?.registrations ?? 0),
-    maxSpeakers: Number(plan.max_speakers ?? plan.limits?.max_speakers ?? plan.limits?.speakers ?? 0),
+    maxEvents: Number(plan.limits?.max_events ?? 0),
+    maxUsers: Number(plan.limits?.max_users ?? 0),
+    maxRegistrations: Number(plan.limits?.max_registrations ?? plan.max_registrations ?? 0),
+    maxSpeakers: Number(plan.limits?.max_speakers ?? plan.max_speakers ?? 0),
     features: [
       ...asArray<string>(plan.feature_highlights),
       ...asArray<string>(plan.features_preview),
@@ -213,6 +214,7 @@ function ReviewSection({ title, children }: { title: string; children: React.Rea
 // ─── Inner component that uses useSearchParams ────────────────────────────────
 
 function NewEventPageInner() {
+  const eventLimitAccess = useOrganizationLimitAccess("max_events");
   const router = useRouter();
   const searchParams = useSearchParams();
   const createEvent = useCreateEvent();
@@ -221,7 +223,9 @@ function NewEventPageInner() {
   const [globalTimezone, setGlobalTimezone] = useState("Asia/Kolkata");
   const [countryStates, setCountryStates] = useState<CountryStateEntry[]>([]);
   const [formData, setFormData] = useState(initialFormData);
-  const [isUploadingTempImage, setIsUploadingTempImage] = useState(false);
+  const [pendingVenueImages, setPendingVenueImages] = useState<
+    Array<{ file: File; previewUrl: string }>
+  >([]);
   const [orgContext, setOrgContext] = useState<OrgContext | null>(null);
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [addons, setAddons] = useState<BillingAddon[]>([]);
@@ -446,36 +450,24 @@ function NewEventPageInner() {
   const handleUploadTempImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
-    setIsUploadingTempImage(true);
     const file = files[0];
-    const formDataObj = new FormData();
-    formDataObj.append("file", file);
-
-    try {
-      const res = await apiClient.post<{ url: string }>(
-        "/events/venue-images/upload-temp",
-        formDataObj,
-        { headers: { "Content-Type": "multipart/form-data" } }
-      );
-      setFormData((current) => ({
-        ...current,
-        venue_images: [...current.venue_images, res.url],
-      }));
-      toast.success("Venue image uploaded successfully.");
-    } catch (err: any) {
-      console.error(err);
-      toast.error(err?.message || "Failed to upload venue image.");
-    } finally {
-      setIsUploadingTempImage(false);
+    if (!file.type.startsWith("image/")) {
+      toast.error("Select a valid image file.");
+      return;
     }
+    setPendingVenueImages((current) => [
+      ...current,
+      { file, previewUrl: URL.createObjectURL(file) },
+    ]);
+    e.target.value = "";
   };
 
   const handleRemoveImage = (index: number) => {
-    setFormData((current) => ({
-      ...current,
-      venue_images: current.venue_images.filter((_, idx) => idx !== index),
-    }));
+    setPendingVenueImages((current) => {
+      const removed = current[index];
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((_, idx) => idx !== index);
+    });
     toast.success("Venue image removed.");
   };
 
@@ -483,13 +475,17 @@ function NewEventPageInner() {
     if (!selectedPlan) {
       throw new Error("Select a plan before requesting access.");
     }
+    const requestPhone = billingPhone || formData.organizer_details.phone;
+    if (!billingName || !billingEmail || !requestPhone) {
+      throw new Error("Add the billing name, email, and phone before requesting access.");
+    }
 
     const result = await orgApi.requestCommercialAccess({
       plan_name: selectedPlan.name,
       addon_keys: selectedAddons,
       billing_name: billingName,
       billing_email: billingEmail,
-      billing_phone: billingPhone || formData.organizer_details.phone || "NA",
+      billing_phone: requestPhone,
       gst_number: null,
       reason: `Request access to ${selectedPlan.name} for a new event workspace`,
     });
@@ -544,8 +540,34 @@ function NewEventPageInner() {
       }
 
       await orgApi.activateEvent(String(created.id), resolvedSubscriptionId);
+      const failedVenueUploads: string[] = [];
+      for (const image of pendingVenueImages) {
+        const upload = new FormData();
+        upload.append("file", image.file);
+        try {
+          await apiClient.post(
+            `/events/${created.id}/venue-images/upload`,
+            upload,
+            {
+              headers: {
+                "Content-Type": "multipart/form-data",
+                "Idempotency-Key": crypto.randomUUID(),
+              },
+            }
+          );
+          URL.revokeObjectURL(image.previewUrl);
+        } catch {
+          failedVenueUploads.push(image.file.name);
+        }
+      }
       setSuccessEvent(created);
-      toast.success("Event created successfully.");
+      if (failedVenueUploads.length > 0) {
+        toast.warning(
+          `Event created, but ${failedVenueUploads.length} venue image upload(s) failed. Add them from Event Planning.`
+        );
+      } else {
+        toast.success("Event created successfully.");
+      }
     } catch (error: any) {
       toast.error(error?.message || "Failed to create event.");
     } finally {
@@ -886,11 +908,11 @@ function NewEventPageInner() {
                     <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                       Upload images representing the venue. These will render in your portals.
                     </p>
-                    {formData.venue_images.length > 0 ? (
+                    {pendingVenueImages.length > 0 ? (
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-                        {formData.venue_images.map((img, idx) => (
+                        {pendingVenueImages.map((image, idx) => (
                           <div key={idx} className="relative rounded-xl overflow-hidden border border-[var(--color-border)] aspect-video bg-black/40">
-                            <img src={img} alt={`Venue ${idx + 1}`} className="h-full w-full object-cover" />
+                            <img src={image.previewUrl} alt={`Venue ${idx + 1}`} className="h-full w-full object-cover" />
                             <button
                               type="button"
                               onClick={() => handleRemoveImage(idx)}
@@ -912,19 +934,13 @@ function NewEventPageInner() {
                       accept="image/*"
                       className="hidden"
                       onChange={handleUploadTempImage}
-                      disabled={isUploadingTempImage}
                     />
                     <Button
                       type="button"
-                      disabled={isUploadingTempImage}
                       onClick={() => document.getElementById("temp-venue-image-upload-input")?.click()}
                       className="h-12 px-6 rounded-xl border border-[rgba(224,255,0,0.2)] bg-[rgba(224,255,0,0.06)] hover:bg-[rgba(224,255,0,0.1)] text-[var(--color-primary-mid)] font-semibold flex items-center gap-2 disabled:opacity-50"
                     >
-                      {isUploadingTempImage ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Upload className="h-4 w-4" />
-                      )}
+                      <Upload className="h-4 w-4" />
                       Upload Venue Image
                     </Button>
                   </div>
@@ -1056,9 +1072,9 @@ function NewEventPageInner() {
                             isPopular: plan.popular,
                             isActive: true,
                             highlights: [
-                              `${plan.maxUsers || "Unlimited"} team members`,
-                              `${plan.maxRegistrations || "Unlimited"} registrations`,
-                              `${plan.maxSpeakers || "Unlimited"} speakers`,
+                              `${plan.maxUsers || "Not configured"} team members`,
+                              `${plan.maxRegistrations || "Not configured"} registrations`,
+                              `${plan.maxSpeakers || "Not configured"} speakers`,
                             ],
                           }}
                           index={idx}
@@ -1103,9 +1119,9 @@ function NewEventPageInner() {
                             isPopular: plan.popular,
                             isActive: true,
                             highlights: [
-                              `${plan.maxUsers || "Unlimited"} team members`,
-                              `${plan.maxRegistrations || "Unlimited"} registrations`,
-                              `${plan.maxSpeakers || "Unlimited"} speakers`,
+                              `${plan.maxUsers || "Not configured"} team members`,
+                              `${plan.maxRegistrations || "Not configured"} registrations`,
+                              `${plan.maxSpeakers || "Not configured"} speakers`,
                             ],
                           }}
                           index={idx}
@@ -1238,7 +1254,11 @@ function NewEventPageInner() {
                       <Zap className="h-5 w-5 text-[#C2F542] shrink-0" />
                       <div>
                         <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">
-                          {hasActiveSubscription ? `Active Subscription: ${activePlanName || "Pro Plan"}` : "Entitlement available"}
+                          {hasActiveSubscription
+                            ? activePlanName
+                              ? `Active subscription: ${activePlanName}`
+                              : "Active subscription name unavailable"
+                            : "Entitlement available"}
                         </p>
                         <p className="text-[11px] text-[var(--color-text-muted)]">
                           {hasActiveSubscription
@@ -1253,9 +1273,9 @@ function NewEventPageInner() {
                   <div className="space-y-4">
                     <div className="sticky top-6">
                       <div className="rounded-2xl overflow-hidden border border-[var(--color-border)] aspect-[4/5] bg-[#0a0a0f]">
-                        {formData.venue_images.length > 0 ? (
+                        {pendingVenueImages.length > 0 ? (
                           <img
-                            src={formData.venue_images[0]}
+                            src={pendingVenueImages[0].previewUrl}
                             alt="Venue"
                             className="h-full w-full object-cover"
                           />
@@ -1339,7 +1359,16 @@ function NewEventPageInner() {
                 )}
                 {((hasActiveSubscription && step === 2) || (!hasActiveSubscription && step === 4)) && (
                   <Button
-                    disabled={loading}
+                    disabled={
+                      loading
+                      || eventLimitAccess.loading
+                      || !eventLimitAccess.enabled
+                    }
+                    title={
+                      eventLimitAccess.enabled
+                        ? undefined
+                        : `Unavailable: ${(eventLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+                    }
                     onClick={handleCreateEvent}
                     className="rounded-xl px-6 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold"
                   >

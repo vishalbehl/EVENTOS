@@ -23,8 +23,13 @@ from app.modules.venue.schemas.srr import (
 from app.schemas.common import MessageResponse
 from app.modules.notifications.services.notification_service import notify_speaker_checked_in
 from app.websocket.events import broadcast_srr_event, EventType
+from app.core.dependencies.feature_gate import require_event_operation
 
-router = APIRouter(prefix="/events/{event_id}/srr", tags=["srr"])
+router = APIRouter(
+    prefix="/events/{event_id}/srr",
+    tags=["srr"],
+    dependencies=[require_event_operation("venue.sync")],
+)
 
 
 # ── Stations ──────────────────────────────────────────────────

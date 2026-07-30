@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone, timedelta
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +17,13 @@ from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.services.pricing_service import get_active_tier
 from app.modules.registration.models.participant_registration import ParticipantRegistration
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _licensed_event(db: AsyncSession, event: Event):
+    await activate_event_for_test(db, event)
+    yield
 
 
 @pytest.mark.asyncio

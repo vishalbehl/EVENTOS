@@ -29,6 +29,7 @@ from app.dependencies import get_db
 from app.modules.events.models.event import Event
 from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.notifications.services.email_service import send_email
+from app.core.dependencies.feature_gate import enforce_event_operation
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,12 @@ async def request_otp(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration is not open for this event.",
         )
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.submit",
+    )
 
     await _throttle_check(body.email, body.event_id, db)
 
@@ -236,6 +243,18 @@ async def verify_otp(
     Step 2: attendee submits the 6-digit OTP.
     On success issues a 7-day portal JWT.
     """
+    event = await _get_event(body.event_id, db)
+    if event is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is not open for this event.",
+        )
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.submit",
+    )
     now = datetime.now(timezone.utc)
 
     # Load the latest valid token for this email+event
@@ -336,6 +355,12 @@ async def resend_otp(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration is not open for this event.",
         )
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.submit",
+    )
 
     await _throttle_check(body.email, body.event_id, db)
 

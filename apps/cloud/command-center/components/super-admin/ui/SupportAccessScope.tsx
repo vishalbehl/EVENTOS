@@ -36,7 +36,7 @@ export function SupportAccessScope({ value, onApply }: SupportAccessScopeProps) 
       className="mb-6 rounded-2xl border border-amber-400/20 bg-amber-400/[0.04] p-4"
     >
       <div className="mb-3 flex items-start gap-3">
-        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--status-warning)]" aria-hidden="true" />
         <div>
           <h2 id="support-access-title" className="text-sm font-semibold text-[var(--text-primary)]">
             Audited tenant support access
@@ -90,7 +90,7 @@ export function SupportAccessScope({ value, onApply }: SupportAccessScopeProps) 
         </Button>
       </div>
       {value ? (
-        <p className="mt-3 text-[11px] text-emerald-300" role="status">
+        <p className="mt-3 text-[11px] text-[var(--status-success)]" role="status">
           Tenant scope is active. Changing either field requires applying the scope again.
         </p>
       ) : null}

@@ -33,12 +33,14 @@ export function formatInTZ(iso: string, timezone?: string, options?: Intl.DateTi
   if (!iso) return "";
   try {
     const tz = timezone || getFallbackTimezone();
-    return new Intl.DateTimeFormat('en-IN', {
+    const formatted = new Intl.DateTimeFormat('en-IN', {
       ...options,
       timeZone: tz
     }).format(new Date(iso));
+    return formatted.replace(/GMT\+5:30/gi, '').trim();
   } catch (e) {
-    return new Date(iso).toLocaleString('en-IN', { timeZone: timezone || getFallbackTimezone() });
+    const formatted = new Date(iso).toLocaleString('en-IN', { timeZone: timezone || getFallbackTimezone() });
+    return formatted.replace(/GMT\+5:30/gi, '').trim();
   }
 }
 
@@ -56,8 +58,7 @@ export function formatDateTimeInTZ(iso: string, timezone?: string): string {
     minute: '2-digit', 
     hour12: true 
   });
-  const abbrev = getTimezoneAbbrev(tz, new Date(iso));
-  return formatted ? `${formatted} ${abbrev}` : "";
+  return formatted || "";
 }
 
 export function formatTimeInTZ(iso: string, timezone?: string): string {
@@ -67,16 +68,14 @@ export function formatTimeInTZ(iso: string, timezone?: string): string {
     minute: '2-digit', 
     hour12: true 
   });
-  const abbrev = getTimezoneAbbrev(tz, new Date(iso));
-  return formatted ? `${formatted} ${abbrev}` : "";
+  return formatted || "";
 }
 
 export function formatTimeRangeInTZ(start: string, end: string, timezone?: string): string {
   const tz = timezone || getFallbackTimezone();
   const startFmt = formatInTZ(start, tz, { hour: '2-digit', minute: '2-digit', hour12: true });
   const endFmt = formatInTZ(end, tz, { hour: '2-digit', minute: '2-digit', hour12: true });
-  const abbrev = getTimezoneAbbrev(tz, new Date(start));
-  return `${startFmt} – ${endFmt} ${abbrev}`;
+  return `${startFmt} – ${endFmt}`;
 }
 
 /**

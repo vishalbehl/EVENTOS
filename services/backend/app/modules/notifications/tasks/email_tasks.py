@@ -20,7 +20,7 @@ from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.services import email_service
 from app.core.tenant_context import TenantContextGuard
 from app.database import tenant_org_id
-from app.core.dependencies.feature_gate import enforce_event_feature
+from app.core.dependencies.feature_gate import enforce_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.platform.models.organization_console import UsageReservation
 
@@ -203,8 +203,11 @@ async def _process_email_campaign_with_session(
         # Re-check canonical access inside the worker so a restriction or kill
         # switch applied after dispatch still stops delivery. Capacity remains
         # reserved across retries and is released only on terminal failure.
-        await enforce_event_feature(
-            db, organization_id, campaign.event_id, "FEAT_BULK_EMAIL"
+        await enforce_event_operation(
+            db,
+            organization_id,
+            campaign.event_id,
+            "communications.bulk_email.send",
         )
         if reservation_id:
             reservation = await db.scalar(select(UsageReservation).where(

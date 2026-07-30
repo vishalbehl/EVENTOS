@@ -26,7 +26,7 @@ export function RoomColumn({ room, sessions, onAddSession }: RoomColumnProps) {
     <div
       ref={setNodeRef}
       className={cn(
-        "flex flex-col rounded-3xl bg-[color-mix(in_srgb,var(--text)_3%,transparent)] border border-default p-4 min-w-[300px] max-w-[360px] flex-1 transition-all duration-200",
+        "flex flex-col rounded-xl bg-[color-mix(in_srgb,var(--text)_3%,transparent)] border border-default p-4 min-w-[300px] max-w-[360px] flex-1 transition-all duration-200",
         isOver && "border-[var(--pri)] bg-[var(--pri)]/5 ring-2 ring-[var(--pri)]/20 shadow-xl"
       )}
     >

@@ -55,9 +55,7 @@ sio = socketio.AsyncServer(
     ping_timeout=20,
 )
 
-# ASGI app wraps the Socket.IO server; mounted in main.py at /socket.io
-socket_app = socketio.ASGIApp(sio, socketio_path="")
-
+# We will wrap the FastAPI app in main.py directly using sio.
 
 # ── Room name helpers ─────────────────────────────────────────
 

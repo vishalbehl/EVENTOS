@@ -266,11 +266,58 @@ class CapabilityService:
                 "operations": definition.get("operations", []),
                 "backend_mode": backend_mode,
                 "availability_note": definition.get("availability_note"),
+                "dependencies": (meta.dependencies if meta else None)
+                or definition.get("dependencies", []),
+                "conflicts": (meta.conflicts if meta else None)
+                or definition.get("conflicts", []),
                 "operation_permissions": {
                     operation: OPERATION_PERMISSIONS[operation]
                     for operation in definition.get("operations", [])
                 },
             }
+
+        # Bad legacy catalogue/contract data must fail closed even if it
+        # bypassed publish-time validation. Dependency failures can cascade, so
+        # resolve them to a stable state before evaluating conflicts.
+        changed = True
+        while changed:
+            changed = False
+            for capability in features.values():
+                if not capability["enabled"]:
+                    continue
+                missing = [
+                    dependency
+                    for dependency in capability["dependencies"]
+                    if not features.get(dependency, {}).get("enabled", False)
+                ]
+                if missing:
+                    capability["enabled"] = False
+                    capability["reason_code"] = "DEPENDENCY_REQUIRED"
+                    capability["availability_note"] = (
+                        "Requires enabled capability: " + ", ".join(sorted(missing))
+                    )
+                    changed = True
+
+        conflicted: set[str] = set()
+        for key, capability in features.items():
+            if not capability["enabled"]:
+                continue
+            for conflict in capability["conflicts"]:
+                if features.get(conflict, {}).get("enabled", False):
+                    conflicted.update({key, conflict})
+        for key in conflicted:
+            capability = features[key]
+            active_conflicts = sorted(
+                conflict
+                for conflict in capability["conflicts"]
+                if conflict in conflicted
+            )
+            capability["enabled"] = False
+            capability["reason_code"] = "FEATURE_CONFLICT"
+            capability["availability_note"] = (
+                "Conflicts with enabled capability: "
+                + ", ".join(active_conflicts or sorted(conflicted - {key}))
+            )
         limits: dict[str, dict[str, Any]] = {}
         all_limit_keys = set(LIMIT_DEFINITIONS) | set(resolved.get("limits", {}))
         for key in sorted(all_limit_keys):
@@ -299,13 +346,58 @@ class CapabilityService:
                 reservation_filters.append(UsageReservation.event_id == event_id)
             reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
             remaining = None if allowed is None else max(int(allowed) - used - reserved, 0)
-            limits[key] = {"key": key, "allowed": allowed, "used": used, "reserved": reserved, "remaining": remaining, "unit": definition.get("unit"), "period": definition.get("period"), "hard_ceiling": resolved.get("hard_ceilings", {}).get(key), "reason_code": "QUOTA_EXHAUSTED" if remaining == 0 and allowed is not None else None, "sources": resolved.get("sources", {}).get(key, [])}
+            enforcement_mode = str(limit_row.get("enforcement_mode") or "HARD").upper()
+            limits[key] = {
+                "key": key,
+                "allowed": allowed,
+                "used": used,
+                "reserved": reserved,
+                "remaining": remaining,
+                "unit": definition.get("unit"),
+                "period": definition.get("period"),
+                "hard_ceiling": resolved.get("hard_ceilings", {}).get(key),
+                "enforcement_mode": enforcement_mode,
+                "overage_policy": limit_row.get("overage_policy") or (
+                    {"action": "BILL"}
+                    if enforcement_mode == "METERED_OVERAGE"
+                    else {"action": "WARN"}
+                    if enforcement_mode == "SOFT_WARNING"
+                    else {"action": "DENY"}
+                ),
+                "reason_code": (
+                    "QUOTA_EXHAUSTED"
+                    if enforcement_mode == "HARD"
+                    and remaining == 0
+                    and allowed is not None
+                    else "METERED_OVERAGE"
+                    if enforcement_mode == "METERED_OVERAGE"
+                    and allowed is not None
+                    and used + reserved > int(allowed)
+                    else "SOFT_WARNING"
+                    if enforcement_mode == "SOFT_WARNING"
+                    and allowed is not None
+                    and used + reserved >= int(allowed)
+                    else None
+                ),
+                "sources": resolved.get("sources", {}).get(key, []),
+            }
         result = {
             "organization_id": str(organization_id), "event_id": str(event_id),
             "contract_version": resolved.get("contract_version"), "resolution_version": resolved["resolution_version"],
             "rollout_mode": resolved["rollout_mode"], "features": features, "limits": limits,
             "restrictions": [{"id": str(row.id), "capability_key": row.capability_key, "reason_code": row.reason_code, "reason": row.reason, "expires_at": row.expires_at} for row in restrictions],
             "flags": flags,
+            "operational_state": {
+                "is_maintenance": event.is_maintenance,
+                "is_read_only": event.is_read_only,
+                "mutation_reason_code": (
+                    "EVENT_MAINTENANCE"
+                    if event.is_maintenance
+                    else "EVENT_READ_ONLY"
+                    if event.is_read_only
+                    else None
+                ),
+            },
             "availability": {
                 "available": resolved["availability"]["available"],
                 "reason": None if resolved["availability"]["available"] else "CONTRACT_REQUIRED",
@@ -415,7 +507,34 @@ class CapabilityService:
             reservation_filters = [UsageReservation.organization_id == organization_id, UsageReservation.metric_key == key, UsageReservation.status == "RESERVED", UsageReservation.expires_at > now]
             reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
             remaining = None if allowed is None else max(int(allowed) - used - reserved, 0)
-            limits[key] = {"key": key, "allowed": allowed, "used": used, "reserved": reserved, "remaining": remaining, "unit": definition.get("unit"), "period": definition.get("period"), "source": item.get("source_type"), "reason_code": "QUOTA_EXHAUSTED" if remaining == 0 and allowed is not None else None}
+            enforcement_mode = str(item.get("enforcement_mode") or "HARD").upper()
+            limits[key] = {
+                "key": key,
+                "allowed": allowed,
+                "used": used,
+                "reserved": reserved,
+                "remaining": remaining,
+                "unit": definition.get("unit"),
+                "period": definition.get("period"),
+                "source": item.get("source_type"),
+                "enforcement_mode": enforcement_mode,
+                "overage_policy": item.get("overage_policy") or {"action": "DENY"},
+                "reason_code": (
+                    "QUOTA_EXHAUSTED"
+                    if enforcement_mode == "HARD"
+                    and remaining == 0
+                    and allowed is not None
+                    else "METERED_OVERAGE"
+                    if enforcement_mode == "METERED_OVERAGE"
+                    and allowed is not None
+                    and used + reserved > int(allowed)
+                    else "SOFT_WARNING"
+                    if enforcement_mode == "SOFT_WARNING"
+                    and allowed is not None
+                    and used + reserved >= int(allowed)
+                    else None
+                ),
+            }
         version = hashlib.sha256(json.dumps({"organization_id": str(organization_id), "features": features, "limits": limits}, sort_keys=True, default=str).encode()).hexdigest()
         result = {"organization_id": str(organization_id), "resolution_version": version, "rollout_mode": "ENFORCED", "features": features, "limits": limits, "restrictions": [{"id": str(row.id), "capability_key": row.capability_key, "reason_code": row.reason_code, "expires_at": row.expires_at} for row in restrictions], "availability": {"available": True}, "freshness_at": now}
         if not CapabilityCacheService.has_pending_changes(db):

@@ -361,6 +361,37 @@ async def toggle_2fa() -> None:
 
 # ── Assignments ───────────────────────────────────────────
 
+async def _scoped_assignment_context(
+    db: AsyncSession,
+    assignment_id: uuid.UUID,
+    current_user: User,
+) -> tuple[UserEventAssignment, User, object]:
+    """Resolve an assignment only when its user/event tenant invariant holds."""
+    from app.modules.events.models.event import Event
+
+    assignment = await db.get(UserEventAssignment, assignment_id)
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    target = await db.get(User, assignment.user_id)
+    event = await db.get(Event, assignment.event_id)
+    if (
+        target is None
+        or event is None
+        or target.organization_id is None
+        or target.organization_id != event.organization_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ASSIGNMENT_TENANT_INVARIANT_VIOLATION"},
+        )
+    if (
+        current_user.role != "super_admin"
+        and target.organization_id != current_user.organization_id
+    ):
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    return assignment, target, event
+
+
 @router.post("/assignments", response_model=UserAssignmentSchema, summary="Assign user to event")
 async def create_assignment(
     payload: AssignmentCreate,
@@ -369,21 +400,39 @@ async def create_assignment(
     db: AsyncSession = Depends(get_db),
 ) -> UserAssignmentSchema:
     """Assign a user to an event with specific permissions."""
-    # Validate that non-super-admins can only assign within their org
-    if current_user.role != "super_admin":
-        target_result = await db.execute(select(User).where(User.id == payload.user_id))
-        target = target_result.scalar_one_or_none()
-        if not target or target.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Cannot assign users outside your organization.")
-        if target.role in ["super_admin", "organiser"]:
-            raise HTTPException(status_code=403, detail="Cannot manage access for super_admin or organiser roles.")
-
     from app.modules.rbac.models.rbac import UserAccessNode
     from app.modules.events.models.event import Event
 
-    event = await db.scalar(select(Event).where(Event.id == payload.event_id))
-    if not event:
+    target = await db.get(User, payload.user_id)
+    event = await db.get(Event, payload.event_id)
+    if (
+        target is None
+        or event is None
+        or target.organization_id is None
+        or target.organization_id != event.organization_id
+    ):
         raise HTTPException(status_code=404, detail="Event not found.")
+    if (
+        current_user.role != "super_admin"
+        and target.organization_id != current_user.organization_id
+    ):
+        raise HTTPException(status_code=404, detail="Event not found.")
+    if current_user.role != "super_admin" and target.role in ["super_admin", "organiser"]:
+        raise HTTPException(status_code=403, detail="Cannot manage access for super_admin or organiser roles.")
+
+    existing_assignment = await db.scalar(
+        select(UserEventAssignment).where(
+            UserEventAssignment.user_id == payload.user_id,
+            UserEventAssignment.event_id == payload.event_id,
+        )
+    )
+    if existing_assignment is not None:
+        if existing_assignment.permissions == payload.permissions:
+            return existing_assignment
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ASSIGNMENT_ALREADY_EXISTS"},
+        )
     reservation = await UsageReservationService.reserve(
         db,
         organization_id=event.organization_id,
@@ -449,14 +498,9 @@ async def update_assignment(
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> UserAssignmentSchema:
-    # Fetch assignment
-    assign_res = await db.execute(
-        select(UserEventAssignment).where(UserEventAssignment.id == assignment_id)
+    assignment, _, _ = await _scoped_assignment_context(
+        db, assignment_id, current_user
     )
-    assignment = assign_res.scalar_one_or_none()
-    
-    if not assignment:
-        raise HTTPException(status_code=404, detail="Assignment not found")
         
     # Update permissions
     assignment.permissions = data.permissions
@@ -477,21 +521,9 @@ async def delete_assignment(
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    # Fetch assignment first
-    assign_res = await db.execute(
-        select(UserEventAssignment).where(UserEventAssignment.id == assignment_id)
+    assignment, _, _ = await _scoped_assignment_context(
+        db, assignment_id, current_user
     )
-    assignment = assign_res.scalar_one_or_none()
-    
-    if not assignment:
-        raise HTTPException(status_code=404, detail="Assignment not found.")
-
-    # Validate that non-super-admins can only manage within their org
-    if current_user.role != "super_admin":
-        target_result = await db.execute(select(User).where(User.id == assignment.user_id))
-        target = target_result.scalar_one_or_none()
-        if not target or target.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Cannot remove assignments for users outside your organization.")
 
     # Fetch granular node cleanup info
     node_type = assignment.permissions.get("node_type")

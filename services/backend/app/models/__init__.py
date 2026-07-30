@@ -237,6 +237,7 @@ from app.modules.procurement.models import (
 
 # V1 pricing template models retain their existing templates schema.
 from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
+from app.modules.templates.models import TemplateInstallation
 
 # design_system models
 from app.modules.design_system.models import (

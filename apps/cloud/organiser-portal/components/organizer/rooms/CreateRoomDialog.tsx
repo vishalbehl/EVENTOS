@@ -82,6 +82,10 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
     { value: "workshop", label: "Workshop Room" },
     { value: "poster", label: "Poster Session" },
     { value: "plenary", label: "Plenary Hall" },
+    { value: "open_area", label: "Open Area / Foyer" },
+    { value: "dining", label: "Dining Area" },
+    { value: "registration", label: "Registration Desk" },
+    { value: "virtual", label: "Virtual / No Physical Room" },
   ];
 
   return (
@@ -219,7 +223,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
               <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
                 Cancel
               </Button>
-              <CapabilityAction operation="venue.rooms.manage"><Button
+              <CapabilityAction operation="venue.rooms.manage" limitKey="max_rooms"><Button
                 disabled={createRoom.isPending}
                 form="create-room-form"
                 type="submit"

@@ -149,7 +149,11 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                         <td className="p-5 text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 {campaign.status === 'draft' && (
-                                                  <CapabilityAction operation="communications.bulk_email.send">
+                                                  <CapabilityAction
+                                                    operation="communications.bulk_email.send"
+                                                    limitKey="max_emails_per_event"
+                                                    quantity={Math.max(campaign.total_recipients, 1)}
+                                                  >
                                                     <button
                                                         onClick={(e) => handleSend(e, campaign.id)}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--pri)] text-white hover:scale-105 active:scale-95 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-[var(--pri)]/20"
@@ -160,7 +164,11 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                   </CapabilityAction>
                                                 )}
                                                 {campaign.status === 'sent' && campaign.sent_count < campaign.total_recipients && (
-                                                  <CapabilityAction operation="communications.bulk_email.send">
+                                                  <CapabilityAction
+                                                    operation="communications.bulk_email.send"
+                                                    limitKey="max_emails_per_event"
+                                                    quantity={Math.max(campaign.total_recipients - campaign.sent_count, 1)}
+                                                  >
                                                     <button
                                                         onClick={(e) => handleResend(e, campaign.id)}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 text-[var(--text)] border border-white/10 hover:bg-white/10 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg"

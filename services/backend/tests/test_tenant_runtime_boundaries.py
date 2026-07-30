@@ -124,8 +124,22 @@ def test_celery_beat_only_schedules_tenant_safe_jobs():
     from app.worker import celery_app
 
     schedule = celery_app.conf.beat_schedule
-    assert set(schedule) == {"flush-api-usage-every-5-minutes"}
+    assert set(schedule) == {
+        "flush-api-usage-every-5-minutes",
+        "reconcile-organizer-usage-nightly",
+        "expire-capability-controls-every-5-minutes",
+        "compare-organizer-entitlements-nightly",
+    }
     assert schedule["flush-api-usage-every-5-minutes"]["task"] == "app.tasks.platform_tasks.flush_api_usage"
+    assert schedule["reconcile-organizer-usage-nightly"]["task"] == (
+        "app.tasks.organization_console_tasks.fanout_nightly_usage_reconciliation"
+    )
+    assert schedule["expire-capability-controls-every-5-minutes"]["task"] == (
+        "app.tasks.organization_console_tasks.fanout_capability_control_expiry"
+    )
+    assert schedule["compare-organizer-entitlements-nightly"]["task"] == (
+        "app.tasks.organization_console_rollout_tasks.fanout_shadow_comparisons"
+    )
 
 
 def test_global_platform_job_stubs_fail_closed():

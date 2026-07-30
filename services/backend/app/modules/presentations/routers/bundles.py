@@ -14,8 +14,13 @@ from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.identity.models.user import User
 from app.modules.presentations.schemas.bundle import BundleCreate, BundleResponse
+from app.core.dependencies.feature_gate import require_event_operation
 
-router = APIRouter(prefix="/events/{event_id}/bundles", tags=["bundles"])
+router = APIRouter(
+    prefix="/events/{event_id}/bundles",
+    tags=["bundles"],
+    dependencies=[require_event_operation("presentations.queue.manage")],
+)
 
 
 @router.post("", response_model=BundleResponse, status_code=status.HTTP_201_CREATED)

@@ -156,7 +156,8 @@ async def test_roles_and_permissions(client: AsyncClient, db: AsyncSession, orga
     # 3. Toggle permission for role
     response = await client.post(
         f"/api/v1/platform/roles/{role_id}/permissions/{target_perm.id}/toggle",
-        headers=headers
+        headers=headers,
+        json={"reason": "Granting approved department administration permission"},
     )
     assert response.status_code == 200
     assert "added" in response.json()["message"]

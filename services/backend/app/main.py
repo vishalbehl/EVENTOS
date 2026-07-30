@@ -213,9 +213,7 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 
 # ── Mount Socket.IO at /socket.io ─────────────────────────────
-from app.modules.venue.services.websocket_service import socket_app  # noqa: E402
-
-app.mount("/socket.io", socket_app)
+# Socket.io is wrapped at the bottom of this file.
 
 
 # ── Health check ──────────────────────────────────────────────
@@ -271,3 +269,10 @@ async def ws_dashboard_fallback(websocket: WebSocket, event_id: uuid.UUID):
     from app.websocket.events import handle_monitor_connection
     await handle_monitor_connection(websocket, event_id)
 
+
+# ── Socket.IO wrapper (instead of mounting at /socket.io) ────────
+from app.modules.venue.services.websocket_service import sio
+import socketio
+
+fastapi_app = app
+app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)

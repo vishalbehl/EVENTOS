@@ -10,7 +10,9 @@ import { usePermissions } from "@/hooks/usePermissions";
 export type CapabilityReason =
   | "NOT_ENTITLED" | "QUOTA_EXHAUSTED" | "SUSPENDED"
   | "SECURITY_RESTRICTED" | "ROLLOUT_DISABLED" | "PROVIDER_UNAVAILABLE"
-  | "RESOLUTION_UNAVAILABLE" | "CONTRACT_REQUIRED" | "PERMISSION_DENIED";
+  | "RESOLUTION_UNAVAILABLE" | "CONTRACT_REQUIRED" | "PERMISSION_DENIED"
+  | "EVENT_MAINTENANCE" | "EVENT_READ_ONLY" | "DEPENDENCY_REQUIRED"
+  | "FEATURE_CONFLICT" | "SOFT_WARNING" | "METERED_OVERAGE";
 
 export type ResolvedFeature = {
   key: string; name: string; value_type: "BOOLEAN" | "TIER" | "ENUM" | "LIMIT";
@@ -23,12 +25,19 @@ export type ResolvedLimit = {
   key: string; allowed: number | null; used: number; reserved: number;
   remaining: number | null; unit?: string; period?: string; reason_code?: CapabilityReason | null;
   hard_ceiling?: number | null; sources?: unknown[];
+  enforcement_mode?: "HARD" | "SOFT_WARNING" | "METERED_OVERAGE";
+  overage_policy?: Record<string, unknown>;
 };
 export type CapabilityResponse = {
   organization_id: string; event_id?: string; contract_version?: number | null;
   resolution_version: string; rollout_mode: "LEGACY" | "SHADOW" | "ENFORCED";
   features: Record<string, ResolvedFeature>; limits: Record<string, ResolvedLimit>;
   restrictions: unknown[]; availability: { available: boolean; reason?: string };
+  operational_state?: {
+    is_maintenance: boolean;
+    is_read_only: boolean;
+    mutation_reason_code: "EVENT_MAINTENANCE" | "EVENT_READ_ONLY" | null;
+  };
   freshness_at: string;
 };
 
@@ -60,7 +69,7 @@ const PORTAL_ROUTE_BINDINGS: Array<{ route: string; featureKey: string }> = [
   { route: "/events/:eventId/speakers/analytics", featureKey: "FEAT_SPEAKER_DASHBOARD" },
   { route: "/events/:eventId/speakers/list", featureKey: "FEAT_SPEAKER_PROFILES" },
   { route: "/events/:eventId/speakers", featureKey: "FEAT_SPEAKER_PORTAL" },
-  { route: "/events/:eventId/sessions/rooms", featureKey: "FEAT_VENUE_SYNC" },
+  { route: "/events/:eventId/sessions/rooms", featureKey: "FEAT_SESSION_MANAGEMENT" },
   { route: "/events/:eventId/sessions/builder", featureKey: "FEAT_SESSION_MANAGEMENT" },
   { route: "/events/:eventId/sessions/agenda", featureKey: "FEAT_SESSION_MANAGEMENT" },
   { route: "/events/:eventId/sessions/dashboard", featureKey: "FEAT_SESSION_MANAGEMENT" },
@@ -130,6 +139,79 @@ export function useOrganizationOperationAccess(operation: string) {
     reason: isError ? "RESOLUTION_UNAVAILABLE" as const : !permissionAllowed ? "PERMISSION_DENIED" as const : availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,
     requiredPermission,
+  };
+}
+
+export function useOrganizationLimitAccess(limitKey?: string, quantity = 1) {
+  const { data, isLoading, isError } = useOrganizationCapabilities();
+  if (!limitKey) {
+    return { enabled: true, loading: false, reason: null, limit: undefined };
+  }
+  const limit = data?.limits[limitKey];
+  const availabilityReason = data?.availability?.available === false
+    ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
+    : null;
+  const hasHeadroom = Boolean(limit)
+    && (limit?.remaining === null || (limit?.remaining ?? 0) >= quantity);
+  const allowsOverage = limit?.enforcement_mode === "SOFT_WARNING"
+    || limit?.enforcement_mode === "METERED_OVERAGE";
+  return {
+    enabled: (hasHeadroom || allowsOverage)
+      && data?.availability?.available !== false
+      && (!limit?.reason_code || allowsOverage),
+    loading: isLoading,
+    reason: isError
+      ? "RESOLUTION_UNAVAILABLE" as const
+      : availabilityReason
+        ?? (allowsOverage ? null : limit?.reason_code)
+        ?? (!limit
+          ? "RESOLUTION_UNAVAILABLE" as const
+          : hasHeadroom
+            ? null
+            : "QUOTA_EXHAUSTED" as const),
+    limit,
+  };
+}
+
+export function useRemoteEventLimitAccess(
+  eventId: string | undefined,
+  limitKey: string,
+  quantity = 1,
+) {
+  const query = useQuery({
+    queryKey: ["event-capabilities", eventId],
+    queryFn: () => apiGet<CapabilityResponse>(`/events/${eventId}/capabilities`),
+    enabled: Boolean(eventId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+  if (!eventId) {
+    return { enabled: true, loading: false, reason: null, limit: undefined };
+  }
+  const limit = query.data?.limits[limitKey];
+  const availabilityReason = query.data?.availability?.available === false
+    ? (query.data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
+    : null;
+  const hasHeadroom = Boolean(limit)
+    && (limit?.remaining === null || (limit?.remaining ?? 0) >= quantity);
+  const allowsOverage = limit?.enforcement_mode === "SOFT_WARNING"
+    || limit?.enforcement_mode === "METERED_OVERAGE";
+  return {
+    enabled: (hasHeadroom || allowsOverage)
+      && query.data?.availability?.available !== false
+      && (!limit?.reason_code || allowsOverage),
+    loading: query.isLoading,
+    reason: query.isError
+      ? "RESOLUTION_UNAVAILABLE" as const
+      : availabilityReason
+        ?? (allowsOverage ? null : limit?.reason_code)
+        ?? (!limit
+          ? "RESOLUTION_UNAVAILABLE" as const
+          : hasHeadroom
+            ? null
+            : "QUOTA_EXHAUSTED" as const),
+    limit,
   };
 }
 
@@ -304,24 +386,54 @@ export function QuotaExceeded({
 }
 
 export function LimitGate({ limitKey, quantity = 1, children, fallback }: { limitKey: string; quantity?: number; children: ReactNode; fallback?: ReactNode }) {
-  const { data, isLoading, isError, refetch } = useEventCapabilities();
-  const limit = data?.limits[limitKey];
-  const allowed = Boolean(limit) && (limit?.remaining === null || (limit?.remaining ?? 0) >= quantity);
-  if (isLoading) {
+  const { refetch } = useEventCapabilities();
+  const access = useLimitAccess(limitKey, quantity);
+  if (access.loading) {
     return <div className="flex min-h-[160px] items-center justify-center text-sm text-[var(--color-text-muted)]">Checking quota…</div>;
   }
-  if (allowed) return <>{children}</>;
+  if (access.enabled) return <>{children}</>;
   if (fallback !== undefined) return <>{fallback}</>;
-  if (isError || data?.availability?.available === false || !limit) {
+  if (access.reason !== "QUOTA_EXHAUSTED") {
     return (
       <CapabilityUnavailable
-        reason={(data?.availability?.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"}
+        reason={access.reason ?? "RESOLUTION_UNAVAILABLE"}
         detail={`The ${limitKey} allowance could not be resolved. The action remains disabled.`}
         onRetry={refetch}
       />
     );
   }
-  return <QuotaExceeded limitKey={limitKey} limit={limit} requested={quantity} />;
+  return <QuotaExceeded limitKey={limitKey} limit={access.limit} requested={quantity} />;
+}
+
+export function useLimitAccess(limitKey?: string, quantity = 1) {
+  const { data, isLoading, isError } = useEventCapabilities();
+  if (!limitKey) {
+    return { enabled: true, loading: false, reason: null, limit: undefined };
+  }
+  const limit = data?.limits[limitKey];
+  const availabilityReason = data?.availability?.available === false
+    ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
+    : null;
+  const hasHeadroom = Boolean(limit)
+    && (limit?.remaining === null || (limit?.remaining ?? 0) >= quantity);
+  const allowsOverage = limit?.enforcement_mode === "SOFT_WARNING"
+    || limit?.enforcement_mode === "METERED_OVERAGE";
+  return {
+    enabled: (hasHeadroom || allowsOverage)
+      && data?.availability?.available !== false
+      && (!limit?.reason_code || allowsOverage),
+    loading: isLoading,
+    reason: isError
+      ? "RESOLUTION_UNAVAILABLE" as const
+      : availabilityReason
+        ?? (allowsOverage ? null : limit?.reason_code)
+        ?? (!limit
+          ? "RESOLUTION_UNAVAILABLE" as const
+          : hasHeadroom
+            ? null
+            : "QUOTA_EXHAUSTED" as const),
+    limit,
+  };
 }
 
 export function useOperationAccess(operation: string) {
@@ -335,22 +447,41 @@ export function useOperationAccess(operation: string) {
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
+  const operationalReason = data?.operational_state?.mutation_reason_code ?? null;
   return {
-    enabled: Boolean(feature?.enabled) && data?.availability?.available !== false && permissionAllowed,
+    enabled: Boolean(feature?.enabled) && data?.availability?.available !== false && permissionAllowed && !operationalReason,
     loading: isLoading || permissionState.isLoading,
-    reason: isError ? "RESOLUTION_UNAVAILABLE" as const : !permissionAllowed ? "PERMISSION_DENIED" as const : availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
+    reason: isError ? "RESOLUTION_UNAVAILABLE" as const : !permissionAllowed ? "PERMISSION_DENIED" as const : operationalReason ?? availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,
     requiredPermission,
   };
 }
 
-export function CapabilityAction({ operation, children }: { operation: string; children: ReactElement<{ disabled?: boolean; title?: string; onClick?: (...args: unknown[]) => unknown }> }) {
+export function CapabilityAction({
+  operation,
+  limitKey,
+  quantity = 1,
+  children,
+}: {
+  operation: string;
+  limitKey?: string;
+  quantity?: number;
+  children: ReactElement<{ disabled?: boolean; title?: string; onClick?: (...args: unknown[]) => unknown }>;
+}) {
   const access = useOperationAccess(operation);
+  const limitAccess = useLimitAccess(limitKey, quantity);
   if (!isValidElement(children)) return null;
-  const reason = access.reason ? access.reason.replaceAll("_", " ").toLowerCase() : "capability unavailable";
+  const denialReason = !access.enabled ? access.reason : !limitAccess.enabled ? limitAccess.reason : null;
+  const reason = denialReason
+    ? denialReason.replaceAll("_", " ").toLowerCase()
+    : "capability unavailable";
+  const enabled = access.enabled && limitAccess.enabled;
   return cloneElement(children, {
-    disabled: Boolean(children.props.disabled) || access.loading || !access.enabled,
-    title: access.enabled ? children.props.title : `Unavailable: ${reason}`,
+    disabled: Boolean(children.props.disabled)
+      || access.loading
+      || limitAccess.loading
+      || !enabled,
+    title: enabled ? children.props.title : `Unavailable: ${reason}`,
   });
 }
 

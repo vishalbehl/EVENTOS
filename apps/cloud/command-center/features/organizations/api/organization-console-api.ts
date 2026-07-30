@@ -102,16 +102,22 @@ export interface OrganizationEventItem {
   id: string;
   organization_id: string;
   name: string;
-  slug: string;
-  status: "DRAFT" | "ACTIVE" | "COMPLETED" | "CANCELLED" | "ARCHIVED";
+  short_code: string;
+  status: "draft" | "active" | "completed" | "cancelled" | "archived";
   start_date?: string | null;
   end_date?: string | null;
+  location?: string | null;
   venue_name?: string | null;
+  country?: string | null;
+  state?: string | null;
+  timezone: string;
+  currency: string;
   plan_name?: string | null;
   registrations_count?: number;
   revenue?: number;
   features?: Record<string, boolean>;
   created_at: string;
+  updated_at: string;
   is_maintenance?: boolean;
   is_read_only?: boolean;
 }
@@ -170,6 +176,8 @@ export interface ResolvedEntitlements {
   sources: Record<string, Array<Record<string, unknown>>>;
   capabilities: Record<string, {
     key: string;
+    name?: string;
+    value_type?: "BOOLEAN" | "TIER" | "ENUM";
     value: unknown;
     enabled: boolean;
     reason_code?: string | null;
@@ -177,6 +185,8 @@ export interface ResolvedEntitlements {
     availability_note?: string | null;
     sources: Array<Record<string, unknown>>;
     operations: string[];
+    dependencies?: string[];
+    conflicts?: string[];
   }>;
   limits: Record<string, {
     key: string;
@@ -184,6 +194,12 @@ export interface ResolvedEntitlements {
     used: number;
     reserved: number;
     remaining?: number | null;
+    unit?: string | null;
+    period?: string | null;
+    hard_ceiling?: number | null;
+    enforcement_mode?: "HARD" | "SOFT_WARNING" | "METERED_OVERAGE";
+    overage_policy?: Record<string, unknown>;
+    sources?: Array<Record<string, unknown>>;
     reason_code?: string | null;
   }>;
   restrictions: Array<Record<string, unknown>>;
@@ -296,6 +312,61 @@ export interface OrganizerRolloutStatus {
   missing_contracts: number;
   comparisons: { sample_size: number; matched: number; diverged: number; stale: number; freshness_cutoff: string; latest_at?: string | null };
   items: Array<{ id: string; event_id: string; status: string; differences: Record<string, unknown>; resolution_version: string; compared_at: string; fresh: boolean }>;
+  preflight: OrganizerRolloutPreflight;
+}
+
+export interface OrganizerRolloutIssue {
+  code: string;
+  message: string;
+  event_id?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface OrganizerRolloutPreflight {
+  organization_id: string;
+  generated_at: string;
+  freshness_cutoff: string;
+  ready_for_enforcement: boolean;
+  blockers: OrganizerRolloutIssue[];
+  warnings: OrganizerRolloutIssue[];
+  rollout: {
+    shadow_enabled: boolean;
+    enforcement_enabled: boolean;
+  };
+  events: {
+    activated: number;
+    contracted: number;
+    compared: number;
+    matched: number;
+    diverged: number;
+    stale: number;
+  };
+  coverage: {
+    feature_count: number;
+    limit_count: number;
+    missing_catalogue_keys: string[];
+    unknown_catalogue_keys: string[];
+    ungated_operations: string[];
+    unenforced_limits: string[];
+  };
+  providers: Array<{
+    channel: string;
+    required_by_event_ids: string[];
+    configured: boolean;
+    provider?: string | null;
+    state?: string | null;
+    last_verified_at?: string | null;
+    ready: boolean;
+    reason?: string | null;
+  }>;
+  diagnostics: {
+    since: string;
+    by_type: Record<string, number>;
+  };
+  reconciliation: {
+    latest_count: number;
+    drifted_count: number;
+  };
 }
 
 export interface CapabilityDiagnostics {
@@ -527,18 +598,49 @@ export const useOrganizationEvents = (orgId: string) =>
   useQuery({
     queryKey: keys.events(orgId),
     queryFn: async () => {
-      const res = await apiClient.get<any>(`/events?organization_id=${orgId}&limit=100`);
-      return res?.items ?? res ?? [];
+      const res = await apiClient.get<{ items: OrganizationEventItem[] }>(
+        `/platform/organizations/${orgId}/console/events?limit=100`,
+      );
+      return res.items;
     },
     enabled: Boolean(orgId),
     staleTime: 15_000,
   });
 
+export const useProvisionOrganizationEvent = (orgId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: {
+      data: {
+        name: string;
+        short_code: string;
+        status: "draft" | "active";
+        start_date: string;
+        end_date: string;
+        timezone: string;
+        location?: string;
+        venue_name?: string;
+        country?: string;
+        currency: string;
+      };
+      reason: string;
+      case_reference: string;
+    }) =>
+      apiClient.post<OrganizationEventItem>(
+        `/platform/organizations/${orgId}/console/events`,
+        payload,
+        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: keys.events(orgId) }),
+  });
+};
+
 export const useUpdateEventStatus = (orgId: string, eventId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { status?: string; is_maintenance?: boolean; is_read_only?: boolean; reason: string }) =>
-      apiClient.patch(`/events/${eventId}/status`, payload),
+    mutationFn: (payload: { is_maintenance?: boolean; is_read_only?: boolean; reason: string; case_reference: string }) =>
+      apiClient.patch(`/platform/organizations/${orgId}/console/events/${eventId}/operations`, payload),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.events(orgId) }),
@@ -806,9 +908,23 @@ export interface EventDomainWorkspace { workspace: string; event_id: string; gen
 
 export const useEventDomainWorkspace = (orgId: string, eventId: string, workspace: string, includeSensitive = false, privilegedAccessSession?: string) => useQuery({
   queryKey: keys.eventWorkspace(orgId, eventId, workspace, includeSensitive),
-  queryFn: () => apiClient.get<EventDomainWorkspace>(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}?include_sensitive=${includeSensitive}&include_archived=${["speakers", "sessions", "rooms", "integrations", "communications", "templates"].includes(workspace)}`, { headers: privilegedAccessSession ? { "X-Privileged-Access-Session": privilegedAccessSession } : undefined }),
-  enabled: Boolean(orgId && eventId) && ["overview", "attendees", "speakers", "abstracts", "sessions", "rooms", "communications", "templates", "files", "payments", "tickets", "checkins", "users", "jobs", "integrations", "analytics", "audit"].includes(workspace),
+  queryFn: () => apiClient.get<EventDomainWorkspace>(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}?include_sensitive=${includeSensitive}&include_archived=${["attendees", "speakers", "sessions", "rooms", "integrations", "communications", "templates"].includes(workspace)}`, { headers: privilegedAccessSession ? { "X-Privileged-Access-Session": privilegedAccessSession } : undefined }),
+  enabled: Boolean(orgId && eventId) && ["overview", "settings", "operations", "attendees", "speakers", "abstracts", "sessions", "rooms", "communications", "templates", "files", "payments", "tickets", "checkins", "users", "jobs", "integrations", "analytics", "audit"].includes(workspace),
 });
+
+export const useUpdateEventSettings = (orgId: string, eventId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { data: Record<string, unknown>; reason: string; case_reference: string }) =>
+      apiClient.patch(`/platform/organizations/${orgId}/console/events/${eventId}/settings`, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.events(orgId) }),
+        queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }),
+      ]);
+    },
+  });
+};
 
 export const useCreateEventWorkspaceResource = (orgId: string, eventId: string, workspace: string) => {
   const queryClient = useQueryClient();
@@ -817,20 +933,20 @@ export const useCreateEventWorkspaceResource = (orgId: string, eventId: string, 
 
 export const useUpdateEventWorkspaceResource = (orgId: string, eventId: string, workspace: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ resourceId, ...payload }: { resourceId: string; data: Record<string, unknown>; reason: string; case_reference: string }) => apiClient.patch(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}/${resourceId}`, payload), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }) });
+  return useMutation({ mutationFn: ({ resourceId, version, ...payload }: { resourceId: string; version?: number; data: Record<string, unknown>; reason: string; case_reference: string }) => apiClient.patch(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}/${resourceId}`, payload, { headers: { "Idempotency-Key": crypto.randomUUID(), ...(version ? { "If-Match": String(version) } : {}) } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }) });
 };
 
 export const useArchiveEventWorkspaceResource = (orgId: string, eventId: string, workspace: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ resourceId, reason, case_reference }: { resourceId: string; reason: string; case_reference: string }) => apiClient.delete(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}/${resourceId}`, { data: { reason, case_reference } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }) });
+  return useMutation({ mutationFn: ({ resourceId, version, reason, case_reference }: { resourceId: string; version?: number; reason: string; case_reference: string }) => apiClient.delete(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}/${resourceId}`, { headers: { "Idempotency-Key": crypto.randomUUID(), ...(version ? { "If-Match": String(version) } : {}) }, data: { reason, case_reference } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }) });
 };
 
 export const useRestoreEventWorkspaceResource = (orgId: string, eventId: string, workspace: string) => {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: ({ resourceId, reason, case_reference }: { resourceId: string; reason: string; case_reference: string }) => apiClient.post(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}/${resourceId}/restore`, { reason, case_reference }, { headers: { "Idempotency-Key": crypto.randomUUID() } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }) });
+  return useMutation({ mutationFn: ({ resourceId, version, reason, case_reference }: { resourceId: string; version?: number; reason: string; case_reference: string }) => apiClient.post(`/platform/organizations/${orgId}/console/events/${eventId}/workspace/${workspace}/${resourceId}/restore`, { reason, case_reference }, { headers: { "Idempotency-Key": crypto.randomUUID(), ...(version ? { "If-Match": String(version) } : {}) } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.eventDetail(orgId, eventId) }) });
 };
 
-export type EventWorkspaceAction = "APPROVE" | "REJECT" | "LOCK" | "UNLOCK" | "RETRY_PROCESSING" | "SEND" | "RESEND_FAILED" | "CANCEL" | "RECORD_REFUND" | "SET_PRICING" | "CHECK_IN" | "REMOVE_CHECK_IN" | "ASSIGN_USER" | "UNASSIGN_USER" | "START_REVIEW" | "REQUEST_REVISION" | "ISSUE_CONFIRMATION_QR" | "ROTATE_CONFIRMATION_QR";
+export type EventWorkspaceAction = "APPROVE" | "REJECT" | "LOCK" | "UNLOCK" | "RETRY_PROCESSING" | "RETRY_JOB" | "SEND" | "RESEND_FAILED" | "CANCEL" | "RECORD_REFUND" | "SET_PRICING" | "CHECK_IN" | "REMOVE_CHECK_IN" | "ASSIGN_USER" | "UNASSIGN_USER" | "START_REVIEW" | "REQUEST_REVISION" | "ISSUE_CONFIRMATION_QR" | "ROTATE_CONFIRMATION_QR";
 
 export const useExecuteEventWorkspaceAction = (orgId: string, eventId: string, workspace: string) => {
   const queryClient = useQueryClient();

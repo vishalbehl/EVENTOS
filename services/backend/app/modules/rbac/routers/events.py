@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import uuid
+import math
+from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form as FastAPIForm
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status, UploadFile, File, Form as FastAPIForm
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,8 +24,45 @@ from app.modules.platform.models.organization import Organization
 from app.modules.identity.models.user import User
 from app.modules.rbac.schemas.event import EventCreate, EventUpdate, EventResponse, EventSummary
 from app.schemas.common import MessageResponse
+from app.core.dependencies.feature_gate import enforce_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.audit.models.audit_log import AuditLog
+from app.modules.events.services.event_mutation_service import EventMutationService
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+
+async def _reserve_storage_upload(
+    db: AsyncSession,
+    *,
+    event: Event,
+    contents: bytes,
+    idempotency_key: str,
+    source: str,
+):
+    if len(contents) > int(event.max_file_size_mb) * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "FILE_TOO_LARGE",
+                "max_file_size_mb": event.max_file_size_mb,
+            },
+        )
+    reserved_mb = max(1, math.ceil(len(contents) / (1024 * 1024)))
+    return await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="storage_quota_mb",
+        quantity=reserved_mb,
+        unit="megabytes",
+        idempotency_key=idempotency_key,
+        metadata={
+            "source": source,
+            "consumption_quantity": len(contents),
+            "consumption_unit": "bytes",
+        },
+    )
 
 
 @router.get("", response_model=List[EventSummary])
@@ -37,9 +76,12 @@ async def list_events(
     db: AsyncSession = Depends(get_db),
 ) -> List[EventSummary]:
     """List events scoped to the authenticated user's organisation."""
-    if current_user.role == 'super_admin':
-        q = select(Event)
-    elif current_user.role in ('admin', 'organiser'):
+    if current_user.role in ('super_admin', 'admin', 'organiser'):
+        if not current_user.organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
+            )
         q = select(Event).where(Event.organization_id == current_user.organization_id)
     else:
         # Restricted roles: only see assigned events
@@ -103,81 +145,28 @@ async def list_events(
 @router.post("", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
 async def create_event(
     payload: EventCreate,
+    idempotency_key: str = Header(
+        min_length=16,
+        max_length=120,
+        alias="Idempotency-Key",
+    ),
     current_user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
-    # Check event limit
-    if current_user.organization_id:
-        from app.modules.billing.services.limit_guard import LimitGuard
-        await LimitGuard.check_events(db, current_user.organization_id)
-
-    existing = await db.execute(
-        select(Event).where(
-            Event.organization_id == current_user.organization_id,
-            Event.short_code == payload.short_code,
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
         )
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=f"Short code '{payload.short_code}' already in use.")
-
-    db_data = payload.model_dump_for_db()
-    event = Event(
+    event = await EventMutationService.create(
+        db,
         organization_id=current_user.organization_id,
-        created_by=current_user.id,
-        **db_data,
+        actor_user_id=current_user.id,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        source="organizer_portal",
     )
-    
-    # Seed default templates for speaker and registration portals
-    from app.modules.registration.routers.registration_portal import DEFAULT_TERMS, DEFAULT_FAQS
-    from app.modules.speakers.models.speaker_theme_setting import DEFAULT_SPEAKER_TERMS, DEFAULT_SPEAKER_FAQS
-
-    if not event.registration_theme_setting:
-        from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
-        event.registration_theme_setting = RegistrationThemeSetting()
-    if not event.speaker_theme_setting:
-        from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
-        event.speaker_theme_setting = SpeakerThemeSetting()
-
-    if not event.registration_theme_setting.terms_and_conditions:
-        event.registration_theme_setting.terms_and_conditions = DEFAULT_TERMS
-    if not event.registration_theme_setting.faqs:
-        event.registration_theme_setting.faqs = DEFAULT_FAQS
-
-    if not event.speaker_theme_setting.terms_and_conditions:
-        event.speaker_theme_setting.terms_and_conditions = DEFAULT_SPEAKER_TERMS
-    if not event.speaker_theme_setting.faqs:
-        event.speaker_theme_setting.faqs = DEFAULT_SPEAKER_FAQS
-
-    db.add(event)
     await db.commit()
-    await db.refresh(event)
-
-    # Automatically clone global default email templates for the new event
-    from app.modules.communications.models.email_template import EmailTemplate
-    global_templates = await db.execute(
-        select(EmailTemplate).where(
-            EmailTemplate.event_id.is_(None),
-            EmailTemplate.is_default.is_(True)
-        )
-    )
-    for gt in global_templates.scalars().all():
-        cloned = EmailTemplate(
-            event_id=event.id,
-            name=gt.name,
-            template_type=gt.template_type,
-            subject=gt.subject,
-            body_html=gt.body_html,
-            body_text=gt.body_text,
-            is_default=False,
-        )
-        db.add(cloned)
-    await db.commit()
-
-    # Automatically seed all participant roles for the new event
-    from app.modules.registration.routers.participant_roles import seed_default_roles
-    await seed_default_roles(event.id, db)
-
     await db.refresh(event)
     return EventResponse.model_validate(event)
 
@@ -195,165 +184,95 @@ async def update_event(
     current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
-
-    if payload.short_code and payload.short_code != event.short_code:
-        existing = await db.execute(
-            select(Event).where(
-                Event.organization_id == current_user.organization_id,
-                Event.short_code == payload.short_code,
-                Event.id != event.id,
-            )
-        )
-        if existing.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Short code '{payload.short_code}' already in use.",
-            )
-
-    update_data = payload.model_dump(exclude_unset=True)
-
-    # Handle nested JSONB settings by merging (not replacing) existing keys
-    for settings_field in ("speaker_settings", "registration_settings", "branding_settings"):
-        if settings_field in update_data and update_data[settings_field] is not None:
-            current = dict(getattr(event, settings_field) or {})
-            current.update(update_data.pop(settings_field))
-            update_data[settings_field] = current
-
-    for field, value in update_data.items():
-        setattr(event, field, value)
-
-    if not event.speaker_mode_enabled and not event.registration_mode_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="At least one mode (Speaker or Registration) must be enabled.",
-        )
+    await EventMutationService.update(
+        db,
+        event=event,
+        payload=payload,
+        actor_user_id=current_user.id,
+    )
 
     await db.commit()
     await db.refresh(event)
     return EventResponse.model_validate(event)
 
 
-async def _perform_nuclear_wipe(event_id: uuid.UUID, db: AsyncSession):
-    """
-    Internal logic for the nuclear wipe. Does NOT commit.
-    """
-    from sqlalchemy import delete, text, select
-    from app.modules.events.models.session import Session
-    from app.modules.events.models.speaker import Speaker
-    from app.modules.events.models.room import Room
-    from app.modules.registration.models.import_job import ImportJob
-    from app.modules.presentations.models.poster import Poster
-    from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.venue.models.venue_activity_log import VenueActivityLog
-    from app.modules.communications.models.email_campaign import EmailCampaign
-    from app.modules.communications.models.email_template import EmailTemplate
-    from app.modules.venue.models.room_device import RoomDevice
-    from app.modules.identity.models.security_event import SecurityEvent
-    from app.modules.venue.models.srr_station import SRRStation
-    from app.modules.venue.models.srr_checkin import SRRCheckin
-    from app.modules.venue.models.venue_sync_job import VenueSyncJob
-    from app.modules.integrations.models.webhook import Webhook
-    from app.modules.presentations.models.presentation_bundle import PresentationBundle
-    from app.modules.audit.models.audit_log import AuditLog
-    
-    # Imports for deep dependent logs
-    from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
-    from app.modules.presentations.models.file_validation import FileValidation
-    from app.modules.venue.models.playback_event import PlaybackEvent
-    from app.modules.venue.models.venue_telemetry import DeviceHeartbeat, WebsocketEvent
-    from app.modules.communications.models.email_log import EmailLog
-    
-    # 1. Temporarily disable triggers
-    await db.execute(text("SET LOCAL session_replication_role = 'replica'"))
-    
-    # Subqueries
-    session_ids = select(Session.id).where(Session.event_id == event_id)
-    speaker_ids = select(Speaker.id).where(Speaker.event_id == event_id)
-    file_ids = select(PresentationFile.id).where(PresentationFile.event_id == event_id)
-    device_ids = select(RoomDevice.id).where(RoomDevice.event_id == event_id)
-    
-    # 0. Deep Logs & Telemetry
-    await db.execute(delete(FileIntegrityLog).where(FileIntegrityLog.file_id.in_(file_ids)))
-    await db.execute(delete(FileValidation).where(FileValidation.file_id.in_(file_ids)))
-    await db.execute(delete(PlaybackEvent).where(PlaybackEvent.session_id.in_(session_ids)))
-    await db.execute(delete(DeviceHeartbeat).where(DeviceHeartbeat.device_id.in_(device_ids)))
-    await db.execute(delete(WebsocketEvent).where(WebsocketEvent.device_id.in_(device_ids)))
-    await db.execute(delete(EmailLog).where(EmailLog.speaker_id.in_(speaker_ids)))
-    
-    # Many-to-Many and Tables without direct CASCADE relationships in code
-    await db.execute(text("DELETE FROM presentations.bundle_files WHERE bundle_id IN (SELECT id FROM presentations.bundles WHERE event_id = :eid)").bindparams(eid=event_id))
-    await db.execute(text("DELETE FROM events.session_speakers WHERE session_id IN (SELECT id FROM events.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
-    await db.execute(text("DELETE FROM venue.presentation_queue WHERE session_id IN (SELECT id FROM events.sessions WHERE event_id = :eid)").bindparams(eid=event_id))
-    
-    # 1. Main Tables (presorted for FK dependencies where possible)
-    await db.execute(delete(Session).where(Session.event_id == event_id))
-    await db.execute(delete(Speaker).where(Speaker.event_id == event_id))
-    await db.execute(delete(Poster).where(Poster.event_id == event_id))
-    await db.execute(delete(Room).where(Room.event_id == event_id))
-    await db.execute(delete(ImportJob).where(ImportJob.event_id == event_id))
-    await db.execute(delete(PresentationBundle).where(PresentationBundle.event_id == event_id))
-    await db.execute(delete(PresentationFile).where(PresentationFile.event_id == event_id))
-    await db.execute(delete(EmailCampaign).where(EmailCampaign.event_id == event_id))
-    await db.execute(delete(EmailTemplate).where(EmailTemplate.event_id == event_id))
-    await db.execute(delete(RoomDevice).where(RoomDevice.event_id == event_id))
-    await db.execute(delete(VenueSyncJob).where(VenueSyncJob.event_id == event_id))
-    await db.execute(delete(Webhook).where(Webhook.event_id == event_id))
-    await db.execute(delete(SRRStation).where(SRRStation.event_id == event_id))
-    await db.execute(delete(SRRCheckin).where(SRRCheckin.event_id == event_id))
-    await db.execute(delete(VenueActivityLog).where(VenueActivityLog.event_id == event_id))
-    await db.execute(delete(SecurityEvent).where(SecurityEvent.event_id == event_id))
-    await db.execute(delete(AuditLog).where(AuditLog.resource_id == event_id, AuditLog.resource_type == 'event'))
-
 @router.delete("/{event_id}", response_model=MessageResponse)
 async def delete_event(
     event: CurrentEvent,
+    current_user: OrganizerOrAbove,
+    reason: str = Header(..., alias="X-Change-Reason", min_length=12, max_length=1000),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """
-    Nuclear Delete: Deletes the event and ALL associated data in other tables atomically.
-    """
-    event_id = event.id
-    try:
-        # Deactivate first to release the slot (if no usage) or lock it (if there is usage)
-        from app.modules.billing.models.event_activation import EventActivation
-        from app.modules.billing.services.activation_service import ActivationService
-        
-        activation = await db.scalar(
-            select(EventActivation).where(
-                EventActivation.event_id == event_id,
-                EventActivation.status.in_(ActivationService.LIVE_STATUSES),
-            )
-        )
-        if activation:
-            await ActivationService.deactivate_event(
-                db,
-                organization_id=event.organization_id,
-                event_id=event_id,
-                idempotency_key=f"delete-deactivate-{event_id}",
-                actor_id=None,
-            )
+    """Soft-delete an event; permanent purge is a governed lifecycle job."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "events.planning.manage",
+        user_id=current_user.id,
+    )
+    if event.deleted_at is not None:
+        return MessageResponse(message="Event is already archived for recovery.")
 
-        # 1. Wipe all associated data in the same transaction
-        await _perform_nuclear_wipe(event_id, db)
-        
-        # 2. Finally delete the event itself
-        await db.delete(event)
-        await db.commit()
-        
-        logger.warning(f"Nuclear delete complete for event {event_id} ({event.name})")
-        return MessageResponse(message="Event and all associated data have been permanently deleted.")
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Nuclear delete FAILED for event {event_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Nuclear delete failed: {str(e)}")
+    from app.modules.billing.models.event_activation import EventActivation
+    from app.modules.billing.services.activation_service import ActivationService
+
+    activation = await db.scalar(
+        select(EventActivation).where(
+            EventActivation.event_id == event.id,
+            EventActivation.organization_id == event.organization_id,
+            EventActivation.status.in_(ActivationService.LIVE_STATUSES),
+        )
+    )
+    if activation:
+        await ActivationService.deactivate_event(
+            db,
+            organization_id=event.organization_id,
+            event_id=event.id,
+            idempotency_key=f"soft-delete:{idempotency_key}",
+            actor_id=current_user.id,
+        )
+
+    previous_status = event.status
+    event.status = "archived"
+    event.deleted_at = datetime.now(timezone.utc)
+    event.deleted_by = current_user.id
+    db.add(
+        AuditLog(
+            organization_id=event.organization_id,
+            actor_user_id=current_user.id,
+            actor_role=current_user.platform_role or current_user.role,
+            action_type="EVENT_SOFT_DELETED",
+            resource_type="event",
+            resource_id=event.id,
+            old_state={"status": previous_status, "deleted_at": None},
+            new_state={
+                "status": event.status,
+                "deleted_at": event.deleted_at.isoformat(),
+                "idempotency_key": idempotency_key,
+                "reason": reason,
+            },
+            is_sensitive=True,
+        )
+    )
+    await db.commit()
+    return MessageResponse(
+        message="Event archived. It remains recoverable until its retention window expires."
+    )
 
 
 @router.post("/{event_id}/publish", response_model=EventResponse)
 async def publish_event(
     event: CurrentEvent,
+    current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
     """Transition event from draft → active."""
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "events.planning.manage",
+        user_id=current_user.id,
+    )
     if event.status != "draft":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Event is '{event.status}', not 'draft'.")
@@ -367,31 +286,40 @@ async def publish_event(
 @router.post("/{event_id}/archive", response_model=EventResponse)
 async def archive_event(
     event: CurrentEvent,
+    current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "events.planning.manage",
+        user_id=current_user.id,
+    )
     event.status = "archived"
     await db.commit()
     await db.refresh(event)
     return EventResponse.model_validate(event)
 
-@router.post("/{event_id}/clear-data", response_model=MessageResponse)
+@router.post(
+    "/{event_id}/clear-data",
+    response_model=MessageResponse,
+    deprecated=True,
+    include_in_schema=False,
+)
 async def clear_event_data(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """
-    DANGEROUS: Deletes all schedule-related data for this event but preserves the event settings.
-    """
-    event_id = event.id
-    try:
-        await _perform_nuclear_wipe(event_id, db)
-        await db.commit()
-        logger.warning(f"All data cleared for event {event_id} by user request.")
-        return MessageResponse(message="All schedule data has been cleared for this event.")
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Clear data FAILED for event {event_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to clear event data: {str(e)}")
+    del db
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "COMMAND_CENTER_LIFECYCLE_JOB_REQUIRED",
+            "message": (
+                "Bulk data clearing is unavailable in Organizer Portal. "
+                "Create a previewed, approved lifecycle job in Command Center."
+            ),
+            "event_id": str(event.id),
+        },
+    )
 
 
 # ── Branding Image Upload ─────────────────────────────────────────────────────
@@ -402,6 +330,7 @@ async def upload_branding_image(
     current_user: OrganizerOrAbove,
     file: UploadFile = File(...),
     field: str = FastAPIForm(...),   # "logo" | "header"
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -410,6 +339,13 @@ async def upload_branding_image(
     - field="header" → appends URL to branding_settings.header_images list
     Returns the new full branding_settings dict.
     """
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "branding.logo.manage",
+        user_id=current_user.id,
+    )
     if field not in ("logo", "header"):
         raise HTTPException(status_code=400, detail="field must be 'logo' or 'header'")
 
@@ -417,6 +353,13 @@ async def upload_branding_image(
         contents = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+    reservation = await _reserve_storage_upload(
+        db,
+        event=event,
+        contents=contents,
+        idempotency_key=f"branding:{idempotency_key}",
+        source="event_branding_upload",
+    )
 
     def _clean(text: str) -> str:
         return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
@@ -435,6 +378,8 @@ async def upload_branding_image(
             content_type=file.content_type or "application/octet-stream",
         )
     except Exception as e:
+        await UsageReservationService.release(db, reservation.id)
+        await db.commit()
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
 
     if _app_settings.STORAGE_MODE == "local":
@@ -458,6 +403,12 @@ async def upload_branding_image(
             branding["banner_url"] = images[0]   # backward compat
 
     event.branding_settings = branding
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="event_branding_upload",
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     await db.refresh(event)
 
@@ -470,6 +421,7 @@ async def upload_speaker_branding_image(
     current_user: OrganizerOrAbove,
     file: UploadFile = File(...),
     field: str = FastAPIForm(...),   # "logo" | "header"
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -479,6 +431,13 @@ async def upload_speaker_branding_image(
     - field="template_file" → stores URL in speaker_settings.profile_settings.template_url
     Returns the new full speaker settings dict.
     """
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "branding.logo.manage",
+        user_id=current_user.id,
+    )
     if field not in ("logo", "header", "template_file"):
         raise HTTPException(status_code=400, detail="field must be 'logo', 'header', or 'template_file'")
 
@@ -486,6 +445,13 @@ async def upload_speaker_branding_image(
         contents = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+    reservation = await _reserve_storage_upload(
+        db,
+        event=event,
+        contents=contents,
+        idempotency_key=f"speaker-branding:{idempotency_key}",
+        source="speaker_branding_upload",
+    )
 
     def _clean(text: str) -> str:
         return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
@@ -504,6 +470,8 @@ async def upload_speaker_branding_image(
             content_type=file.content_type or "application/octet-stream",
         )
     except Exception as e:
+        await UsageReservationService.release(db, reservation.id)
+        await db.commit()
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
 
     if _app_settings.STORAGE_MODE == "local":
@@ -536,6 +504,12 @@ async def upload_speaker_branding_image(
         speaker_settings["profile_settings"] = profile_settings
 
     event.speaker_settings = speaker_settings
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="speaker_branding_upload",
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     await db.refresh(event)
 
@@ -546,49 +520,32 @@ async def upload_speaker_branding_image(
     }
 
 
-@router.post("/venue-images/upload-temp", response_model=dict)
+@router.post(
+    "/venue-images/upload-temp",
+    response_model=dict,
+    deprecated=True,
+    include_in_schema=False,
+)
 async def upload_temp_venue_image(
     current_user: User = Depends(require_active_user),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Upload a venue image before an event is created (associated with the organization).
+    Retired because pre-event files cannot be assigned to an immutable event
+    contract or event-scoped storage allowance.
     """
-    try:
-        contents = await file.read()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
-
-    def _clean(text: str) -> str:
-        return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
-
-    org_slug = _clean(str(current_user.organization_id or "temp"))
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
-    filename = f"{uuid.uuid4().hex[:8]}.{ext}"
-    storage_path = f"org_{org_slug}/temp_venue/{filename}"
-    bucket = "event_branding"
-
-    try:
-        _upload_service.upload_bytes(
-            bucket=bucket,
-            storage_path=storage_path,
-            data=contents,
-            content_type=file.content_type or "application/octet-stream",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
-
-    if _app_settings.STORAGE_MODE == "local":
-        url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
-    else:
-        url = _upload_service.create_presigned_download(
-            bucket=bucket,
-            storage_path=storage_path,
-            expiry_seconds=31_536_000,
-        )
-
-    return {"url": url}
+    del current_user, file, db
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "EVENT_CONTEXT_REQUIRED",
+            "message": (
+                "Create and activate the event before uploading venue images "
+                "so storage is enforced against its event contract."
+            ),
+        },
+    )
 
 
 @router.post("/{event_id}/venue-images/upload", response_model=dict)
@@ -596,16 +553,28 @@ async def upload_venue_image(
     event: CurrentEvent,
     current_user: OrganizerOrAbove,
     file: UploadFile = File(...),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
     Authenticated venue image upload.
     Appends the uploaded image URL to the event's `venue_images` array.
     """
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "events.planning.manage",
+        user_id=current_user.id,
+    )
     try:
         contents = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+    reservation = await _reserve_storage_upload(
+        db,
+        event=event,
+        contents=contents,
+        idempotency_key=f"venue-image:{idempotency_key}",
+        source="event_venue_image_upload",
+    )
 
     def _clean(text: str) -> str:
         return _re.sub(r"[^A-Za-z0-9\-]+", "_", text.strip()).strip("_")
@@ -624,6 +593,8 @@ async def upload_venue_image(
             content_type=file.content_type or "application/octet-stream",
         )
     except Exception as e:
+        await UsageReservationService.release(db, reservation.id)
+        await db.commit()
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
 
     if _app_settings.STORAGE_MODE == "local":
@@ -639,7 +610,12 @@ async def upload_venue_image(
     images = list(event.venue_images or [])
     images.append(url)
     event.venue_images = images
-    
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="event_venue_image_upload",
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     await db.refresh(event)
 
@@ -656,163 +632,27 @@ class ApplyPlanRequest(BaseModel):
     plan_id: Optional[str] = None
     addon_keys: Optional[list[str]] = None
 
-@router.post("/{event_id}/apply-plan", response_model=EventResponse)
+@router.post(
+    "/{event_id}/apply-plan",
+    response_model=EventResponse,
+    deprecated=True,
+    include_in_schema=False,
+)
 async def apply_plan_to_event(
     payload: ApplyPlanRequest,
     event: CurrentEvent,
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> EventResponse:
-    event.status = "active"
-
-    try:
-        from app.modules.billing.models.subscription import SubscriptionPlan, OrganizationSubscription
-        from app.modules.billing.models.event_activation import EventActivation
-        from app.modules.platform.models.organization_console import EventCommercialContract
-        from sqlalchemy.orm import selectinload
-        from sqlalchemy import func
-
-        plan = None
-        if payload.plan_name:
-            plan = await db.scalar(
-                select(SubscriptionPlan).where(
-                    func.lower(SubscriptionPlan.name) == payload.plan_name.strip().lower()
-                )
-            )
-        elif payload.plan_id:
-            try:
-                import uuid
-                plan_uuid = uuid.UUID(payload.plan_id)
-                plan = await db.get(SubscriptionPlan, plan_uuid)
-            except ValueError:
-                pass
-
-        if not plan:
-            plan = await db.scalar(
-                select(SubscriptionPlan).where(
-                    SubscriptionPlan.is_active.is_(True)
-                ).order_by(SubscriptionPlan.display_order.desc()).limit(1)
-            )
-
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-
-        sub = await db.scalar(
-            select(OrganizationSubscription).where(
-                OrganizationSubscription.organization_id == current_user.organization_id
-            ).order_by(OrganizationSubscription.created_at.desc()).limit(1)
-        )
-        if sub:
-            if plan:
-                sub.plan_id = plan.id
-            sub.status = "ACTIVE"
-            sub.status_reason = "PLAN_PURCHASE_APPLIED"
-            sub.status_changed_at = now
-            sub.status_changed_by = current_user.id
-        elif plan:
-            sub = OrganizationSubscription(
-                organization_id=current_user.organization_id,
-                plan_id=plan.id,
-                status="ACTIVE",
-                status_reason="PLAN_PURCHASE_APPLIED",
-                status_changed_at=now,
-                status_changed_by=current_user.id,
-            )
-            db.add(sub)
-            await db.flush()
-
-        if sub:
-            activation = await db.scalar(
-                select(EventActivation).where(
-                    EventActivation.event_id == event.id,
-                    EventActivation.organization_id == current_user.organization_id,
-                ).limit(1)
-            )
-            if activation:
-                activation.status = "ACTIVE"
-                activation.subscription_id = sub.id
-                activation.activated_at = now
-            else:
-                db.add(EventActivation(
-                    organization_id=current_user.organization_id,
-                    event_id=event.id,
-                    subscription_id=sub.id,
-                    status="ACTIVE",
-                    activation_policy="SNAPSHOT_LOCKED",
-                    activated_at=now,
-                ))
-
-        current_contract = await db.scalar(
-            select(EventCommercialContract).where(
-                EventCommercialContract.event_id == event.id,
-                EventCommercialContract.status == "ACTIVE",
-            ).with_for_update()
-        )
-        version = 1
-        if current_contract:
-            current_contract.status = "SUPERSEDED"
-            version = current_contract.version + 1
-
-        entitlements = {
-            "plan_name": plan.name if plan else "PRO",
-            "active": True,
-            "max_users": getattr(plan, "max_users", 10),
-            "max_registrations": getattr(plan, "max_registrations", 1000),
-            "max_speakers": getattr(plan, "max_speakers", 100),
-            "max_sessions": getattr(plan, "max_sessions", 50),
-            "max_rooms": getattr(plan, "max_rooms", 10),
-            "storage_quota_mb": getattr(plan, "storage_quota_mb", 10240),
-            "addon_keys": payload.addon_keys or [],
-        }
-
-        if plan:
-            from app.modules.platform.models.feature import FeatureCatalog
-            from app.modules.billing.models.subscription import PlanFeature
-            from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS
-            
-            typed_assignments = (await db.execute(
-                select(FeatureCatalog.key, PlanFeature.value_type, PlanFeature.entitlement_value)
-                .join(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id)
-                .where(PlanFeature.plan_id == plan.id, PlanFeature.enabled.is_(True))
-            )).all()
-            for feature_key, value_type, raw in typed_assignments:
-                value = raw.get("value") if isinstance(raw, dict) else True
-                contract_key = CATALOG_LIMIT_KEYS.get(feature_key, feature_key)
-                entitlements[contract_key] = {"type": value_type, "value": value}
-
-        db.add(EventCommercialContract(
-            organization_id=current_user.organization_id,
-            event_id=event.id,
-            version=version,
-            status="ACTIVE",
-            plan_key=plan.name if plan else "COMMERCIAL_PLAN",
-            plan_version=str(getattr(plan, "version", 1)),
-            currency=getattr(plan, "currency", "INR") or "INR",
-            entitlements=entitlements,
-            source={"type": "PLAN_PURCHASE_APPLIED", "user_id": str(current_user.id)},
-            effective_at=now,
-            created_by=current_user.id,
-        ))
-
-        from app.modules.platform.models.organization_console import CapabilityRevision
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        for scope in ["ORGANIZATION", "EVENT"]:
-            stmt = pg_insert(CapabilityRevision).values(
-                scope_type=scope,
-                revision=1,
-            ).on_conflict_do_update(
-                index_elements=["scope_type"],
-                set_={"revision": CapabilityRevision.revision + 1, "updated_at": func.now()}
-            )
-            await db.execute(stmt)
-
-        await db.commit()
-        await db.refresh(event)
-
-    except Exception as e:
-        await db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to apply plan: {str(e)}")
-
-    return event
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "COMMAND_CENTER_APPROVAL_REQUIRED",
+            "message": (
+                "Organizer Portal cannot apply plans, add-ons, or entitlement "
+                "snapshots. Submit a commercial access request for approval."
+            ),
+            "request_url": "/organisations/me/commercial-access-requests",
+            "event_id": str(event.id),
+        },
+    )

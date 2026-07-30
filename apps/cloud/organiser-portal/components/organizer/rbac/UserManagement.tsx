@@ -86,6 +86,7 @@ import { toast } from "sonner";
 import { cn, formatApiError } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
 import { CreateUserDialog } from "./CreateUserDialog";
+import { useRemoteEventLimitAccess } from "@/lib/capabilities";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -170,6 +171,10 @@ export function UserManagement() {
   const [isFetchingData, setIsFetchingData] = useState(false);
   
   const [selectedEventId, setSelectedEventId] = useState<string>("none");
+  const assignmentLimitAccess = useRemoteEventLimitAccess(
+    selectedEventId === "none" ? undefined : selectedEventId,
+    "max_event_team_members",
+  );
   const [selectedSessionId, setSelectedSessionId] = useState<string>("none");
   const [selectedRoomId, setSelectedRoomId] = useState<string>("none");
   const [selectedItemType, setSelectedItemType] = useState<"event" | "session" | "room">("event");
@@ -513,7 +518,11 @@ export function UserManagement() {
       
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/users/assignments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'Idempotency-Key': crypto.randomUUID(),
+        },
         body: JSON.stringify(body)
       });
       
@@ -1270,9 +1279,16 @@ export function UserManagement() {
                           disabled={
                             sidebarLoading || 
                             selectedEventId === "none" || 
+                            assignmentLimitAccess.loading ||
+                            !assignmentLimitAccess.enabled ||
                             (selectedItemType === "session" && selectedSessionId === "none") ||
                             (selectedItemType === "room" && selectedRoomId === "none")
                           } 
+                          title={
+                            assignmentLimitAccess.enabled
+                              ? undefined
+                              : `Unavailable: ${(assignmentLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
+                          }
                           className="w-full h-14 bg-[var(--pri)] text-white rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-2xl shadow-[var(--pri)]/30 group"
                         >
                           <PlusCircle className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform" />

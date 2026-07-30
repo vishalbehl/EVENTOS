@@ -102,6 +102,12 @@ class Event(Base, SoftDeleteMixin):
         String(30), nullable=False, default="draft", index=True
     )
     event_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_maintenance: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    is_read_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     # ── Licensing & feature flags ─────────────────────────────
     # starter | pro | enterprise

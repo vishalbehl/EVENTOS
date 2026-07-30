@@ -16,6 +16,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 scripts/
+!services/backend/scripts/
+services/backend/scripts/*
+!services/backend/scripts/verify_capability_migrations.py
+!services/backend/scripts/organizer_console_rollout.py
 scratch/
 docs/
 .agents/

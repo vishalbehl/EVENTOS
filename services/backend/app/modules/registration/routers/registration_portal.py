@@ -1,8 +1,9 @@
+import hashlib
 import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -33,6 +34,8 @@ from app.modules.registration.routers.registrations import helper_approve_regist
 from app.modules.registration.services.portal_service import verify_and_resolve_registration
 from app.core.dependencies.feature_gate import enforce_event_feature, enforce_event_operation, require_event_operation
 from app.modules.platform.services.metering_service import MeteringService
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.platform.models.organization_console import UsageReservation
 
 router = APIRouter(tags=["registration_portal"])
 
@@ -626,7 +629,8 @@ async def public_registration_upload(
     field_name: Optional[str] = Form(None),
     regno: Optional[str] = Form(None),
     username: Optional[str] = Form(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ):
     """
     Public upload endpoint for files/images in custom fields.
@@ -641,14 +645,50 @@ async def public_registration_upload(
             detail=f"Could not read upload file: {str(e)}"
         )
 
+    event = await db.scalar(select(Event).where(Event.id == event_id))
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.submit",
+    )
+
+    request_fingerprint = hashlib.sha256(
+        b"|".join(
+            [
+                str(event_id).encode(),
+                (field_name or "").encode(),
+                (regno or "").encode(),
+                (username or "").encode(),
+                (file.filename or "").encode(),
+                contents,
+            ]
+        )
+    ).hexdigest()
+    reservation_key = f"registration-upload:{idempotency_key}"
+    existing_reservation = await db.scalar(
+        select(UsageReservation).where(
+            UsageReservation.organization_id == event.organization_id,
+            UsageReservation.idempotency_key == reservation_key,
+        )
+    )
+    if existing_reservation and existing_reservation.status == "CONSUMED":
+        metadata = existing_reservation.metadata_json or {}
+        if metadata.get("request_fingerprint") != request_fingerprint:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "IDEMPOTENCY_CONFLICT"},
+            )
+        return {
+            "status": "success",
+            "url": metadata["url"],
+            "filename": metadata["filename"],
+        }
+
     # 2. Query event to get event name
     import re
-    event = None
-    try:
-        event_result = await db.execute(select(Event).where(Event.id == event_id))
-        event = event_result.scalar_one_or_none()
-    except Exception as e:
-        pass
 
     def sanitize_path_part(text: str, is_file: bool = False) -> str:
         if not text:
@@ -670,11 +710,37 @@ async def public_registration_upload(
     elif u_part:
         base_filename = u_part
     else:
-        base_filename = str(uuid.uuid4())
+        base_filename = str(uuid.uuid5(uuid.NAMESPACE_URL, reservation_key))
 
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     stored_filename = f"{base_filename}.{ext}"
     storage_path = f"{event_name_clean}/registration_upload/{field_folder}/{stored_filename}"
+    if settings.STORAGE_MODE == "local":
+        url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/registration_uploads/{storage_path}"
+    else:
+        url = upload_service.create_presigned_download(
+            bucket="registration_uploads",
+            storage_path=storage_path,
+            expiry_seconds=31536000,
+        )
+
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        limit_key="storage_quota_mb",
+        quantity=max(1, (len(contents) + 1024 * 1024 - 1) // (1024 * 1024)),
+        unit="megabyte",
+        idempotency_key=reservation_key,
+        metadata={
+            "request_fingerprint": request_fingerprint,
+            "storage_path": storage_path,
+            "filename": file.filename,
+            "url": url,
+            "consumption_quantity": len(contents),
+            "consumption_unit": "bytes",
+        },
+    )
 
     # 3. Upload bytes to S3 or local bucket 'registration_uploads'
     bucket = "registration_uploads"
@@ -686,21 +752,20 @@ async def public_registration_upload(
             content_type=file.content_type or "application/octet-stream"
         )
     except Exception as e:
+        await UsageReservationService.release(db, reservation.id)
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Storage upload failed: {str(e)}"
         )
 
     # 4. Construct accessibility URL
-    if settings.STORAGE_MODE == "local":
-        url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
-    else:
-        # In S3 mode, return a download URL (or direct public URL if bucket is public)
-        url = upload_service.create_presigned_download(
-            bucket=bucket,
-            storage_path=storage_path,
-            expiry_seconds=31536000 # 1 year expiry for registration documents
-        )
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="registration.portal.upload",
+    )
+    await db.commit()
 
     return {
         "status": "success",

@@ -233,11 +233,31 @@ class ActivationService:
             key: "HARD_PLATFORM_CEILING" for key in hard_ceilings
         }
         if plan:
-            typed_assignments = (await db.execute(select(FeatureCatalog.key, PlanFeature.value_type, PlanFeature.entitlement_value, PlanFeature.hard_ceiling).join(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id).where(PlanFeature.plan_id == plan.id, PlanFeature.enabled.is_(True)))).all()
-            for feature_key, value_type, raw, hard_ceiling in typed_assignments:
+            typed_assignments = (await db.execute(select(
+                FeatureCatalog.key,
+                PlanFeature.value_type,
+                PlanFeature.entitlement_value,
+                PlanFeature.hard_ceiling,
+                PlanFeature.enforcement_mode,
+            ).join(PlanFeature, PlanFeature.feature_id == FeatureCatalog.id).where(
+                PlanFeature.plan_id == plan.id,
+                PlanFeature.enabled.is_(True),
+            ))).all()
+            for feature_key, value_type, raw, hard_ceiling, enforcement_mode in typed_assignments:
                 value = raw.get("value") if isinstance(raw, dict) else True
                 contract_key = CATALOG_LIMIT_KEYS.get(feature_key, feature_key)
-                entitlements[contract_key] = {"type": value_type, "value": value}
+                entitlements[contract_key] = {
+                    "type": value_type,
+                    "value": value,
+                    "enforcement_mode": enforcement_mode or "HARD",
+                    "overage_policy": (
+                        {"action": "BILL"}
+                        if enforcement_mode == "METERED_OVERAGE"
+                        else {"action": "WARN"}
+                        if enforcement_mode == "SOFT_WARNING"
+                        else {"action": "DENY"}
+                    ),
+                }
                 if hard_ceiling is not None:
                     plan_ceiling = hard_ceiling.get("value") if isinstance(hard_ceiling, dict) else hard_ceiling
                     platform_ceiling = hard_ceilings.get(contract_key)

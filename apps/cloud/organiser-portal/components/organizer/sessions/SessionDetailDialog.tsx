@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { apiGet, apiPost, apiDelete, apiPatch } from "@/lib/api-client";
 import { cn, toDateTimeLocalString, fromDateTimeLocalString, formatTimeInTZ, formatDateInTZ } from "@/lib/utils";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEvent } from "@/hooks/useEvents";
 import { useRooms } from "@/hooks/useRooms";
 import { SESSION_CATEGORIES } from "@/types/models";
@@ -24,6 +25,7 @@ interface SessionDetailDialogProps {
 }
 
 export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: SessionDetailDialogProps) {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState<any>(null);
   const { data: event } = useEvent(eventId);
   const { data: rooms } = useRooms(eventId);
@@ -35,6 +37,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [editData, setEditData] = useState({
+    session_code: "",
     name: "",
     moderator_name: "",
     start_time: "",
@@ -50,6 +53,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
       setSession(data);
       const tz = data.event_timezone || 'UTC';
       setEditData({
+        session_code: data.session_code || "",
         name: data.name,
         moderator_name: data.moderator_name || "",
         start_time: toDateTimeLocalString(data.start_time, tz),
@@ -99,6 +103,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
       const tz = session?.event_timezone || 'UTC';
       // 1. Update session metadata
       await apiPatch(`/events/${eventId}/sessions/${sessionId}`, {
+        session_code: editData.session_code.trim().toUpperCase(),
         name: editData.name,
         moderator_name: editData.moderator_name,
         start_time: fromDateTimeLocalString(editData.start_time, tz),
@@ -114,6 +119,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
 
       toast.success("Session updated successfully");
       setIsEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
       fetchSession();
     } catch (err) {
       toast.error("Failed to update session");
@@ -164,9 +170,17 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
               <div className="p-8 border-b border-default flex-shrink-0 bg-gradient-to-br from-[var(--pri)]/5 to-transparent">
                 <div className="flex items-start justify-between gap-6 mb-8">
                   <div className="flex items-center gap-5">
-                    <div className="h-16 w-16 rounded-3xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center text-xl font-black text-[var(--pri)]">
-                      {session.session_code}
-                    </div>
+                    {isEditing ? (
+                      <input 
+                        value={editData.session_code}
+                        onChange={e => setEditData({...editData, session_code: e.target.value})}
+                        className="h-16 w-20 rounded-3xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center text-xl font-black text-[var(--pri)] text-center outline-none uppercase"
+                      />
+                    ) : (
+                      <div className="h-16 w-16 rounded-3xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center text-xl font-black text-[var(--pri)]">
+                        {session.session_code?.toUpperCase()}
+                      </div>
+                    )}
                     <div className="flex-1">
                       {isEditing ? (
                         <input 

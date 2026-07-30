@@ -5,7 +5,6 @@ import { useState } from "react";
 import {
   Calendar,
   Search,
-  Plus,
   Settings,
   Eye,
   Lock,
@@ -15,11 +14,6 @@ import {
   Check,
   X,
   Shield,
-  Sparkles,
-  Smartphone,
-  Award,
-  FileText,
-  QrCode,
 } from "lucide-react";
 import {
   useOrganizationEvents,
@@ -45,17 +39,17 @@ import { EventResourceControlPanel } from "@/features/organizations/components/E
 import { EventWorkspaceActionsPanel } from "@/features/organizations/components/EventWorkspaceActionsPanel";
 import { EventAccessCommercePanel } from "@/features/organizations/components/EventAccessCommercePanel";
 import { EventTemplateControlPanel } from "@/features/organizations/components/EventTemplateControlPanel";
+import { EventSettingsControlPanel } from "@/features/organizations/components/EventSettingsControlPanel";
+import { EventProvisionControl } from "@/features/organizations/components/EventProvisionControl";
 
-const ALL_EVENT_MODULES = [
-  { key: "registration", label: "Registration Workflow", icon: FileText },
-  { key: "abstracts", label: "Abstract Management", icon: FileText },
-  { key: "speaker_module", label: "Speaker Management", icon: Settings },
-  { key: "certificates", label: "Certificate Builder", icon: Award },
-  { key: "badge_builder", label: "Badge Builder", icon: QrCode },
-  { key: "mobile_app", label: "Dedicated Mobile App", icon: Smartphone },
-  { key: "ai_assistant", label: "AI Event Assistant", icon: Sparkles },
-  { key: "whatsapp", label: "WhatsApp Gateway", icon: Settings },
-];
+function capabilityLabel(key: string) {
+  return key
+    .replace(/^FEAT_/, "")
+    .replace(/^LIMIT_/, "")
+    .split("_")
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(" ");
+}
 
 function WorkspaceDataView({ data }: { data: Record<string, unknown> }) {
   return (
@@ -200,25 +194,33 @@ export default function EventsPageScreen() {
     const matchSearch =
       !search ||
       ev.name?.toLowerCase().includes(q) ||
-      ev.slug?.toLowerCase().includes(q);
+      ev.short_code?.toLowerCase().includes(q);
     const matchStatus =
-      !statusFilter || (ev.status || "ACTIVE") === statusFilter;
+      !statusFilter || (ev.status || "draft").toLowerCase() === statusFilter;
     return matchSearch && matchStatus;
   });
 
-  const activeCount = events.filter((ev: any) => ev.status === "ACTIVE").length;
-  const totalRegs = events.reduce(
-    (acc: number, ev: any) => acc + (ev.registrations_count || 0),
-    0,
+  const activeCount = events.filter(
+    (ev: any) => ev.status?.toLowerCase() === "active",
+  ).length;
+  const registrationsMeasured = events.every(
+    (ev: any) => typeof ev.registrations_count === "number",
   );
+  const totalRegs = registrationsMeasured
+    ? events.reduce(
+        (acc: number, ev: any) => acc + ev.registrations_count,
+        0,
+      )
+    : null;
 
-  const handleToggleMaintenance = async () => {
+  const handleToggleMaintenance = async (input: { reason: string; caseReference: string }) => {
     if (!selectedEvent) return;
     const nextVal = !selectedEvent.is_maintenance;
     try {
       await updateStatus.mutateAsync({
         is_maintenance: nextVal,
-        reason: "Toggled from Event Command Center",
+        reason: input.reason,
+        case_reference: input.caseReference,
       });
       setSelectedEvent((prev: any) => ({ ...prev, is_maintenance: nextVal }));
       toast.success(
@@ -227,6 +229,7 @@ export default function EventsPageScreen() {
       refetch();
     } catch (e: any) {
       toast.error("Failed to update maintenance mode");
+      throw e;
     }
   };
 
@@ -236,19 +239,7 @@ export default function EventsPageScreen() {
         icon={Calendar}
         title="Events Workspace"
         description="Comprehensive Event Directory & 360° Event Command Center."
-        actions={
-          <button
-            onClick={() =>
-              toast.info(
-                "Use the super admin event provisioner to launch new events.",
-              )
-            }
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--brand-primary)] text-[var(--primary-contrast)] text-xs font-bold hover:bg-[var(--brand-primary-hover)] transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Provision Event
-          </button>
-        }
+        actions={<EventProvisionControl orgId={orgId} />}
       />
 
       {/* Metrics */}
@@ -257,7 +248,7 @@ export default function EventsPageScreen() {
         <OrgMetricCard label="Active Events" value={activeCount} />
         <OrgMetricCard
           label="Total Registrations"
-          value={totalRegs.toLocaleString()}
+          value={totalRegs == null ? "Not measured" : totalRegs.toLocaleString()}
         />
         <OrgMetricCard
           label="Draft / Archived"
@@ -282,10 +273,10 @@ export default function EventsPageScreen() {
           className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] text-xs text-[var(--text-secondary)] px-3 py-2 focus:outline-none"
         >
           <option value="">All Statuses</option>
-          <option value="ACTIVE">Active</option>
-          <option value="DRAFT">Draft</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="ARCHIVED">Archived</option>
+          <option value="active">Active</option>
+          <option value="draft">Draft</option>
+          <option value="completed">Completed</option>
+          <option value="archived">Archived</option>
         </select>
       </div>
 
@@ -301,7 +292,7 @@ export default function EventsPageScreen() {
                   {ev.name || ev.id}
                 </p>
                 <p className="text-[10px] font-mono text-[var(--text-tertiary)]">
-                  {ev.slug || ev.id}
+                  {ev.short_code || ev.id}
                 </p>
               </div>
             ),
@@ -331,7 +322,9 @@ export default function EventsPageScreen() {
             header: "Registrations",
             render: (ev: any) => (
               <span className="text-xs font-bold font-mono text-[var(--text-primary)]">
-                {(ev.registrations_count || 0).toLocaleString()}
+                {typeof ev.registrations_count === "number"
+                  ? ev.registrations_count.toLocaleString()
+                  : "Not measured"}
               </span>
             ),
           },
@@ -340,7 +333,7 @@ export default function EventsPageScreen() {
             header: "Status",
             render: (ev: any) => (
               <div className="flex items-center gap-1.5">
-                <OrgStatusBadge status={ev.status || "ACTIVE"} />
+                <OrgStatusBadge status={(ev.status || "draft").toUpperCase()} />
                 {ev.is_maintenance && (
                   <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-muted)] text-[var(--status-warning)] text-[9px] font-bold">
                     MAINTENANCE
@@ -477,39 +470,108 @@ export default function EventsPageScreen() {
                   <p className="text-xs text-[var(--text-tertiary)]">
                     Canonical resolved entitlements. Submit any change through Commercial so it receives independent approval.
                   </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {ALL_EVENT_MODULES.map((mod) => {
-                      const resolvedValues = resolvedEntitlements.data?.values;
-                      const available = Boolean(resolvedValues) && Object.prototype.hasOwnProperty.call(resolvedValues, mod.key);
-                      const enabled = available ? Boolean(resolvedValues?.[mod.key]) : false;
-                      const Icon = mod.icon;
-                      return (
-                        <div
-                          key={mod.key}
-                          className="p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Icon className="w-4 h-4 text-[var(--brand-primary)]" />
-                            <span className="text-xs font-bold text-[var(--text-primary)]">
-                              {mod.label}
-                            </span>
-                          </div>
-                          <span
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
-                              !available
-                                ? "bg-[var(--bg-surface)] text-[var(--text-tertiary)]"
-                                :
-                              enabled
-                                ? "bg-[var(--status-success-muted)] text-[var(--status-success)]"
-                                : "bg-[var(--bg-surface)] text-[var(--text-tertiary)]"
-                            }`}
-                          >
-                            {resolvedEntitlements.isError ? "UNAVAILABLE" : !available ? "NOT CONFIGURED" : enabled ? "ENABLED" : "RESTRICTED"}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {resolvedEntitlements.isLoading ? (
+                    <div className="rounded-xl border border-[var(--border-default)] p-4 text-xs text-[var(--text-tertiary)]">
+                      Resolving the event contract and capability sources…
+                    </div>
+                  ) : resolvedEntitlements.isError || !resolvedEntitlements.data ? (
+                    <div className="rounded-xl border border-[var(--status-danger)]/30 p-4 text-xs text-[var(--status-danger)]">
+                      Canonical capabilities are unavailable. No feature is being inferred as enabled or disabled.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-tertiary)]">
+                        <span className="rounded-lg bg-[var(--bg-surface-3)] px-2 py-1">
+                          Contract v{resolvedEntitlements.data.contract_version}
+                        </span>
+                        <span className="rounded-lg bg-[var(--bg-surface-3)] px-2 py-1">
+                          {resolvedEntitlements.data.rollout_mode} enforcement
+                        </span>
+                        <span className="rounded-lg bg-[var(--bg-surface-3)] px-2 py-1">
+                          Fresh {new Date(resolvedEntitlements.data.freshness_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <OrgSectionTitle>Features and tiers</OrgSectionTitle>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {Object.entries(resolvedEntitlements.data.capabilities)
+                          .sort(([, left], [, right]) =>
+                            (left.name ?? left.key).localeCompare(right.name ?? right.key),
+                          )
+                          .map(([key, capability]) => (
+                            <div
+                              key={key}
+                              className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] p-3"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex min-w-0 items-start gap-2">
+                                  <Layers className="mt-0.5 h-4 w-4 shrink-0 text-[var(--brand-primary)]" />
+                                  <div>
+                                    <p className="text-xs font-bold text-[var(--text-primary)]">
+                                      {capability.name ?? capabilityLabel(key)}
+                                    </p>
+                                    <p className="font-mono text-[9px] text-[var(--text-tertiary)]">{key}</p>
+                                  </div>
+                                </div>
+                                <OrgStatusBadge
+                                  status={capability.enabled ? "ENABLED" : capability.reason_code ?? "NOT_ENTITLED"}
+                                />
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                                <div><span className="text-[var(--text-tertiary)]">Value</span><p className="font-bold">{String(capability.value ?? "Not set")}</p></div>
+                                <div><span className="text-[var(--text-tertiary)]">Backend</span><p className="font-bold">{capability.backend_mode.replaceAll("_", " ")}</p></div>
+                              </div>
+                              {capability.availability_note ? (
+                                <p className="mt-2 text-[10px] text-[var(--status-warning)]">{capability.availability_note}</p>
+                              ) : null}
+                              <details className="mt-3 text-[10px]">
+                                <summary className="cursor-pointer font-bold text-[var(--brand-primary)]">
+                                  Source lineage ({capability.sources.length})
+                                </summary>
+                                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--bg-surface)] p-2 text-[9px]">
+                                  {JSON.stringify(capability.sources, null, 2)}
+                                </pre>
+                              </details>
+                            </div>
+                          ))}
+                      </div>
+                      <OrgSectionTitle>Limits and consumption</OrgSectionTitle>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {Object.entries(resolvedEntitlements.data.limits)
+                          .sort(([left], [right]) => left.localeCompare(right))
+                          .map(([key, limit]) => (
+                            <div key={key} className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-2">
+                                  <Wrench className="mt-0.5 h-4 w-4 text-[var(--brand-primary)]" />
+                                  <div>
+                                    <p className="text-xs font-bold">{capabilityLabel(key)}</p>
+                                    <p className="font-mono text-[9px] text-[var(--text-tertiary)]">{key}</p>
+                                  </div>
+                                </div>
+                                <OrgStatusBadge status={limit.reason_code ?? "AVAILABLE"} />
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+                                <div><span className="text-[var(--text-tertiary)]">Used</span><p className="font-bold">{limit.used.toLocaleString()}</p></div>
+                                <div><span className="text-[var(--text-tertiary)]">Allowed</span><p className="font-bold">{limit.allowed == null ? "Unlimited" : limit.allowed.toLocaleString()}</p></div>
+                                <div><span className="text-[var(--text-tertiary)]">Reserved</span><p className="font-bold">{limit.reserved.toLocaleString()}</p></div>
+                                <div><span className="text-[var(--text-tertiary)]">Remaining</span><p className="font-bold">{limit.remaining == null ? "Unlimited" : limit.remaining.toLocaleString()}</p></div>
+                              </div>
+                              <p className="mt-2 text-[9px] text-[var(--text-tertiary)]">
+                                {limit.enforcement_mode ?? "HARD"} · ceiling {limit.hard_ceiling == null ? "not set" : limit.hard_ceiling.toLocaleString()} · {limit.period ?? "event"}
+                              </p>
+                              <details className="mt-3 text-[10px]">
+                                <summary className="cursor-pointer font-bold text-[var(--brand-primary)]">
+                                  Source lineage ({limit.sources?.length ?? 0})
+                                </summary>
+                                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--bg-surface)] p-2 text-[9px]">
+                                  {JSON.stringify(limit.sources ?? [], null, 2)}
+                                </pre>
+                              </details>
+                            </div>
+                          ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -727,29 +789,19 @@ export default function EventsPageScreen() {
 
               {eventTab === "settings" && (
                 <div className="space-y-4">
-                  <OrgSectionTitle>Event Configuration</OrgSectionTitle>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] mb-1">
-                        Event Title
-                      </label>
-                      <input
-                        readOnly
-                        value={selectedEvent.name || ""}
-                        className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] px-3 py-2 text-xs text-[var(--text-primary)]"
-                      />
+                  {domainWorkspace.isError ? (
+                    <div className="rounded-xl border border-[var(--status-danger)]/30 p-4 text-xs text-[var(--status-danger)]">
+                      Event settings are unavailable. No cached values can be edited.
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] mb-1">
-                        URL Slug
-                      </label>
-                      <input
-                        readOnly
-                        value={selectedEvent.slug || ""}
-                        className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] px-3 py-2 text-xs text-[var(--text-primary)]"
-                      />
-                    </div>
-                  </div>
+                  ) : domainWorkspace.isLoading ? (
+                    <LoadingPage />
+                  ) : (
+                    <EventSettingsControlPanel
+                      orgId={orgId}
+                      eventId={String(selectedEvent.id)}
+                      data={domainWorkspace.data?.data ?? {}}
+                    />
+                  )}
                 </div>
               )}
 
@@ -764,15 +816,57 @@ export default function EventsPageScreen() {
                         Block attendee logins & registrations during updates.
                       </p>
                     </div>
-                    <button
-                      onClick={handleToggleMaintenance}
+                    <GovernedActionButton
+                      label={
+                        selectedEvent.is_maintenance
+                          ? "Disable Maintenance"
+                          : "Enable Maintenance"
+                      }
+                      title={
+                        selectedEvent.is_maintenance
+                          ? "Restore event access"
+                          : "Place event in maintenance mode"
+                      }
+                      confirmationText={selectedEvent.is_maintenance ? undefined : selectedEvent.name}
+                      onConfirm={handleToggleMaintenance}
                       className="px-3 py-1.5 rounded-xl bg-[var(--status-warning)] text-white text-xs font-bold"
-                    >
-                      {selectedEvent.is_maintenance
-                        ? "Disable Maintenance"
-                        : "Enable Maintenance"}
-                    </button>
+                    />
                   </div>
+                  <div className="p-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-3)] flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-[var(--text-primary)]">Read-only mode</p>
+                      <p className="text-[10px] text-[var(--text-tertiary)]">Keep reads available while blocking organizer mutations.</p>
+                    </div>
+                    <GovernedActionButton
+                      label={selectedEvent.is_read_only ? "Disable Read-only" : "Enable Read-only"}
+                      title={selectedEvent.is_read_only ? "Restore event mutations" : "Make event read-only"}
+                      confirmationText={selectedEvent.is_read_only ? undefined : selectedEvent.name}
+                      onConfirm={async ({ reason, caseReference }) => {
+                        const nextVal = !selectedEvent.is_read_only;
+                        try {
+                          await updateStatus.mutateAsync({
+                            is_read_only: nextVal,
+                            reason,
+                            case_reference: caseReference,
+                          });
+                          setSelectedEvent((previous: any) => ({ ...previous, is_read_only: nextVal }));
+                          toast.success(nextVal ? "Event is now read-only" : "Read-only mode disabled");
+                          refetch();
+                        } catch {
+                          toast.error("Failed to update read-only mode");
+                          throw new Error("Failed to update read-only mode");
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-[var(--brand-primary)] text-[var(--primary-contrast)] text-xs font-bold"
+                    />
+                  </div>
+                  {domainWorkspace.isError ? (
+                    <div className="rounded-xl border border-[var(--status-danger)]/30 p-4 text-xs text-[var(--status-danger)]">
+                      Operational evidence is unavailable.
+                    </div>
+                  ) : domainWorkspace.data ? (
+                    <WorkspaceDataView data={domainWorkspace.data.data} />
+                  ) : null}
                 </div>
               )}
             </div>

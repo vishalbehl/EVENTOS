@@ -630,7 +630,10 @@ export default function SpeakerLandingPage() {
       const loadingId = toast.loading("Uploading template...");
       try {
         const res = await apiClient.post(`/events/${eventId}/speakers/${portal.speaker_id}/profile/parse-template?token=${token}`, formData, {
-          headers: { "Content-Type": "multipart/form-data" }
+          headers: {
+            "Content-Type": "multipart/form-data",
+            "Idempotency-Key": crypto.randomUUID(),
+          }
         });
         if (res.data && res.data.template_url) {
           setTemplateUrl(res.data.template_url);
@@ -656,7 +659,10 @@ export default function SpeakerLandingPage() {
       const loadingId = toast.loading("Uploading CV...");
       try {
         const res = await apiClient.post(`/events/${eventId}/speakers/${portal.speaker_id}/profile/parse-cv?token=${token}`, formData, {
-          headers: { "Content-Type": "multipart/form-data" }
+          headers: {
+            "Content-Type": "multipart/form-data",
+            "Idempotency-Key": crypto.randomUUID(),
+          }
         });
         if (res.data && res.data.cv_url) {
           setCvUrl(res.data.cv_url);

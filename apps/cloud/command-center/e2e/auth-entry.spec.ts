@@ -6,11 +6,10 @@ test.describe("Command Center entry", () => {
     await page.goto("/");
 
     await expect(page).toHaveTitle(/Event OS/);
-    await expect(page.getByRole("heading", { name: /Platform Control Panel/i })).toBeVisible();
-    await expect(page.getByLabel(/admin identity/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Command Center Access/i })).toBeVisible();
+    await expect(page.getByLabel(/work email/i)).toBeVisible();
     await expect(page.getByLabel(/^password$/i)).toBeVisible();
-    await expect(page.getByLabel(/authenticator code/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: /verify and continue/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /continue securely/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /fast login/i })).toHaveCount(0);
 
     const results = await new AxeBuilder({ page })

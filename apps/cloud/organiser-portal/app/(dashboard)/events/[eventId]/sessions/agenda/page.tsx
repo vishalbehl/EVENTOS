@@ -318,11 +318,11 @@ export default function SessionsPage() {
                       onClick={() => setSelectedSessionId(session.id)}
                       className="glass-3d group flex items-center justify-between p-6 rounded-3xl border-default hover:border-[var(--pri)] transition-all cursor-pointer hover-lift-3d"
                     >
-                      <div className="flex items-center gap-6">
-                        <div className="h-14 w-14 rounded-2xl bg-[color-mix(in_srgb,var(--pri)_10%,transparent)] flex items-center justify-center text-[var(--pri)] font-black text-xs">
-                          {session.session_code}
+                      <div className="flex items-center gap-5">
+                        <div className="h-16 w-16 rounded-3xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center text-xl font-black text-[var(--pri)]">
+                          {session.session_code?.toLowerCase()}
                         </div>
-                        <div>
+                        <div className="flex-1">
                           <h3 className="text-lg font-black tracking-tight text-[var(--text)] group-hover:text-[var(--pri)] transition-colors flex flex-wrap items-center gap-2">
                             <span>{session.name}</span>
                             {session.session_type && (

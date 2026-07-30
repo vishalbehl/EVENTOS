@@ -18,18 +18,20 @@ interface CreateSessionDialogProps {
   isOpen: boolean;
   onClose: () => void;
   eventId: string;
+  preloadedRooms?: any[];
 }
 
-export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionDialogProps) {
+export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms }: CreateSessionDialogProps) {
   const queryClient = useQueryClient();
-  const { data: rooms } = useRooms(eventId);
+  const { data: fetchedRooms } = useRooms(eventId);
+  const rooms = (preloadedRooms && preloadedRooms.length > 0) ? preloadedRooms : (fetchedRooms || []);
   const { data: event } = useEvent(eventId);
   const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     session_code: "",
     name: "",
-    room_id: "",
+    room_input: "",
     session_type: "KEYNOTE",
     selected_date: "",
     start_time_only: "09:00",
@@ -67,10 +69,33 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
       const startTime = fromDateTimeLocalString(`${formData.selected_date}T${formData.start_time_only}`, tz);
       const endTime = fromDateTimeLocalString(`${formData.selected_date}T${formData.end_time_only}`, tz);
 
+      // Handle dynamic room creation
+      let finalRoomId = null;
+      if (formData.room_input) {
+        const matchingRoom = rooms.find((r: any) => 
+          r.name.toLowerCase() === formData.room_input.trim().toLowerCase() ||
+          r.id === formData.room_input
+        );
+        
+        if (matchingRoom) {
+          finalRoomId = matchingRoom.id;
+        } else {
+          // Create new room
+          const newRoom = await apiPost<{ id: string }>(`/events/${eventId}/rooms`, {
+            name: formData.room_input.trim(),
+            room_type: "ROOM",
+            capacity: 50,
+            screen_count: 1
+          });
+          finalRoomId = newRoom.id;
+          queryClient.invalidateQueries({ queryKey: ["rooms", eventId] });
+        }
+      }
+
       const payload = {
-        session_code: formData.session_code,
-        name: formData.name,
-        room_id: formData.room_id || null,
+        session_code: formData.session_code.trim().toUpperCase(),
+        name: formData.name.trim(),
+        room_id: finalRoomId,
         session_type: formData.session_type,
         start_time: startTime,
         end_time: endTime,
@@ -84,7 +109,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
       onClose();
       // Reset
       setFormData({
-        session_code: "", name: "", room_id: "", session_type: "KEYNOTE",
+        session_code: "", name: "", room_input: "", session_type: "KEYNOTE",
         selected_date: eventDates[0] || "",
         start_time_only: "09:00", end_time_only: "10:00", 
         moderator_name: "", description: ""
@@ -142,9 +167,9 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
                     <Input
                       required
                       value={formData.session_code}
-                      onChange={e => setFormData({ ...formData, session_code: e.target.value })}
+                      onChange={e => setFormData({ ...formData, session_code: e.target.value.toUpperCase() })}
                       placeholder="e.g. S101"
-                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
+                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold uppercase"
                     />
                   </div>
                 </div>
@@ -162,17 +187,20 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
 
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Hall / Room *</label>
+                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Hall / Room (Optional)</label>
                   <div className="relative">
-                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none z-10" />
                     <select
-                      required
-                      value={formData.room_id}
-                      onChange={e => setFormData({ ...formData, room_id: e.target.value })}
-                      className="w-full h-12 glass-3d border-default rounded-xl pl-12 pr-4 text-[13px] font-bold text-[var(--text)] appearance-none focus:outline-none"
+                      value={formData.room_input}
+                      onChange={e => setFormData({ ...formData, room_input: e.target.value })}
+                      className="w-full h-12 glass-3d border border-default rounded-xl pl-12 pr-4 text-[13px] font-bold text-[var(--text)] bg-background appearance-none focus:outline-none cursor-pointer"
                     >
-                      <option key="placeholder" value="">Select Room...</option>
-                      {rooms?.map((r: any, idx: number) => <option key={r.id || `room-${idx}`} value={r.id}>{r.name}</option>)}
+                      <option value="">No Room (Unallocated)</option>
+                      {rooms.map((r: any) => (
+                        <option key={r.id} value={r.id || r.name}>
+                          {r.name} {r.capacity ? `(${r.capacity} seats)` : ""}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -265,7 +293,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
               <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
                 Cancel
               </Button>
-              <CapabilityAction operation="sessions.manage">
+              <CapabilityAction operation="sessions.manage" limitKey="max_sessions">
                 <Button
                   disabled={loading}
                   onClick={handleSubmit}

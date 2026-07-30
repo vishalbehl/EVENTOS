@@ -180,9 +180,14 @@ export interface FeatureMatrixItem {
   key: string;
   name: string;
   description?: string;
-  display_basic: string;
-  display_professional: string;
-  display_enterprise: string;
+  value_type?: "BOOLEAN" | "LIMIT" | "TIER" | "ENUM" | string;
+  scope_type?: string;
+  enforcement_mode?: "HARD" | "SOFT_WARNING" | "METERED_OVERAGE";
+  default_value?: unknown;
+  allowed_values?: string[];
+  unit?: string | null;
+  period?: string | null;
+  version?: number;
 }
 
 export interface FeatureMatrixCategory {

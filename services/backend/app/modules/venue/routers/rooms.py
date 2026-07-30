@@ -14,9 +14,10 @@ from app.modules.events.models.room import Room
 from app.modules.identity.models.user import User
 from app.modules.venue.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 from app.schemas.common import MessageResponse
-from app.modules.platform.services.metering_service import MeteringService
 from app.core.dependencies.feature_gate import require_event_operation
-from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.events.services.event_resource_mutation_service import (
+    EventResourceMutationService,
+)
 
 router = APIRouter(prefix="/events/{event_id}/rooms", tags=["rooms"], dependencies=[require_event_operation("venue.rooms.manage")])
 
@@ -27,10 +28,13 @@ async def list_rooms(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[RoomResponse]:
-    q = select(Room).options(selectinload(Room.event)).where(Room.event_id == event.id)
+    q = select(Room).options(selectinload(Room.event)).where(
+        Room.event_id == event.id,
+        Room.is_active.is_(True),
+    )
 
-    # Restricted roles (NOT super_admin or admin) must have specific room assignments
-    if current_user.role not in ["super_admin", "admin"]:
+    # Restricted roles (NOT super_admin, admin, or organiser) must have specific room assignments
+    if current_user.role not in ["super_admin", "admin", "organiser", "organizer"]:
         from app.modules.rbac.models.rbac import UserAccessNode
         from sqlalchemy import or_, exists
 
@@ -67,25 +71,13 @@ async def create_room(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RoomResponse:
-    reservation = await UsageReservationService.reserve(
+    room = await EventResourceMutationService.create_room(
         db,
-        organization_id=event.organization_id,
-        event_id=event.id,
-        limit_key="max_rooms",
-        quantity=1,
-        unit="room",
-        idempotency_key=f"room-create:{idempotency_key}",
-        metadata={"name": payload.name},
-    )
-
-    room = Room(event_id=event.id, **payload.model_dump())
-    db.add(room)
-    await db.flush()
-    await UsageReservationService.consume(
-        db,
-        reservation.id,
-        source="organizer_portal.rooms.create",
+        event=event,
+        payload=payload,
         actor_user_id=current_user.id,
+        idempotency_key=idempotency_key,
+        source="organizer_portal",
     )
     await db.commit()
     await db.refresh(room)
@@ -112,9 +104,16 @@ async def update_room(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RoomResponse:
-    room = await _get_room_or_404(db, room_id, event.id, user=current_user)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(room, field, value)
+    await _get_room_or_404(
+        db, room_id, event.id, user=current_user, allow_inactive=True
+    )
+    room, _, _ = await EventResourceMutationService.update_room(
+        db,
+        event=event,
+        room_id=room_id,
+        payload=payload,
+        actor_user_id=current_user.id,
+    )
     await db.commit()
     await db.refresh(room)
     return RoomResponse.model_validate(room)
@@ -127,10 +126,14 @@ async def delete_room(
     user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    room = await _get_room_or_404(db, room_id, event.id, user=user)
-    if room.is_active:
-        room.is_active = False
-        await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="rooms", quantity=-1, unit="count", source="organizer_portal.rooms.archive", idempotency_key=f"room-archive:{room.id}", actor_user_id=user.id, metadata={"resource_id": str(room.id)})
+    await _get_room_or_404(db, room_id, event.id, user=user)
+    await EventResourceMutationService.archive_room(
+        db,
+        event=event,
+        room_id=room_id,
+        actor_user_id=user.id,
+        source="organizer_portal",
+    )
     await db.commit()
     return MessageResponse(message="Room archived and remains recoverable.")
 
@@ -139,11 +142,14 @@ async def _get_room_or_404(
     db: AsyncSession, 
     room_id: uuid.UUID, 
     event_id: uuid.UUID,
-    user: Optional[User] = None
+    user: Optional[User] = None,
+    allow_inactive: bool = False
 ) -> Room:
-    result = await db.execute(
-        select(Room).options(selectinload(Room.event)).where(Room.id == room_id, Room.event_id == event_id)
-    )
+    query = select(Room).options(selectinload(Room.event)).where(Room.id == room_id, Room.event_id == event_id)
+    if not allow_inactive:
+        query = query.where(Room.is_active == True)
+
+    result = await db.execute(query)
     r = result.scalar_one_or_none()
     if r is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")

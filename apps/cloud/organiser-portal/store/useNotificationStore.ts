@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import { useAuthStore } from './use-auth-store';
+import { socketService } from '@/lib/socket';
 
 export interface Notification {
   id: string;
@@ -38,21 +39,17 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     { id: 't4', label: 'Check Storage', done: false },
   ],
   connect: (eventIds: string[]) => {
-    if (get().socket) return;
-    
     const token = useAuthStore.getState().accessToken;
     if (!token) return;
-    const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8000', {
-      path: '/socket.io',
-      transports: ['websocket'],
-      auth: { token },
-    });
 
-    socket.on('connect', () => {
-      console.log('Connected to WebSocket server');
-      eventIds.forEach(eventId => {
-         socket.emit('join_event_room', { event_id: eventId });
-      });
+    socketService.connect(token);
+    const socket = socketService.socket;
+    if (!socket) return;
+
+    if (get().socket === socket) return;
+
+    eventIds.forEach(eventId => {
+      socketService.joinEvent(eventId);
     });
 
     socket.on('notification', (payload) => {
@@ -95,7 +92,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   disconnect: () => {
     const { socket } = get();
     if (socket) {
-      socket.disconnect();
+      socketService.disconnect();
       set({ socket: null });
     }
   },

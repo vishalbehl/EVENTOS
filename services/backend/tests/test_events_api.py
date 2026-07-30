@@ -4,15 +4,30 @@ from __future__ import annotations
 import uuid
 from datetime import date
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
-from tests.conftest import auth_headers
+from tests.conftest import activate_event_for_test, auth_headers as _auth_headers
 
 
 BASE_URL = "/events"
 DETAIL_URL = "/events/{event_id}"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _licensed_event(db: AsyncSession, event: Event):
+    await activate_event_for_test(db, event)
+    yield
+
+
+def auth_headers(user: User) -> dict[str, str]:
+    return {
+        **_auth_headers(user),
+        "Idempotency-Key": f"event-api-{uuid.uuid4()}",
+    }
 
 
 class TestEventsAPICreation:

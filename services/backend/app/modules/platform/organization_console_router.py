@@ -16,12 +16,30 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.client_ip import resolve_client_ip
+from app.core.tenant_context import TenantContextGuard
 from app.dependencies import StepUpAuth, get_db
 from app.modules.audit.models.audit_log import AuditLog, compute_audit_hash
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
+from app.modules.events.services.event_mutation_service import EventMutationService
+from app.modules.events.services.event_resource_mutation_service import (
+    EventResourceMutationService,
+)
+from app.modules.events.services.event_template_mutation_service import (
+    EventTemplateMutationService,
+)
+from app.modules.events.services.event_campaign_mutation_service import (
+    EventCampaignMutationService,
+)
+from app.modules.events.services.event_participant_mutation_service import (
+    EventParticipantMutationService,
+)
+from app.modules.events.services.event_job_control_service import (
+    EventJobControlService,
+)
+from app.modules.rbac.schemas.event import EventCreate, EventUpdate
 from app.modules.platform.models.organization_console import (
     OrganizationBrandProfile,
     OrganizationComplianceControl,
@@ -72,6 +90,7 @@ from app.modules.platform.schemas.organization_console import (
     FinancialAdjustmentCreate,
     RegistrationAdministrativeCorrection,
     EventWorkspaceMutation,
+    EventOperationalControlUpdate,
     EventWorkspaceDelete,
     EventWorkspaceAction,
     ConsoleExportCreate,
@@ -97,6 +116,9 @@ from app.modules.platform.schemas.organization_console import (
 )
 from app.modules.audit.models.audit_domain_tables import ImpersonationLog
 from app.modules.platform.services.organization_console_service import OrganizationConsoleService
+from app.modules.platform.services.capability_rollout_preflight_service import (
+    CapabilityRolloutPreflightService,
+)
 from app.modules.platform.services.metering_service import MeteringService
 from app.modules.platform.services.lifecycle_service import OrganizationLifecycleService
 from app.modules.superadmin.dependencies import require_super_admin
@@ -126,18 +148,19 @@ from app.modules.rbac.models.organization_member import OrganizationMember
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.modules.presentations.models.presentations_domain_tables import PresentationProcessingJob
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.integrations.models.webhook import Webhook
+from app.modules.integrations.models.webhook import Webhook, WebhookMutation
 from app.modules.speakers.schemas.speaker import SpeakerCreate, SpeakerUpdate
 from app.modules.speakers.schemas.session import SessionCreate, SessionUpdate
-from app.modules.venue.schemas.room import RoomCreate, RoomUpdate, ROOM_TYPES
+from app.modules.venue.schemas.room import RoomCreate, RoomUpdate
 from app.modules.notifications.schemas.webhook import WebhookCreate, WebhookUpdate
-from app.modules.notifications.schemas.notification import CampaignCreate, EmailTemplateCreate, EmailTemplateUpdate
+from app.modules.notifications.schemas.notification import CampaignCreate, CampaignUpdate, EmailTemplateCreate, EmailTemplateUpdate
 from app.modules.notifications.services.channel_provider_service import (
     ChannelProviderError,
     ChannelProviderService,
     SUPPORTED_PROVIDERS,
 )
 from app.modules.registration.schemas.print_template import PrintTemplateCreate, PrintTemplateUpdate
+from app.modules.registration.schemas.participant import ParticipantCreate, ParticipantUpdate
 from app.modules.billing.capability_registry import LIMIT_DEFINITIONS, registry_coverage
 from app.modules.billing.services.event_entitlement_service import EventEntitlementService
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
@@ -166,10 +189,28 @@ from app.modules.billing.models.subscription import Addon, OrganizationAddon, Or
 from app.modules.billing.models.event_activation import EventActivation
 
 
+async def _selected_organization_scope(
+    organization_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run every console query under the selected tenant's RLS context.
+
+    Authentication still resolves the real platform actor before this
+    dependency enters the selected organization scope. The context changes
+    database visibility only; it never impersonates the actor recorded by
+    privileged-action audits.
+    """
+    async with TenantContextGuard.scoped(db, organization_id):
+        yield
+
+
 router = APIRouter(
     prefix="/platform/organizations/{organization_id}/console",
     tags=["organization-console"],
-    dependencies=[Depends(require_super_admin)],
+    dependencies=[
+        Depends(require_super_admin),
+        Depends(_selected_organization_scope),
+    ],
 )
 
 SEARCH_DOMAINS = {"events", "speakers", "sessions", "registrations", "files", "campaigns", "users"}
@@ -180,6 +221,28 @@ async def _require_scoped_event(db: AsyncSession, organization_id: uuid.UUID, ev
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+def _console_event_out(event: Event) -> dict:
+    return {
+        "id": event.id,
+        "organization_id": event.organization_id,
+        "name": event.name,
+        "short_code": event.short_code,
+        "status": event.status,
+        "location": event.location,
+        "venue_name": event.venue_name,
+        "country": event.country,
+        "state": event.state,
+        "start_date": event.start_date,
+        "end_date": event.end_date,
+        "timezone": event.timezone,
+        "currency": event.currency,
+        "is_maintenance": event.is_maintenance,
+        "is_read_only": event.is_read_only,
+        "created_at": event.created_at,
+        "updated_at": event.updated_at,
+    }
 
 
 async def _governed_mutation_replay(
@@ -232,6 +295,60 @@ def _governed_mutation_receipt(
         request_hash=request_hash,
         resource_type=resource_type,
         resource_id=resource_id,
+        response_json=jsonable_encoder(response),
+    )
+
+
+async def _webhook_mutation_replay(
+    db: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    event_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    idempotency_key: str,
+    request_hash: str,
+) -> dict | None:
+    mutation = await db.scalar(
+        select(WebhookMutation)
+        .where(
+            WebhookMutation.organization_id == organization_id,
+            WebhookMutation.idempotency_key == idempotency_key,
+        )
+        .with_for_update()
+    )
+    if mutation is None:
+        return None
+    if (
+        mutation.event_id != event_id
+        or mutation.requested_by != actor_id
+        or mutation.request_hash != request_hash
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "IDEMPOTENCY_CONFLICT"},
+        )
+    return mutation.response_json
+
+
+def _webhook_mutation(
+    *,
+    organization_id: uuid.UUID,
+    event_id: uuid.UUID,
+    webhook_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    operation_type: str,
+    idempotency_key: str,
+    request_hash: str,
+    response: dict,
+) -> WebhookMutation:
+    return WebhookMutation(
+        organization_id=organization_id,
+        event_id=event_id,
+        webhook_id=webhook_id,
+        requested_by=actor_id,
+        operation_type=operation_type,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
         response_json=jsonable_encoder(response),
     )
 
@@ -390,66 +507,58 @@ async def create_impersonation_handoff(
 @router.get("/rollout")
 async def get_organizer_rollout(organization_id: uuid.UUID, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    flags = (await db.scalars(select(FeatureFlag).where(FeatureFlag.organization_id == organization_id, FeatureFlag.flag_key.in_(["organizer_console_entitlement_shadow", "organizer_console_entitlement_enforce"])))).all()
-    values = {row.flag_key: row.is_enabled for row in flags}
-    activated_event_ids = (
-        await db.scalars(
-            select(EventActivation.event_id).where(
-                EventActivation.organization_id == organization_id,
-                EventActivation.status.in_(EntitlementResolver.LIVE_ACTIVATION_STATUSES),
-            )
-        )
-    ).all()
-    latest_by_event = select(EntitlementShadowComparison.event_id, func.max(EntitlementShadowComparison.compared_at).label("latest")).where(EntitlementShadowComparison.organization_id == organization_id, EntitlementShadowComparison.event_id.in_(activated_event_ids)).group_by(EntitlementShadowComparison.event_id).subquery()
-    latest = (await db.scalars(select(EntitlementShadowComparison).join(latest_by_event, and_(EntitlementShadowComparison.event_id == latest_by_event.c.event_id, EntitlementShadowComparison.compared_at == latest_by_event.c.latest)).where(EntitlementShadowComparison.organization_id == organization_id).order_by(EntitlementShadowComparison.compared_at.desc()))).all()
-    contracted_event_ids = set(
-        (
-            await db.scalars(
-                select(EventCommercialContract.event_id).where(
-                    EventCommercialContract.organization_id == organization_id,
-                    EventCommercialContract.event_id.in_(activated_event_ids),
-                    EventCommercialContract.status == "ACTIVE",
-                )
-            )
-        ).all()
+    preflight = await CapabilityRolloutPreflightService.evaluate(
+        db, organization_id
     )
-    freshness_cutoff = datetime.now(timezone.utc) - timedelta(hours=26)
-    stale = sum(row.compared_at < freshness_cutoff for row in latest)
-    return {"shadow_enabled": values.get("organizer_console_entitlement_shadow", False), "enforcement_enabled": values.get("organizer_console_entitlement_enforce", False), "activated_events": len(activated_event_ids), "contracted_events": len(contracted_event_ids), "missing_contracts": max(len(activated_event_ids) - len(contracted_event_ids), 0), "comparisons": {"sample_size": len(latest), "matched": sum(row.status == "MATCHED" for row in latest), "diverged": sum(row.status == "DIVERGED" for row in latest), "stale": stale, "freshness_cutoff": freshness_cutoff, "latest_at": latest[0].compared_at if latest else None}, "items": [{"id": row.id, "event_id": row.event_id, "status": row.status, "differences": row.differences, "resolution_version": row.resolution_version, "compared_at": row.compared_at, "fresh": row.compared_at >= freshness_cutoff} for row in latest]}
+    events = preflight["events"]
+    return {
+        "shadow_enabled": preflight["rollout"]["shadow_enabled"],
+        "enforcement_enabled": preflight["rollout"]["enforcement_enabled"],
+        "activated_events": events["activated"],
+        "contracted_events": events["contracted"],
+        "missing_contracts": max(events["activated"] - events["contracted"], 0),
+        "comparisons": {
+            "sample_size": events["compared"],
+            "matched": events["matched"],
+            "diverged": events["diverged"],
+            "stale": events["stale"],
+            "freshness_cutoff": preflight["freshness_cutoff"],
+            "latest_at": (
+                preflight["items"][0]["compared_at"]
+                if preflight["items"]
+                else None
+            ),
+        },
+        "items": preflight["items"],
+        "preflight": preflight,
+    }
 
 
 @router.patch("/rollout")
 async def update_organizer_rollout(organization_id: uuid.UUID, payload: OrganizerRolloutUpdate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    activated_event_ids = (
-        await db.scalars(
-            select(EventActivation.event_id).where(
-                EventActivation.organization_id == organization_id,
-                EventActivation.status.in_(EntitlementResolver.LIVE_ACTIVATION_STATUSES),
-            )
-        )
-    ).all()
-    contracted_event_count = int(
-        await db.scalar(
-            select(func.count(func.distinct(EventCommercialContract.event_id))).where(
-                EventCommercialContract.organization_id == organization_id,
-                EventCommercialContract.event_id.in_(activated_event_ids),
-                EventCommercialContract.status == "ACTIVE",
-            )
-        )
-        or 0
+    preflight = await CapabilityRolloutPreflightService.evaluate(
+        db, organization_id
     )
-    missing_contract_count = max(len(activated_event_ids) - contracted_event_count, 0)
+    missing_contract_count = max(
+        preflight["events"]["activated"] - preflight["events"]["contracted"],
+        0,
+    )
     if payload.enforcement_enabled:
-        freshness_cutoff = datetime.now(timezone.utc) - timedelta(hours=26)
-        latest_by_event = select(EntitlementShadowComparison.event_id, func.max(EntitlementShadowComparison.compared_at).label("latest")).where(EntitlementShadowComparison.organization_id == organization_id, EntitlementShadowComparison.event_id.in_(activated_event_ids), EntitlementShadowComparison.compared_at >= freshness_cutoff).group_by(EntitlementShadowComparison.event_id).subquery()
-        divergence = await db.scalar(select(func.count()).select_from(EntitlementShadowComparison).join(latest_by_event, and_(EntitlementShadowComparison.event_id == latest_by_event.c.event_id, EntitlementShadowComparison.compared_at == latest_by_event.c.latest)).where(EntitlementShadowComparison.organization_id == organization_id, EntitlementShadowComparison.status == "DIVERGED"))
-        event_count = len(activated_event_ids)
-        comparison_count = await db.scalar(select(func.count()).select_from(latest_by_event)) or 0
         if missing_contract_count:
             raise HTTPException(status_code=409, detail={"code": "EVENT_CONTRACTS_REQUIRED", "missing_contracts": missing_contract_count})
-        if divergence or comparison_count < event_count:
-            raise HTTPException(status_code=409, detail="Enforcement requires a current matching shadow comparison for every activated event")
+        if not preflight["ready_for_enforcement"]:
+            raise HTTPException(
+                status_code=409,
+                detail=jsonable_encoder(
+                    {
+                        "code": "ROLLOUT_PREFLIGHT_FAILED",
+                        "message": "Canonical enforcement requires a passing tenant preflight.",
+                        "blockers": preflight["blockers"],
+                        "generated_at": preflight["generated_at"],
+                    }
+                ),
+            )
     old = {}
     for key, enabled in (("organizer_console_entitlement_shadow", payload.shadow_enabled), ("organizer_console_entitlement_enforce", payload.enforcement_enabled)):
         row = await db.scalar(select(FeatureFlag).where(FeatureFlag.organization_id == organization_id, FeatureFlag.flag_key == key).with_for_update())
@@ -561,7 +670,7 @@ async def get_capability_diagnostics(
     rollout_values = {row.flag_key: row.is_enabled for row in rollout_flags}
     rollout_mode = (
         "ENFORCED"
-        if rollout_values.get("organizer_console_entitlement_enforce", True)
+        if rollout_values.get("organizer_console_entitlement_enforce", False)
         else "SHADOW"
         if rollout_values.get("organizer_console_entitlement_shadow", False)
         else "LEGACY"
@@ -1382,6 +1491,118 @@ async def decide_commercial_access_request(
     ))
     await db.commit()
     return {"id": row.id, "status": row.status, "version": row.version, "subscription_id": subscription.id}
+
+
+@router.get("/events")
+async def list_organization_console_events(
+    organization_id: uuid.UUID,
+    include_archived: bool = False,
+    limit: int = Query(default=100, ge=1, le=200),
+    actor: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    await OrganizationConsoleService(db).require_organization(organization_id)
+    filters = [Event.organization_id == organization_id]
+    if not include_archived:
+        filters.extend(
+            (
+                Event.deleted_at.is_(None),
+                ~func.lower(Event.status).in_(["archived", "cancelled"]),
+            )
+        )
+    rows = (
+        await db.scalars(
+            select(Event)
+            .where(*filters)
+            .order_by(Event.start_date.desc(), Event.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    return {
+        "items": [_console_event_out(row) for row in rows],
+        "has_more": len(rows) == limit,
+        "availability": "AVAILABLE",
+        "freshness_at": datetime.now(timezone.utc),
+        "source": "events.events",
+    }
+
+
+@router.post("/events", status_code=status.HTTP_201_CREATED)
+async def provision_organization_event(
+    organization_id: uuid.UUID,
+    payload: EventWorkspaceMutation,
+    request: Request,
+    step_up: StepUpAuth,
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+        min_length=16,
+        max_length=160,
+    ),
+    actor: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    await OrganizationConsoleService(db).require_organization(organization_id)
+    event_payload = EventCreate.model_validate(payload.data)
+    operation_key = "event.provision"
+    request_hash = request_fingerprint(
+        {
+            "operation": operation_key,
+            "organization_id": str(organization_id),
+            "payload": payload.model_dump(mode="json"),
+        }
+    )
+    replay = await _governed_mutation_replay(
+        db,
+        organization_id=organization_id,
+        actor_id=actor.id,
+        operation_key=operation_key,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if replay is not None:
+        return replay
+
+    event = await EventMutationService.create(
+        db,
+        organization_id=organization_id,
+        payload=event_payload,
+        actor_user_id=actor.id,
+        idempotency_key=idempotency_key,
+        source="organization_console",
+    )
+    response = _console_event_out(event)
+    db.add(
+        _audit(
+            request,
+            actor,
+            organization_id,
+            "EVENT_PROVISIONED",
+            "event",
+            event.id,
+            new_state={
+                **response,
+                "reason": payload.reason,
+                "case_reference": payload.case_reference,
+                "idempotency_key": idempotency_key,
+            },
+            sensitive=True,
+        )
+    )
+    db.add(
+        _governed_mutation_receipt(
+            organization_id=organization_id,
+            actor_id=actor.id,
+            operation_key=operation_key,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            resource_type="event",
+            resource_id=event.id,
+            response=response,
+        )
+    )
+    await db.commit()
+    return response
 
 
 @router.post("/events/{event_id}/contract", status_code=status.HTTP_201_CREATED)
@@ -2421,7 +2642,7 @@ async def event_domain_workspace(
     db: AsyncSession = Depends(get_db),
 ):
     event = await _require_scoped_event(db, organization_id, event_id)
-    supported = {"overview", "attendees", "speakers", "abstracts", "sessions", "rooms", "communications", "templates", "files", "payments", "integrations", "tickets", "checkins", "users", "jobs", "analytics", "audit"}
+    supported = {"overview", "settings", "operations", "attendees", "speakers", "abstracts", "sessions", "rooms", "communications", "templates", "files", "payments", "integrations", "tickets", "checkins", "users", "jobs", "analytics", "audit"}
     if workspace not in supported: raise HTTPException(status_code=404, detail="Event workspace not found")
     access = None
     sensitive_categories = {"CONTACT"} if workspace in {"attendees", "speakers", "abstracts", "communications", "users"} else {"PAYMENT"} if workspace == "payments" else set()
@@ -2433,18 +2654,128 @@ async def event_domain_workspace(
         counts = {}
         for key, model in (("registrations", ParticipantRegistration), ("speakers", Speaker), ("sessions", Session), ("rooms", Room), ("files", PresentationFile), ("payments", PaymentTransaction)):
             counts[key] = await db.scalar(select(func.count(model.id)).where(model.event_id == event_id)) or 0
-        data = {"event": {"id": event.id, "name": event.name, "short_code": event.short_code, "status": event.status, "start_date": event.start_date, "end_date": event.end_date, "timezone": event.timezone, "venue_name": event.venue_name, "country": event.country, "license_tier": event.license_tier, "is_maintenance": getattr(event, "is_maintenance", False), "is_read_only": getattr(event, "is_read_only", False)}, "counts": counts}; source = "events.events"
+        capability = await CapabilityService.resolve_event(
+            db,
+            organization_id,
+            event_id,
+            user_id=actor.id,
+        )
+        data = {
+            "event": {
+                "id": event.id,
+                "name": event.name,
+                "short_code": event.short_code,
+                "status": event.status,
+                "start_date": event.start_date,
+                "end_date": event.end_date,
+                "timezone": event.timezone,
+                "venue_name": event.venue_name,
+                "country": event.country,
+                "is_maintenance": event.is_maintenance,
+                "is_read_only": event.is_read_only,
+            },
+            "commercial_control": {
+                "contract_version": capability.get("contract_version"),
+                "resolution_version": capability["resolution_version"],
+                "rollout_mode": capability["rollout_mode"],
+                "availability": capability["availability"],
+                "source": "CANONICAL_CAPABILITY_RESOLVER",
+            },
+            "counts": counts,
+        }
+        source = "events.events+canonical_capabilities"
+    elif workspace == "settings":
+        data = {
+            "event": {
+                "id": event.id,
+                "name": event.name,
+                "short_code": event.short_code,
+                "status": event.status,
+                "tagline": event.tagline,
+                "description": event.description,
+                "location": event.location,
+                "venue_name": event.venue_name,
+                "country": event.country,
+                "state": event.state,
+                "organizer_name": event.organizer_name,
+                "organizer_details": event.organizer_details,
+                "start_date": event.start_date,
+                "end_date": event.end_date,
+                "timezone": event.timezone,
+                "upload_deadline": event.upload_deadline,
+                "max_file_size_mb": event.max_file_size_mb,
+                "allowed_formats": event.allowed_formats,
+                "currency": event.currency,
+                "map_link": event.map_link,
+                "venue_images": event.venue_images,
+                "venue_details": event.venue_details,
+                "speaker_settings": event.speaker_settings,
+                "registration_settings": event.registration_settings,
+                "branding_settings": event.branding_settings,
+                "updated_at": event.updated_at,
+            }
+        }
+        source = "events.events"
+    elif workspace == "operations":
+        import_failures = int(
+            await db.scalar(
+                select(func.count(ImportJob.id)).where(
+                    ImportJob.event_id == event_id,
+                    func.lower(ImportJob.status).in_(["failed", "error"]),
+                )
+            )
+            or 0
+        )
+        sync_failures = int(
+            await db.scalar(
+                select(func.count(VenueSyncJob.id)).where(
+                    VenueSyncJob.event_id == event_id,
+                    func.lower(VenueSyncJob.status).in_(["failed", "error"]),
+                )
+            )
+            or 0
+        )
+        processing_failures = int(
+            await db.scalar(
+                select(func.count(PresentationProcessingJob.id))
+                .join(
+                    PresentationFile,
+                    PresentationFile.id == PresentationProcessingJob.file_id,
+                )
+                .where(
+                    PresentationFile.event_id == event_id,
+                    func.lower(PresentationProcessingJob.status).in_(["failed", "error"]),
+                )
+            )
+            or 0
+        )
+        data = {
+            "control": {
+                "status": event.status,
+                "is_active": event.deleted_at is None
+                and str(event.status).lower() not in {"archived", "cancelled"},
+                "is_maintenance": event.is_maintenance,
+                "is_read_only": event.is_read_only,
+            },
+            "failures": {
+                "import_jobs": import_failures,
+                "venue_sync_jobs": sync_failures,
+                "processing_jobs": processing_failures,
+                "total": import_failures + sync_failures + processing_failures,
+            },
+        }
+        source = "events.events,registration.import_jobs,venue.sync_jobs,presentations.processing_jobs"
     elif workspace == "attendees":
+        participant_filters = [Participant.event_id == event_id]
+        if not include_archived:
+            participant_filters.append(Participant.deleted_at.is_(None))
         rows = (await db.execute(
             select(Participant, RegistrationConfirmationQR)
             .outerjoin(
                 RegistrationConfirmationQR,
                 RegistrationConfirmationQR.participant_id == Participant.id,
             )
-            .where(
-                Participant.event_id == event_id,
-                Participant.deleted_at.is_(None),
-            )
+            .where(*participant_filters)
             .order_by(Participant.registered_at.desc())
             .limit(100)
         )).all()
@@ -2457,10 +2788,18 @@ async def event_domain_workspace(
                     "email": participant.email if include_sensitive else _mask_email(participant.email),
                     "phone": participant.phone if include_sensitive else _mask_phone(participant.phone),
                     "role": participant.role,
+                    "role_id": participant.role_id,
+                    "company": participant.company if include_sensitive else None,
+                    "designation": participant.designation if include_sensitive else None,
+                    "country": participant.country,
                     "approval_status": participant.approval_status,
                     "paid_status": participant.paid_status,
                     "source": participant.source,
+                    "custom_fields": participant.custom_fields if include_sensitive else None,
                     "registered_at": participant.registered_at,
+                    "updated_at": participant.updated_at,
+                    "lifecycle_state": "archived" if participant.deleted_at else "active",
+                    "deleted_at": participant.deleted_at,
                     "qr_status": credential.status if credential else "NOT_ISSUED",
                     "qr_version": credential.credential_version if credential else 0,
                     "qr_image_url": (
@@ -2477,6 +2816,7 @@ async def event_domain_workspace(
                 for participant, credential in rows
             ],
             "has_more": len(rows) == 100,
+            "sensitive_edit_allowed": include_sensitive,
         }
         source = "registration.participants,registration.confirmation_qr_credentials"
     elif workspace == "speakers":
@@ -2484,69 +2824,6 @@ async def event_domain_workspace(
         if not include_archived: speaker_filter.append(Speaker.deleted_at.is_(None))
         rows = (await db.scalars(select(Speaker).where(*speaker_filter).order_by(Speaker.created_at.desc()).limit(100))).all()
         data = {"items": [{"id": row.id, "first_name": row.first_name if include_sensitive else f"{row.first_name[:1]}***", "last_name": row.last_name if include_sensitive else f"{row.last_name[:1]}***", "email": row.email if include_sensitive else _mask_email(row.email), "phone": row.phone if include_sensitive else _mask_phone(row.phone), "designation": row.designation, "affiliation": row.affiliation, "country": row.country, "upload_status": row.upload_status, "allow_override": row.allow_override, "checked_in_at": row.checked_in_at, "created_at": row.created_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in rows], "has_more": len(rows) == 100}; source = "events.speakers"
-    elif workspace == "attendees":
-        if action not in {"ISSUE_CONFIRMATION_QR", "ROTATE_CONFIRMATION_QR"}:
-            raise HTTPException(
-                status_code=422,
-                detail="Unsupported attendee action",
-            )
-        await enforce_event_operation(
-            db,
-            organization_id,
-            event_id,
-            "registration.confirmation_qr.manage",
-            user_id=actor.id,
-        )
-        participant = await db.scalar(
-            select(Participant)
-            .where(
-                Participant.id == resource_id,
-                Participant.event_id == event_id,
-                Participant.deleted_at.is_(None),
-            )
-            .with_for_update()
-        )
-        if participant is None:
-            raise HTTPException(status_code=404, detail="Attendee not found")
-        try:
-            expected_version = int(payload.data.get("version"))
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=422,
-                detail="A numeric confirmation QR version is required",
-            ) from exc
-        if action == "ISSUE_CONFIRMATION_QR" and expected_version != 0:
-            raise HTTPException(
-                status_code=409,
-                detail="Use ROTATE_CONFIRMATION_QR for an existing credential",
-            )
-        if action == "ROTATE_CONFIRMATION_QR" and expected_version < 1:
-            raise HTTPException(
-                status_code=409,
-                detail="No existing confirmation QR is available to rotate",
-            )
-        issuance = await RegistrationConfirmationQRService.issue_or_rotate(
-            db,
-            organization_id=organization_id,
-            event_id=event_id,
-            participant=participant,
-            expected_version=expected_version,
-            idempotency_key=idempotency_key,
-            actor_user_id=actor.id,
-        )
-        token = build_confirmation_token(
-            issuance.credential.id,
-            issuance.credential.credential_version,
-        )
-        result = {
-            "id": participant.id,
-            "qr_status": issuance.credential.status,
-            "qr_version": issuance.credential.credential_version,
-            "qr_image_url": build_confirmation_image_url(token),
-            "outcome": "REPLAYED" if issuance.replayed else (
-                "ROTATED" if issuance.old_state else "ISSUED"
-            ),
-        }
     elif workspace == "abstracts":
         rows = (await db.execute(
             select(SessionSpeaker, Speaker, Session)
@@ -2624,10 +2901,89 @@ async def event_domain_workspace(
         imports = (await db.scalars(select(ImportJob).where(ImportJob.event_id == event_id).order_by(ImportJob.created_at.desc()).limit(100))).all()
         sync_jobs = (await db.scalars(select(VenueSyncJob).where(VenueSyncJob.event_id == event_id).order_by(VenueSyncJob.created_at.desc()).limit(100))).all()
         processing = (await db.execute(select(PresentationProcessingJob, PresentationFile).join(PresentationFile, PresentationFile.id == PresentationProcessingJob.file_id).where(PresentationFile.event_id == event_id).order_by(PresentationProcessingJob.created_at.desc()).limit(100))).all()
-        data = {"import_jobs": [{"id": row.id, "job_type": row.job_type, "filename": row.filename, "status": row.status, "rows_total": row.rows_total, "rows_imported": row.rows_imported, "rows_failed": row.rows_failed, "rows_updated": row.rows_updated, "sessions_created": row.sessions_created, "speakers_created": row.speakers_created, "rooms_created": row.rooms_created, "error_summary": row.error_summary, "created_at": row.created_at, "completed_at": row.completed_at} for row in imports], "venue_sync_jobs": [{"id": row.id, "file_id": row.file_id, "sync_type": row.sync_type, "priority": row.priority, "status": row.status, "retry_count": row.retry_count, "error_message": row.error_message, "bytes_transferred": row.bytes_transferred, "transfer_speed_mbps": row.transfer_speed_mbps, "checksum_verified": row.checksum_verified, "storage_provider": row.storage_provider, "started_at": row.started_at, "completed_at": row.completed_at, "created_at": row.created_at} for row in sync_jobs], "processing_jobs": [{"id": job.id, "file_id": file.id, "filename": file.original_filename, "status": job.status, "logs": job.logs, "created_at": job.created_at} for job, file in processing]}; source = "registration.import_jobs,venue.sync_jobs,presentations.processing_jobs"
+        import_items = [
+            {
+                "id": row.id,
+                "source": "IMPORT",
+                "job_type": row.job_type,
+                "filename": row.filename,
+                "status": row.status,
+                "rows_total": row.rows_total,
+                "rows_imported": row.rows_imported,
+                "rows_failed": row.rows_failed,
+                "rows_updated": row.rows_updated,
+                "sessions_created": row.sessions_created,
+                "speakers_created": row.speakers_created,
+                "rooms_created": row.rooms_created,
+                "error_summary": row.error_summary,
+                "created_at": row.created_at,
+                "completed_at": row.completed_at,
+                "capabilities": {
+                    "retry": row.status.lower() in {"failed", "error"},
+                    "cancel": False,
+                },
+            }
+            for row in imports
+        ]
+        sync_items = [
+            {
+                "id": row.id,
+                "source": "VENUE_SYNC",
+                "file_id": row.file_id,
+                "sync_type": row.sync_type,
+                "priority": row.priority,
+                "status": row.status,
+                "retry_count": row.retry_count,
+                "error_message": row.error_message,
+                "bytes_transferred": row.bytes_transferred,
+                "transfer_speed_mbps": row.transfer_speed_mbps,
+                "checksum_verified": row.checksum_verified,
+                "storage_provider": row.storage_provider,
+                "started_at": row.started_at,
+                "completed_at": row.completed_at,
+                "created_at": row.created_at,
+                "capabilities": {
+                    "retry": row.status.lower() in {"failed", "error"},
+                    "cancel": False,
+                },
+            }
+            for row in sync_jobs
+        ]
+        processing_items = [
+            {
+                "id": job.id,
+                "source": "PROCESSING",
+                "file_id": file.id,
+                "filename": file.original_filename,
+                "status": job.status,
+                "logs": job.logs,
+                "created_at": job.created_at,
+                "capabilities": {
+                    "retry": False,
+                    "cancel": False,
+                    "retry_workspace": "files",
+                    "retry_resource_id": file.id,
+                    "unavailable_reason": (
+                        "Use RETRY_PROCESSING on the associated file."
+                    ),
+                },
+            }
+            for job, file in processing
+        ]
+        data = {
+            "items": [*import_items, *sync_items, *processing_items],
+            "import_jobs": import_items,
+            "venue_sync_jobs": sync_items,
+            "processing_jobs": processing_items,
+            "has_more": any(
+                len(items) == 100
+                for items in (imports, sync_jobs, processing)
+            ),
+        }
+        source = "registration.import_jobs,venue.sync_jobs,presentations.processing_jobs"
     elif workspace == "integrations":
         rows = (await db.scalars(select(Webhook).where(Webhook.event_id == event_id).order_by(Webhook.created_at.desc()).limit(100))).all()
-        data = {"webhooks": [{"id": row.id, "url": row.url, "description": row.description, "subscribed_events": row.subscribed_events, "status": row.status, "lifecycle_state": "archived" if row.status == "paused" else "active", "consecutive_failures": row.consecutive_failures, "last_triggered_at": row.last_triggered_at, "last_success_at": row.last_success_at, "last_failure_reason": row.last_failure_reason, "total_deliveries": row.total_deliveries, "total_failures": row.total_failures, "secret_configured": bool(row.secret_hash)} for row in rows]}; source = "integrations.webhooks"
+        data = {"webhooks": [{"id": row.id, "url": row.url, "description": row.description, "subscribed_events": row.subscribed_events, "status": row.status, "version": row.version, "created_at": row.created_at, "updated_at": row.updated_at, "lifecycle_state": "archived" if row.status == "paused" else "active", "consecutive_failures": row.consecutive_failures, "last_triggered_at": row.last_triggered_at, "last_success_at": row.last_success_at, "last_failure_reason": row.last_failure_reason, "total_deliveries": row.total_deliveries, "total_failures": row.total_failures, "secret_configured": bool(row.secret_hash)} for row in rows]}; source = "integrations.webhooks"
     elif workspace == "analytics":
         data = await build_analytics_snapshot(db, event_id); source = "analytics.build_analytics_snapshot"
     elif workspace == "audit":
@@ -2636,6 +2992,102 @@ async def event_domain_workspace(
     if access:
         db.add(_audit(request, actor, organization_id, f"SENSITIVE_EVENT_{workspace.upper()}_READ", "event", event_id, new_state={"privileged_access_session_id": str(access.id), "workspace": workspace, "field_categories": sorted(sensitive_categories)}, sensitive=True)); await db.commit()
     return {"workspace": workspace, "event_id": event_id, "generated_at": datetime.now(timezone.utc), "availability": {"available": True, "freshness_at": datetime.now(timezone.utc)}, "source": source, "sensitive_data_included": bool(access), "data": data}
+
+
+@router.patch("/events/{event_id}/settings")
+async def update_event_settings(
+    organization_id: uuid.UUID,
+    event_id: uuid.UUID,
+    payload: EventWorkspaceMutation,
+    request: Request,
+    step_up: StepUpAuth,
+    actor: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    del step_up
+    event = await _require_scoped_event(db, organization_id, event_id)
+    event_update = EventUpdate.model_validate(payload.data)
+    event, old_state, changed_fields = await EventMutationService.update(
+        db,
+        event=event,
+        payload=event_update,
+        actor_user_id=actor.id,
+    )
+    db.add(
+        _audit(
+            request,
+            actor,
+            organization_id,
+            "EVENT_SETTINGS_UPDATED",
+            "event",
+            event.id,
+            old_state=old_state,
+            new_state={
+                "changed_fields": changed_fields,
+                "reason": payload.reason,
+                "case_reference": payload.case_reference,
+            },
+            sensitive=True,
+        )
+    )
+    await db.commit()
+    await db.refresh(event)
+    return {
+        "id": event.id,
+        "event_id": event.id,
+        "updated": changed_fields,
+        "updated_at": event.updated_at,
+    }
+
+
+@router.patch("/events/{event_id}/operations")
+async def update_event_operational_controls(
+    organization_id: uuid.UUID,
+    event_id: uuid.UUID,
+    payload: EventOperationalControlUpdate,
+    request: Request,
+    step_up: StepUpAuth,
+    actor: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    del step_up
+    event = await _require_scoped_event(db, organization_id, event_id)
+    await enforce_event_operation(
+        db,
+        organization_id,
+        event_id,
+        "events.planning.manage",
+        user_id=actor.id,
+    )
+    old_state = {
+        "is_maintenance": event.is_maintenance,
+        "is_read_only": event.is_read_only,
+    }
+    if payload.is_maintenance is not None:
+        event.is_maintenance = payload.is_maintenance
+    if payload.is_read_only is not None:
+        event.is_read_only = payload.is_read_only
+    new_state = {
+        "is_maintenance": event.is_maintenance,
+        "is_read_only": event.is_read_only,
+        "reason": payload.reason,
+        "case_reference": payload.case_reference,
+    }
+    db.add(
+        _audit(
+            request,
+            actor,
+            organization_id,
+            "EVENT_OPERATIONAL_CONTROLS_UPDATED",
+            "event",
+            event.id,
+            old_state=old_state,
+            new_state=new_state,
+            sensitive=True,
+        )
+    )
+    await db.commit()
+    return {"id": event.id, **new_state}
 
 
 @router.post("/events/{event_id}/workspace/registrations/{registration_id}/correction")
@@ -2667,199 +3119,936 @@ async def correct_event_registration(organization_id: uuid.UUID, event_id: uuid.
 async def create_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, payload: EventWorkspaceMutation, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     event = await _require_scoped_event(db, organization_id, event_id)
     reservation = None
+    one_time_secret = None
     if workspace == "speakers":
         data = SpeakerCreate.model_validate(payload.data)
-        await enforce_event_operation(db, organization_id, event_id, "speakers.manage", user_id=actor.id)
-        reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_speakers", quantity=1, unit="speaker", idempotency_key=f"console-speaker:{idempotency_key}", metadata={"case_reference": payload.case_reference})
-        duplicate = await db.scalar(select(Speaker.id).where(Speaker.event_id == event_id, func.lower(Speaker.email) == str(data.email).lower(), Speaker.deleted_at.is_(None)))
-        if duplicate: raise HTTPException(status_code=409, detail="A speaker with this email already exists in the event")
-        row = Speaker(event_id=event_id, upload_token=secrets.token_urlsafe(48), speaker_code=secrets.token_hex(5).upper(), token_expires_at=datetime.now(timezone.utc) + timedelta(days=365), **data.model_dump())
+        row = await EventResourceMutationService.create_speaker(
+            db,
+            event=event,
+            payload=data,
+            actor_user_id=actor.id,
+            idempotency_key=idempotency_key,
+            source="organization_console",
+        )
         resource_type = "speaker"
     elif workspace == "sessions":
         data = SessionCreate.model_validate(payload.data)
-        await enforce_event_operation(db, organization_id, event_id, "sessions.manage", user_id=actor.id)
-        reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_sessions", quantity=1, unit="session", idempotency_key=f"console-session:{idempotency_key}", metadata={"case_reference": payload.case_reference})
-        if data.room_id and not await db.scalar(select(Room.id).where(Room.id == data.room_id, Room.event_id == event_id)): raise HTTPException(status_code=404, detail="Room not found in this event")
-        if data.moderator_id:
-            moderator = await db.get(User, data.moderator_id)
-            if not moderator or moderator.organization_id != organization_id: raise HTTPException(status_code=404, detail="Moderator not found in this organization")
-        if await db.scalar(select(Session.id).where(Session.event_id == event_id, Session.session_code == data.session_code, Session.deleted_at.is_(None))): raise HTTPException(status_code=409, detail="Session code is already used in this event")
-        session_data = data.model_dump(exclude={"speakers"})
-        row = Session(event_id=event_id, **session_data); resource_type = "session"
+        row = await EventResourceMutationService.create_session(
+            db,
+            event=event,
+            payload=data,
+            actor_user_id=actor.id,
+            idempotency_key=idempotency_key,
+            source="organization_console",
+        )
+        resource_type = "session"
     elif workspace == "rooms":
         data = RoomCreate.model_validate(payload.data)
-        if data.room_type not in ROOM_TYPES: raise HTTPException(status_code=422, detail=f"room_type must be one of {ROOM_TYPES}")
-        await enforce_event_operation(db, organization_id, event_id, "venue.rooms.manage", user_id=actor.id)
-        reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_rooms", quantity=1, unit="room", idempotency_key=f"console-room:{idempotency_key}", metadata={"case_reference": payload.case_reference})
-        row = Room(event_id=event_id, **data.model_dump()); resource_type = "room"
+        row = await EventResourceMutationService.create_room(
+            db,
+            event=event,
+            payload=data,
+            actor_user_id=actor.id,
+            idempotency_key=idempotency_key,
+            source="organization_console",
+        )
+        resource_type = "room"
+    elif workspace == "attendees":
+        data = ParticipantCreate.model_validate(payload.data)
+        row, _, outcome = await EventParticipantMutationService.create(
+            db,
+            event=event,
+            payload=data,
+            actor_user_id=actor.id,
+            idempotency_key=idempotency_key,
+            source="organization_console",
+        )
+        resource_type = "participant"
+        if outcome == "MERGED":
+            db.add(
+                _audit(
+                    request,
+                    actor,
+                    organization_id,
+                    "EVENT_PARTICIPANT_MERGED",
+                    resource_type,
+                    row.id,
+                    new_state={
+                        "event_id": str(event_id),
+                        "reason": payload.reason,
+                        "case_reference": payload.case_reference,
+                    },
+                    sensitive=True,
+                )
+            )
+            await db.commit()
+            return {
+                "id": row.id,
+                "event_id": event_id,
+                "resource_type": resource_type,
+                "outcome": outcome,
+            }
     elif workspace == "integrations":
         data = WebhookCreate.model_validate(payload.data)
         await enforce_event_operation(db, organization_id, event_id, "developer.webhooks.manage", user_id=actor.id)
+        request_hash = request_fingerprint(
+            {
+                "operation": "CREATE",
+                "event_id": str(event_id),
+                "payload": payload.model_dump(mode="json"),
+            }
+        )
+        replay = await _webhook_mutation_replay(
+            db,
+            organization_id=organization_id,
+            event_id=event_id,
+            actor_id=actor.id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return replay
+        await db.scalar(
+            select(Event.id)
+            .where(Event.id == event_id, Event.organization_id == organization_id)
+            .with_for_update()
+        )
+        duplicate = await db.scalar(
+            select(Webhook.id).where(
+                Webhook.event_id == event_id,
+                Webhook.url == data.url,
+                Webhook.status != "paused",
+            )
+        )
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail="A webhook with this URL already exists for this event",
+            )
         secret = data.secret or secrets.token_urlsafe(32)
+        one_time_secret = secret
         row = Webhook(event_id=event_id, url=data.url, description=data.description, subscribed_events=data.subscribed_events, secret_hash=hashlib.sha256(secret.encode()).hexdigest(), status="active")
         resource_type = "webhook"
+        db.add(row)
+        await db.flush()
+        response = {
+            "id": row.id,
+            "event_id": event_id,
+            "resource_type": resource_type,
+            "created_at": row.created_at,
+            "secret": one_time_secret,
+            "secret_available_once": True,
+            "version": row.version,
+        }
+        replay_response = {
+            **response,
+            "secret": None,
+            "secret_available_once": False,
+        }
+        db.add(
+            _webhook_mutation(
+                organization_id=organization_id,
+                event_id=event_id,
+                webhook_id=row.id,
+                actor_id=actor.id,
+                operation_type="CREATE",
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                response=replay_response,
+            )
+        )
+        db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_CREATED", "webhook", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "secret_configured": True, "version": row.version}, sensitive=True))
+        await db.commit()
+        return response
     elif workspace == "communications":
         data = CampaignCreate.model_validate(payload.data)
-        await enforce_event_operation(db, organization_id, event_id, "communications.email.send", user_id=actor.id)
-        template = await db.scalar(select(EmailTemplate).where(EmailTemplate.id == data.template_id, or_(EmailTemplate.event_id == event_id, EmailTemplate.event_id.is_(None)), EmailTemplate.deleted_at.is_(None)))
-        if not template: raise HTTPException(status_code=404, detail="Email template not available for this event")
-        if data.session_id_filter and not await db.scalar(select(Session.id).where(Session.id == data.session_id_filter, Session.event_id == event_id, Session.deleted_at.is_(None))): raise HTTPException(status_code=404, detail="Session filter not found in this event")
-        if data.room_id_filter and not await db.scalar(select(Room.id).where(Room.id == data.room_id_filter, Room.event_id == event_id, Room.is_active.is_(True))): raise HTTPException(status_code=404, detail="Room filter not found in this event")
-        campaign_data = data.model_dump(exclude={"speaker_ids"})
-        if data.speaker_ids:
-            model = Participant if data.target_type == "participant" else Speaker
-            valid = await db.scalar(select(func.count(model.id)).where(model.event_id == event_id, model.id.in_(data.speaker_ids))) or 0
-            if valid != len(set(data.speaker_ids)): raise HTTPException(status_code=404, detail="One or more campaign recipients do not belong to this event")
-            campaign_data["speaker_id_list"] = ",".join(str(item) for item in data.speaker_ids); campaign_data["total_recipients"] = valid
-        row = EmailCampaign(event_id=event_id, created_by=actor.id, **campaign_data); resource_type = "email_campaign"
+        row = await EventCampaignMutationService.create(
+            db,
+            event=event,
+            payload=data,
+            actor=actor,
+        )
+        resource_type = "email_campaign"
     elif workspace == "templates":
         kind = payload.data.get("kind")
         template_data = {key: value for key, value in payload.data.items() if key != "kind"}
         if kind == "email":
             data = EmailTemplateCreate.model_validate(template_data)
-            await enforce_event_operation(db, organization_id, event_id, "communications.email.send", user_id=actor.id)
-            row = EmailTemplate(event_id=event_id, created_by=actor.id, **data.model_dump()); resource_type = "email_template"
+            row = await EventTemplateMutationService.create_email(
+                db,
+                event=event,
+                payload=data,
+                actor_user_id=actor.id,
+            )
+            resource_type = "email_template"
         elif kind == "print":
             data = PrintTemplateCreate.model_validate(template_data)
-            is_certificate = data.template_type == "certificate"
-            await enforce_event_operation(db, organization_id, event_id, "certificates.templates.manage" if is_certificate else "badges.templates.manage", user_id=actor.id)
-            reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=event_id, limit_key="max_certificate_templates" if is_certificate else "max_badge_templates", quantity=1, unit="template", idempotency_key=f"console-print-template:{idempotency_key}", metadata={"case_reference": payload.case_reference, "template_type": data.template_type})
-            row = PrintTemplate(event_id=event_id, **data.model_dump()); resource_type = "print_template"
+            row = await EventTemplateMutationService.create_print(
+                db,
+                event=event,
+                payload=data,
+                actor_user_id=actor.id,
+                idempotency_key=idempotency_key,
+                source="organization_console",
+            )
+            resource_type = "print_template"
         else: raise HTTPException(status_code=422, detail="Template kind must be 'email' or 'print'")
     else: raise HTTPException(status_code=405, detail="This event workspace does not support create operations")
     db.add(row); await db.flush()
-    if workspace == "sessions" and data.speakers:
-        for slot in data.speakers:
-            if not await db.scalar(select(Speaker.id).where(Speaker.id == slot.speaker_id, Speaker.event_id == event_id, Speaker.deleted_at.is_(None))): raise HTTPException(status_code=404, detail="Session speaker not found in this event")
-            db.add(SessionSpeaker(session_id=row.id, speaker_id=slot.speaker_id, presentation_title=slot.presentation_title, talk_order=slot.talk_order, talk_duration_minutes=slot.talk_duration_minutes, speaker_type=slot.speaker_type, is_confirmed=slot.is_confirmed, start_time=slot.start_time, end_time=slot.end_time))
     if reservation is not None:
         await UsageReservationService.consume(db, reservation.id, source=f"organization_console.{workspace}.create", actor_user_id=actor.id)
     db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_CREATED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=workspace in {"speakers", "integrations"})); await db.commit(); await db.refresh(row)
-    return {"id": row.id, "event_id": event_id, "resource_type": resource_type, "created_at": getattr(row, "created_at", getattr(row, "updated_at", None))}
+    response = {"id": row.id, "event_id": event_id, "resource_type": resource_type, "created_at": getattr(row, "created_at", getattr(row, "updated_at", None))}
+    if one_time_secret is not None:
+        response["secret"] = one_time_secret
+        response["secret_available_once"] = True
+        response["version"] = row.version
+    return response
 
 
 @router.patch("/events/{event_id}/workspace/{workspace}/{resource_id}")
-async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceMutation, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    await _require_scoped_event(db, organization_id, event_id)
-    if workspace == "speakers": model, schema, resource_type = Speaker, SpeakerUpdate, "speaker"
-    elif workspace == "sessions": model, schema, resource_type = Session, SessionUpdate, "session"
-    elif workspace == "rooms": model, schema, resource_type = Room, RoomUpdate, "room"
-    elif workspace == "integrations": model, schema, resource_type = Webhook, WebhookUpdate, "webhook"
+async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceMutation, request: Request, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    event = await _require_scoped_event(db, organization_id, event_id)
+    if workspace == "attendees":
+        row, _, changes, old = await EventParticipantMutationService.update(
+            db,
+            event=event,
+            participant_id=resource_id,
+            payload=ParticipantUpdate.model_validate(payload.data),
+            actor_user_id=actor.id,
+        )
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                "EVENT_PARTICIPANT_UPDATED",
+                "participant",
+                row.id,
+                old_state=old,
+                new_state={
+                    "changed_fields": sorted(changes),
+                    "event_id": str(event_id),
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=True,
+            )
+        )
+        await db.commit()
+        return {
+            "id": row.id,
+            "event_id": event_id,
+            "resource_type": "participant",
+            "updated": sorted(changes),
+        }
+    if workspace in {"speakers", "sessions", "rooms"}:
+        if workspace == "speakers":
+            row, changes, old = await EventResourceMutationService.update_speaker(
+                db,
+                event=event,
+                speaker_id=resource_id,
+                payload=SpeakerUpdate.model_validate(payload.data),
+                actor_user_id=actor.id,
+            )
+            resource_type = "speaker"
+        elif workspace == "sessions":
+            row, changes, old = await EventResourceMutationService.update_session(
+                db,
+                event=event,
+                session_id=resource_id,
+                payload=SessionUpdate.model_validate(payload.data),
+                actor_user_id=actor.id,
+            )
+            resource_type = "session"
+        else:
+            row, changes, old = await EventResourceMutationService.update_room(
+                db,
+                event=event,
+                room_id=resource_id,
+                payload=RoomUpdate.model_validate(payload.data),
+                actor_user_id=actor.id,
+            )
+            resource_type = "room"
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                f"EVENT_{resource_type.upper()}_UPDATED",
+                resource_type,
+                row.id,
+                old_state=old,
+                new_state={
+                    "changed_fields": sorted(changes),
+                    "event_id": str(event_id),
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=workspace == "speakers",
+            )
+        )
+        await db.commit()
+        return {
+            "id": row.id,
+            "event_id": event_id,
+            "resource_type": resource_type,
+            "updated": sorted(changes),
+        }
+    if workspace == "integrations":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "developer.webhooks.manage",
+            user_id=actor.id,
+        )
+        if if_match is None or idempotency_key is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "VERSION_AND_IDEMPOTENCY_REQUIRED",
+                    "required_headers": ["If-Match", "Idempotency-Key"],
+                },
+            )
+        data = WebhookUpdate.model_validate(payload.data)
+        changes = data.model_dump(exclude_unset=True)
+        request_hash = request_fingerprint(
+            {
+                "operation": "UPDATE",
+                "event_id": str(event_id),
+                "webhook_id": str(resource_id),
+                "version": if_match,
+                "payload": payload.model_dump(mode="json"),
+            }
+        )
+        replay = await _webhook_mutation_replay(
+            db,
+            organization_id=organization_id,
+            event_id=event_id,
+            actor_id=actor.id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return replay
+        row = await db.scalar(
+            select(Webhook)
+            .where(Webhook.id == resource_id, Webhook.event_id == event_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Webhook not found")
+        if row.version != if_match:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "current_version": row.version},
+            )
+        old = {key: getattr(row, key, None) for key in changes}
+        for key, value in changes.items():
+            setattr(row, key, value)
+        if data.status == "active":
+            row.consecutive_failures = 0
+            row.last_failure_reason = None
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+        await db.flush()
+        response = {
+            "id": row.id,
+            "event_id": event_id,
+            "resource_type": "webhook",
+            "updated": sorted(changes),
+            "version": row.version,
+            "status": row.status,
+        }
+        db.add(
+            _webhook_mutation(
+                organization_id=organization_id,
+                event_id=event_id,
+                webhook_id=row.id,
+                actor_id=actor.id,
+                operation_type="UPDATE",
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                response=response,
+            )
+        )
+        db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_UPDATED", "webhook", row.id, old_state=old, new_state={"changed_fields": sorted(changes), "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "version": row.version}, sensitive=True))
+        await db.commit()
+        return response
     elif workspace == "communications":
-        row = await db.scalar(select(EmailCampaign).where(EmailCampaign.id == resource_id, EmailCampaign.event_id == event_id, EmailCampaign.deleted_at.is_(None)).with_for_update())
-        if not row: raise HTTPException(status_code=404, detail="Email campaign not found")
-        if row.status not in {"draft", "scheduled"}: raise HTTPException(status_code=409, detail="Only draft or scheduled campaigns can be edited")
-        allowed = {"template_id", "name", "recipient_filter", "session_id_filter", "room_id_filter", "scheduled_at", "target_type", "speaker_id_list"}
-        changes = {key: value for key, value in payload.data.items() if key in allowed}
-        if not changes: raise HTTPException(status_code=422, detail="No supported campaign fields supplied")
-        if "template_id" in changes and not await db.scalar(select(EmailTemplate.id).where(EmailTemplate.id == changes["template_id"], or_(EmailTemplate.event_id == event_id, EmailTemplate.event_id.is_(None)), EmailTemplate.deleted_at.is_(None))): raise HTTPException(status_code=404, detail="Email template not available for this event")
-        old = {key: getattr(row, key) for key in changes}
-        for key, value in changes.items(): setattr(row, key, value)
-        db.add(_audit(request, actor, organization_id, "EVENT_EMAIL_CAMPAIGN_UPDATED", "email_campaign", row.id, old_state=old, new_state={"changed_fields": sorted(changes), "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=False)); await db.commit()
-        return {"id": row.id, "event_id": event_id, "resource_type": "email_campaign", "updated": sorted(changes)}
+        row, old, changes = await EventCampaignMutationService.update(
+            db,
+            event=event,
+            campaign_id=resource_id,
+            payload=CampaignUpdate.model_validate(payload.data),
+            actor=actor,
+        )
+        db.add(_audit(request, actor, organization_id, "EVENT_EMAIL_CAMPAIGN_UPDATED", "email_campaign", row.id, old_state=old, new_state={"changed_fields": changes, "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=False))
+        await db.commit()
+        return {"id": row.id, "event_id": event_id, "resource_type": "email_campaign", "updated": changes}
     elif workspace == "templates":
-        kind = payload.data.get("kind"); clean = {key: value for key, value in payload.data.items() if key != "kind"}
-        if kind == "email": model, schema, resource_type = EmailTemplate, EmailTemplateUpdate, "email_template"
-        elif kind == "print": model, schema, resource_type = PrintTemplate, PrintTemplateUpdate, "print_template"
-        else: raise HTTPException(status_code=422, detail="Template kind must be 'email' or 'print'")
-        payload = EventWorkspaceMutation(data=clean, reason=payload.reason, case_reference=payload.case_reference)
+        kind = payload.data.get("kind")
+        clean = {key: value for key, value in payload.data.items() if key != "kind"}
+        if kind == "email":
+            row, old, changes, cloned = await EventTemplateMutationService.update_email(
+                db,
+                event=event,
+                template_id=resource_id,
+                payload=EmailTemplateUpdate.model_validate(clean),
+                actor_user_id=actor.id,
+            )
+            resource_type = "email_template"
+        elif kind == "print":
+            if idempotency_key is None:
+                raise HTTPException(
+                    status_code=428,
+                    detail={
+                        "code": "IDEMPOTENCY_REQUIRED",
+                        "required_headers": ["Idempotency-Key"],
+                    },
+                )
+            row, old, changes = await EventTemplateMutationService.update_print(
+                db,
+                event=event,
+                template_id=resource_id,
+                payload=PrintTemplateUpdate.model_validate(clean),
+                actor_user_id=actor.id,
+                idempotency_key=idempotency_key,
+                source="organization_console",
+            )
+            cloned = False
+            resource_type = "print_template"
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="Template kind must be 'email' or 'print'",
+            )
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                f"EVENT_{resource_type.upper()}_UPDATED",
+                resource_type,
+                row.id,
+                old_state=old,
+                new_state={
+                    "changed_fields": changes,
+                    "event_id": str(event_id),
+                    "cloned_from_global": cloned,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=False,
+            )
+        )
+        await db.commit()
+        return {
+            "id": row.id,
+            "event_id": event_id,
+            "resource_type": resource_type,
+            "updated": changes,
+            "cloned_from_global": cloned,
+        }
     else: raise HTTPException(status_code=405, detail="This event workspace does not support update operations")
     conditions = [model.id == resource_id, model.event_id == event_id]
     if hasattr(model, "deleted_at"): conditions.append(model.deleted_at.is_(None))
     row = await db.scalar(select(model).where(*conditions).with_for_update())
     if not row: raise HTTPException(status_code=404, detail=f"{resource_type.replace('_', ' ').title()} not found")
+    if workspace == "integrations":
+        if if_match is None or idempotency_key is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "VERSION_AND_IDEMPOTENCY_REQUIRED",
+                    "required_headers": ["If-Match", "Idempotency-Key"],
+                },
+            )
+        if row.version != if_match:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "current_version": row.version},
+            )
     data = schema.model_validate(payload.data)
     changes = data.model_dump(exclude_unset=True)
-    if workspace == "sessions":
-        start = changes.get("start_time", row.start_time); end = changes.get("end_time", row.end_time)
-        if end <= start: raise HTTPException(status_code=422, detail="end_time must be after start_time")
-        room_id = changes.get("room_id")
-        if room_id and not await db.scalar(select(Room.id).where(Room.id == room_id, Room.event_id == event_id)): raise HTTPException(status_code=404, detail="Room not found in this event")
-    if workspace == "rooms" and changes.get("room_type") and changes["room_type"] not in ROOM_TYPES: raise HTTPException(status_code=422, detail=f"room_type must be one of {ROOM_TYPES}")
-    if workspace == "speakers" and changes.get("email"): changes["email"] = str(changes["email"]).lower()
+    transition_reservation = None
+    if (
+        workspace == "templates"
+        and resource_type == "print_template"
+        and changes.get("template_type")
+        and changes["template_type"] != row.template_type
+    ):
+        if idempotency_key is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "IDEMPOTENCY_REQUIRED",
+                    "required_headers": ["Idempotency-Key"],
+                },
+            )
+        is_certificate = changes["template_type"] == "certificate"
+        transition_reservation = await UsageReservationService.reserve(
+            db,
+            organization_id=organization_id,
+            event_id=event_id,
+            limit_key=(
+                "max_certificate_templates"
+                if is_certificate
+                else "max_badge_templates"
+            ),
+            quantity=1,
+            unit="template",
+            idempotency_key=f"console-print-template-transition:{idempotency_key}",
+            metadata={
+                "template_id": str(row.id),
+                "from": row.template_type,
+                "to": changes["template_type"],
+                "case_reference": payload.case_reference,
+            },
+        )
     old = {key: getattr(row, key, None) for key in changes}
     for key, value in changes.items(): setattr(row, key, value)
+    if workspace == "integrations":
+        if data.status == "active":
+            row.consecutive_failures = 0
+            row.last_failure_reason = None
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+    if transition_reservation is not None:
+        await db.flush()
+        await UsageReservationService.consume(
+            db,
+            transition_reservation.id,
+            source="organization_console.print_templates.transition",
+            actor_user_id=actor.id,
+        )
     db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_UPDATED", resource_type, row.id, old_state=old, new_state={"changed_fields": sorted(changes), "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=workspace in {"speakers", "integrations"})); await db.commit()
     return {"id": row.id, "event_id": event_id, "resource_type": resource_type, "updated": sorted(changes)}
 
 
 @router.delete("/events/{event_id}/workspace/{workspace}/{resource_id}")
-async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceDelete, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    await _require_scoped_event(db, organization_id, event_id)
-    if workspace == "speakers": model, resource_type = Speaker, "speaker"
-    elif workspace == "sessions": model, resource_type = Session, "session"
-    elif workspace == "rooms": model, resource_type = Room, "room"
-    elif workspace == "integrations": model, resource_type = Webhook, "webhook"
-    elif workspace == "communications": model, resource_type = EmailCampaign, "email_campaign"
+async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceDelete, request: Request, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    event = await _require_scoped_event(db, organization_id, event_id)
+    if workspace in {"speakers", "sessions", "rooms"}:
+        if workspace == "speakers":
+            row, outcome = await EventResourceMutationService.archive_speaker(
+                db,
+                event=event,
+                speaker_id=resource_id,
+                actor_user_id=actor.id,
+                source="organization_console",
+            )
+            resource_type = "speaker"
+        elif workspace == "sessions":
+            row, outcome = await EventResourceMutationService.archive_session(
+                db,
+                event=event,
+                session_id=resource_id,
+                actor_user_id=actor.id,
+                source="organization_console",
+            )
+            resource_type = "session"
+        else:
+            row, outcome = await EventResourceMutationService.archive_room(
+                db,
+                event=event,
+                room_id=resource_id,
+                actor_user_id=actor.id,
+                source="organization_console",
+            )
+            resource_type = "room"
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                f"EVENT_{resource_type.upper()}_{outcome}",
+                resource_type,
+                row.id,
+                new_state={
+                    "event_id": str(event_id),
+                    "outcome": outcome,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=True,
+            )
+        )
+        await db.commit()
+        return {"id": row.id, "outcome": outcome, "recoverable": True}
+    if workspace == "attendees":
+        row, outcome = await EventParticipantMutationService.archive(
+            db,
+            event=event,
+            participant_id=resource_id,
+            actor_user_id=actor.id,
+            source="organization_console",
+        )
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                f"EVENT_PARTICIPANT_{outcome}",
+                "participant",
+                row.id,
+                new_state={
+                    "event_id": str(event_id),
+                    "outcome": outcome,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=True,
+            )
+        )
+        await db.commit()
+        return {"id": row.id, "outcome": outcome, "recoverable": True}
+    if workspace == "integrations":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "developer.webhooks.manage",
+            user_id=actor.id,
+        )
+        if if_match is None or idempotency_key is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "VERSION_AND_IDEMPOTENCY_REQUIRED",
+                    "required_headers": ["If-Match", "Idempotency-Key"],
+                },
+            )
+        request_hash = request_fingerprint(
+            {
+                "operation": "ARCHIVE",
+                "event_id": str(event_id),
+                "webhook_id": str(resource_id),
+                "version": if_match,
+                "payload": payload.model_dump(mode="json"),
+            }
+        )
+        replay = await _webhook_mutation_replay(
+            db,
+            organization_id=organization_id,
+            event_id=event_id,
+            actor_id=actor.id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return replay
+        row = await db.scalar(
+            select(Webhook)
+            .where(Webhook.id == resource_id, Webhook.event_id == event_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Webhook not found")
+        if row.version != if_match:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "current_version": row.version},
+            )
+        row.status = "paused"
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+        response = {
+            "id": row.id,
+            "outcome": "PAUSED",
+            "recoverable": True,
+            "version": row.version,
+        }
+        db.add(
+            _webhook_mutation(
+                organization_id=organization_id,
+                event_id=event_id,
+                webhook_id=row.id,
+                actor_id=actor.id,
+                operation_type="ARCHIVE",
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                response=response,
+            )
+        )
+        db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_PAUSED", "webhook", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "version": row.version}, sensitive=True))
+        await db.commit()
+        return response
+    elif workspace == "communications":
+        row, outcome = await EventCampaignMutationService.archive(
+            db,
+            event=event,
+            campaign_id=resource_id,
+            actor=actor,
+        )
+        db.add(_audit(request, actor, organization_id, f"EVENT_EMAIL_CAMPAIGN_{outcome}", "email_campaign", row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
+        await db.commit()
+        return {"id": row.id, "outcome": outcome, "recoverable": True}
     elif workspace == "templates":
-        row = await db.scalar(select(EmailTemplate).where(EmailTemplate.id == resource_id, EmailTemplate.event_id == event_id).with_for_update())
-        resource_type = "email_template"
-        if not row:
-            row = await db.scalar(select(PrintTemplate).where(PrintTemplate.id == resource_id, PrintTemplate.event_id == event_id).with_for_update()); resource_type = "print_template"
-        if not row: raise HTTPException(status_code=404, detail="Template not found")
-        if row.deleted_at is not None: return {"id": row.id, "outcome": "ALREADY_ARCHIVED", "recoverable": True}
-        row.deleted_at = datetime.now(timezone.utc); row.deleted_by = actor.id; outcome = "SOFT_DELETED"
-        db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit()
+        if await db.scalar(
+            select(EmailTemplate.id).where(
+                EmailTemplate.id == resource_id,
+                EmailTemplate.event_id == event_id,
+            )
+        ):
+            row, outcome = await EventTemplateMutationService.archive_email(
+                db,
+                event=event,
+                template_id=resource_id,
+                actor_user_id=actor.id,
+            )
+            resource_type = "email_template"
+        else:
+            row, outcome = await EventTemplateMutationService.archive_print(
+                db,
+                event=event,
+                template_id=resource_id,
+                actor_user_id=actor.id,
+            )
+            resource_type = "print_template"
+        db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
+        await db.commit()
         return {"id": row.id, "outcome": outcome, "recoverable": True}
     else: raise HTTPException(status_code=409, detail="This resource requires a recoverable lifecycle job and cannot be directly deleted")
     row = await db.scalar(select(model).where(model.id == resource_id, model.event_id == event_id).with_for_update())
     if not row: raise HTTPException(status_code=404, detail=f"{resource_type.title()} not found")
+    if workspace == "integrations":
+        if if_match is None or idempotency_key is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "VERSION_AND_IDEMPOTENCY_REQUIRED",
+                    "required_headers": ["If-Match", "Idempotency-Key"],
+                },
+            )
+        if row.version != if_match:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "current_version": row.version},
+            )
     if (hasattr(row, "deleted_at") and row.deleted_at is not None) or (workspace == "rooms" and not row.is_active) or (workspace == "integrations" and row.status == "paused"):
         return {"id": row.id, "outcome": "ALREADY_ARCHIVED", "recoverable": True}
     if workspace == "sessions" and row.status == "in_progress": raise HTTPException(status_code=409, detail="An in-progress session cannot be archived")
     if hasattr(row, "deleted_at"):
         row.deleted_at = datetime.now(timezone.utc); row.deleted_by = actor.id; outcome = "SOFT_DELETED"
     elif workspace == "rooms": row.is_active = False; outcome = "DEACTIVATED"
-    else: row.status = "paused"; outcome = "PAUSED"
-    metric_key = {"speakers": "speakers", "sessions": "sessions", "rooms": "rooms"}.get(workspace)
-    if metric_key:
-        archive_marker = row.deleted_at.isoformat() if getattr(row, "deleted_at", None) else outcome
-        await MeteringService.record(db, organization_id=organization_id, event_id=event_id, metric_key=metric_key, quantity=-1, unit="count", source=f"organization_console.{workspace}.archive", idempotency_key=f"workspace-archive:{workspace}:{row.id}:{archive_marker}", actor_user_id=actor.id, metadata={"resource_id": str(row.id), "outcome": outcome})
+    else:
+        row.status = "paused"
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+        outcome = "PAUSED"
     db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit()
     return {"id": row.id, "outcome": outcome, "recoverable": True}
 
 
 @router.post("/events/{event_id}/workspace/{workspace}/{resource_id}/restore")
-async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceDelete, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    await _require_scoped_event(db, organization_id, event_id)
-    if workspace == "speakers": model, resource_type = Speaker, "speaker"
-    elif workspace == "sessions": model, resource_type = Session, "session"
-    elif workspace == "rooms": model, resource_type = Room, "room"
-    elif workspace == "integrations": model, resource_type = Webhook, "webhook"
-    elif workspace == "communications": model, resource_type = EmailCampaign, "email_campaign"
-    elif workspace == "templates":
-        row = await db.scalar(select(EmailTemplate).where(EmailTemplate.id == resource_id, EmailTemplate.event_id == event_id).with_for_update())
-        resource_type = "email_template"
-        if not row:
-            row = await db.scalar(select(PrintTemplate).where(PrintTemplate.id == resource_id, PrintTemplate.event_id == event_id).with_for_update()); resource_type = "print_template"
-        if not row: raise HTTPException(status_code=404, detail="Template not found")
-        if row.deleted_at is None: return {"id": row.id, "outcome": "ALREADY_ACTIVE"}
-        reservation = None
-        if isinstance(row, PrintTemplate):
-            is_certificate = row.template_type == "certificate"
-            operation = "certificates.templates.manage" if is_certificate else "badges.templates.manage"
-            limit_key = "max_certificate_templates" if is_certificate else "max_badge_templates"
-            await enforce_event_operation(db, organization_id, event_id, operation, user_id=actor.id)
-            reservation = await UsageReservationService.reserve(
+async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceDelete, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), if_match: int | None = Header(None, alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    event = await _require_scoped_event(db, organization_id, event_id)
+    if workspace in {"speakers", "sessions", "rooms"}:
+        if workspace == "speakers":
+            row, outcome = await EventResourceMutationService.restore_speaker(
                 db,
+                event=event,
+                speaker_id=resource_id,
+                actor_user_id=actor.id,
+                idempotency_key=idempotency_key,
+                source="organization_console",
+            )
+            resource_type = "speaker"
+        elif workspace == "sessions":
+            row, outcome = await EventResourceMutationService.restore_session(
+                db,
+                event=event,
+                session_id=resource_id,
+                actor_user_id=actor.id,
+                idempotency_key=idempotency_key,
+                source="organization_console",
+            )
+            resource_type = "session"
+        else:
+            row, outcome = await EventResourceMutationService.restore_room(
+                db,
+                event=event,
+                room_id=resource_id,
+                actor_user_id=actor.id,
+                idempotency_key=idempotency_key,
+                source="organization_console",
+            )
+            resource_type = "room"
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                f"EVENT_{resource_type.upper()}_{outcome}",
+                resource_type,
+                row.id,
+                new_state={
+                    "event_id": str(event_id),
+                    "outcome": outcome,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=True,
+            )
+        )
+        await db.commit()
+        return {"id": row.id, "outcome": outcome}
+    if workspace == "attendees":
+        row, outcome = await EventParticipantMutationService.restore(
+            db,
+            event=event,
+            participant_id=resource_id,
+            actor_user_id=actor.id,
+            idempotency_key=idempotency_key,
+            source="organization_console",
+        )
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                f"EVENT_PARTICIPANT_{outcome}",
+                "participant",
+                row.id,
+                new_state={
+                    "event_id": str(event_id),
+                    "outcome": outcome,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=True,
+            )
+        )
+        await db.commit()
+        return {"id": row.id, "outcome": outcome}
+    if workspace == "integrations":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "developer.webhooks.manage",
+            user_id=actor.id,
+        )
+        if if_match is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "VERSION_REQUIRED",
+                    "required_headers": ["If-Match"],
+                },
+            )
+        request_hash = request_fingerprint(
+            {
+                "operation": "RESTORE",
+                "event_id": str(event_id),
+                "webhook_id": str(resource_id),
+                "version": if_match,
+                "payload": payload.model_dump(mode="json"),
+            }
+        )
+        replay = await _webhook_mutation_replay(
+            db,
+            organization_id=organization_id,
+            event_id=event_id,
+            actor_id=actor.id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return replay
+        row = await db.scalar(
+            select(Webhook)
+            .where(Webhook.id == resource_id, Webhook.event_id == event_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Webhook not found")
+        if row.version != if_match:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "current_version": row.version},
+            )
+        row.status = "active"
+        row.consecutive_failures = 0
+        row.last_failure_reason = None
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+        response = {
+            "id": row.id,
+            "outcome": "RESTORED",
+            "version": row.version,
+        }
+        db.add(
+            _webhook_mutation(
                 organization_id=organization_id,
                 event_id=event_id,
-                limit_key=limit_key,
-                quantity=1,
-                unit="template",
-                idempotency_key=f"workspace-template-restore:{idempotency_key}",
-                metadata={"resource_id": str(row.id), "template_type": row.template_type},
+                webhook_id=row.id,
+                actor_id=actor.id,
+                operation_type="RESTORE",
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                response=response,
             )
+        )
+        db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_RESTORED", "webhook", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "version": row.version}, sensitive=True))
+        await db.commit()
+        return response
+    elif workspace == "communications":
+        row, outcome = await EventCampaignMutationService.restore(
+            db,
+            event=event,
+            campaign_id=resource_id,
+            actor=actor,
+        )
+        db.add(_audit(request, actor, organization_id, f"EVENT_EMAIL_CAMPAIGN_{outcome}", "email_campaign", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
+        await db.commit()
+        return {"id": row.id, "outcome": outcome}
+    elif workspace == "templates":
+        if await db.scalar(
+            select(EmailTemplate.id).where(
+                EmailTemplate.id == resource_id,
+                EmailTemplate.event_id == event_id,
+            )
+        ):
+            row, outcome = await EventTemplateMutationService.restore_email(
+                db,
+                event=event,
+                template_id=resource_id,
+                actor_user_id=actor.id,
+            )
+            resource_type = "email_template"
         else:
-            await enforce_event_operation(db, organization_id, event_id, "communications.campaign.manage", user_id=actor.id)
-        row.deleted_at = None; row.deleted_by = None
-        if reservation is not None:
-            await UsageReservationService.consume(db, reservation.id, source="organization_console.templates.restore", actor_user_id=actor.id)
-        db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_RESTORED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit()
-        return {"id": row.id, "outcome": "RESTORED"}
+            row, outcome = await EventTemplateMutationService.restore_print(
+                db,
+                event=event,
+                template_id=resource_id,
+                actor_user_id=actor.id,
+                idempotency_key=idempotency_key,
+                source="organization_console",
+            )
+            resource_type = "print_template"
+        db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
+        await db.commit()
+        return {"id": row.id, "outcome": outcome}
     else: raise HTTPException(status_code=405, detail="This workspace does not support restore")
     row = await db.scalar(select(model).where(model.id == resource_id, model.event_id == event_id).with_for_update())
     if not row: raise HTTPException(status_code=404, detail=f"{resource_type.title()} not found")
+    if workspace == "integrations":
+        if if_match is None:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "VERSION_REQUIRED",
+                    "required_headers": ["If-Match"],
+                },
+            )
+        if row.version != if_match:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "current_version": row.version},
+            )
     if (hasattr(row, "deleted_at") and row.deleted_at is None) or (workspace == "rooms" and row.is_active) or (workspace == "integrations" and row.status == "active"):
         return {"id": row.id, "outcome": "ALREADY_ACTIVE"}
     restore_marker = row.deleted_at.isoformat() if getattr(row, "deleted_at", None) else f"{workspace}:{getattr(row, 'status', getattr(row, 'is_active', None))}"
@@ -2890,7 +4079,10 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
         )
     if hasattr(row, "deleted_at"): row.deleted_at = None; row.deleted_by = None
     elif workspace == "rooms": row.is_active = True
-    else: row.status = "active"
+    else:
+        row.status = "active"
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
     if reservation is not None:
         await UsageReservationService.consume(db, reservation.id, source=f"organization_console.{workspace}.restore", actor_user_id=actor.id)
     db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_RESTORED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit()
@@ -2911,6 +4103,71 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
             from app.modules.presentations.tasks.file_tasks import validate_presentation
             task_to_dispatch = lambda: validate_presentation.delay(str(row.id), str(organization_id))
         result = {"id": row.id, "status": row.upload_status, "is_locked": row.is_locked}
+    elif workspace == "attendees":
+        if action not in {"ISSUE_CONFIRMATION_QR", "ROTATE_CONFIRMATION_QR"}:
+            raise HTTPException(
+                status_code=422,
+                detail="Unsupported attendee action",
+            )
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "registration.confirmation_qr.manage",
+            user_id=actor.id,
+        )
+        participant = await db.scalar(
+            select(Participant)
+            .where(
+                Participant.id == resource_id,
+                Participant.event_id == event_id,
+                Participant.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if participant is None:
+            raise HTTPException(status_code=404, detail="Attendee not found")
+        try:
+            expected_version = int(payload.data.get("version"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="A numeric confirmation QR version is required",
+            ) from exc
+        if action == "ISSUE_CONFIRMATION_QR" and expected_version != 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Use ROTATE_CONFIRMATION_QR for an existing credential",
+            )
+        if action == "ROTATE_CONFIRMATION_QR" and expected_version < 1:
+            raise HTTPException(
+                status_code=409,
+                detail="No existing confirmation QR is available to rotate",
+            )
+        issuance = await RegistrationConfirmationQRService.issue_or_rotate(
+            db,
+            organization_id=organization_id,
+            event_id=event_id,
+            participant=participant,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            actor_user_id=actor.id,
+        )
+        token = build_confirmation_token(
+            issuance.credential.id,
+            issuance.credential.credential_version,
+        )
+        result = {
+            "id": participant.id,
+            "qr_status": issuance.credential.status,
+            "qr_version": issuance.credential.credential_version,
+            "qr_image_url": build_confirmation_image_url(token),
+            "outcome": (
+                "REPLAYED"
+                if issuance.replayed
+                else ("ROTATED" if issuance.old_state else "ISSUED")
+            ),
+        }
     elif workspace == "abstracts":
         await enforce_event_operation(
             db,
@@ -3039,6 +4296,13 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
             raise HTTPException(status_code=422, detail="Unsupported communication action")
         result = {"id": campaign.id, "status": campaign.status}
     elif workspace == "payments":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "registration.payments.manage",
+            user_id=actor.id,
+        )
         if action != "RECORD_REFUND" or not payload.approved_request_id:
             raise HTTPException(status_code=422, detail="A dual-approved refund request is required")
         payment = await db.scalar(select(PaymentTransaction).where(PaymentTransaction.id == resource_id, PaymentTransaction.event_id == event_id).with_for_update())
@@ -3073,6 +4337,13 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
         approval.details = {**(approval.details or {}), "provider_refund_id": provider_refund_id, "payment_id": str(payment.id)}
         result = {"id": payment.id, "status": payment.status, "provider_refund_id": provider_refund_id}
     elif workspace == "tickets":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "registration.ticket_types.manage",
+            user_id=actor.id,
+        )
         if action != "SET_PRICING" or resource_id != event_id:
             raise HTTPException(status_code=422, detail="Ticket pricing requires SET_PRICING against the selected event")
         pricing_data = payload.data.get("pricing_data")
@@ -3086,6 +4357,13 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
             await TicketPricingService.set_tiers(db, event, tiers)
         result = {"event_id": event.id, "pricing_data": matrix, "tiers": (event.registration_settings or {}).get("tiers", [])}
     elif workspace == "checkins":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "registration.checkin",
+            user_id=actor.id,
+        )
         if action == "CHECK_IN":
             session_id = payload.data.get("session_id")
             try:
@@ -3099,7 +4377,107 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
             result = {"id": checkin.id, "outcome": "REMOVED"}
         else:
             raise HTTPException(status_code=422, detail="Unsupported check-in action")
+    elif workspace == "jobs":
+        if action != "RETRY_JOB":
+            raise HTTPException(status_code=422, detail="Unsupported job action")
+        source_type = str(payload.data.get("source") or "").strip().upper()
+        retry = await EventJobControlService.request_retry(
+            db,
+            event=event,
+            source_type=source_type,
+            job_id=resource_id,
+            actor=actor,
+            idempotency_key=idempotency_key,
+            reason=payload.reason,
+        )
+        control = retry["control"]
+        result = {
+            "id": control.id,
+            "source": retry["source"],
+            "source_job_id": retry["source_job_id"],
+            "successor_job_id": retry["successor_job_id"],
+            "status": retry["status"],
+            "replayed": retry["replayed"],
+        }
+        if retry["replayed"]:
+            return result
+        # Commit the successor before publishing it to a worker or venue poller.
+        await db.commit()
+        dispatch = retry["dispatch"]
+        if dispatch is not None:
+            try:
+                from app.tasks import run_excel_import
+
+                run_excel_import.delay(
+                    str(dispatch["job_id"]),
+                    str(dispatch["organization_id"]),
+                )
+                control = await EventJobControlService.mark_dispatch_succeeded(
+                    db, control.id
+                )
+            except Exception as exc:
+                control = await EventJobControlService.mark_dispatch_failed(
+                    db, control.id
+                )
+                db.add(
+                    _audit(
+                        request,
+                        actor,
+                        organization_id,
+                        "EVENT_JOBS_RETRY_JOB_FAILED",
+                        "background_job",
+                        resource_id,
+                        new_state={
+                            "event_id": str(event_id),
+                            "source": source_type,
+                            "successor_job_id": retry["successor_job_id"],
+                            "status": control.status,
+                            "reason": payload.reason,
+                            "case_reference": payload.case_reference,
+                            "failure_code": control.failure_code,
+                        },
+                        sensitive=True,
+                    )
+                )
+                await db.commit()
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "QUEUE_UNAVAILABLE",
+                        "control_request_id": str(control.id),
+                        "successor_job_id": retry["successor_job_id"],
+                    },
+                ) from exc
+        result["status"] = control.status
+        db.add(
+            _audit(
+                request,
+                actor,
+                organization_id,
+                "EVENT_JOBS_RETRY_JOB",
+                "background_job",
+                resource_id,
+                new_state={
+                    "event_id": str(event_id),
+                    "source": source_type,
+                    "successor_job_id": retry["successor_job_id"],
+                    "status": control.status,
+                    "reason": payload.reason,
+                    "case_reference": payload.case_reference,
+                },
+                sensitive=True,
+            )
+        )
+        await db.commit()
+        return result
     elif workspace == "users":
+        await enforce_event_operation(
+            db,
+            organization_id,
+            event_id,
+            "events.planning.manage",
+            user_id=actor.id,
+        )
         user = await db.scalar(select(User).where(User.id == resource_id, User.organization_id == organization_id, User.is_active.is_(True)))
         if not user:
             raise HTTPException(status_code=404, detail="Active organization user not found")

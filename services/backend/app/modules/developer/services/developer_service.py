@@ -13,9 +13,9 @@ from app.modules.developer.models.developer_domain_tables import (
 )
 from app.modules.analytics.models.analytics_domain_tables import ApiUsageMetric
 from app.config import settings
-from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.identity.models.user import User
+from app.core.dependencies.feature_gate import enforce_org_operation
 
 class DeveloperService:
     @staticmethod
@@ -96,13 +96,12 @@ class DeveloperService:
         # serializes calls made with the same credential so the monthly limit
         # cannot be overshot by concurrent requests.
         try:
-            capability = await CapabilityService.resolve_organization(
-                db, api_key.organization_id
+            await enforce_org_operation(
+                db,
+                api_key.organization_id,
+                "developer.api.use",
             )
         except Exception:
-            return None
-        feature = capability.get("features", {}).get("FEAT_API_ACCESS")
-        if not feature or not feature.get("enabled"):
             return None
         try:
             reservation = await UsageReservationService.reserve(
@@ -279,13 +278,13 @@ class DeveloperService:
         if not authorizing_user or not authorizing_user.organization_id:
             return None
         try:
-            capability = await CapabilityService.resolve_organization(
-                db, authorizing_user.organization_id, user_id=authorizing_user.id
+            await enforce_org_operation(
+                db,
+                authorizing_user.organization_id,
+                "developer.api.use",
+                user_id=authorizing_user.id,
             )
         except Exception:
-            return None
-        api_feature = capability.get("features", {}).get("FEAT_API_ACCESS")
-        if not api_feature or not api_feature.get("enabled"):
             return None
             
         # Generate tokens

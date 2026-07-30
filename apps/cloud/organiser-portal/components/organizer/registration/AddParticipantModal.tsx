@@ -459,7 +459,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                     >
                       Cancel
                     </Button>
-                    <CapabilityAction operation="registration.manage">
+                    <CapabilityAction operation="registration.manage" limitKey="max_registrations">
                       <Button
                         type="submit"
                         disabled={submitting}
@@ -591,7 +591,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                     >
                       Cancel
                     </Button>
-                    <CapabilityAction operation="registration.import">
+                    <CapabilityAction operation="registration.import" limitKey="max_registrations">
                       <Button
                         onClick={handleExcelImport}
                         disabled={importing || !importFile}

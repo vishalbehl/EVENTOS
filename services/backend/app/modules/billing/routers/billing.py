@@ -103,6 +103,16 @@ async def get_billing_plan(user: ActiveUser, db: DB):
     max_rooms = await EntitlementResolver.get_limit(db, org_id, "max_rooms")
     max_ticket_categories = await EntitlementResolver.get_limit(db, org_id, "max_ticket_categories")
     storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
+    resolved_limits = {
+        "max_events": max_events,
+        "max_users": max_users,
+        "max_registrations": max_registrations,
+        "max_speakers": max_speakers,
+        "max_sessions": max_sessions,
+        "max_rooms": max_rooms,
+        "max_ticket_categories": max_ticket_categories,
+        "storage_quota_mb": storage_quota_mb,
+    }
     return {
         "subscription_id": sub.id, "status": sub.status,
         "trial_ends_at": sub.trial_ends_at, "current_period_end": sub.current_period_end,
@@ -127,6 +137,7 @@ async def get_billing_plan(user: ActiveUser, db: DB):
                   "users": {"used": users_used, "max": max_users},
                   "registrations": {"used": registrations_used, "max": max_registrations},
                   "storage": {"used_mb": storage_used_mb, "max_mb": storage_quota_mb}},
+        "limits": resolved_limits,
         "availability": "AVAILABLE" if all(value is not None for value in (max_events, max_users, max_registrations, storage_quota_mb)) else "PARTIAL",
         "freshness_at": datetime.now(timezone.utc),
         "source": "CANONICAL_ENTITLEMENT_RESOLVER"}

@@ -30,6 +30,11 @@ class MeteringService:
         "ticket_categories": "max_ticket_categories",
         "badge_templates": "max_badge_templates",
         "certificate_templates": "max_certificate_templates",
+        "sms_sent": "max_sms_per_event",
+        "whatsapp_sent": "max_whatsapp_per_event",
+        "push_sent": "max_push_per_event",
+        "exports": "max_exports_per_event",
+        "devices": "max_devices_per_event",
     }
     ENTITLEMENT_METRICS = {**AUTHORITATIVE_METRICS, "storage_bytes": "storage_quota_mb", "registration_submissions": "max_registrations"}
 

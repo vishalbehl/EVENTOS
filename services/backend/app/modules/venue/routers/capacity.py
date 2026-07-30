@@ -24,8 +24,13 @@ from app.modules.venue.schemas.capacity import (
 )
 from app.modules.registration.schemas.registration import ParticipantRegistrationResponse
 from app.modules.registration.routers.registrations import helper_approve_registration
+from app.core.dependencies.feature_gate import require_event_operation
 
-router = APIRouter(prefix="/events/{event_id}/capacity", tags=["capacity"])
+router = APIRouter(
+    prefix="/events/{event_id}/capacity",
+    tags=["capacity"],
+    dependencies=[require_event_operation("registration.manage")],
+)
 
 
 @router.post("", response_model=CapacityRuleResponse, status_code=status.HTTP_201_CREATED)

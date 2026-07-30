@@ -3,7 +3,7 @@ import re
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, status, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,8 @@ from app.modules.speakers.schemas.speaker_profile import (
     SpeakerProfileResponse,
 )
 from app.schemas.common import MessageResponse
+from app.core.dependencies.feature_gate import enforce_event_operation
+from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
 # Create the router with events prefix
 router = APIRouter(prefix="/events/{event_id}/speakers/{speaker_id}/profile", tags=["speaker_profiles"])
@@ -54,6 +56,12 @@ async def check_profile_access(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Speaker portal is currently closed."
                 )
+            await enforce_event_operation(
+                db,
+                speaker.event.organization_id,
+                event_id,
+                "speakers.profiles.manage",
+            )
             return "speaker"
 
     # 2. Try JWT auth
@@ -110,7 +118,13 @@ async def check_profile_access(
         )
         if not speaker_exists:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
-            
+        await enforce_event_operation(
+            db,
+            event.organization_id,
+            event_id,
+            "speakers.profiles.manage",
+            user_id=getattr(current_user, "id", None),
+        )
         return "organiser"
 
     # If neither token nor user is present or matches
@@ -272,6 +286,10 @@ async def parse_cv(
     event_id: uuid.UUID,
     speaker_id: uuid.UUID,
     file: UploadFile = File(...),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
     access_type: str = Depends(check_profile_access),
 ) -> SpeakerProfileUpdate:
     """
@@ -298,6 +316,21 @@ async def parse_cv(
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=404, detail="Speaker not found.")
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=speaker.event.organization_id,
+        event_id=event_id,
+        limit_key="storage_quota_mb",
+        quantity=max(1, (len(content) + 1024 * 1024 - 1) // (1024 * 1024)),
+        unit="megabyte",
+        idempotency_key=f"speaker-profile-cv:{speaker_id}:{idempotency_key}",
+        metadata={
+            "speaker_id": str(speaker_id),
+            "profile_asset": "cv",
+            "consumption_quantity": len(content),
+            "consumption_unit": "byte",
+        },
+    )
 
     ext = file.filename.split('.')[-1].lower()
     from app.services import upload_service
@@ -343,6 +376,11 @@ async def parse_cv(
         profile.cv_url = url
         profile.last_updated_by = access_type
 
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="speaker_profile.cv_upload",
+    )
     await db.commit()
     await db.refresh(profile)
     return SpeakerProfileUpdate(cv_url=url)
@@ -446,6 +484,10 @@ async def parse_profile_template(
     event_id: uuid.UUID,
     speaker_id: uuid.UUID,
     file: UploadFile = File(...),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db),
     access_type: str = Depends(check_profile_access),
 ) -> SpeakerProfileUpdate:
     """
@@ -472,6 +514,21 @@ async def parse_profile_template(
     speaker = speaker_res.scalar_one_or_none()
     if not speaker:
         raise HTTPException(status_code=404, detail="Speaker not found.")
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=speaker.event.organization_id,
+        event_id=event_id,
+        limit_key="storage_quota_mb",
+        quantity=max(1, (len(content) + 1024 * 1024 - 1) // (1024 * 1024)),
+        unit="megabyte",
+        idempotency_key=f"speaker-profile-template:{speaker_id}:{idempotency_key}",
+        metadata={
+            "speaker_id": str(speaker_id),
+            "profile_asset": "template",
+            "consumption_quantity": len(content),
+            "consumption_unit": "byte",
+        },
+    )
 
     ext = file.filename.split('.')[-1].lower()
     from app.services import upload_service
@@ -517,6 +574,11 @@ async def parse_profile_template(
         profile.template_url = url
         profile.last_updated_by = access_type
 
+    await UsageReservationService.consume(
+        db,
+        reservation.id,
+        source="speaker_profile.template_upload",
+    )
     await db.commit()
     await db.refresh(profile)
     return SpeakerProfileUpdate(template_url=url)

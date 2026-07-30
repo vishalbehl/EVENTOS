@@ -270,16 +270,20 @@ async def test_delete_organization_clears_impersonation_fk_references(db, client
     token = create_access_token(super_admin)
     headers = {"Authorization": f"Bearer {token}"}
 
-    response = await client.delete(f"/api/v1/platform/organizations/{target_org.id}", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["message"] == "Organization and all associated data successfully deleted"
+    response = await client.request(
+        "DELETE",
+        f"/api/v1/platform/organizations/{target_org.id}",
+        headers=headers,
+        json={"reason": "Testing retention-aware organization deletion denial"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RETENTION_WORKFLOW_REQUIRED"
 
     deleted_org = await db.get(Organization, target_org.id)
-    assert deleted_org is None
+    assert deleted_org is not None
 
-    db.expunge(log)
     refreshed_log = (await db.execute(select(ImpersonationLog).where(ImpersonationLog.id == log.id))).scalar_one_or_none()
     assert refreshed_log is not None
-    assert refreshed_log.target_user_id is None
-    assert refreshed_log.target_organization_id is None
+    assert refreshed_log.target_user_id == target_user.id
+    assert refreshed_log.target_organization_id == target_org.id
     assert refreshed_log.super_admin_id == super_admin.id

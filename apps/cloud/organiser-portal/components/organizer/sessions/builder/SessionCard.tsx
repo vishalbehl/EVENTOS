@@ -6,6 +6,8 @@ import { motion } from "framer-motion";
 import { Clock, MapPin, Users, AlertTriangle, GripVertical, MoreVertical, Copy, Trash2, Edit3, CheckCircle2 } from "lucide-react";
 import { cn, formatTimeRangeInTZ } from "@/lib/utils";
 import { BuilderSession, useSessionBuilderStore } from "@/store/useSessionBuilderStore";
+import { useAssignSpeakerToSession } from "@/hooks/useSessionBuilder";
+import { useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -30,6 +32,9 @@ export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete
   const conflicts = useSessionBuilderStore((s) => s.conflicts);
   const selectedSessionId = useSessionBuilderStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useSessionBuilderStore((s) => s.setSelectedSessionId);
+  
+  const { eventId } = useParams();
+  const { mutate: assignSpeaker } = useAssignSpeakerToSession(eventId as string);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isDndKitDragging } = useSortable({
     id: session.id,
@@ -50,8 +55,27 @@ export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete
     <div
       ref={setNodeRef}
       style={style}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("application/json")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(e) => {
+        try {
+          const dataStr = e.dataTransfer.getData("application/json");
+          if (dataStr) {
+            const payload = JSON.parse(dataStr);
+            if (payload.type === "speaker") {
+              e.preventDefault();
+              e.stopPropagation();
+              assignSpeaker({ sessionId: session.id, speaker: payload.data });
+            }
+          }
+        } catch (err) {}
+      }}
       className={cn(
-        "group relative rounded-2xl border p-4 transition-all duration-200 cursor-pointer select-none",
+        "group relative rounded-xl border p-4 transition-all duration-200 cursor-pointer select-none",
         typeStyle.bg,
         typeStyle.border,
         isSelected && "ring-2 ring-[var(--pri)] shadow-lg shadow-[var(--pri)]/20 scale-[1.01]",
@@ -64,8 +88,8 @@ export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete
       {/* Top Bar: Code + Type + Drag Handle */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-black uppercase tracking-wider text-muted bg-[color-mix(in_srgb,var(--text)_10%,transparent)] px-2 py-0.5 rounded-md">
-            {session.session_code}
+          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--pri)] bg-[var(--pri)]/10 px-2 py-0.5 rounded-md">
+            {session.session_code?.toUpperCase()}
           </span>
           <Badge
             variant="outline"
@@ -99,18 +123,12 @@ export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete
         {session.name}
       </h4>
 
-      {/* Time & Room */}
+      {/* Time */}
       <div className="flex flex-col gap-1 text-[11px] text-muted mb-3 font-medium">
         <div className="flex items-center gap-1.5 text-[var(--pri)] font-semibold">
           <Clock className="h-3.5 w-3.5 flex-shrink-0" />
           <span>{formatTimeRangeInTZ(session.start_time, session.end_time, timezone)}</span>
         </div>
-        {session.room_name && (
-          <div className="flex items-center gap-1.5 text-muted">
-            <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
-            <span>{session.room_name}</span>
-          </div>
-        )}
       </div>
 
       {/* Speakers & Readiness Footer */}

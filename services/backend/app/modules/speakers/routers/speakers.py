@@ -31,10 +31,12 @@ from app.modules.speakers.schemas.speaker import (
 )
 from app.schemas.common import MessageResponse
 from app.services import email_service, qr_service
-from app.modules.platform.services.metering_service import MeteringService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.audit.services.audit_service import AuditContext, AuditService
+from app.modules.events.services.event_resource_mutation_service import (
+    EventResourceMutationService,
+)
 
 router = APIRouter(prefix="/events/{event_id}/speakers", tags=["speakers"], dependencies=[require_event_operation("speakers.manage")])
 abstracts_router = APIRouter(
@@ -298,7 +300,7 @@ async def list_speakers(
     page_size: int = Query(200, ge=1, le=1000),
 ) -> List[SpeakerSummary]:
     # 1. Base query for speakers with basic fields
-    q = select(Speaker).where(Speaker.event_id == event.id)
+    q = select(Speaker).where(Speaker.event_id == event.id, Speaker.deleted_at.is_(None))
 
     assigned_event_ids = set()
     assigned_room_ids = set()
@@ -518,6 +520,7 @@ from app.modules.speakers.schemas.speaker import (
 async def manual_register_speaker(
     payload: ManualRegisterRequest,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
     # 1. Create or get speaker (case-insensitive email)
@@ -525,56 +528,46 @@ async def manual_register_speaker(
         select(Speaker).where(
             Speaker.event_id == event.id,
             func.lower(Speaker.email) == str(payload.email).lower(),
+            Speaker.deleted_at.is_(None),
         )
     )
     speaker = dup.scalar_one_or_none()
     
-    created_new = speaker is None
-    reservation = None
     if speaker:
-        # Update existing
-        speaker.first_name = payload.first_name
-        speaker.last_name = payload.last_name
-        speaker.phone = payload.phone
-        speaker.affiliation = payload.affiliation
-        speaker.designation = payload.designation
-        speaker.country = payload.country
+        speaker, _, _ = await EventResourceMutationService.update_speaker(
+            db,
+            event=event,
+            speaker_id=speaker.id,
+            payload=SpeakerUpdate(
+                regno=payload.regno,
+                first_name=payload.first_name,
+                last_name=payload.last_name,
+                phone=payload.phone,
+                affiliation=payload.affiliation,
+                designation=payload.designation,
+                country=payload.country,
+            ),
+            actor_user_id=current_user.id,
+        )
     else:
-        reservation = await UsageReservationService.reserve(
+        speaker = await EventResourceMutationService.create_speaker(
             db,
-            organization_id=event.organization_id,
-            event_id=event.id,
-            limit_key="max_speakers",
-            quantity=1,
-            unit="speaker",
-            idempotency_key=f"speaker-manual:{event.id}:{str(payload.email).strip().lower()}",
-            metadata={"email_hash": hashlib.sha256(str(payload.email).strip().lower().encode()).hexdigest()},
-        )
-        
-        token = str(uuid.uuid4())
-        # Generate a human-readable code (8 chars, uppercase)
-        code = token.split("-")[0].upper()
-        speaker = Speaker(
-            event_id=event.id,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
-            email=str(payload.email).lower(),
-            phone=payload.phone,
-            affiliation=payload.affiliation,
-            designation=payload.designation,
-            country=payload.country,
-            upload_token=token,
-            speaker_code=code,
-            upload_status="pending",
-        )
-        db.add(speaker)
-    
-    await db.flush()
-    if created_new and reservation:
-        await UsageReservationService.consume(
-            db,
-            reservation.id,
-            source="organizer_portal.speakers.manual_register",
+            event=event,
+            payload=SpeakerCreate(
+                regno=payload.regno,
+                first_name=payload.first_name,
+                last_name=payload.last_name,
+                email=payload.email,
+                phone=payload.phone,
+                affiliation=payload.affiliation,
+                designation=payload.designation,
+                country=payload.country,
+            ),
+            actor_user_id=current_user.id,
+            idempotency_key=(
+                f"manual:{event.id}:{str(payload.email).strip().lower()}"
+            ),
+            source="organizer_portal",
         )
 
     # 2. Link to sessions/posters if provided
@@ -666,7 +659,11 @@ async def get_speaker(
 ) -> SpeakerResponse:
     result = await db.execute(
         select(Speaker)
-        .where(Speaker.id == speaker_id, Speaker.event_id == event.id)
+        .where(
+            Speaker.id == speaker_id,
+            Speaker.event_id == event.id,
+            Speaker.deleted_at.is_(None),
+        )
         .options(selectinload(Speaker.profile))
     )
     sp = result.scalar_one_or_none()
@@ -690,18 +687,13 @@ async def update_speaker(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
-    await enforce_event_operation(
+    speaker, _, _ = await EventResourceMutationService.update_speaker(
         db,
-        event.organization_id,
-        event.id,
-        "speakers.profiles.manage",
-        user_id=current_user.id,
+        event=event,
+        speaker_id=speaker_id,
+        payload=payload,
+        actor_user_id=current_user.id,
     )
-    speaker = await _get_speaker_or_404(db, speaker_id, event.id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        if field == "email" and value:
-            value = str(value).lower()
-        setattr(speaker, field, value)
     await db.commit()
     
     result = await db.execute(
@@ -725,11 +717,13 @@ async def delete_speaker(
     user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    speaker = await _get_speaker_or_404(db, speaker_id, event.id)
-    if speaker.deleted_at is None:
-        speaker.deleted_at = datetime.now(timezone.utc)
-        speaker.deleted_by = user.id
-        await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="speakers", quantity=-1, unit="count", source="organizer_portal.speakers.archive", idempotency_key=f"speaker-archive:{speaker.id}:{speaker.deleted_at.isoformat()}", actor_user_id=user.id, metadata={"resource_id": str(speaker.id)})
+    await EventResourceMutationService.archive_speaker(
+        db,
+        event=event,
+        speaker_id=speaker_id,
+        actor_user_id=user.id,
+        source="organizer_portal",
+    )
     await db.commit()
     return MessageResponse(message="Speaker archived and remains recoverable.")
 
@@ -800,7 +794,11 @@ async def _get_speaker_or_404(
     db: AsyncSession, speaker_id: uuid.UUID, event_id: uuid.UUID
 ) -> Speaker:
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id, Speaker.event_id == event_id)
+        select(Speaker).where(
+            Speaker.id == speaker_id,
+            Speaker.event_id == event_id,
+            Speaker.deleted_at.is_(None),
+        )
     )
     sp = result.scalar_one_or_none()
     if sp is None:

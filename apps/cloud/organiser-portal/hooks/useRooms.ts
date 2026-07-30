@@ -47,7 +47,13 @@ export function useRooms(eventId: string) {
 export function useRoomAnalytics(eventId: string) {
   return useQuery({
     queryKey: ["room-analytics", eventId],
-    queryFn: () => apiGet<RoomAnalytics[]>(`/events/${eventId}/analytics/rooms`),
+    queryFn: async () => {
+      try {
+        return await apiGet<RoomAnalytics[]>(`/events/${eventId}/analytics/rooms`);
+      } catch {
+        return [];
+      }
+    },
     enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]",
   });
 }
@@ -67,6 +73,7 @@ export function useCreateRoom() {
       apiPost(`/events/${eventId}/rooms`, data, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", variables.eventId] });
     },
   });
 }
@@ -78,6 +85,7 @@ export function useUpdateRoom() {
       apiPatch(`/events/${eventId}/rooms/${roomId}`, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", variables.eventId] });
     },
   });
 }
@@ -89,6 +97,7 @@ export function useDeleteRoom() {
       apiDelete(`/events/${eventId}/rooms/${roomId}`),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["rooms", variables.eventId] });
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", variables.eventId] });
     },
   });
 }

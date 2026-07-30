@@ -24,11 +24,15 @@ from app.modules.registration.schemas.badge import (
     BadgeHistoryResponse,
     BadgePrintJobResponse,
 )
-from app.core.dependencies.feature_gate import enforce_event_operation, require_event_feature
+from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
-router = APIRouter(prefix="/events/{event_id}/badges", tags=["badges"], dependencies=[require_event_feature("FEAT_QR_BADGE")])
+router = APIRouter(
+    prefix="/events/{event_id}/badges",
+    tags=["badges"],
+    dependencies=[require_event_operation("badges.qr.manage")],
+)
 
 
 @router.post("/export-authorizations", status_code=status.HTTP_201_CREATED)

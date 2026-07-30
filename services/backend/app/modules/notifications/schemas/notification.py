@@ -52,7 +52,20 @@ class CampaignCreate(BaseModel):
     room_id_filter: Optional[uuid.UUID] = None
     speaker_ids: Optional[List[uuid.UUID]] = None  # for specific_speakers
     scheduled_at: Optional[datetime] = None
-    target_type: str = Field(default="speaker")
+    target_type: str = Field(default="speaker", pattern="^(speaker|participant)$")
+
+
+class CampaignUpdate(BaseModel):
+    template_id: Optional[uuid.UUID] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=150)
+    recipient_filter: Optional[str] = Field(
+        None,
+        pattern="^(all|pending_upload|uploaded|approved|rejected|posters|specific_session|specific_room|specific_speakers|custom_list|custom|paid|unpaid|pending|specific_participants)$",
+    )
+    session_id_filter: Optional[uuid.UUID] = None
+    room_id_filter: Optional[uuid.UUID] = None
+    scheduled_at: Optional[datetime] = None
+    target_type: Optional[str] = Field(None, pattern="^(speaker|participant)$")
 
 
 class CampaignResponse(BaseModel):

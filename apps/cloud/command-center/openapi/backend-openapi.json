@@ -2683,48 +2683,6 @@
         "title": "ApplyCreditRequest",
         "type": "object"
       },
-      "ApplyPlanRequest": {
-        "properties": {
-          "addon_keys": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Addon Keys"
-          },
-          "plan_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Plan Id"
-          },
-          "plan_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Plan Name"
-          }
-        },
-        "title": "ApplyPlanRequest",
-        "type": "object"
-      },
       "ApprovalDecision": {
         "additionalProperties": false,
         "properties": {
@@ -4171,20 +4129,6 @@
           "field"
         ],
         "title": "Body_upload_speaker_branding_image_api_v1_events__event_id__speaker_branding_upload_post",
-        "type": "object"
-      },
-      "Body_upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post": {
-        "properties": {
-          "file": {
-            "contentMediaType": "application/octet-stream",
-            "title": "File",
-            "type": "string"
-          }
-        },
-        "required": [
-          "file"
-        ],
-        "title": "Body_upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post",
         "type": "object"
       },
       "Body_upload_venue_image_api_v1_events__event_id__venue_images_upload_post": {
@@ -9820,17 +9764,29 @@
             "title": "Custom Domain"
           },
           "event_count": {
-            "default": 0,
-            "title": "Event Count",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Count"
           },
           "health_score": {
-            "default": 100,
-            "title": "Health Score",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Score"
           },
           "health_status": {
-            "default": "HEALTHY",
+            "default": "NOT_MEASURED",
             "title": "Health Status",
             "type": "string"
           },
@@ -9856,9 +9812,15 @@
             "title": "Logo Url"
           },
           "mrr": {
-            "default": 0.0,
-            "title": "Mrr",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mrr"
           },
           "name": {
             "title": "Name",
@@ -9873,12 +9835,18 @@
             "type": "string"
           },
           "storage_used_bytes": {
-            "default": 0,
-            "title": "Storage Used Bytes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Used Bytes"
           },
           "subscription_status": {
-            "default": "TRIAL",
+            "default": "NOT_CONFIGURED",
             "title": "Subscription Status",
             "type": "string"
           },
@@ -9899,9 +9867,15 @@
             "type": "string"
           },
           "user_count": {
-            "default": 0,
-            "title": "User Count",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Count"
           }
         },
         "required": [
@@ -10869,6 +10843,7 @@
         "type": "object"
       },
       "EventCreate": {
+        "additionalProperties": false,
         "properties": {
           "allowed_formats": {
             "default": [
@@ -12382,32 +12357,6 @@
           "reason"
         ],
         "title": "FeatureOverrideRequest",
-        "type": "object"
-      },
-      "FeatureOverrideUpsert": {
-        "description": "Body for PUT /organisations/{org_id}/feature-overrides.",
-        "properties": {
-          "feature_key": {
-            "title": "Feature Key",
-            "type": "string"
-          },
-          "override": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Override"
-          }
-        },
-        "required": [
-          "feature_key",
-          "override"
-        ],
-        "title": "FeatureOverrideUpsert",
         "type": "object"
       },
       "FeatureToggles": {
@@ -16104,55 +16053,6 @@
           "reason"
         ],
         "title": "LegalHoldRelease",
-        "type": "object"
-      },
-      "LicenseInfo": {
-        "description": "Summary of what the current license tier unlocks.",
-        "properties": {
-          "dedicated_support": {
-            "title": "Dedicated Support",
-            "type": "boolean"
-          },
-          "max_events": {
-            "title": "Max Events",
-            "type": "integer"
-          },
-          "max_speakers_per_event": {
-            "title": "Max Speakers Per Event",
-            "type": "integer"
-          },
-          "max_storage_gb": {
-            "title": "Max Storage Gb",
-            "type": "integer"
-          },
-          "posters_enabled": {
-            "title": "Posters Enabled",
-            "type": "boolean"
-          },
-          "tier": {
-            "title": "Tier",
-            "type": "string"
-          },
-          "webhooks_enabled": {
-            "title": "Webhooks Enabled",
-            "type": "boolean"
-          },
-          "whatsapp_enabled": {
-            "title": "Whatsapp Enabled",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "tier",
-          "max_events",
-          "max_speakers_per_event",
-          "max_storage_gb",
-          "whatsapp_enabled",
-          "posters_enabled",
-          "webhooks_enabled",
-          "dedicated_support"
-        ],
-        "title": "LicenseInfo",
         "type": "object"
       },
       "LifecycleApprovalDecision": {
@@ -30422,6 +30322,19 @@
             ],
             "title": "Room Id"
           },
+          "session_code": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Code"
+          },
           "session_type": {
             "anyOf": [
               {
@@ -30487,6 +30400,15 @@
             "title": "Branding Settings",
             "type": "object"
           },
+          "capabilities_url": {
+            "title": "Capabilities Url",
+            "type": "string"
+          },
+          "capability_source": {
+            "default": "CANONICAL_CAPABILITY_API",
+            "title": "Capability Source",
+            "type": "string"
+          },
           "event_id": {
             "format": "uuid",
             "title": "Event Id",
@@ -30500,12 +30422,20 @@
             "additionalProperties": {
               "type": "boolean"
             },
+            "default": {},
             "title": "Feature Toggles",
             "type": "object"
           },
           "license_tier": {
-            "title": "License Tier",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License Tier"
           },
           "logo_url": {
             "anyOf": [
@@ -30549,9 +30479,8 @@
           "allowed_formats",
           "theme_color",
           "timezone",
-          "license_tier",
           "event_mode",
-          "feature_toggles"
+          "capabilities_url"
         ],
         "title": "SettingsResponse",
         "type": "object"
@@ -33352,134 +33281,6 @@
           }
         },
         "title": "StripeCredentialsSchema",
-        "type": "object"
-      },
-      "SubscribeRequest": {
-        "properties": {
-          "addon_keys": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Addon Keys"
-          },
-          "billing_email": {
-            "format": "email",
-            "title": "Billing Email",
-            "type": "string"
-          },
-          "billing_name": {
-            "title": "Billing Name",
-            "type": "string"
-          },
-          "billing_phone": {
-            "title": "Billing Phone",
-            "type": "string"
-          },
-          "card_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Card Number"
-          },
-          "cardholder_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cardholder Name"
-          },
-          "custom_limits": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "integer"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Custom Limits"
-          },
-          "cvv": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cvv"
-          },
-          "expiry": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expiry"
-          },
-          "gst_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gst Number"
-          },
-          "is_custom": {
-            "default": false,
-            "title": "Is Custom",
-            "type": "boolean"
-          },
-          "plan_name": {
-            "title": "Plan Name",
-            "type": "string"
-          },
-          "promo_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Promo Code"
-          }
-        },
-        "required": [
-          "plan_name",
-          "billing_name",
-          "billing_email",
-          "billing_phone"
-        ],
-        "title": "SubscribeRequest",
         "type": "object"
       },
       "SubscriptionItem": {
@@ -44451,8 +44252,8 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "maxLength": 200,
-              "minLength": 8,
+              "maxLength": 120,
+              "minLength": 16,
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -44501,58 +44302,9 @@
         ]
       }
     },
-    "/api/v1/events/venue-images/upload-temp": {
-      "post": {
-        "description": "Upload a venue image before an event is created (associated with the organization).",
-        "operationId": "upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_temp_venue_image_api_v1_events_venue_images_upload_temp_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Upload Temp Venue Image Api V1 Events Venue Images Upload Temp Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Upload Temp Venue Image",
-        "tags": [
-          "events"
-        ]
-      }
-    },
     "/api/v1/events/{event_id}": {
       "delete": {
-        "description": "Nuclear Delete: Deletes the event and ALL associated data in other tables atomically.",
+        "description": "Soft-delete an event; permanent purge is a governed lifecycle job.",
         "operationId": "delete_event_api_v1_events__event_id__delete",
         "parameters": [
           {
@@ -44564,6 +44316,28 @@
               "description": "Event UUID",
               "format": "uuid",
               "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Change-Reason",
+            "required": true,
+            "schema": {
+              "maxLength": 1000,
+              "minLength": 12,
+              "title": "X-Change-Reason",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 16,
+              "title": "Idempotency-Key",
               "type": "string"
             }
           }
@@ -45983,67 +45757,6 @@
         ]
       }
     },
-    "/api/v1/events/{event_id}/apply-plan": {
-      "post": {
-        "description": "Apply a newly purchased or selected plan and commercial entitlements\ndirectly to an existing trial/demo event, unlocking its features and activating it.",
-        "operationId": "apply_plan_to_event_api_v1_events__event_id__apply_plan_post",
-        "parameters": [
-          {
-            "description": "Event UUID",
-            "in": "path",
-            "name": "event_id",
-            "required": true,
-            "schema": {
-              "description": "Event UUID",
-              "format": "uuid",
-              "title": "Event Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApplyPlanRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Apply Plan To Event",
-        "tags": [
-          "events"
-        ]
-      }
-    },
     "/api/v1/events/{event_id}/archive": {
       "post": {
         "operationId": "archive_event_api_v1_events__event_id__archive_post",
@@ -47039,6 +46752,17 @@
               "title": "Event Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 16,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -47543,57 +47267,6 @@
         "summary": "Update Capacity Rule",
         "tags": [
           "capacity"
-        ]
-      }
-    },
-    "/api/v1/events/{event_id}/clear-data": {
-      "post": {
-        "description": "DANGEROUS: Deletes all schedule-related data for this event but preserves the event settings.",
-        "operationId": "clear_event_data_api_v1_events__event_id__clear_data_post",
-        "parameters": [
-          {
-            "description": "Event UUID",
-            "in": "path",
-            "name": "event_id",
-            "required": true,
-            "schema": {
-              "description": "Event UUID",
-              "format": "uuid",
-              "title": "Event Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Clear Event Data",
-        "tags": [
-          "events"
         ]
       }
     },
@@ -53189,6 +52862,17 @@
               "title": "Event Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -56548,7 +56232,7 @@
         ]
       },
       "patch": {
-        "description": "Update event settings.\n- license_tier: super_admin ONLY.\n- All other settings: organizer and above.",
+        "description": "Update organizer-configurable event settings.",
         "operationId": "update_settings_api_v1_events__event_id__settings_patch",
         "parameters": [
           {
@@ -56630,7 +56314,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LicenseInfo"
+                  "additionalProperties": true,
+                  "title": "Response Get License Info Api V1 Events  Event Id  Settings License Get",
+                  "type": "object"
                 }
               }
             },
@@ -56681,7 +56367,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SettingsResponse"
+                  "additionalProperties": true,
+                  "title": "Response Reset Feature Toggles Api V1 Events  Event Id  Settings Reset Toggles Post",
+                  "type": "object"
                 }
               }
             },
@@ -56723,6 +56411,17 @@
               "description": "Event UUID",
               "format": "uuid",
               "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 16,
+              "title": "Idempotency-Key",
               "type": "string"
             }
           }
@@ -57471,6 +57170,17 @@
               ],
               "title": "Token"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -57555,6 +57265,17 @@
                 }
               ],
               "title": "Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           }
         ],
@@ -57865,10 +57586,12 @@
         "operationId": "qr_checkin_api_v1_events__event_id__srr_checkin_qr_post",
         "parameters": [
           {
+            "description": "Event UUID",
             "in": "path",
             "name": "event_id",
             "required": true,
             "schema": {
+              "description": "Event UUID",
               "format": "uuid",
               "title": "Event Id",
               "type": "string"
@@ -57907,6 +57630,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Qr Checkin",
         "tags": [
           "srr"
@@ -58520,6 +58248,17 @@
               "description": "Event UUID",
               "format": "uuid",
               "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 16,
+              "title": "Idempotency-Key",
               "type": "string"
             }
           }
@@ -61392,55 +61131,6 @@
         ]
       }
     },
-    "/api/v1/organisations/me/subscribe": {
-      "post": {
-        "description": "Subscribe current organization to a plan with custom limits, addons, and invoice logging.",
-        "operationId": "subscribe_organization_api_v1_organisations_me_subscribe_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SubscribeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Subscribe Organization Api V1 Organisations Me Subscribe Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Subscribe Organization",
-        "tags": [
-          "organisations"
-        ]
-      }
-    },
     "/api/v1/organisations/plans": {
       "get": {
         "description": "List available subscription plans for organization signup.",
@@ -64226,7 +63916,7 @@
     },
     "/api/v1/platform/features/matrix": {
       "get": {
-        "description": "Get grouped feature catalog matrix for plan comparison.",
+        "description": "Return the canonical catalogue grouped for typed plan assignment.",
         "operationId": "get_features_matrix_api_v1_platform_features_matrix_get",
         "responses": {
           "200": {
@@ -78979,6 +78669,15 @@
               "title": "Token",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -79543,6 +79242,15 @@
             "schema": {
               "format": "uuid",
               "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
               "type": "string"
             }
           }
@@ -94167,56 +93875,6 @@
         ]
       }
     },
-    "/api/v1/superadmin/organisations/me/subscribe": {
-      "post": {
-        "description": "Subscribe current organization to a plan with custom limits, addons, and invoice logging.",
-        "operationId": "subscribe_organization_api_v1_superadmin_organisations_me_subscribe_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SubscribeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Subscribe Organization Api V1 Superadmin Organisations Me Subscribe Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Subscribe Organization",
-        "tags": [
-          "superadmin",
-          "organisations"
-        ]
-      }
-    },
     "/api/v1/superadmin/organisations/plans": {
       "get": {
         "description": "List available subscription plans for organization signup.",
@@ -94349,64 +94007,6 @@
           }
         ],
         "summary": "Super Admin \u2014 Get feature overrides for an organization",
-        "tags": [
-          "organisations",
-          "superadmin-organisations"
-        ]
-      },
-      "put": {
-        "description": "Upsert a feature override for a specific organization.\n\nBody: { feature_key, override: true | false | null }\n- null \u2192 removes override, restores plan default\n- true \u2192 force-enables regardless of plan\n- false \u2192 force-disables regardless of plan",
-        "operationId": "superadmin_upsert_feature_override_api_v1_superadmin_organisations__org_id__feature_overrides_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Org Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FeatureOverrideUpsert"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeatureOverrideItem-Output"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Super Admin \u2014 Upsert a feature override for an organization",
         "tags": [
           "organisations",
           "superadmin-organisations"
@@ -96352,65 +95952,6 @@
           }
         ],
         "summary": "Super Admin \u2014 Get feature overrides for an organization",
-        "tags": [
-          "superadmin",
-          "organisations",
-          "superadmin-organisations"
-        ]
-      },
-      "put": {
-        "description": "Upsert a feature override for a specific organization.\n\nBody: { feature_key, override: true | false | null }\n- null \u2192 removes override, restores plan default\n- true \u2192 force-enables regardless of plan\n- false \u2192 force-disables regardless of plan",
-        "operationId": "superadmin_upsert_feature_override_api_v1_superadmin_superadmin_organisations__org_id__feature_overrides_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Org Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FeatureOverrideUpsert"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeatureOverrideItem-Output"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Super Admin \u2014 Upsert a feature override for an organization",
         "tags": [
           "superadmin",
           "organisations",

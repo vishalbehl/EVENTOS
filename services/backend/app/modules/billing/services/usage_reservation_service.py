@@ -61,11 +61,20 @@ class UsageReservationService:
             event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == organization_id).with_for_update(of=Event))
         if event_id is not None and not event:
             raise HTTPException(status_code=404, detail="Event not found")
-        resolved = (
-            await EntitlementResolver.resolve_org_entitlements(db, organization_id, explain=True)
-            if definition.get("scope") == "ORGANIZATION" and event_id is None
-            else await EventEntitlementService.resolve(db, organization_id, event_id, explain=True)
-        )
+        try:
+            resolved = (
+                await EntitlementResolver.resolve_org_entitlements(db, organization_id, explain=True)
+                if definition.get("scope") == "ORGANIZATION" and event_id is None
+                else await EventEntitlementService.resolve(db, organization_id, event_id, explain=True)
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "RESOLUTION_UNAVAILABLE",
+                    "limit_key": limit_key,
+                },
+            ) from exc
         limit = resolved.get("limits", {}).get(limit_key)
         if not limit or limit.get("denial_reason") == "CONTRACT_REQUIRED":
             raise HTTPException(status_code=409, detail={"code": "CONTRACT_REQUIRED", "limit_key": limit_key})
@@ -98,6 +107,20 @@ class UsageReservationService:
                 UsageLedgerEntry.period_end > now,
             )) or 0)
             used = max(authoritative, ledger)
+        elif limit_key == "storage_quota_mb":
+            authoritative_mb = await UsageService.get_effective_event_metric(
+                db, event_id, limit_key
+            )
+            ledger_bytes, _, _ = await MeteringService.current_value(
+                db, organization_id, event_id, "storage_bytes"
+            )
+            ledger_mb = (
+                max(0, int(ledger_bytes)) + 1024 * 1024 - 1
+            ) // (1024 * 1024)
+            # Domain records and the durable ledger overlap for managed
+            # presentation assets. max() includes uploads that have no domain
+            # record (branding/registration files) without double counting.
+            used = max(authoritative_mb, ledger_mb)
         elif limit_key in UsageService.METRIC_STRATEGIES:
             used = await UsageService.get_effective_event_metric(db, event_id, limit_key)
         else:
@@ -114,17 +137,63 @@ class UsageReservationService:
         if definition.get("scope") != "ORGANIZATION":
             reservation_filters.append(UsageReservation.event_id == event_id)
         reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
-        if allowance is not None and used + reserved + quantity > int(allowance):
-            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail={"code": "QUOTA_EXHAUSTED", "limit_key": limit_key, "allowed": int(allowance), "used": used, "reserved": reserved, "requested": quantity, "remaining": max(int(allowance) - used - reserved, 0)})
+        projected = used + reserved + quantity
+        enforcement_mode = str(limit.get("enforcement_mode") or "HARD").upper()
+        if enforcement_mode not in {"HARD", "SOFT_WARNING", "METERED_OVERAGE"}:
+            # Unknown policy is a configuration failure, never an implicit
+            # overage grant.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "RESOLUTION_UNAVAILABLE",
+                    "limit_key": limit_key,
+                    "reason": "INVALID_ENFORCEMENT_MODE",
+                },
+            )
+        hard_ceiling = resolved.get("hard_ceilings", {}).get(limit_key)
+        if hard_ceiling is not None and projected > int(hard_ceiling):
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "code": "HARD_CEILING_EXCEEDED",
+                    "limit_key": limit_key,
+                    "hard_ceiling": int(hard_ceiling),
+                    "used": used,
+                    "reserved": reserved,
+                    "requested": quantity,
+                    "remaining": max(int(hard_ceiling) - used - reserved, 0),
+                },
+            )
+
+        reservation_metadata = dict(metadata or {})
+        if allowance is not None and projected > int(allowance):
+            if enforcement_mode == "HARD":
+                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail={"code": "QUOTA_EXHAUSTED", "limit_key": limit_key, "allowed": int(allowance), "used": used, "reserved": reserved, "requested": quantity, "remaining": max(int(allowance) - used - reserved, 0)})
+            reservation_metadata.update({
+                "quota_state": (
+                    "METERED_OVERAGE"
+                    if enforcement_mode == "METERED_OVERAGE"
+                    else "SOFT_WARNING"
+                ),
+                "enforcement_mode": enforcement_mode,
+                "contract_allowance": int(allowance),
+                "projected_usage": projected,
+                "overage_quantity": projected - int(allowance),
+                "overage_policy": limit.get("overage_policy") or (
+                    {"action": "BILL"}
+                    if enforcement_mode == "METERED_OVERAGE"
+                    else {"action": "WARN"}
+                ),
+            })
         if existing:
             existing.status = "RESERVED"
             existing.expires_at = now + timedelta(seconds=ttl_seconds)
             existing.released_at = None
             existing.consumed_entry_id = None
-            existing.metadata_json = metadata or {}
+            existing.metadata_json = reservation_metadata
             await db.flush()
             return existing
-        row = UsageReservation(organization_id=organization_id, event_id=event_id, metric_key=limit_key, quantity=quantity, unit=unit, idempotency_key=idempotency_key, expires_at=now + timedelta(seconds=ttl_seconds), metadata_json=metadata or {})
+        row = UsageReservation(organization_id=organization_id, event_id=event_id, metric_key=limit_key, quantity=quantity, unit=unit, idempotency_key=idempotency_key, expires_at=now + timedelta(seconds=ttl_seconds), metadata_json=reservation_metadata)
         db.add(row); await db.flush()
         return row
 

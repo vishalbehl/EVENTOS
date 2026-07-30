@@ -504,8 +504,7 @@ async def remove_speaker_from_session(
     await _get_session_or_404(db, session_id, event.id, user=user)
     result = await db.execute(
         select(SessionSpeaker).where(
-            SessionSpeaker.id == session_speaker_id,
-            SessionSpeaker.session_id == session_id,
+            or_(SessionSpeaker.id == session_speaker_id, SessionSpeaker.speaker_id == session_speaker_id), SessionSpeaker.session_id == session_id,
         )
     )
     ss = result.scalar_one_or_none()
@@ -528,8 +527,7 @@ async def update_session_speaker(
     
     result = await db.execute(
         select(SessionSpeaker).where(
-            SessionSpeaker.id == session_speaker_id,
-            SessionSpeaker.session_id == session_id,
+            or_(SessionSpeaker.id == session_speaker_id, SessionSpeaker.speaker_id == session_speaker_id), SessionSpeaker.session_id == session_id,
         )
     )
     ss = result.scalar_one_or_none()
@@ -626,3 +624,4 @@ async def _get_session_or_404(
                 )
 
     return s
+
