@@ -95,6 +95,33 @@ def test_local_presigned_download_contains_bound_capability(monkeypatch):
     assert int(query["expires_at"][0]) > int(time.time())
 
 
+def test_platform_email_assets_require_explicit_verified_storage_scope(monkeypatch, tmp_path):
+    monkeypatch.setattr(upload_service.settings, "STORAGE_MODE", "local")
+    monkeypatch.setattr(upload_service, "LOCAL_STORAGE_ROOT", tmp_path)
+    storage_path = "platform/email_assets/icon.png"
+
+    with pytest.raises(RuntimeError, match="tenant context"):
+        upload_service.upload_bytes(
+            bucket="assets",
+            storage_path=storage_path,
+            data=b"icon",
+            content_type="image/png",
+        )
+
+    upload_service.upload_bytes(
+        bucket="assets",
+        storage_path=storage_path,
+        data=b"icon",
+        content_type="image/png",
+        allow_platform=True,
+    )
+    assert upload_service.get_object_bytes(
+        "assets",
+        storage_path,
+        allow_platform=True,
+    ) == b"icon"
+
+
 def test_worker_tasks_require_explicit_organization_payload():
     from app.modules.notifications.tasks.email_tasks import process_email_campaign
     from app.modules.presentations.tasks.file_tasks import validate_poster, validate_presentation

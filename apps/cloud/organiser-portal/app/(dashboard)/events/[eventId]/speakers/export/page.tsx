@@ -299,7 +299,7 @@ export default function AgendaExportPage() {
       </div>
 
       {/* Global CSS for browser printing */}
-      <style jsx global>{`
+      <style>{`
         @media print {
           /* Force page break behavior */
           .page-break {

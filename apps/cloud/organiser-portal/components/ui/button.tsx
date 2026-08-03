@@ -52,7 +52,13 @@ export interface ButtonProps
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, style, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
+    // Radix is hoisted in this mixed React 18/19 workspace, so its declaration
+    // can resolve through the root React type package. The runtime contract is
+    // still an ElementType; normalize it at this package boundary to prevent
+    // two structurally different ReactNode declarations leaking to consumers.
+    const Comp: React.ElementType = asChild
+      ? (Slot as unknown as React.ElementType)
+      : "button";
 
     // Apply inline styles based on variant
     const variantStyles: React.CSSProperties = (() => {

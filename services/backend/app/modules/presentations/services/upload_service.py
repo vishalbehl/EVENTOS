@@ -43,9 +43,16 @@ def _require_tenant_org_id() -> uuid.UUID:
     return organization_id
 
 
-def _assert_tenant_storage_path(storage_path: str) -> uuid.UUID:
-    organization_id = _require_tenant_org_id()
+def _assert_tenant_storage_path(
+    storage_path: str,
+    *,
+    verified_organization_id: uuid.UUID | None = None,
+    allow_platform: bool = False,
+) -> uuid.UUID | None:
     normalized = storage_path.replace("\\", "/").lstrip("/")
+    if allow_platform and normalized.startswith("platform/"):
+        return None
+    organization_id = verified_organization_id or _require_tenant_org_id()
     if not normalized.startswith(f"{organization_id}/"):
         raise RuntimeError("Storage object key is outside the verified tenant namespace.")
     return organization_id
@@ -509,12 +516,22 @@ def move_object(
     logger.info(f"Moved {source_bucket}/{source_path} → {dest_bucket}/{dest_path}")
 
 
-def get_object_bytes(bucket: str, storage_path: str) -> bytes:
+def get_object_bytes(
+    bucket: str,
+    storage_path: str,
+    *,
+    verified_organization_id: uuid.UUID | None = None,
+    allow_platform: bool = False,
+) -> bytes:
     """
     Download and return the raw bytes of an object.
     Supports local filesystem fallback in development.
     """
-    _assert_tenant_storage_path(storage_path)
+    _assert_tenant_storage_path(
+        storage_path,
+        verified_organization_id=verified_organization_id,
+        allow_platform=allow_platform,
+    )
     if settings.STORAGE_MODE == "local":
         # Strategy 1: Direct combination (as saved by the app)
         local_path = (LOCAL_STORAGE_ROOT / bucket / storage_path).absolute()
@@ -555,12 +572,19 @@ def upload_bytes(
     storage_path: str,
     data: bytes,
     content_type: str = "application/octet-stream",
+    *,
+    verified_organization_id: uuid.UUID | None = None,
+    allow_platform: bool = False,
 ) -> None:
     """
     Upload raw bytes to storage.
     Supports local filesystem fallback in development.
     """
-    _assert_tenant_storage_path(storage_path)
+    _assert_tenant_storage_path(
+        storage_path,
+        verified_organization_id=verified_organization_id,
+        allow_platform=allow_platform,
+    )
     if settings.STORAGE_MODE == "local":
         local_path = LOCAL_STORAGE_ROOT / bucket / storage_path
         local_path.parent.mkdir(parents=True, exist_ok=True)

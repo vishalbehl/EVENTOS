@@ -278,7 +278,7 @@ export default function EventSettingsPage() {
   const handleUploadVenueImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    
+
     setIsUploadingImage(true);
     const file = files[0];
     const formData = new FormData();
@@ -295,7 +295,7 @@ export default function EventSettingsPage() {
           },
         }
       );
-      
+
       const newImages = res.venue_images || [...form.venue_images, res.url];
       setForm(prev => ({
         ...prev,

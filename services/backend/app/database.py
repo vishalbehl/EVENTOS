@@ -178,6 +178,11 @@ TABLE_SCHEMAS = {
 
     # communications
     "email_templates": "communications",
+    "email_template_versions": "communications",
+    "email_components": "communications",
+    "email_assets": "communications",
+    "email_asset_folders": "communications",
+    "email_branding_policy": "communications",
     "email_campaigns": "communications",
     "email_logs": "communications",
     "announcements": "communications",

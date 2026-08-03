@@ -17,6 +17,7 @@ class EmailTemplateCreate(BaseModel):
     body_html: str = Field(min_length=1)
     body_text: Optional[str] = None
     target_type: str = Field(default="speaker")
+    designer_json: Optional[dict] = None
 
 
 class EmailTemplateUpdate(BaseModel):
@@ -25,6 +26,7 @@ class EmailTemplateUpdate(BaseModel):
     body_html: Optional[str] = None
     body_text: Optional[str] = None
     target_type: Optional[str] = None
+    designer_json: Optional[dict] = None
 
 
 class EmailTemplateResponse(BaseModel):
@@ -37,8 +39,41 @@ class EmailTemplateResponse(BaseModel):
     subject: str
     body_html: str
     body_text: Optional[str] = None
+    designer_json: Optional[dict] = None
     is_default: bool
     target_type: str
+    created_at: datetime
+    scope_type: str = "EVENT"
+    organization_id: Optional[uuid.UUID] = None
+    stable_key: str = "custom"
+    version: int = 1
+    lifecycle_state: str = "PUBLISHED"
+    effective_origin: str = "EVENT"
+    editable: bool = False
+    fallback_reason: Optional[str] = None
+
+
+class EmailComponentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    component_type: str = Field(min_length=1, max_length=100)
+    default_config: dict
+    is_global: bool = False
+
+
+class EmailComponentUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=150)
+    default_config: Optional[dict] = None
+
+
+class EmailComponentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    event_id: Optional[uuid.UUID] = None
+    name: str
+    component_type: str
+    default_config: dict
+    is_global: bool
     created_at: datetime
 
 

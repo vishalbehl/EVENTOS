@@ -61,7 +61,7 @@ class EventTemplateMutationService:
             db,
             event.organization_id,
             event.id,
-            "communications.campaign.manage",
+            "communications.email_designer.manage",
             user_id=actor_user_id,
         )
         if template_type in {"reminder", "deadline"}:
@@ -139,7 +139,7 @@ class EventTemplateMutationService:
                 EmailTemplate.name == payload.name,
                 EmailTemplate.target_type == payload.target_type,
                 EmailTemplate.deleted_at.is_(None),
-            )
+            ).execution_options(skip_tenant_filter=True)
         )
         if duplicate:
             raise HTTPException(
@@ -175,6 +175,7 @@ class EventTemplateMutationService:
                 EmailTemplate.deleted_at.is_(None),
             )
             .with_for_update()
+            .execution_options(skip_tenant_filter=True)
         )
         if source is None:
             raise HTTPException(status_code=404, detail="Email template not found")
@@ -196,6 +197,7 @@ class EventTemplateMutationService:
                     EmailTemplate.deleted_at.is_(None),
                 )
                 .with_for_update()
+                .execution_options(skip_tenant_filter=True)
             )
             if target is None:
                 target = EmailTemplate(
@@ -207,6 +209,10 @@ class EventTemplateMutationService:
                     subject=source.subject,
                     body_html=source.body_html,
                     body_text=source.body_text,
+                    designer_json=source.designer_json,
+                    scope_type="EVENT",
+                    stable_key=source.stable_key,
+                    parent_template_id=source.id,
                     is_default=False,
                 )
                 db.add(target)
@@ -235,6 +241,7 @@ class EventTemplateMutationService:
                 EmailTemplate.event_id == event.id,
             )
             .with_for_update()
+            .execution_options(skip_tenant_filter=True)
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Email template not found")
@@ -263,6 +270,7 @@ class EventTemplateMutationService:
                 EmailTemplate.event_id == event.id,
             )
             .with_for_update()
+            .execution_options(skip_tenant_filter=True)
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Email template not found")

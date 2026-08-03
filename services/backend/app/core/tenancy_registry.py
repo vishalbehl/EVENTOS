@@ -54,6 +54,7 @@ EVENT_TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("presentations", "posters", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("rbac", "user_event_assignments", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("communications", "email_campaigns", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    TenantTable("communications", "email_assets", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("communications", "announcements", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("integrations", "webhooks", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("venue", "sync_jobs", "event_id", "EVENT_CANARY", "EVENT_ROOT"),

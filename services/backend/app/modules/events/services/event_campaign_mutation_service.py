@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies.feature_gate import (
@@ -69,12 +69,13 @@ class EventCampaignMutationService:
         template = await db.scalar(
             select(EmailTemplate).where(
                 EmailTemplate.id == template_id,
-                (
-                    (EmailTemplate.event_id == event.id)
-                    | EmailTemplate.event_id.is_(None)
+                or_(
+                    (EmailTemplate.scope_type == "EVENT") & (EmailTemplate.event_id == event.id),
+                    (EmailTemplate.scope_type == "ORGANIZATION") & (EmailTemplate.organization_id == event.organization_id),
+                    EmailTemplate.scope_type == "PLATFORM",
                 ),
                 EmailTemplate.deleted_at.is_(None),
-            )
+            ).execution_options(skip_tenant_filter=True)
         )
         if template is None:
             raise HTTPException(
@@ -171,7 +172,7 @@ class EventCampaignMutationService:
         actor: User,
     ) -> EmailCampaign:
         await EventCampaignMutationService._enforce_base(db, event, actor)
-        await EventCampaignMutationService._validate_configuration(
+        template = await EventCampaignMutationService._validate_configuration(
             db,
             event=event,
             actor=actor,
@@ -214,6 +215,7 @@ class EventCampaignMutationService:
         row = EmailCampaign(
             event_id=event.id,
             created_by=actor.id,
+            template_version_id=template.current_published_version_id,
             **values,
         )
         db.add(row)

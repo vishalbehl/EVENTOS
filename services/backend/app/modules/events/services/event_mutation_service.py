@@ -86,34 +86,12 @@ class EventMutationService:
         db.add(event)
         await db.flush()
 
-        from app.modules.communications.models.email_template import EmailTemplate
         from app.modules.registration.routers.participant_roles import (
             seed_default_roles,
         )
-
-        global_templates = (
-            await db.scalars(
-                select(EmailTemplate).where(
-                    EmailTemplate.event_id.is_(None),
-                    EmailTemplate.is_default.is_(True),
-                    EmailTemplate.deleted_at.is_(None),
-                )
-            )
-        ).all()
-        for template in global_templates:
-            db.add(
-                EmailTemplate(
-                    event_id=event.id,
-                    created_by=actor_user_id,
-                    name=template.name,
-                    template_type=template.template_type,
-                    target_type=template.target_type,
-                    subject=template.subject,
-                    body_html=template.body_html,
-                    body_text=template.body_text,
-                    is_default=False,
-                )
-            )
+        # Email defaults are inherited through EmailTemplateResolver. Materializing
+        # a copy here made platform fixes invisible and bypassed organisation-level
+        # overrides; an event row is now created only on explicit customization.
         await seed_default_roles(event.id, db, commit=False)
         await UsageReservationService.consume(
             db,

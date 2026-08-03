@@ -187,7 +187,7 @@ export default function AdminLoginPage() {
         <footer className="login-footer relative z-10 mt-auto flex min-h-10 shrink-0 items-center justify-center gap-4 rounded-2xl border border-white/[0.08] bg-[#080808]/80 px-5 py-2 text-[9px] text-white/42 shadow-[0_-10px_35px_rgba(0,0,0,.32),inset_0_1px_0_rgba(255,255,255,.025)] backdrop-blur-xl sm:justify-between [@media(max-height:700px)]:min-h-8 [@media(max-height:700px)]:py-1"><p className="flex items-center gap-2"><Lock className="size-3" /> © 2026 Eventos IT. All rights reserved.</p><p className="hidden text-right sm:block">Security policy <span className="mx-3 text-white/16">|</span> Session monitoring enabled <Check className="ml-2 inline size-3" /></p></footer>
       </div>
 
-      <style jsx>{`
+      <style>{`
         /* Zooming out creates a much wider CSS viewport. Grow the composition
            at those widths so it does not collapse into a tiny center island. */
         @media (min-width: 2200px) {

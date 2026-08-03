@@ -30,7 +30,24 @@ from app.modules.registration.routers import (
 from app.modules.analytics.routers import analytics
 from app.modules.analytics.routers.dashboard import router as dashboard_router
 from app.modules.notifications.routers import notifications, webhooks, announcements
-from app.modules.notifications.routers.notifications import email_router
+from app.modules.notifications.routers.notifications import (
+    email_asset_public_router,
+    email_router,
+)
+from app.modules.notifications.routers.email_template_studio import (
+    platform_router as platform_email_template_router,
+    organization_router as organization_email_template_router,
+    event_router as event_email_template_router,
+    platform_component_router as platform_email_component_router,
+    organization_component_router as organization_email_component_router,
+    event_component_router as event_email_component_router,
+    platform_asset_router as platform_email_asset_router,
+    organization_asset_router as organization_email_asset_router,
+    event_asset_router as event_email_asset_router,
+    email_asset_delivery_router,
+    branding_policy_router as email_branding_policy_router,
+    platform_branding_policy_router,
+)
 
 from app.modules.search.routers.search import router as search_router
 from app.modules.audit.routers.audit import router as audit_router
@@ -64,6 +81,18 @@ api_router.include_router(impersonation.router)
 api_router.include_router(platform.router)
 api_router.include_router(organization_console_router)
 api_router.include_router(platform_communications_router)
+api_router.include_router(platform_email_template_router)
+api_router.include_router(organization_email_template_router)
+api_router.include_router(event_email_template_router)
+api_router.include_router(platform_email_component_router)
+api_router.include_router(organization_email_component_router)
+api_router.include_router(event_email_component_router)
+api_router.include_router(platform_email_asset_router)
+api_router.include_router(organization_email_asset_router)
+api_router.include_router(event_email_asset_router)
+api_router.include_router(email_asset_delivery_router)
+api_router.include_router(email_branding_policy_router)
+api_router.include_router(platform_branding_policy_router)
 api_router.include_router(operations_control_router)
 
 api_router.include_router(support_router.router)
@@ -89,6 +118,7 @@ api_router.include_router(portal.router)
 api_router.include_router(files.router)
 api_router.include_router(import_jobs.router)
 api_router.include_router(notifications.router)
+api_router.include_router(email_asset_public_router)
 api_router.include_router(email_router)
 api_router.include_router(announcements.router)
 api_router.include_router(srr.router)

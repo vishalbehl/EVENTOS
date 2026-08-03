@@ -233,6 +233,39 @@ async def _process_email_campaign_with_session(
             )
         await db.commit()
 
+        # Published campaigns pin a concrete version. If Email Designer access
+        # expires before dispatch, tenant/event customizations are deliberately
+        # replaced by the matching platform default and the fallback is audited.
+        delivery_subject = campaign.template.subject
+        delivery_html = campaign.template.body_html
+        from app.modules.communications.models.email_template_version import EmailTemplateVersion
+        from app.modules.notifications.services.email_template_studio_service import (
+            designer_enabled_for_event,
+            resolve_template_type,
+        )
+        designer_enabled, fallback_reason = await designer_enabled_for_event(
+            db, organization_id, campaign.event_id
+        )
+        if designer_enabled and campaign.template_version_id:
+            pinned = await db.get(EmailTemplateVersion, campaign.template_version_id)
+            if pinned:
+                delivery_subject, delivery_html = pinned.subject, pinned.body_html
+        elif not designer_enabled and campaign.template.scope_type != "PLATFORM":
+            platform_template, _ = await resolve_template_type(
+                db,
+                organization_id=organization_id,
+                event_id=campaign.event_id,
+                template_type=campaign.template.template_type,
+                target_type=campaign.target_type,
+            )
+            if platform_template:
+                delivery_subject, delivery_html = platform_template.subject, platform_template.body_html
+                logger.warning(
+                    "Campaign %s fell back to platform template because Email Designer is unavailable: %s",
+                    campaign.id,
+                    fallback_reason or "NOT_ENTITLED",
+                )
+
         # 4. Batch Processing
         batch_size = 50
         emails_sent_in_batch = 0
@@ -259,11 +292,11 @@ async def _process_email_campaign_with_session(
                     from app.modules.notifications.services.email_renderer import render_template as render_with_css
 
                     # 1. Substitute variables in subject
-                    subject = email_service.render_template(campaign.template.subject, variables)
+                    subject = email_service.render_template(delivery_subject, variables)
 
                     # 2. Render HTML, inject variables, and inline CSS
                     inlined_html, text_fallback = render_with_css(
-                        html=campaign.template.body_html,
+                        html=delivery_html,
                         variables=variables
                     )
 
@@ -325,9 +358,9 @@ async def _process_email_campaign_with_session(
                     from app.modules.notifications.services.email_renderer import render_template as render_with_css
 
                     # 1. Substitute variables in subject
-                    subject = email_service.render_template(campaign.template.subject, variables)
+                    subject = email_service.render_template(delivery_subject, variables)
 
-                    template_html = campaign.template.body_html
+                    template_html = delivery_html
                     total_presentations = len(session_speakers) + len(posters)
                     if (total_presentations > 1 or len(posters) >= 1) and "{{SessionTable}}" not in template_html:
                         table_append = f"""

@@ -35,6 +35,7 @@ from app.modules.analytics.schemas.analytics import (
 )
 from app.modules.notifications.schemas.notification import (
     EmailTemplateCreate, EmailTemplateUpdate, EmailTemplateResponse,
+    EmailComponentCreate, EmailComponentUpdate, EmailComponentResponse,
     CampaignCreate, CampaignResponse, EmailLogResponse,
     SendCampaignRequest, InviteSpeakersRequest,
 )

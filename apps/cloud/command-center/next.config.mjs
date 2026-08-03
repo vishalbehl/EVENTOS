@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
+    transpilePackages: ["@eventos/email-builder-studio"],
     distDir: process.env.NEXT_DIST_DIR || ".next",
     images: {
         remotePatterns: [

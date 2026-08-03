@@ -566,7 +566,13 @@ async def send_upload_invitation(
 <p>Best regards,<br/>The Organizing Committee</p>"""
 
     if template_id and db:
-        res = await db.execute(select(EmailTemplate).where(EmailTemplate.id == template_id))
+        # The caller supplies an already-authorized/resolved family ID. Mixed-scope
+        # templates opt out of the generic organization-only loader criterion.
+        res = await db.execute(
+            select(EmailTemplate)
+            .where(EmailTemplate.id == template_id)
+            .execution_options(skip_tenant_filter=True)
+        )
         tpl = res.scalar_one_or_none()
         if tpl:
             subject = tpl.subject
@@ -599,20 +605,20 @@ async def send_file_approved(
     if not db:
         return
 
-    from sqlalchemy import or_, select
-    from app.modules.communications.models.email_template import EmailTemplate
+    from sqlalchemy import select
     from app.modules.communications.models.email_campaign import EmailCampaign
+    from app.modules.events.models.event import Event
+    from app.modules.notifications.services.email_template_studio_service import resolve_template_type
 
     # Find the visual template of type "approval"
-    res_tpl = await db.execute(
-        select(EmailTemplate)
-        .where(
-            EmailTemplate.template_type == "approval",
-            or_(EmailTemplate.event_id == speaker.event_id, EmailTemplate.event_id.is_(None))
-        )
-        .order_by(EmailTemplate.event_id.desc())
-    )
-    tpl = res_tpl.scalars().first()
+    event_row = await db.get(Event, speaker.event_id)
+    tpl, _ = await resolve_template_type(
+        db,
+        organization_id=event_row.organization_id,
+        event_id=speaker.event_id,
+        template_type="approval",
+        target_type="speaker",
+    ) if event_row else (None, "EVENT_NOT_FOUND")
     if not tpl:
         return
 
@@ -653,20 +659,20 @@ async def send_file_rejected(
     if not db:
         return
 
-    from sqlalchemy import or_, select
-    from app.modules.communications.models.email_template import EmailTemplate
+    from sqlalchemy import select
     from app.modules.communications.models.email_campaign import EmailCampaign
+    from app.modules.events.models.event import Event
+    from app.modules.notifications.services.email_template_studio_service import resolve_template_type
 
     # Find the visual template of type "rejection"
-    res_tpl = await db.execute(
-        select(EmailTemplate)
-        .where(
-            EmailTemplate.template_type == "rejection",
-            or_(EmailTemplate.event_id == speaker.event_id, EmailTemplate.event_id.is_(None))
-        )
-        .order_by(EmailTemplate.event_id.desc())
-    )
-    tpl = res_tpl.scalars().first()
+    event_row = await db.get(Event, speaker.event_id)
+    tpl, _ = await resolve_template_type(
+        db,
+        organization_id=event_row.organization_id,
+        event_id=speaker.event_id,
+        template_type="rejection",
+        target_type="speaker",
+    ) if event_row else (None, "EVENT_NOT_FOUND")
     if not tpl:
         return
 

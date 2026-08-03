@@ -123,6 +123,7 @@ export function Sidebar() {
     { label: "Venue Operations", icon: ClipboardPlus, href: "/venue-operations" },
     { label: "Users", icon: Users, href: "/users", permission: PERMISSIONS.USERS_VIEW },
     { label: "Settings", icon: Settings, href: "/settings" },
+    { label: "Email Templates", icon: Mail, href: "/settings/email-templates", permission: PERMISSIONS.SETTINGS_EDIT },
     { label: "Help & Support", icon: BookOpen, href: "/help-support" },
   ];
 
@@ -180,7 +181,6 @@ export function Sidebar() {
       subItems: [
         { label: "Dashboard", icon: LayoutDashboard, href: `/events/${eventId}/communication/dashboard` },
         { label: "Campaigns", icon: Mail, href: `/events/${eventId}/communication/emails`, permission: PERMISSIONS.SETTINGS_EDIT },
-        { label: "Email Designer", icon: FileEdit, href: `/events/${eventId}/communication/email-designer`, permission: PERMISSIONS.SETTINGS_EDIT },
         { label: "Notifications", icon: Bell, href: `/events/${eventId}/communication/notifications`, permission: PERMISSIONS.EVENTS_VIEW },
         { label: "Announcements", icon: Megaphone, href: `/events/${eventId}/communication/announcements`, permission: PERMISSIONS.SETTINGS_EDIT },
       ],

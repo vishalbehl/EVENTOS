@@ -20,10 +20,15 @@ export type Campaign = {
 
 export type Template = {
   id: string
+  event_id?: string | null
   name: string
   template_type: string
+  target_type: string
   subject: string
   body_html: string
+  body_text?: string | null
+  designer_json?: Record<string, unknown> | null
+  is_default?: boolean
 }
 
 export type Recipient = {
@@ -111,9 +116,14 @@ export const createTemplate = async (
     template_type: string
     subject: string
     body_html: string
+    body_text?: string
+    target_type?: string
+    designer_json?: Record<string, unknown>
   }
 ): Promise<Template> => {
-  return apiClient.post(`/events/${eventId}/notifications/templates`, payload)
+  return apiClient.post(`/events/${eventId}/notifications/templates`, payload, {
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  })
 }
 
 export const updateTemplate = async (
@@ -123,7 +133,60 @@ export const updateTemplate = async (
 ): Promise<Template> => {
   return apiClient.patch(
     `/events/${eventId}/notifications/templates/${templateId}`,
-    payload
+    payload,
+    { headers: { "Idempotency-Key": crypto.randomUUID() } }
+  )
+}
+
+export const uploadEmailAsset = async (
+  eventId: string,
+  file: File,
+): Promise<{ id: string; url: string; name: string; file_type: string; size_bytes: number }> => {
+  const formData = new FormData()
+  formData.append("file", file)
+  return apiClient.post(`/events/${eventId}/emails/assets/upload`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+  })
+}
+
+export const deleteTemplate = async (eventId: string, templateId: string): Promise<{ message: string }> => {
+  return apiClient.delete(
+    `/events/${eventId}/notifications/templates/${templateId}`
+  )
+}
+
+// ================= COMPONENTS =================
+
+export type EmailComponent = {
+  id: string
+  name: string
+  component_type: string
+  default_config: any
+  is_global: boolean
+}
+
+export const getComponents = async (eventId: string): Promise<EmailComponent[]> => {
+  return apiClient.get(`/events/${eventId}/notifications/components`)
+}
+
+export const createComponent = async (
+  eventId: string,
+  payload: {
+    name: string
+    component_type: string
+    default_config: any
+    is_global?: boolean
+  }
+): Promise<EmailComponent> => {
+  return apiClient.post(`/events/${eventId}/notifications/components`, payload)
+}
+
+export const deleteComponent = async (eventId: string, componentId: string): Promise<{ message: string }> => {
+  return apiClient.delete(
+    `/events/${eventId}/notifications/components/${componentId}`
   )
 }
 

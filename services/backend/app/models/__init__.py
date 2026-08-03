@@ -8,6 +8,12 @@ from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.system_setting import SystemSetting
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.health import OrganizationHealth
+from app.modules.communications.models.email_component import EmailComponent
+from app.modules.communications.models.email_asset import EmailAsset
+from app.modules.communications.models.email_asset_folder import EmailAssetFolder
+from app.modules.communications.models.email_branding_policy import EmailBrandingPolicy
+from app.modules.communications.models.email_template_version import EmailTemplateVersion
+
 from app.modules.platform.models.platform_domain_tables import (
     OrganizationDomain, OrganizationSetting, FeatureFlag,
     PlatformFlagDefinition, PlatformFlagOverride,

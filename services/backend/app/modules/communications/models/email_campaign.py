@@ -55,6 +55,12 @@ class EmailCampaign(Base, SoftDeleteMixin):
         ForeignKey("communications.email_templates.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    template_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("communications.email_template_versions.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="SET NULL"),

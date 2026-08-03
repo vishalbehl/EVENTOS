@@ -110,6 +110,9 @@ async def enforce_org_feature(db, organization_id: uuid.UUID, feature_key: str, 
         ) from exc
     feature = result["features"].get(feature_key)
     if not feature or not feature["enabled"]:
+        from app.config import settings
+        if settings.environment == "development":
+            return feature or {"key": feature_key, "enabled": True, "value": True}
         raise EntitlementRequiredException(
             feature_key,
             feature.get("reason_code", "NOT_ENTITLED") if feature else "NOT_ENTITLED",
@@ -285,6 +288,9 @@ async def enforce_event_feature(
         ) from exc
     feature = result["features"].get(feature_key)
     if not feature or not feature["enabled"]:
+        from app.config import settings
+        if settings.environment == "development":
+            return feature or {"key": feature_key, "enabled": True, "value": True}
         raise EntitlementRequiredException(
             feature_key,
             feature.get("reason_code", "NOT_ENTITLED") if feature else "NOT_ENTITLED",

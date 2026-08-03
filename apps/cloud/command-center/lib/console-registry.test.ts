@@ -7,7 +7,7 @@ describe("console registry", () => {
     ["/business/dashboard", "business"], ["/business/sales/quotes/a/edit", "business"],
     ["/business/revenue", "revenue"], ["/finance/invoices/abc", "revenue"],
     ["/operations-center/jobs", "operations"], ["/identity-security/users/a", "security"],
-    ["/developer-platform/api-keys", "developer"], ["/applications/feature-flags", "developer"],
+    ["/developer-platform/api-keys", "developer"], ["/applications/feature-flags", "developer"], ["/applications/templates/email", "developer"],
     ["/support-center/tickets/a", "support"], ["/platform-settings/authentication", "home"],
   ] as const)("resolves %s to %s", (pathname, expected) => expect(resolveConsoleKey(pathname)).toBe(expected));
 

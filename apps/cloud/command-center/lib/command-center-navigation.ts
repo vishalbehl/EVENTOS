@@ -2,7 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity, BarChart3, Bell, Building2, Calculator, ClipboardList,
   Code2, CreditCard, Database, FileSpreadsheet, FileText, Landmark,
-  LayoutDashboard, Library, Palette, Settings, ShieldCheck,
+  LayoutDashboard, Library, Mail, Palette, Settings, ShieldCheck,
   Terminal, Users,
 } from "lucide-react";
 
@@ -45,6 +45,7 @@ export const COMMAND_CENTER_DESTINATIONS: CommandCenterDestination[] = [
   { label: "API keys", href: "/developer-platform/api-keys", group: "Developer platform", keywords: ["credentials", "token"], icon: Code2 },
   { label: "Webhooks", href: "/developer-platform/webhooks", group: "Developer platform", keywords: ["delivery", "signatures"], icon: Terminal },
   { label: "Integrations", href: "/developer-platform/integrations", group: "Developer platform", keywords: ["providers", "connections"], icon: Terminal },
+  { label: "Email templates", href: "/applications/templates/email", group: "Templates", keywords: ["email", "designer", "studio", "waypoint", "defaults"], icon: Mail },
   { label: "Support tickets", href: "/support-center/tickets", group: "Support", keywords: ["sla", "customers"], icon: ClipboardList },
   { label: "Announcements", href: "/support-center/announcements", group: "Support", keywords: ["maintenance", "broadcast"], icon: Bell },
   { label: "Platform settings", href: "/platform-settings/general", group: "Settings", keywords: ["configuration"], icon: Settings },

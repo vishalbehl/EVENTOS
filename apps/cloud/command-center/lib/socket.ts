@@ -30,13 +30,23 @@ class SocketService {
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('[Socket.IO] Connection error details:', {
+      const authenticationFailed = /invalid|expired|authentication|access token/i.test(error.message);
+      const details = {
         message: error.message,
         name: error.name,
         stack: error.stack,
         description: (error as any).description,
         context: (error as any).context,
-      });
+      };
+
+      if (authenticationFailed) {
+        // An access token cannot become valid through Socket.IO retries. Stop
+        // the retry loop and let the auth hook refresh the HTTP-only session.
+        console.warn('[Socket.IO] Authentication expired; refreshing session.');
+        this.disconnect();
+      } else {
+        console.error('[Socket.IO] Connection error details:', details);
+      }
       
       if (error.message === 'xhr poll error' || error.message === 'websocket error') {
         console.warn('[Socket.IO] Falling back to polling/websocket mixed mode');
@@ -54,6 +64,7 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
     }
+    this.currentToken = null;
   }
 }
 

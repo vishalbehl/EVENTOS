@@ -45,6 +45,7 @@ export const CONSOLE_REGISTRY: Record<ConsoleKey, ConsoleDefinition> = {
   developer: { key: "developer", name: "Developer Console", shortName: "Developer", description: "APIs, credentials, integrations, delivery and applications.", dashboardRoute: "/developer-platform", icon: Terminal, accent: "var(--chart-1)", matchers: ["/developer-platform", "/applications"], navigation: [
     { label: "Developer platform", items: [item("Developer dashboard", "/developer-platform", LayoutDashboard), item("API catalogue", "/developer-platform/apis", Code2), item("API keys", "/developer-platform/api-keys", KeyRound), item("Webhooks", "/developer-platform/webhooks", Webhook), item("Integrations", "/developer-platform/integrations", Plug), item("Logs", "/developer-platform/logs", FileText)] },
     { label: "Applications", items: [item("Application registry", "/applications/registry", AppWindow), item("Feature flags", "/applications/feature-flags", SlidersHorizontal)] },
+    { label: "Templates", items: [item("Email templates", "/applications/templates/email", Mail, ["email", "designer", "studio", "defaults"])] },
   ] },
   support: { key: "support", name: "Support Console", shortName: "Support", description: "Customer support, SLA risk and service communication.", dashboardRoute: "/support-center", icon: Ticket, accent: "var(--chart-3)", matchers: ["/support-center"], navigation: [
     { label: "Support", items: [item("Support dashboard", "/support-center", LayoutDashboard), item("Tickets", "/support-center/tickets", Ticket), item("Knowledge base", "/support-center/knowledge-base", BookOpen), item("Announcements", "/support-center/announcements", Bell)] },
@@ -76,7 +77,6 @@ export const SETTINGS_TABS: ConsoleTabDefinition[] = [
   { label: "General", href: "/platform-settings/general", icon: Settings },
   { label: "Branding", href: "/platform-settings/branding", icon: Palette },
   { label: "Localization", href: "/platform-settings/localization", icon: Languages },
-  { label: "Notifications", href: "/platform-settings/notifications", icon: Mail },
   { label: "Authentication", href: "/platform-settings/authentication", icon: ShieldCheck },
   { label: "Interface standards", href: "/platform-settings/interface-standards", icon: SlidersHorizontal },
 ];
