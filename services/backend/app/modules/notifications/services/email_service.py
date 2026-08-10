@@ -473,13 +473,38 @@ async def send_email(
     # We expect `html_body` to be the fully inlined HTML now.
     final_html = html_body
 
-
     import aiosmtplib
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
+    from email.mime.image import MIMEImage
+    import base64
+
+    # Extract base64 images and convert them to CID attachments
+    inline_images = []
+    
+    def _replace_src_data(match: re.Match) -> str:
+        mime_type = match.group(1)
+        b64_data = match.group(2)
+        cid = f"img_{uuid.uuid4().hex[:12]}@eventos.local"
+        try:
+            image_bytes = base64.b64decode(b64_data)
+            subtype = mime_type.split("/")[-1] if "/" in mime_type else "jpeg"
+            inline_images.append((cid, subtype, image_bytes))
+            return f'src="cid:{cid}"'
+        except Exception:
+            return match.group(0)
+
+    final_html = re.sub(r'src=["\']data:([^;]+);base64,([^"\']+)["\']', _replace_src_data, final_html, flags=re.I)
 
     # --- GMAIL SMTP IMPLEMENTATION ---
-    msg = MIMEMultipart('alternative')
+    if inline_images:
+        msg = MIMEMultipart('related')
+        alt = MIMEMultipart('alternative')
+        msg.attach(alt)
+    else:
+        msg = MIMEMultipart('alternative')
+        alt = msg
+        
     msg["Subject"] = subject
     
     # Use config overrides if set, otherwise default to config settings
@@ -489,8 +514,15 @@ async def send_email(
     msg["To"] = to_email
     
     if text_body:
-        msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
-    msg.attach(MIMEText(final_html, 'html', 'utf-8'))
+        alt.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    alt.attach(MIMEText(final_html, 'html', 'utf-8'))
+
+    # Attach all parsed inline images
+    for cid, subtype, image_bytes in inline_images:
+        img_part = MIMEImage(image_bytes, _subtype=subtype)
+        img_part.add_header('Content-ID', f'<{cid}>')
+        img_part.add_header('Content-Disposition', 'inline')
+        msg.attach(img_part)
 
     provider_message_id = None
     error_message = None

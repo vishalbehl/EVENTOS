@@ -23,6 +23,7 @@ function toStudio(row: EmailStudioRecord): StudioTemplate {
     preheader: row.preheader ?? "",
     stableKey: row.stable_key,
     scopeType: row.scope_type,
+    organizationId: row.organization_id ?? null,
     lifecycleState: row.lifecycle_state,
     version: row.version,
     designerJson: candidate?.root ? row.designer_json as StudioTemplate["designerJson"] : null,
@@ -37,6 +38,7 @@ export default function EmailTemplateStudioScreen() {
   const [rows, setRows] = useState<EmailStudioRecord[]>([]);
   const [fragmentRows, setFragmentRows] = useState<EmailFragmentRecord[]>([]);
   const [assetRows, setAssetRows] = useState<EmailAssetRecord[]>([]);
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; slug?: string }>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -44,10 +46,16 @@ export default function EmailTemplateStudioScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [result, savedFragments, savedAssets] = await Promise.all([platformEmailTemplates.list(), platformEmailComponents.list(), platformEmailAssets.list()]);
+      const [result, savedFragments, savedAssets, orgs] = await Promise.all([
+        platformEmailTemplates.list(),
+        platformEmailComponents.list(),
+        platformEmailAssets.list(),
+        platformEmailTemplates.listOrganizations().catch(() => []),
+      ]);
       setRows(result);
       setFragmentRows(savedFragments);
       setAssetRows(savedAssets);
+      setOrganizations(orgs);
       setActiveId((current) => current && result.some((row) => row.id === current) ? current : result[0]?.id ?? null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Template library is unavailable.");
@@ -65,15 +73,20 @@ export default function EmailTemplateStudioScreen() {
   };
 
   const saveDraft = async (draft: StudioDraft) => {
-    const saved = await platformEmailTemplates.saveDraft(draft.templateId, draft.expectedVersion, {
-      name: draft.name,
-      subject: draft.subject,
-      preheader: draft.preheader ?? "",
-      body_html: draft.bodyHtml,
-      designer_json: draft.designerJson,
-      editor_schema_version: draft.editorSchemaVersion,
-    });
-    replace(saved, draft.templateId);
+    try {
+      const saved = await platformEmailTemplates.saveDraft(draft.templateId, draft.expectedVersion, {
+        name: draft.name,
+        subject: draft.subject,
+        preheader: draft.preheader ?? "",
+        body_html: draft.bodyHtml,
+        designer_json: draft.designerJson,
+        editor_schema_version: draft.editorSchemaVersion,
+      });
+      replace(saved, draft.templateId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save draft.");
+      throw error;
+    }
   };
 
   const publish = async (template: StudioTemplate, reason: string) => {
@@ -83,6 +96,7 @@ export default function EmailTemplateStudioScreen() {
       toast.success("Platform email template published.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Template could not be published.");
+      throw error;
     } finally {
       setBusy(false);
     }
@@ -94,18 +108,49 @@ export default function EmailTemplateStudioScreen() {
   };
 
   const sendTest = async (draft: StudioDraft, recipient: string) => {
-    await platformEmailTemplates.testSend(draft.templateId, recipient, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion });
-    toast.success(`Test email queued for ${recipient}.`);
+    try {
+      await platformEmailTemplates.testSend(draft.templateId, recipient, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion });
+      toast.success(`Test email queued for ${recipient}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to send test email.");
+      throw error;
+    }
   };
   const saveFragment = async (fragment: { name: string; componentKind: "BLOCK" | "SECTION"; documentFragment: Record<string, unknown> }) => {
-    const stableKey = `${fragment.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "fragment"}-${Date.now().toString(36)}`;
-    const saved = await platformEmailComponents.create({ name: fragment.name, stable_key: stableKey, component_kind: fragment.componentKind, category: "saved", document_fragment: fragment.documentFragment, preview_metadata: {} });
-    setFragmentRows((current) => [saved, ...current]);
-    toast.success("Reusable email fragment saved.");
+    try {
+      const stableKey = `${fragment.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "fragment"}-${Date.now().toString(36)}`;
+      const saved = await platformEmailComponents.create({ name: fragment.name, stable_key: stableKey, component_kind: fragment.componentKind, category: "saved", document_fragment: fragment.documentFragment, preview_metadata: {} });
+      setFragmentRows((current) => [saved, ...current]);
+      toast.success("Reusable email fragment saved.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save fragment.");
+      throw error;
+    }
   };
   const fragments: StudioFragment[] = fragmentRows.map((row) => ({ id: row.id, name: row.name, category: row.category, componentKind: row.component_kind, scopeType: row.scope_type, documentFragment: row.document_fragment, editable: row.editable }));
   const assets: StudioAsset[] = assetRows.map((row) => ({ id: row.id, name: row.name, url: row.url, fileType: row.file_type, scopeType: row.scope_type, assetKind: row.asset_kind, sourceType: row.source_type, width: row.width ?? undefined, height: row.height ?? undefined, metadata: row.metadata }));
-  const uploadAsset = async (file: File, assetKind: "IMAGE" | "ICON" = "IMAGE") => { const saved = await platformEmailAssets.upload(file, assetKind); setAssetRows((current) => [saved, ...current]); return saved.url; };
+  const uploadAsset = async (file: File, assetKind: "IMAGE" | "ICON" = "IMAGE") => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const mockAsset: EmailAssetRecord = {
+          id: `local-${Date.now()}`,
+          name: file.name,
+          url: dataUrl,
+          file_type: file.type,
+          scope_type: "PLATFORM",
+          asset_kind: assetKind,
+          source_type: "UPLOAD",
+          metadata: {},
+        };
+        setAssetRows((current) => [mockAsset, ...current]);
+        resolve(dataUrl);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
 
   const create = async ({ name, stableKey }: { name: string; stableKey: string }) => {
     setBusy(true);
@@ -115,6 +160,7 @@ export default function EmailTemplateStudioScreen() {
       toast.success("Platform template draft created.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Template could not be created.");
+      throw error;
     } finally { setBusy(false); }
   };
 
@@ -127,10 +173,46 @@ export default function EmailTemplateStudioScreen() {
       toast.success("Historical version restored as a new immutable publication.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Template could not be rolled back.");
+      throw error;
+    } finally { setBusy(false); }
+  };
+
+  const deleteTemplate = async (templateId: string) => {
+    setBusy(true);
+    try {
+      await platformEmailTemplates.delete(templateId);
+      setRows((current) => current.filter((row) => row.id !== templateId));
+      toast.success("Platform template deleted.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Template could not be deleted.");
+    } finally { setBusy(false); }
+  };
+
+  const duplicateTemplate = async (templateId: string) => {
+    setBusy(true);
+    try {
+      const saved = await platformEmailTemplates.duplicate(templateId);
+      replace(saved);
+      setActiveId(saved.id);
+      toast.success("Template duplicated successfully.");
+      return toStudio(saved);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Template could not be duplicated.");
+    } finally { setBusy(false); }
+  };
+
+  const updateScope = async (templateId: string, scopeType: "PLATFORM" | "ORGANIZATION", organizationId?: string | null) => {
+    setBusy(true);
+    try {
+      const updated = await platformEmailTemplates.updateScope(templateId, scopeType, organizationId);
+      replace(updated);
+      toast.success("Template tenant scope updated.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Scope assignment could not be updated.");
     } finally { setBusy(false); }
   };
 
   if (loading) return <div className="grid h-full min-h-0 flex-1 place-items-center text-sm text-[var(--text-tertiary)]">Loading authoritative template versions…</div>;
 
-  return <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Command Center · platform defaults" busy={busy} onSelectTemplate={setActiveId} onCreateTemplate={create} onSaveDraft={saveDraft} onPublish={publish} onLoadVersions={loadVersions} onRollback={rollback} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={uploadAsset} />;
+  return <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Command Center · platform defaults" busy={busy} organizations={organizations} onSelectTemplate={setActiveId} onCreateTemplate={create} onSaveDraft={saveDraft} onDeleteTemplate={deleteTemplate} onDuplicateTemplate={duplicateTemplate} onUpdateScope={updateScope} onPublish={publish} onLoadVersions={loadVersions} onRollback={rollback} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={uploadAsset} />;
 }

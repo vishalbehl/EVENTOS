@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.dependencies.feature_gate import enforce_event_operation
 from app.modules.billing.capability_registry import (
     CATALOG_LIMIT_KEYS,
     FEATURE_DEFINITIONS,
@@ -21,6 +22,7 @@ from app.modules.billing.capability_registry import (
     OPERATION_PERMISSIONS,
     PLATFORM_HARD_CEILINGS,
     PORTAL_LIMIT_CONTROL_SITES,
+    REGISTRATION_CAPABILITY_KEYS,
     feature_for_operation,
     registry_coverage,
 )
@@ -35,6 +37,7 @@ from app.modules.billing.models.subscription import (
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.billing.services.capability_cache_service import CapabilityCacheService
+from app.modules.billing.services.event_entitlement_service import EventEntitlementService
 from app.modules.billing.services.platform_flag_service import PlatformFlagService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.events.models.event import Event
@@ -42,6 +45,7 @@ from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.organization_console import (
+    CapabilityRestriction,
     EventCommercialContract,
     UsageLedgerEntry,
     UsageReservation,
@@ -227,10 +231,11 @@ async def test_public_registration_upload_is_gated_metered_and_replay_safe(
             plan_key="PUBLIC_UPLOAD_TEST",
             plan_version="1",
             currency="INR",
-            entitlements={
-                "FEAT_REGISTRATION_PORTAL": {"type": "BOOLEAN", "value": True},
-                "storage_quota_mb": {"type": "LIMIT", "value": 5},
-            },
+                entitlements={
+                    "FEAT_REGISTRATION_PORTAL": {"type": "BOOLEAN", "value": True},
+                    "FEAT_REGISTRATION_FORMS": {"type": "TIER", "value": "CUSTOM"},
+                    "storage_quota_mb": {"type": "LIMIT", "value": 5},
+                },
             hard_ceilings={},
             addons=[],
             source={"type": "TEST"},
@@ -736,6 +741,24 @@ def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption(
     for path in sorted((app_root / "modules").glob("*/routers/*.py")):
         if path.parts[-3] not in customer_modules:
             continue
+        # The registration router delegates selected mutations to the shared
+        # participant/template services.  Those services are the canonical
+        # enforcement sites.  Keep this classification local to registration
+        # so unrelated notification routes retain their own coverage rules.
+        shared_service_markers = (
+            {"EventParticipantMutationService", "EventTemplateMutationService"}
+            if path.parts[-3] == "registration"
+            else {
+                # This router delegates its template mutations to these
+                # service functions, which include the canonical event gate.
+                "SuperAdminOnly", "_require_org_admin",
+                "designer_enabled_for_event", "designer_enabled_for_organization",
+                "create_family", "save_draft", "publish_draft", "rollback_to_version",
+            }
+            if path.name == "email_template_studio.py"
+            else set()
+        )
+        path_gate_markers = gate_markers | shared_service_markers
         source = path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source, filename=str(path))
         functions = {
@@ -748,7 +771,7 @@ def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption(
             for name, node in functions.items()
             if any(
                 marker in (ast.get_source_segment(source, node) or "")
-                for marker in gate_markers
+                for marker in path_gate_markers
             )
         }
         changed = True
@@ -770,7 +793,7 @@ def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption(
             "APIRouter" in (ast.get_source_segment(source, node) or "")
             and any(
                 marker in (ast.get_source_segment(source, node) or "")
-                for marker in gate_markers
+                    for marker in path_gate_markers
             )
             for node in tree.body
             if isinstance(node, (ast.Assign, ast.AnnAssign))
@@ -789,7 +812,7 @@ def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption(
             decorator_controlled = any(
                 marker in decorator
                 for decorator in decorators
-                for marker in gate_markers
+                for marker in path_gate_markers
             )
             if router_controlled or decorator_controlled or name in controlled:
                 continue
@@ -1294,6 +1317,144 @@ async def test_resolver_fails_closed_for_dependency_and_conflict_drift(
         conflict_result["features"]["FEAT_SESSION_MANAGEMENT"]["reason_code"],
         conflict_result["features"]["FEAT_SPEAKER_PROFILES"]["reason_code"],
     } == {"FEATURE_CONFLICT"}
+
+
+@pytest.mark.asyncio
+async def test_eventos_is_unrestricted_for_every_feature_and_limit(
+    db: AsyncSession,
+    client: AsyncClient,
+    organization: Organization,
+    organizer: User,
+    event: Event,
+):
+    organization.name = "Eventos"
+    organization.slug = "Eventos"
+    organization.is_platform_org = True
+    organization.is_internal_unrestricted = True
+    organization.is_active = False
+    organization.suspended_at = datetime.now(timezone.utc)
+    event.status = "archived"
+    db.add(
+        CapabilityRestriction(
+            organization_id=organization.id,
+            event_id=event.id,
+            capability_key="FEAT_REGISTRATION_PORTAL",
+            restriction_type="SECURITY",
+            reason_code="SECURITY_RESTRICTED",
+            reason="The main tenant must ignore tenant feature restrictions.",
+            case_reference="TEST-INTERNAL-UNRESTRICTED",
+            status="APPROVED",
+            effective_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            requested_by=organizer.id,
+            approved_by=organizer.id,
+            idempotency_key=f"internal-unrestricted-{uuid.uuid4()}",
+        )
+    )
+    await db.flush()
+
+    entitlement = await EventEntitlementService.resolve(
+        db, organization.id, event.id, explain=True
+    )
+    assert entitlement["contract_id"] is None
+    assert entitlement["availability"]["available"] is True
+    assert entitlement["hard_ceilings"] == {}
+    assert set(FEATURE_DEFINITIONS) <= set(entitlement["features"])
+    assert all(row["enabled"] for row in entitlement["features"].values())
+    assert all(
+        row["source_type"] == "INTERNAL_UNRESTRICTED_BASELINE"
+        for row in entitlement["features"].values()
+    )
+    assert set(LIMIT_DEFINITIONS) <= set(entitlement["limits"])
+    assert all(row["limit_value"] is None for row in entitlement["limits"].values())
+
+    event_capabilities = await CapabilityService.resolve_event(
+        db, organization.id, event.id
+    )
+    assert all(row["enabled"] for row in event_capabilities["features"].values())
+    assert all(row["allowed"] is None for row in event_capabilities["limits"].values())
+    assert all(row["remaining"] is None for row in event_capabilities["limits"].values())
+
+    organization_capabilities = await CapabilityService.resolve_organization(
+        db, organization.id
+    )
+    assert all(row["enabled"] for row in organization_capabilities["features"].values())
+    assert all(row["allowed"] is None for row in organization_capabilities["limits"].values())
+
+    public_response = await client.get(
+        f"/portal/registration/{event.id}/capabilities"
+    )
+    assert public_response.status_code == 200, public_response.text
+    public_payload = public_response.json()
+    assert public_payload["availability"]["available"] is True
+    assert all(row["enabled"] for row in public_payload["features"].values())
+    assert all("sources" not in row and "flags" not in row for row in public_payload["features"].values())
+
+    etag = public_response.headers["etag"]
+    not_modified = await client.get(
+        f"/portal/registration/{event.id}/capabilities",
+        headers={"If-None-Match": etag},
+    )
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == etag
+
+    # Public registration operations are deliberately permissionless and the
+    # main tenant also ignores its tenant suspension/archive/maintenance state.
+    event.is_maintenance = True
+    event.is_read_only = True
+    await db.flush()
+    operation_result = await enforce_event_operation(
+        db,
+        organization.id,
+        event.id,
+        "registration.submit",
+    )
+    assert operation_result["enabled"] is True
+
+    # Prove that the internal baseline removes the commercial and hard-ceiling
+    # quota paths rather than merely displaying an unlimited value.
+    reservation = await UsageReservationService.reserve(
+        db,
+        organization_id=organization.id,
+        event_id=event.id,
+        limit_key="max_registrations",
+        quantity=PLATFORM_HARD_CEILINGS["max_registrations"] + 1,
+        unit="registrations",
+        idempotency_key=f"internal-unlimited-registration-{uuid.uuid4()}",
+    )
+    assert reservation.status == "RESERVED"
+    await UsageReservationService.release(db, reservation.id)
+
+
+@pytest.mark.asyncio
+async def test_platform_org_without_eventos_marker_remains_plan_enforced(
+    db: AsyncSession,
+    client: AsyncClient,
+    organization: Organization,
+    event: Event,
+):
+    organization.is_platform_org = True
+    organization.is_internal_unrestricted = False
+    await db.flush()
+
+    result = await CapabilityService.resolve_event(db, organization.id, event.id)
+    assert result["availability"]["available"] is False
+    for key in REGISTRATION_CAPABILITY_KEYS:
+        assert result["features"][key]["enabled"] is False
+        assert result["features"][key]["reason_code"] == "CONTRACT_REQUIRED"
+
+    public_response = await client.get(
+        f"/portal/registration/{event.id}/capabilities"
+    )
+    assert public_response.status_code == 200, public_response.text
+    public_payload = public_response.json()
+    assert public_payload["availability"]["available"] is False
+    assert all(not row["enabled"] for row in public_payload["features"].values())
+
+    form_response = await client.get(f"/portal/registration/{event.id}/form")
+    assert form_response.status_code == 403
+    error_payload = form_response.json()
+    error_detail = error_payload.get("detail", error_payload)
+    assert error_detail["code"] == "CONTRACT_REQUIRED"
 
 
 @pytest.mark.asyncio

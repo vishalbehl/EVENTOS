@@ -91,7 +91,7 @@ export function ScheduleImportModal({ isOpen, onClose, eventId }: ScheduleImport
       const response = await apiClient.post<ImportPreview>(
         `/events/${eventId}/import/preview?import_type=${importType}`,
         body,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        { headers: { "Content-Type": undefined } as any }
       );
       setPreview(response);
       if (response.can_import) {
@@ -119,7 +119,7 @@ export function ScheduleImportModal({ isOpen, onClose, eventId }: ScheduleImport
       const body = new FormData();
       body.append("file", selectedFile);
       await apiClient.post(`/events/${eventId}/import/upload?import_type=${importType}`, body, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined } as any,
       });
       const speakerCount = preview?.speakers_to_create ?? 0;
       setCommittedSpeakerCount(speakerCount);

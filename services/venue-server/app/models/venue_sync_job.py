@@ -38,6 +38,7 @@ class VenueSyncJob(Base):
         failed      → Error occurred (see error_message)
         skipped     → File no longer needed (session cancelled etc.)
     """
+    __table_args__ = {"schema": "venue"}
     __tablename__ = "venue_sync_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -45,13 +46,13 @@ class VenueSyncJob(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="CASCADE"),
+        ForeignKey("presentations.presentation_files.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

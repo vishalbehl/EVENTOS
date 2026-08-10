@@ -31,7 +31,10 @@ from app.modules.billing.services.usage_reservation_service import UsageReservat
 router = APIRouter(
     prefix="/events/{event_id}/badges",
     tags=["badges"],
-    dependencies=[require_event_operation("badges.qr.manage")],
+    # Badge generation, printing, and QR rotation are registration-domain
+    # operations.  Keep the router-level gate as defence in depth for every
+    # mutation; individual export endpoints add their own quota reservation.
+    dependencies=[require_event_operation("registration.manage")],
 )
 
 

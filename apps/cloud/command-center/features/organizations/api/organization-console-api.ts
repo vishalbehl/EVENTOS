@@ -61,6 +61,7 @@ export interface OrganizationConsoleSummary {
     slug: string;
     logo_url?: string | null;
     is_active: boolean;
+    is_internal_unrestricted?: boolean;
     created_at: string;
     country: string;
     timezone: string;

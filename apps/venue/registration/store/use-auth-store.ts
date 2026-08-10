@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type AppMode = "admin" | "registration" | "scanning" | "self_checkin";
+
 export interface User {
   id: string;
   email: string;
@@ -15,6 +17,8 @@ export interface User {
   assignments?: any[];
   allowed_ips?: string[];
   notification_preferences?: Record<string, any>;
+  mode_preferences?: Record<string, Record<string, any>>;
+  allowed_modes?: AppMode[];
 }
 
 interface AuthState {
@@ -26,6 +30,8 @@ interface AuthState {
   loginTime: number | null;
   lastActivity: number | null;
   hasHydrated: boolean;
+  mode: AppMode | null;
+  setMode: (mode: AppMode) => void;
   setAuth: (user: User, accessToken: string, refreshToken?: string, rememberMe?: boolean) => void;
   logout: () => void;
   updateUser: (user: Partial<User>) => void;
@@ -44,6 +50,8 @@ export const useAuthStore = create<AuthState>()(
       loginTime: null,
       lastActivity: null,
       hasHydrated: false,
+      mode: null,
+      setMode: (mode) => set({ mode }),
       setAuth: (user, accessToken, refreshToken, rememberMe = false) => 
         set({ 
           user, 
@@ -62,7 +70,8 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: false,
           rememberMe: false,
           loginTime: null,
-          lastActivity: null
+          lastActivity: null,
+          mode: null
         }),
       updateUser: (userData) => 
         set((state) => ({

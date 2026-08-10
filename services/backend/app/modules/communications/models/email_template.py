@@ -86,6 +86,7 @@ class EmailTemplate(Base, SoftDeleteMixin):
 
     # System defaults cannot be deleted — only customized
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

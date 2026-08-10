@@ -38,6 +38,7 @@ class RoomDevice(Base):
         error        → App reported an error condition
         maintenance  → Manually taken offline
     """
+    __table_args__ = {"schema": "venue"}
     __tablename__ = "room_devices"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -45,13 +46,13 @@ class RoomDevice(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     room_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rooms.id", ondelete="CASCADE"),
+        ForeignKey("events.rooms.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

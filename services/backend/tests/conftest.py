@@ -55,6 +55,7 @@ celery_app.conf.task_eager_propagates = True
 from cryptography.fernet import Fernet as _Fernet
 _TEST_FERNET_KEY = _Fernet.generate_key().decode()
 settings.PAYMENT_SECRET_KEY = _TEST_FERNET_KEY
+settings.FERNET_KEY = _TEST_FERNET_KEY
 
 from app.database import Base
 from app.models import (  # ensures all models are registered with Base
@@ -201,7 +202,7 @@ async def setup_test_database():
         "platform_audit", "platform_activity", "platform_compliance",
         "commercial", "inventory", "procurement", "pricing",
         "templates", "website_builder", "blueprints", "design_system", "theme_engine",
-        "technology_services", "operations_planning", "resource_management", "deployment_management"
+        "technology_services", "operations_planning", "operations", "resource_management", "deployment_management"
     ]
     lock_key = 1163284047  # Stable key reserved for the EventOS test database.
     lock_conn = await _test_engine.connect()

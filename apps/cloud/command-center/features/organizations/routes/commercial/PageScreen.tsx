@@ -35,6 +35,7 @@ import {
   useDecideCommercialAccessRequest,
 } from "@/features/organizations/api/organization-console-api";
 import { toast } from "sonner";
+import { useOrgConsole } from "@/features/organizations/context/OrgConsoleContext";
 import { GovernedActionButton } from "@/features/organizations/components/GovernedActionButton";
 import {
   OrgPageHeader,
@@ -63,6 +64,7 @@ function EntitlementMatrixCell({ orgId, eventId, featureKey }: { orgId: string; 
 export default function CommercialPageScreen() {
   const params = useParams<{ orgId: string }>();
   const orgId = params.orgId;
+  const { summary } = useOrgConsole();
 
   const [activeTab, setActiveTab] = useState("subscriptions");
 
@@ -192,6 +194,12 @@ export default function CommercialPageScreen() {
           </div>
         }
       />
+
+      {summary?.organization.is_internal_unrestricted ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-primary)]">
+          <strong>Internal unrestricted tenant.</strong> Every capability resolves from the internal baseline, not from a plan or event contract, and all metered allowances are unlimited. Tenant feature restrictions and commercial limits apply only to other organizations. This status is read-only.
+        </div>
+      ) : null}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

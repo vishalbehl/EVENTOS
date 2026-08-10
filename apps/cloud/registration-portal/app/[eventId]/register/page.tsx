@@ -32,6 +32,8 @@ interface FormConfig {
   is_live: boolean;
   fields: FormField[];
   payment_enabled?: boolean;
+  coupon_enabled?: boolean;
+  uploads_enabled?: boolean;
   currency?: string;
   active_prices?: Record<string, number>;
   active_gateway?: string;
@@ -1795,7 +1797,7 @@ export default function PublicRegistrationPortal() {
                         )}
 
                         {/* File or Image Upload widget */}
-                        {(fieldType === "image" || fieldType === "file") && (
+                        {(fieldType === "image" || fieldType === "file") && config.uploads_enabled !== false && (
                           <div className="space-y-3">
                             {formData[field.id] ? (
                               <div className="flex items-center justify-between p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-2xl">
@@ -1858,6 +1860,11 @@ export default function PublicRegistrationPortal() {
                             )}
                           </div>
                         )}
+                        {(fieldType === "image" || fieldType === "file") && config.uploads_enabled === false && (
+                          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                            File uploads are unavailable for this event.
+                          </div>
+                        )}
                       </div>
                     );
                   };
@@ -1895,7 +1902,7 @@ export default function PublicRegistrationPortal() {
                   </div>
 
                   {/* Promo Code Input */}
-                  <div className="space-y-2 pt-2 border-t border-white/5">
+                  {config.coupon_enabled && <div className="space-y-2 pt-2 border-t border-white/5">
                     <label className="text-[10px] font-black text-muted uppercase tracking-widest block">Promo Code</label>
                     <div className="flex gap-2">
                       <input
@@ -1925,7 +1932,7 @@ export default function PublicRegistrationPortal() {
                         </button>
                       )}
                     </div>
-                  </div>
+                  </div>}
 
                   {/* Applied Promo summary */}
                   {appliedPromo && (

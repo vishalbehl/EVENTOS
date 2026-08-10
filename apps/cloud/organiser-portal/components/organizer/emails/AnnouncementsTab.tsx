@@ -128,7 +128,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
       
       const res = await apiClient.post<any>(`/events/${eventId}/announcements/upload`, fd, {
         headers: {
-          "Content-Type": "multipart/form-data",
+          "Content-Type": undefined,
           "Idempotency-Key": crypto.randomUUID(),
         }
       });

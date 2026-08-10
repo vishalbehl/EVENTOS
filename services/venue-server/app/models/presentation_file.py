@@ -12,8 +12,7 @@ if TYPE_CHECKING:
     from app.models.speaker import Speaker
     from app.models.session_speaker import SessionSpeaker
     from app.models.event import Event
-    from app.models.user import User
-    from app.models.file_validation import FileValidation
+
     from app.models.venue_sync_job import VenueSyncJob
     from app.models.presentation_queue import PresentationQueue
     from app.models.srr_activity_log import SRRActivityLog
@@ -28,6 +27,7 @@ class PresentationFile(Base):
 
     Files are stored in Cloudflare R2 / MinIO — never on the app server.
     """
+    __table_args__ = {"schema": "presentations"}
     __tablename__ = "presentation_files"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -35,19 +35,19 @@ class PresentationFile(Base):
     )
     speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="CASCADE"),
+        ForeignKey("presentations.speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     session_speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("session_speakers.id", ondelete="CASCADE"),
+        ForeignKey("presentations.session_speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -86,7 +86,6 @@ class PresentationFile(Base):
     )
     approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     approved_at: Mapped[Optional[datetime]] = mapped_column(
@@ -127,16 +126,8 @@ class PresentationFile(Base):
         "SessionSpeaker", back_populates="presentation_files"
     )
     event: Mapped["Event"] = relationship("Event")
-    approver: Mapped[Optional["User"]] = relationship(
-        "User", foreign_keys=[approved_by]
-    )
+
     # One validation result per file version
-    validation: Mapped[Optional["FileValidation"]] = relationship(
-        "FileValidation",
-        back_populates="file",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
     venue_sync_jobs: Mapped[list["VenueSyncJob"]] = relationship(
         "VenueSyncJob", back_populates="file"
     )

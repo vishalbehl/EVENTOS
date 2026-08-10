@@ -37,6 +37,22 @@ class Organization(Base):
     )
     plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_platform_org: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The single seeded Eventos tenant is an internal verification tenant.  It
+    # receives a resolver-owned commercial baseline rather than a mutable plan
+    # or an implicit development-mode bypass.
+    is_internal_unrestricted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    @property
+    def has_unrestricted_capabilities(self) -> bool:
+        """True only for the seeded main Eventos tenant.
+
+        The durable flag is intentionally coupled to the canonical seed slug,
+        so `is_platform_org` and a copied database row can never inherit the
+        commercial bypass accidentally.
+        """
+        return bool(self.is_internal_unrestricted and self.slug == "Eventos")
     event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     banner_thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     readiness_score: Mapped[Optional[float]] = mapped_column(nullable=True)

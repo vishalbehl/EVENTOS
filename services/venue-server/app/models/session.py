@@ -11,10 +11,10 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.room import Room
-    from app.models.user import User
+
     from app.models.session_speaker import SessionSpeaker
     from app.models.presentation_queue import PresentationQueue
-    from app.models.email_campaign import EmailCampaign
+    from app.models.room import Room
 
 
 class Session(Base):
@@ -22,6 +22,7 @@ class Session(Base):
     A scheduled time block in a room during which speakers present.
     One session can have multiple speakers (via session_speakers).
     """
+    __table_args__ = {"schema": "events"}
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -29,20 +30,19 @@ class Session(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     room_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rooms.id", ondelete="SET NULL"),
+        ForeignKey("events.rooms.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     # Assigned moderator (must be a system user with moderator role)
     moderator_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -89,9 +89,7 @@ class Session(Base):
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="sessions")
     room: Mapped[Optional["Room"]] = relationship("Room", back_populates="sessions")
-    moderator: Mapped[Optional["User"]] = relationship(
-        "User", foreign_keys=[moderator_id]
-    )
+
     session_speakers: Mapped[List["SessionSpeaker"]] = relationship(
         "SessionSpeaker",
         back_populates="session",
@@ -103,11 +101,6 @@ class Session(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="PresentationQueue.queue_order",
-    )
-    email_campaigns: Mapped[List["EmailCampaign"]] = relationship(
-        "EmailCampaign",
-        foreign_keys="EmailCampaign.session_id_filter",
-        back_populates="session_filter",
     )
 
     @property

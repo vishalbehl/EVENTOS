@@ -52,7 +52,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
     fetchCountryStates().then(setCountryStates).catch(console.error);
 
     // Fetch global timezone
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001";
     fetch(`${apiBase}/api/v1/global-settings`, {
       headers: {
         'Authorization': `Bearer ${localStorage.getItem("accessToken") || ""}`
@@ -160,7 +160,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200]"
           />
 
           {/* Dialog Container */}
@@ -169,10 +169,10 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="w-full max-w-5xl glass-3d rounded-[3rem] border-default shadow-2xl pointer-events-auto flex flex-col h-full max-h-[95vh] overflow-hidden"
+              className="w-full max-w-5xl bg-[var(--card)] rounded-[3rem] border border-[var(--border)] shadow-2xl pointer-events-auto flex flex-col h-full max-h-[95vh] overflow-hidden text-[var(--text)]"
             >
               {/* Header */}
-              <div className="p-8 border-b border-default flex-shrink-0">
+              <div className="p-8 border-b border-[var(--border)] bg-[var(--surf)] flex-shrink-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="h-12 w-12 rounded-2xl bg-[var(--pri)]/10 flex items-center justify-center">
@@ -187,7 +187,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                       </p>
                     </div>
                   </div>
-                  <button onClick={onClose} className="h-10 w-10 rounded-full border border-default flex items-center justify-center text-muted hover:text-[var(--text)] transition-all hover:rotate-90">
+                  <button onClick={onClose} className="h-10 w-10 rounded-full border border-[var(--border)] flex items-center justify-center text-muted hover:text-[var(--text)] transition-all hover:rotate-90">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -204,7 +204,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                       value={formData.name}
                       onChange={e => setFormData({ ...formData, name: e.target.value })}
                       placeholder="e.g. Global Tech Summit 2026"
-                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                      className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                     />
                   </div>
                 </div>
@@ -220,7 +220,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         onChange={e => setFormData({ ...formData, short_code: e.target.value.toUpperCase() })}
                         placeholder="GTS26"
                         maxLength={10}
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)] font-mono"
+                        className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)] font-mono"
                       />
                     </div>
                   </div>
@@ -232,7 +232,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         value={formData.venue_name}
                         onChange={e => setFormData({ ...formData, venue_name: e.target.value })}
                         placeholder="e.g. Grand Plaza Hotel"
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                        className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                       />
                     </div>
                   </div>
@@ -246,7 +246,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                       <select
                         value={formData.country}
                         onChange={e => setFormData({ ...formData, country: e.target.value, state: "" })}
-                        className="w-full h-12 glass-3d border border-default pl-12 pr-4 text-[13px] font-bold text-[var(--text)] bg-[var(--base)] rounded-xl outline-none focus:border-[var(--pri)]/50 transition-all appearance-none"
+                        className="w-full h-12 bg-[var(--surf)] border border-[var(--border)] pl-12 pr-4 text-[13px] font-bold text-[var(--text)] rounded-xl outline-none focus:border-[var(--pri)]/50 transition-all appearance-none"
                       >
                         <option value="" disabled className="bg-[var(--base)] text-muted">Select Country</option>
                         {countryStates.map(c => (
@@ -263,7 +263,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         value={formData.state}
                         onChange={e => setFormData({ ...formData, state: e.target.value })}
                         disabled={!formData.country}
-                        className="w-full h-12 glass-3d border border-default pl-12 pr-4 text-[13px] font-bold text-[var(--text)] bg-[var(--base)] rounded-xl outline-none focus:border-[var(--pri)]/50 transition-all appearance-none disabled:opacity-50"
+                        className="w-full h-12 bg-[var(--surf)] border border-[var(--border)] pl-12 pr-4 text-[13px] font-bold text-[var(--text)] rounded-xl outline-none focus:border-[var(--pri)]/50 transition-all appearance-none disabled:opacity-50"
                       >
                         <option value="" className="bg-[var(--base)] text-muted">Select State</option>
                         {getStatesForCountry(countryStates, formData.country).map(s => (
@@ -280,14 +280,14 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         value={formData.location}
                         onChange={e => setFormData({ ...formData, location: e.target.value })}
                         placeholder="e.g. 5th Avenue, California"
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                        className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                       />
                     </div>
                   </div>
                 </div>
 
                 {/* Organizer Contact Info */}
-                <div className="glass-3d p-6 rounded-[2rem] border-default space-y-6">
+                <div className="bg-[var(--raised)] p-6 rounded-[2rem] border border-[var(--border)] space-y-6">
                   <div>
                     <h4 className="text-[12px] font-black text-[var(--text)] uppercase tracking-wider">Organizer Contact Info</h4>
                     <p className="text-muted text-[10px] font-bold uppercase tracking-widest mt-0.5">Specify organizer details and public contact channels.</p>
@@ -305,7 +305,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                             organizer_details: { ...formData.organizer_details, name: e.target.value }
                           })}
                           placeholder="e.g. Tech Solutions Inc."
-                          className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                          className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                         />
                       </div>
                     </div>
@@ -321,7 +321,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                             organizer_details: { ...formData.organizer_details, email: e.target.value }
                           })}
                           placeholder="org@example.com"
-                          className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                          className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                         />
                       </div>
                     </div>
@@ -339,7 +339,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                             organizer_details: { ...formData.organizer_details, phone: e.target.value }
                           })}
                           placeholder="+1 555 1234"
-                          className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                          className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                         />
                       </div>
                     </div>
@@ -354,7 +354,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                             organizer_details: { ...formData.organizer_details, website: e.target.value }
                           })}
                           placeholder="www.organizer.com"
-                          className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)]"
+                          className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)]"
                         />
                       </div>
                     </div>
@@ -371,7 +371,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         type="date"
                         value={formData.start_date}
                         onChange={e => setFormData({ ...formData, start_date: e.target.value })}
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)] [color-scheme:dark]"
+                        className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)] [color-scheme:dark]"
                       />
                     </div>
                   </div>
@@ -384,7 +384,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         type="date"
                         value={formData.end_date}
                         onChange={e => setFormData({ ...formData, end_date: e.target.value })}
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold text-[var(--text)] [color-scheme:dark]"
+                        className="h-12 bg-[var(--surf)] border-[var(--border)] pl-12 text-[13px] font-bold text-[var(--text)] [color-scheme:dark]"
                       />
                     </div>
                   </div>
@@ -396,7 +396,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                         required
                         value={formData.timezone}
                         onChange={e => setFormData({ ...formData, timezone: e.target.value })}
-                        className="w-full h-12 glass-3d border border-default pl-12 pr-4 text-[13px] font-bold text-[var(--text)] bg-[var(--base)] rounded-xl outline-none focus:border-[var(--pri)]/50 transition-all cursor-pointer"
+                        className="w-full h-12 bg-[var(--surf)] border border-[var(--border)] pl-12 pr-4 text-[13px] font-bold text-[var(--text)] rounded-xl outline-none focus:border-[var(--pri)]/50 transition-all cursor-pointer"
                       >
                         <option value="Asia/Kolkata">Asia/Kolkata (IST - UTC+05:30)</option>
                         <option value="UTC">UTC (Coordinated Universal Time - UTC+00:00)</option>
@@ -414,14 +414,14 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                 </div>
 
                 {/* Event Features / Modes Switches */}
-                <div className="glass-3d p-6 rounded-[2rem] border-default space-y-6">
+                <div className="bg-[var(--raised)] p-6 rounded-[2rem] border border-[var(--border)] space-y-6">
                   <div>
                     <h4 className="text-[12px] font-black text-[var(--text)] uppercase tracking-wider">Event Features & Modes</h4>
                     <p className="text-muted text-[10px] font-bold uppercase tracking-widest mt-0.5">Enable the modules required for this conference. At least one must be active.</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="flex items-center justify-between p-5 rounded-2xl bg-white/5 border border-default/50 hover:border-[var(--pri)]/20 transition-all gap-4">
+                    <div className="flex items-center justify-between p-5 rounded-2xl bg-[var(--surf)] border border-[var(--border)] hover:border-[var(--pri)]/20 transition-all gap-4">
                       <div className="space-y-1">
                         <Label className="text-[12px] font-black text-[var(--text)] leading-none cursor-pointer" htmlFor="switch-speaker">Speaker Presentation Desk</Label>
                         <p className="text-muted text-[9px] font-bold uppercase tracking-wider leading-normal">Manage schedule, speakers, files & eposters</p>
@@ -436,7 +436,7 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
                       />
                     </div>
 
-                    <div className="flex items-center justify-between p-5 rounded-2xl bg-white/5 border border-default/50 hover:border-[var(--sec)]/20 transition-all gap-4">
+                    <div className="flex items-center justify-between p-5 rounded-2xl bg-[var(--surf)] border border-[var(--border)] hover:border-[var(--sec)]/20 transition-all gap-4">
                       <div className="space-y-1">
                         <Label className="text-[12px] font-black text-[var(--text)] leading-none cursor-pointer" htmlFor="switch-registration">On-Site Registration & Badges</Label>
                         <p className="text-muted text-[9px] font-bold uppercase tracking-wider leading-normal">Manage registrations, checkins & dynamic badge printing</p>
@@ -455,14 +455,14 @@ export function CreateEventDialog({ isOpen, onClose, eventToEdit }: CreateEventD
               </form>
 
               {/* Footer */}
-              <div className="p-8 border-t border-default bg-[color-mix(in_srgb,var(--base)_50%,transparent)] backdrop-blur-sm flex gap-4">
+              <div className="p-8 border-t border-[var(--border)] bg-[var(--surf)] flex gap-4">
                 <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
                   Cancel
                 </Button>
                 <Button
                   disabled={loading}
                   onClick={handleSubmit}
-                  className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
+                  className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--primary-contrast)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
                 >
                   {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                   {eventToEdit ? "Update Event" : "Create Event"}

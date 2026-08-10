@@ -144,39 +144,45 @@ class RBACMiddleware:
             await self.app(scope, receive, send)
             return
 
+        user_exists = False
+        is_allowed = False
+        
         async with AsyncSessionLocal() as db:
             # Check if user exists in DB first to handle stale tokens/JWTs (e.g. after DB wipe/reset)
             from app.modules.identity.models.user import User
             user = await db.get(User, user_id)
-            if not user:
-                # User does not exist, let route-level auth dependencies return a proper 401
-                await self.app(scope, receive, send)
-                return
-
-            is_allowed = await RBACService.validate_access(db, user_id, required_perm, scope_id)
-            
-            if not is_allowed:
-                logger.warning(f"RBAC Denied: user={user_id} perm={required_perm} scope={scope_id} path={path}")
-                # Audit the failure
-                fail_log = AuditLog(
-                    actor_user_id=user_id,
-                    action_type="PERMISSION_DENIED",
-                    resource_type="rbac",
-                    resource_id=user_id,
-                    new_state={"required_permission": required_perm, "path": path},
-                    actor_ip=self._get_ip(request),
-                    is_sensitive=True,
-                    occurred_at=datetime.now(timezone.utc)
-                )
-                db.add(fail_log)
-                await db.commit()
+            if user:
+                user_exists = True
+                is_allowed = await RBACService.validate_access(db, user_id, required_perm, scope_id)
                 
-                response = JSONResponse(
-                    status_code=403,
-                    content={"detail": f"Missing required permission: {required_perm}"}
-                )
-                await response(scope, receive, send)
-                return
+                if not is_allowed:
+                    logger.warning(f"RBAC Denied: user={user_id} perm={required_perm} scope={scope_id} path={path}")
+                    # Audit the failure
+                    fail_log = AuditLog(
+                        actor_user_id=user_id,
+                        action_type="PERMISSION_DENIED",
+                        resource_type="rbac",
+                        resource_id=user_id,
+                        new_state={"required_permission": required_perm, "path": path},
+                        actor_ip=self._get_ip(request),
+                        is_sensitive=True,
+                        occurred_at=datetime.now(timezone.utc)
+                    )
+                    db.add(fail_log)
+                    await db.commit()
+
+        if not user_exists:
+            # User does not exist, let route-level auth dependencies return a proper 401
+            await self.app(scope, receive, send)
+            return
+
+        if not is_allowed:
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": f"Missing required permission: {required_perm}"}
+            )
+            await response(scope, receive, send)
+            return
 
         await self.app(scope, receive, send)
 

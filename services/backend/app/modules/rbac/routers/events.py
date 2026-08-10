@@ -67,6 +67,7 @@ async def _reserve_storage_upload(
 
 @router.get("", response_model=List[EventSummary])
 async def list_events(
+    organization_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status",
                                          pattern="^(draft|active|completed|archived)$"),
     search: Optional[str] = Query(None, max_length=100),
@@ -76,13 +77,15 @@ async def list_events(
     db: AsyncSession = Depends(get_db),
 ) -> List[EventSummary]:
     """List events scoped to the authenticated user's organisation."""
-    if current_user.role in ('super_admin', 'admin', 'organiser'):
-        if not current_user.organization_id:
+    if current_user.role in ('super_admin', 'system_admin', 'admin', 'organiser', 'organizer'):
+        target_org_id = organization_id or current_user.organization_id
+            
+        if not target_org_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
             )
-        q = select(Event).where(Event.organization_id == current_user.organization_id)
+        q = select(Event).where(Event.organization_id == target_org_id).execution_options(skip_tenant_filter=True)
     else:
         # Restricted roles: only see assigned events
         from app.modules.rbac.models.rbac import UserAccessNode

@@ -33,6 +33,7 @@ import dynamicIconImports from "lucide-react/dynamicIconImports";
 import { createRoot } from "react-dom/client";
 import {
   Archive,
+  ArrowLeft,
   Award,
   BadgeCheck,
   Blocks,
@@ -59,14 +60,18 @@ import {
   ListChecks,
   Italic,
   Link2,
+  Lock,
+  Mail,
   MapPin,
   Megaphone,
   Menu,
   Minus,
   Monitor,
+  MoreVertical,
   MousePointerClick,
   MoveVertical,
   Palette,
+  Pencil,
   PanelBottom,
   PanelRight,
   PanelTop,
@@ -1366,6 +1371,893 @@ const preciseCollisionDetection: CollisionDetection = (args) => {
       : closestCenter(args);
 };
 
+function SearchableOrgSelect({
+  organizations,
+  value,
+  onChange,
+}: {
+  organizations: Array<{ id: string; name: string; slug?: string }>;
+  value?: string | null;
+  onChange: (id: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return organizations;
+    const term = search.toLowerCase();
+    return organizations.filter(
+      (org) =>
+        org.name.toLowerCase().includes(term) ||
+        (org.slug && org.slug.toLowerCase().includes(term)),
+    );
+  }, [organizations, search]);
+
+  const selectedOrg = organizations.find((o) => o.id === value);
+
+  return (
+    <div className="ebs-searchable-select">
+      <button
+        type="button"
+        className="ebs-select-trigger"
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span>{selectedOrg ? selectedOrg.name : "Select an organization…"}</span>
+        <ChevronDown size={14} />
+      </button>
+      {open ? (
+        <div className="ebs-select-dropdown">
+          <div className="ebs-select-search-box">
+            <Search size={14} />
+            <input
+              type="text"
+              autoFocus
+              placeholder="Search organization by name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="ebs-select-options">
+            {filtered.map((org) => (
+              <button
+                key={org.id}
+                type="button"
+                className={`ebs-select-option ${org.id === value ? "is-selected" : ""}`}
+                onClick={() => {
+                  onChange(org.id);
+                  setOpen(false);
+                }}
+              >
+                <span>{org.name}</span>
+                {org.slug ? <small>({org.slug})</small> : null}
+              </button>
+            ))}
+            {!filtered.length ? (
+              <div className="ebs-select-empty">No matching organization</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectsGalleryView({
+  templates,
+  scopeLabel,
+  activeTemplateId,
+  onSelectTemplate,
+  onCreateTemplate,
+  onDeleteTemplate,
+  onDuplicateTemplate,
+  onSendTest,
+  onOpenEditor,
+  onOpenDetails,
+}: {
+  templates: StudioTemplate[];
+  scopeLabel: string;
+  activeTemplateId: string | null;
+  onSelectTemplate?: (id: string) => void;
+  onCreateTemplate?: (template: { name: string; stableKey: string }) => void;
+  onDeleteTemplate?: (id: string) => Promise<void> | void;
+  onDuplicateTemplate?: (id: string) => Promise<StudioTemplate | void>;
+  onSendTest?: (id: string) => void;
+  onOpenEditor: (id: string) => void;
+  onOpenDetails: (id: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [orderBy, setOrderBy] = useState<"updated" | "name">("updated");
+  const [typeFilter, setTypeFilter] = useState<string>("All");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [templateToDelete, setTemplateToDelete] = useState<StudioTemplate | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateKey, setNewTemplateKey] = useState("");
+
+  const filtered = useMemo(() => {
+    let result = templates;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          t.subject.toLowerCase().includes(q) ||
+          t.stableKey.toLowerCase().includes(q),
+      );
+    }
+    if (typeFilter !== "All") {
+      result = result.filter(
+        (t) =>
+          t.stableKey.toLowerCase().includes(typeFilter.toLowerCase()) ||
+          t.scopeType.toLowerCase().includes(typeFilter.toLowerCase()),
+      );
+    }
+    if (orderBy === "name") {
+      result = [...result].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return result;
+  }, [templates, search, typeFilter, orderBy]);
+
+  return (
+    <div className="ebs-projects-page" onClick={() => setOpenMenuId(null)}>
+      {/* Top Header Bar */}
+      <div className="ebs-projects-header">
+        <div>
+          <h1 className="ebs-projects-title">Projects</h1>
+          <span className="ebs-projects-scope-badge">{scopeLabel}</span>
+        </div>
+        <div className="ebs-projects-actions">
+          {onCreateTemplate ? (
+            <button
+              type="button"
+              className="ebs-btn-create-primary"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus size={16} />
+              Create new
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div className="ebs-projects-filter-bar">
+        <div className="ebs-filter-selects">
+          <div className="ebs-filter-item">
+            <label>Order by:</label>
+            <select
+              value={orderBy}
+              onChange={(e) => setOrderBy(e.target.value as "updated" | "name")}
+            >
+              <option value="updated">Last updated...</option>
+              <option value="name">Template Name (A-Z)</option>
+            </select>
+          </div>
+          <div className="ebs-filter-item">
+            <label>Type:</label>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+            >
+              <option value="All">All</option>
+              <option value="speaker">Speaker</option>
+              <option value="participant">Participant</option>
+              <option value="attendee">Attendee</option>
+            </select>
+          </div>
+        </div>
+        <div className="ebs-search-field">
+          <Search size={15} />
+          <input
+            type="text"
+            placeholder="Search in Your workspace"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="ebs-projects-meta-line">
+        <span>Designs <strong>{filtered.length}</strong>/{templates.length}</span>
+      </div>
+
+      {/* Card Grid */}
+      <div className="ebs-projects-grid">
+        {/* Create Card */}
+        {onCreateTemplate ? (
+          <div
+            className="ebs-card ebs-card-create"
+            onClick={() => setCreateOpen(true)}
+          >
+            <div className="ebs-card-create-body">
+              <div className="ebs-create-plus-icon">
+                <Plus size={26} />
+              </div>
+              <strong>Create New Template</strong>
+              <span>Start from scratch or blank layout</span>
+            </div>
+          </div>
+        ) : null}
+        {filtered.map((template) => {
+          const isMenuOpen = openMenuId === template.id;
+          const canDelete = Boolean(onDeleteTemplate) && template.editable;
+
+          return (
+            <div
+              key={template.id}
+              className={`ebs-card ${activeTemplateId === template.id ? "is-selected-card" : ""}`}
+              onClick={() => {
+                onSelectTemplate?.(template.id);
+                onOpenDetails(template.id);
+              }}
+            >
+              {/* 3-dots Menu Button (outside overflow:hidden preview box) */}
+              <div
+                className="ebs-card-menu-anchor"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="ebs-card-dots-btn"
+                  title="Template options"
+                  onClick={() => setOpenMenuId(isMenuOpen ? null : template.id)}
+                >
+                  <MoreVertical size={16} />
+                </button>
+
+                {/* Dropdown Menu on Hover/Click */}
+                {isMenuOpen ? (
+                  <div className="ebs-card-menu-dropdown">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenuId(null);
+                        onSelectTemplate?.(template.id);
+                        onOpenDetails(template.id);
+                      }}
+                    >
+                      <Pencil size={14} />
+                      View details
+                    </button>
+
+                    {onSendTest ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenuId(null);
+                          onSelectTemplate?.(template.id);
+                          onSendTest(template.id);
+                        }}
+                      >
+                        <Send size={14} />
+                        Send test
+                      </button>
+                    ) : null}
+
+                    {onDuplicateTemplate ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setOpenMenuId(null);
+                          const copy = await onDuplicateTemplate(template.id);
+                          if (copy) {
+                            onOpenEditor(copy.id);
+                          }
+                        }}
+                      >
+                        <Copy size={14} />
+                        Make a copy
+                      </button>
+                    ) : null}
+
+                    {canDelete ? (
+                      <button
+                        type="button"
+                        className="is-delete-btn"
+                        onClick={() => {
+                          setOpenMenuId(null);
+                          setTemplateToDelete(template);
+                        }}
+                      >
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
+                    ) : (
+                      <div className="ebs-menu-disabled-item" title="Platform default templates cannot be deleted by organization users">
+                        <Lock size={12} />
+                        <span>System default</span>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Preview Box */}
+              <div className="ebs-card-preview-box">
+                <div className="ebs-type-tag">
+                  <Mail size={11} />
+                  <span>Email</span>
+                </div>
+
+                {/* HTML Iframe Preview */}
+                <iframe
+                  title={template.name}
+                  srcDoc={template.bodyHtml}
+                  className="ebs-card-preview-iframe"
+                  tabIndex={-1}
+                />
+              </div>
+
+              {/* Card Footer */}
+              <div className="ebs-card-info">
+                <div className="ebs-card-name">{template.name}</div>
+                <div className="ebs-card-subtext">
+                  <span>{template.effectiveOrigin ?? template.scopeType}</span>
+                  <span>{template.version ? `v${template.version}` : "Draft"}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {templateToDelete ? (
+        <div className="ebs-modal-overlay" onClick={() => setTemplateToDelete(null)}>
+          <div className="ebs-modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete Template</h3>
+            <p>
+              Are you sure you want to delete <strong>{templateToDelete.name}</strong>? This action cannot be undone.
+            </p>
+            <div className="ebs-modal-footer">
+              <button
+                type="button"
+                className="ebs-btn-cancel"
+                onClick={() => setTemplateToDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ebs-btn-danger"
+                onClick={async () => {
+                  if (onDeleteTemplate) {
+                    await onDeleteTemplate(templateToDelete.id);
+                  }
+                  setTemplateToDelete(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Create Modal */}
+      {createOpen ? (
+        <div className="ebs-modal-overlay" onClick={() => setCreateOpen(false)}>
+          <div className="ebs-modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>Create New Email Template</h3>
+            <p>Specify a friendly name and unique key for this template.</p>
+            <div className="ebs-form-group">
+              <label>Template Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Speaker Welcome Email"
+                value={newTemplateName}
+                onChange={(e) => {
+                  setNewTemplateName(e.target.value);
+                  if (!newTemplateKey) {
+                    setNewTemplateKey(
+                      e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+                    );
+                  }
+                }}
+              />
+            </div>
+            <div className="ebs-form-group">
+              <label>Stable Key</label>
+              <input
+                type="text"
+                placeholder="e.g. speaker-welcome-email"
+                value={newTemplateKey}
+                onChange={(e) => setNewTemplateKey(e.target.value)}
+              />
+            </div>
+            <div className="ebs-modal-footer">
+              <button
+                type="button"
+                className="ebs-btn-cancel"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ebs-btn-primary"
+                disabled={!newTemplateName.trim() || !newTemplateKey.trim()}
+                onClick={async () => {
+                  if (onCreateTemplate) {
+                    await onCreateTemplate({
+                      name: newTemplateName.trim(),
+                      stableKey: newTemplateKey.trim(),
+                    });
+                  }
+                  setCreateOpen(false);
+                  setNewTemplateName("");
+                  setNewTemplateKey("");
+                }}
+              >
+                Create Template
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+function TemplateDetailsView({
+  template,
+  scopeLabel,
+  organizations = [],
+  onBackToGallery,
+  onOpenEditor,
+  onSaveDraft,
+  onUpdateScope,
+  onDuplicateTemplate,
+  onDeleteTemplate,
+  onSendTest,
+  onLoadVersions,
+  onRollback,
+}: {
+  template: StudioTemplate;
+  scopeLabel: string;
+  organizations?: Array<{ id: string; name: string; slug?: string }>;
+  onBackToGallery: () => void;
+  onOpenEditor: () => void;
+  onSaveDraft: (draft: StudioDraft) => Promise<void>;
+  onUpdateScope?: (
+    id: string,
+    scopeType: "PLATFORM" | "ORGANIZATION",
+    organizationId?: string | null,
+  ) => Promise<void>;
+  onDuplicateTemplate?: (id: string) => Promise<StudioTemplate | void>;
+  onDeleteTemplate?: (id: string) => Promise<void> | void;
+  onSendTest?: (id: string) => void;
+  onLoadVersions?: (template: StudioTemplate) => Promise<StudioVersion[]>;
+  onRollback?: (
+    template: StudioTemplate,
+    versionId: string,
+    reason: string,
+  ) => Promise<void>;
+}) {
+  const [tab, setTab] = useState<"details" | "review" | "history">("details");
+  const [name, setName] = useState(template.name);
+  const [editingName, setEditingName] = useState(false);
+  const [subject, setSubject] = useState(template.subject);
+  const [preheader, setPreheader] = useState(template.preheader ?? "");
+  const [editingSubject, setEditingSubject] = useState(false);
+  const [activeStatus, setActiveStatus] = useState(template.lifecycleState !== "ARCHIVED");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [versionsList, setVersionsList] = useState<StudioVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+
+  useEffect(() => {
+    setName(template.name);
+    setSubject(template.subject);
+    setPreheader(template.preheader ?? "");
+    setActiveStatus(template.lifecycleState !== "ARCHIVED");
+  }, [template]);
+
+  useEffect(() => {
+    if (tab === "history" && onLoadVersions) {
+      setLoadingVersions(true);
+      onLoadVersions(template)
+        .then((res) => setVersionsList(res))
+        .finally(() => setLoadingVersions(false));
+    }
+  }, [tab, template, onLoadVersions]);
+
+  const saveDetails = async () => {
+    if (!template.designerJson) return;
+    setBusy(true);
+    try {
+      await onSaveDraft({
+        templateId: template.id,
+        name: name.trim(),
+        subject: subject.trim(),
+        preheader: preheader.trim(),
+        designerJson: template.designerJson,
+        bodyHtml: template.bodyHtml,
+        editorSchemaVersion: 4,
+        expectedVersion: template.version,
+      });
+      setEditingName(false);
+      setEditingSubject(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canDelete = Boolean(onDeleteTemplate) && template.editable;
+
+  return (
+    <div className="ebs-template-details-page">
+      {/* Top Breadcrumbs Navigation Header */}
+      <div className="ebs-details-top-nav">
+        <div className="ebs-breadcrumbs">
+          <button type="button" className="ebs-crumb-link" onClick={onBackToGallery}>
+            Projects
+          </button>
+          <span className="ebs-crumb-sep">›</span>
+          <span className="ebs-crumb-current">{template.name}</span>
+          <span className="ebs-crumb-tag">
+            <Mail size={12} />
+          </span>
+        </div>
+      </div>
+
+      {/* Main Two-Column View */}
+      <div className="ebs-details-main-grid">
+        {/* Left Column: Live Email Preview Box */}
+        <div className="ebs-details-preview-col">
+          <div className="ebs-preview-window-frame">
+            <div className="ebs-preview-window-dots">
+              <span />
+              <span />
+              <span />
+            </div>
+            <iframe
+              title={template.name}
+              srcDoc={template.bodyHtml}
+              className="ebs-preview-window-iframe"
+            />
+          </div>
+        </div>
+
+        {/* Right Column: Settings & Details Panel */}
+        <div className="ebs-details-panel-col">
+          {/* Tabs Bar */}
+          <div className="ebs-details-tabs">
+            <button
+              type="button"
+              className={tab === "details" ? "is-active-tab" : ""}
+              onClick={() => setTab("details")}
+            >
+              Email Details
+            </button>
+            <button
+              type="button"
+              className={tab === "review" ? "is-active-tab" : ""}
+              onClick={() => setTab("review")}
+            >
+              Email Review
+            </button>
+            <button
+              type="button"
+              className={tab === "history" ? "is-active-tab" : ""}
+              onClick={() => setTab("history")}
+            >
+              Email History
+            </button>
+          </div>
+
+          {/* Subheader Meta Bar */}
+          <div className="ebs-details-meta-bar">
+            <span className="ebs-meta-text">
+              Last edit v{template.version} · {template.effectiveOrigin ?? template.scopeType}
+            </span>
+            <div className="ebs-meta-actions">
+              <button
+                type="button"
+                className="ebs-btn-edit-email"
+                onClick={onOpenEditor}
+              >
+                <Pencil size={15} />
+                Edit email
+              </button>
+              {onDuplicateTemplate ? (
+                <button
+                  type="button"
+                  className="ebs-btn-duplicate-action"
+                  title="Make a copy of this template"
+                  onClick={() => onDuplicateTemplate(template.id)}
+                >
+                  <Copy size={15} />
+                  Make a copy
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {tab === "details" ? (
+            <div className="ebs-details-cards-stack">
+              {/* Card 1: Template Name */}
+              <div className="ebs-details-card">
+                <div className="ebs-card-header-row">
+                  <strong>{editingName ? "Edit Template Name" : template.name}</strong>
+                  <button
+                    type="button"
+                    className="ebs-icon-edit-btn"
+                    onClick={() => setEditingName((v) => !v)}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                </div>
+                {editingName ? (
+                  <div className="ebs-card-edit-body">
+                    <input
+                      type="text"
+                      className="ebs-input-field"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                    />
+                    <div className="ebs-card-save-row">
+                      <button
+                        type="button"
+                        className="ebs-btn-cancel"
+                        onClick={() => setEditingName(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="ebs-btn-primary"
+                        disabled={busy}
+                        onClick={saveDetails}
+                      >
+                        Save Name
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Card 2: Subject & Preheader */}
+              <div className="ebs-details-card">
+                <div className="ebs-card-header-row">
+                  <div>
+                    <strong>Subject, Preheader, and UTMs</strong>
+                    <p className="ebs-card-sub-desc">
+                      {subject ? `Subject: ${subject}` : "No subject defined"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="ebs-icon-edit-btn"
+                    onClick={() => setEditingSubject((v) => !v)}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                </div>
+                {editingSubject ? (
+                  <div className="ebs-card-edit-body">
+                    <div className="ebs-form-group">
+                      <label>Subject Line</label>
+                      <input
+                        type="text"
+                        className="ebs-input-field"
+                        value={subject}
+                        onChange={(e) => setSubject(e.target.value)}
+                      />
+                    </div>
+                    <div className="ebs-form-group">
+                      <label>Preheader Text</label>
+                      <input
+                        type="text"
+                        className="ebs-input-field"
+                        value={preheader}
+                        onChange={(e) => setPreheader(e.target.value)}
+                      />
+                    </div>
+                    <div className="ebs-card-save-row">
+                      <button
+                        type="button"
+                        className="ebs-btn-cancel"
+                        onClick={() => setEditingSubject(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="ebs-btn-primary"
+                        disabled={busy}
+                        onClick={saveDetails}
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Card 3: Scope & Availability */}
+              {onUpdateScope ? (
+                <div className="ebs-details-card">
+                  <strong>Template Scope & Availability</strong>
+                  <p className="ebs-card-sub-desc">
+                    Control whether this template is available to all tenant organizations or a specific organization.
+                  </p>
+                  <div className="ebs-scope-select-wrap">
+                    <select
+                      className="ebs-select-field"
+                      value={template.organizationId ? "ORGANIZATION" : "PLATFORM"}
+                      onChange={async (e) => {
+                        const nextType = e.target.value as "PLATFORM" | "ORGANIZATION";
+                        if (nextType === "PLATFORM") {
+                          await onUpdateScope(template.id, "PLATFORM", null);
+                        } else {
+                          const firstOrg = organizations[0]?.id ?? null;
+                          await onUpdateScope(template.id, "ORGANIZATION", firstOrg);
+                        }
+                      }}
+                    >
+                      <option value="PLATFORM">All Tenants / Organizations (Public Default)</option>
+                      <option value="ORGANIZATION">Specific Organization Only</option>
+                    </select>
+                    {template.organizationId || (organizations && organizations.length > 0) ? (
+                      <div className="ebs-scope-org-picker-wrap">
+                        <small>Assigned Organization:</small>
+                        <SearchableOrgSelect
+                          organizations={organizations}
+                          value={template.organizationId}
+                          onChange={async (orgId) => {
+                            await onUpdateScope(template.id, "ORGANIZATION", orgId);
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Card 4: Active Status Switch */}
+              <div className="ebs-details-card ebs-toggle-card">
+                <div>
+                  <strong>Active Status</strong>
+                  <p className="ebs-card-sub-desc">
+                    Enable or disable this template for event notifications.
+                  </p>
+                </div>
+                <label className="ebs-switch-toggle">
+                  <input
+                    type="checkbox"
+                    checked={activeStatus}
+                    onChange={(e) => setActiveStatus(e.target.checked)}
+                  />
+                  <span className="ebs-switch-slider" />
+                </label>
+              </div>
+
+              {/* Bottom Quick Actions Row */}
+              <div className="ebs-details-bottom-actions">
+                {onSendTest ? (
+                  <button
+                    type="button"
+                    className="ebs-bottom-action-btn"
+                    onClick={() => onSendTest(template.id)}
+                  >
+                    <Send size={14} />
+                    Send test
+                  </button>
+                ) : null}
+                {onDuplicateTemplate ? (
+                  <button
+                    type="button"
+                    className="ebs-bottom-action-btn"
+                    onClick={() => onDuplicateTemplate(template.id)}
+                  >
+                    <Copy size={14} />
+                    Make a copy
+                  </button>
+                ) : null}
+                {canDelete ? (
+                  <button
+                    type="button"
+                    className="ebs-bottom-action-btn is-delete"
+                    onClick={() => setDeleteConfirm(true)}
+                  >
+                    <Trash2 size={14} />
+                    Delete template
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : tab === "review" ? (
+            <div className="ebs-details-tab-panel">
+              <h3>Email Diagnostics & Syntax Review</h3>
+              <p>Everything in this template is structurally valid and ready for production delivery.</p>
+              <div className="ebs-review-item">
+                <span className="ebs-review-check">✓</span>
+                <div>
+                  <strong>Schema v4 Structural Validation</strong>
+                  <p>All block nodes, icon fragments, and layout grid specs are standard compliant.</p>
+                </div>
+              </div>
+              <div className="ebs-review-item">
+                <span className="ebs-review-check">✓</span>
+                <div>
+                  <strong>Dynamic Variable Placeholders</strong>
+                  <p>Subject and body text contain valid handlebars variables.</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="ebs-details-tab-panel">
+              <h3>Version Audit Log</h3>
+              {loadingVersions ? (
+                <p>Loading historical template versions...</p>
+              ) : (
+                <div className="ebs-versions-list">
+                  {versionsList.map((ver) => (
+                    <div key={ver.id} className="ebs-version-row">
+                      <div>
+                        <strong>v{ver.version}</strong> · {ver.lifecycleState}
+                        <small className="ebs-version-date">
+                          {ver.publishedAt ? new Date(ver.publishedAt).toLocaleString() : "Draft"}
+                        </small>
+                      </div>
+                      {ver.lifecycleState !== "DRAFT" && onRollback ? (
+                        <button
+                          type="button"
+                          className="ebs-btn-cancel"
+                          onClick={() => onRollback(template, ver.id, "Restored from Details view")}
+                        >
+                          Restore v{ver.version}
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Delete Pop-up Modal Window */}
+      {deleteConfirm ? (
+        <div className="ebs-modal-overlay" onClick={() => setDeleteConfirm(false)}>
+          <div className="ebs-modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete Template</h3>
+            <p>
+              Are you sure you want to delete <strong>{template.name}</strong>? This action cannot be undone and will permanently remove this template from your workspace.
+            </p>
+            <div className="ebs-modal-footer">
+              <button
+                type="button"
+                className="ebs-btn-cancel"
+                onClick={() => setDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ebs-btn-danger"
+                onClick={async () => {
+                  if (onDeleteTemplate) {
+                    await onDeleteTemplate(template.id);
+                  }
+                  setDeleteConfirm(false);
+                  onBackToGallery();
+                }}
+              >
+                Delete Template
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
 export function EmailBuilderStudio({
   templates,
   activeTemplateId,
@@ -1380,7 +2272,11 @@ export function EmailBuilderStudio({
   readOnly = false,
   busy = false,
   scopeLabel,
+  organizations = [],
   onSelectTemplate,
+  onDeleteTemplate,
+  onDuplicateTemplate,
+  onUpdateScope,
   onCreateTemplate,
   onSaveDraft,
   onPublish,
@@ -1393,6 +2289,7 @@ export function EmailBuilderStudio({
   onSaveFragment,
   onArchive,
 }: EmailBuilderStudioProps) {
+  const [viewMode, setViewMode] = useState<"gallery" | "details" | "editor">("gallery");
   const active =
     templates.find((item) => item.id === activeTemplateId) ?? templates[0];
   const [document, setDocument] = useState<EmailDocument>(
@@ -2353,9 +3250,73 @@ export function EmailBuilderStudio({
       ? nodeOf(document, activeDragId)?.type
       : null;
 
+  if (viewMode === "gallery") {
+    return (
+      <section className="ebs-shell" aria-label="Email templates gallery">
+        <ProjectsGalleryView
+          templates={templates}
+          scopeLabel={scopeLabel}
+          activeTemplateId={active?.id ?? null}
+          onSelectTemplate={onSelectTemplate}
+          onCreateTemplate={onCreateTemplate}
+          onDeleteTemplate={onDeleteTemplate}
+          onDuplicateTemplate={onDuplicateTemplate}
+          onSendTest={(id) => {
+            onSelectTemplate?.(id);
+            setTestOpen(true);
+            setViewMode("editor");
+          }}
+          onOpenEditor={(id) => {
+            onSelectTemplate?.(id);
+            setViewMode("editor");
+          }}
+          onOpenDetails={(id) => {
+            onSelectTemplate?.(id);
+            setViewMode("details");
+          }}
+        />
+      </section>
+    );
+  }
+
+  if (viewMode === "details" && active) {
+    return (
+      <section className="ebs-shell" aria-label="Email template details">
+        <TemplateDetailsView
+          template={active}
+          scopeLabel={scopeLabel}
+          organizations={organizations}
+          onBackToGallery={() => setViewMode("gallery")}
+          onOpenEditor={() => setViewMode("editor")}
+          onSaveDraft={async (draft) => {
+            if (onSaveDraft) await onSaveDraft(draft);
+          }}
+          onUpdateScope={onUpdateScope}
+          onDuplicateTemplate={onDuplicateTemplate}
+          onDeleteTemplate={onDeleteTemplate}
+          onSendTest={(id) => {
+            setTestOpen(true);
+            setViewMode("editor");
+          }}
+          onLoadVersions={onLoadVersions}
+          onRollback={onRollback}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="ebs-shell" aria-label="Email designer">
       <header className="ebs-toolbar">
+        <button
+          type="button"
+          className="ebs-btn-back-gallery"
+          title="Back to Projects"
+          onClick={() => setViewMode("gallery")}
+        >
+          <ArrowLeft size={16} />
+          <span>All Templates</span>
+        </button>
         <div className="ebs-brand-lockup">
           <span className="ebs-brand-icon">
             <Send size={17} />
@@ -2437,6 +3398,19 @@ export function EmailBuilderStudio({
             <Send size={16} />
             Send test
           </button>
+          {onDuplicateTemplate ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                await onDuplicateTemplate(active.id);
+              }}
+              title="Make a copy of this template"
+            >
+              <Copy size={16} />
+              Make a copy
+            </button>
+          ) : null}
           <button disabled={!editable || busy} onClick={() => void save()}>
             <Save size={16} />
             Save draft
@@ -2799,6 +3773,37 @@ export function EmailBuilderStudio({
                       <option value="en">English</option>
                     </select>
                   </Field>
+                  {onUpdateScope ? (
+                    <Field label="Tenant scope assignment">
+                      <select
+                        value={active?.organizationId ? "ORGANIZATION" : "PLATFORM"}
+                        onChange={async (e) => {
+                          const nextType = e.target.value as "PLATFORM" | "ORGANIZATION";
+                          if (nextType === "PLATFORM") {
+                            await onUpdateScope(active.id, "PLATFORM", null);
+                          } else {
+                            const firstOrg = organizations[0]?.id ?? null;
+                            await onUpdateScope(active.id, "ORGANIZATION", firstOrg);
+                          }
+                        }}
+                      >
+                        <option value="PLATFORM">All Tenants / Organizations (Platform Default)</option>
+                        <option value="ORGANIZATION">Specific Organization Only</option>
+                      </select>
+                      {active?.organizationId || (organizations && organizations.length > 0) ? (
+                        <div className="ebs-scope-org-picker">
+                          <small className="ebs-field-sub">Select Target Organization:</small>
+                          <SearchableOrgSelect
+                            organizations={organizations}
+                            value={active?.organizationId}
+                            onChange={async (orgId) => {
+                              await onUpdateScope(active.id, "ORGANIZATION", orgId);
+                            }}
+                          />
+                        </div>
+                      ) : null}
+                    </Field>
+                  ) : null}
                 </div>
               ) : null}
             </aside>

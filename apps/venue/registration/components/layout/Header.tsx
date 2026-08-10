@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import {
   Bell, User, ChevronRight,
   Settings, HelpCircle, LogOut, Clock,
-  Zap, Palette, ShieldCheck, Box, PanelLeft, Wifi, WifiOff
+  Zap, ShieldCheck, Box, PanelLeft, Wifi, WifiOff, Sun, Moon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,12 +24,10 @@ export function Header() {
   const { eventId } = useParams();
   const [time, setTime] = useState(new Date());
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
-  const { theme, setTheme, themes } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { user, logout } = useAuthStore();
   const { isSidebarCollapsed, toggleSidebar } = useUIStore();
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const themeMenuRef = useRef<HTMLDivElement>(null);
 
   // WebSocket hook
   const { isConnected } = useWebSocket(eventId as string);
@@ -43,9 +41,6 @@ export function Header() {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
-      }
-      if (themeMenuRef.current && !themeMenuRef.current.contains(event.target as Node)) {
-        setIsThemeMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -130,51 +125,18 @@ export function Header() {
             </button>
           </Link>
 
-          <div className="relative" ref={themeMenuRef}>
-            <button
-              onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
-              className="h-11 w-11 rounded-xl glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--pri)] hover:border-[var(--pri)]/30 transition-all"
-            >
-              <Palette className="h-5 w-5" />
-            </button>
-            <AnimatePresence>
-              {isThemeMenuOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute right-0 mt-3 w-48 glass-3d border-default rounded-2xl p-3 z-50 shadow-2xl"
-                >
-                  <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-3 px-2">Select Theme</p>
-                  <div className="grid grid-cols-5 gap-2">
-                    {themes.map(t => (
-                      <button
-                        key={t.name}
-                        onClick={() => { setTheme(t.name); setIsThemeMenuOpen(false); }}
-                        className={cn(
-                          "h-7 w-7 rounded-full border-2 transition-all",
-                          theme === t.name ? "border-[var(--pri)] scale-110" : "border-default hover:border-muted"
-                        )}
-                        title={t.label}
-                        style={{
-                          background: t.name === 'void-indigo' ? '#6366F1' :
-                            t.name === 'obsidian-rose' ? '#C084FC' :
-                              t.name === 'carbon-teal' ? '#14B8A6' :
-                                t.name === 'amber-noir' ? '#F59E0B' :
-                                  t.name === 'slate-aurora' ? '#38BDF8' :
-                                    t.name === 'forest-ink' ? '#22C55E' :
-                                      t.name === 'copper-oxide' ? '#D97706' :
-                                        t.name === 'plasma-violet' ? '#8B5CF6' :
-                                          t.name === 'light' ? '#ececf3ff' :
-                                            '#1a1a1a'
-                        }}
-                      />
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          {/* Direct 1-Click Light/Dark Mode Toggle */}
+          <button
+            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+            className="h-11 w-11 rounded-xl glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--pri)] hover:border-[var(--pri)]/30 transition-all"
+            title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+          >
+            {theme === "light" ? (
+              <Moon className="h-5 w-5 text-[var(--pri)]" />
+            ) : (
+              <Sun className="h-5 w-5 text-amber-400" />
+            )}
+          </button>
 
           <Link href="/docs">
             <button className="h-11 w-11 rounded-xl glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--text)] hover:border-default transition-all">

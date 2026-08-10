@@ -92,6 +92,7 @@ async def test_get_public_form_closed(
     db: AsyncSession,
     event: Event
 ):
+    await activate_event_for_test(db, event)
     # By default, form config is closed
     form_data = await get_public_registration_form(event_id=event.id, response=Response(), db=db)
     

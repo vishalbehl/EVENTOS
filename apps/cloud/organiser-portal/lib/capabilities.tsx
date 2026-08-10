@@ -242,7 +242,7 @@ export function useFeatureAccess(featureKey?: string) {
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
   return {
-    enabled: true, // Boolean(feature?.enabled) && data?.availability?.available !== false,
+    enabled: Boolean(feature?.enabled) && data?.availability?.available !== false,
     loading: isLoading,
     reason: isError ? "RESOLUTION_UNAVAILABLE" as const : availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,

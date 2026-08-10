@@ -2,7 +2,7 @@ import { apiClient } from "@/lib/api-client";
 
 export type EmailStudioRecord = {
   id: string; name: string; stable_key: string; template_type: string; target_type: string;
-  scope_type: "PLATFORM" | "ORGANIZATION" | "EVENT"; subject: string; preheader?: string | null; body_html: string;
+  scope_type: "PLATFORM" | "ORGANIZATION" | "EVENT"; organization_id?: string | null; subject: string; preheader?: string | null; body_html: string;
   body_text?: string | null; designer_json?: Record<string, unknown> | null; version: number;
   lifecycle_state: "DRAFT" | "PUBLISHED" | "ARCHIVED" | "LEGACY";
   effective_origin: "PLATFORM" | "ORGANIZATION" | "EVENT"; editable: boolean; fallback_reason?: string | null;
@@ -17,6 +17,8 @@ export const eventEmailTemplates = {
   publish: (eventId: string, id: string, version: number, reason: string) => apiClient.post<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio/${id}/publish`, { reason }, { headers: headers(version) }),
   preview: (eventId: string, id: string, payload: object) => apiClient.post<{ subject: string; html: string; plain_text: string; diagnostics: Array<{ path: string; message: string; severity: "error" | "warning" }> }>(`/events/${eventId}/notifications/template-studio/${id}/preview`, { ...payload, preview_data_profile: "representative" }),
   testSend: (eventId: string, id: string, recipientEmail: string, payload: object) => apiClient.post(`/events/${eventId}/notifications/template-studio/${id}/test-send`, { ...payload, recipient_email: recipientEmail, preview_data_profile: "representative" }, { headers: headers(1) }),
+  delete: (eventId: string, id: string) => apiClient.delete(`/events/${eventId}/notifications/template-studio/${id}`),
+  duplicate: (eventId: string, id: string) => apiClient.post<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio/${id}/duplicate`),
 };
 export const organizationEmailTemplates = {
   list: (organizationId: string, targetType = "speaker") => apiClient.get<EmailStudioRecord[]>(`/organizations/${organizationId}/email-templates`, { params: { target_type: targetType } }),
@@ -24,6 +26,8 @@ export const organizationEmailTemplates = {
   publish: (organizationId: string, id: string, version: number, reason: string) => apiClient.post<EmailStudioRecord>(`/organizations/${organizationId}/email-templates/${id}/publish`, { reason }, { headers: headers(version) }),
   preview: (organizationId: string, id: string, payload: object) => apiClient.post<{ subject: string; html: string; plain_text: string; diagnostics: Array<{ path: string; message: string; severity: "error" | "warning" }> }>(`/organizations/${organizationId}/email-templates/${id}/preview`, { ...payload, preview_data_profile: "representative" }),
   testSend: (organizationId: string, id: string, recipientEmail: string, payload: object) => apiClient.post(`/organizations/${organizationId}/email-templates/${id}/test-send`, { ...payload, recipient_email: recipientEmail, preview_data_profile: "representative" }, { headers: headers(1) }),
+  delete: (organizationId: string, id: string) => apiClient.delete(`/organizations/${organizationId}/email-templates/${id}`),
+  duplicate: (organizationId: string, id: string) => apiClient.post<EmailStudioRecord>(`/organizations/${organizationId}/email-templates/${id}/duplicate`),
 };
 export const organizationEmailComponents = {
   list: (organizationId: string) => apiClient.get<EmailFragmentRecord[]>(`/organizations/${organizationId}/email-components`),
@@ -35,7 +39,7 @@ export const eventEmailComponents = {
 };
 export const organizationEmailAssets = {
   list: (organizationId: string) => apiClient.get<EmailAssetRecord[]>(`/organizations/${organizationId}/email-assets`),
-  upload: (organizationId: string, file: File, assetKind: "IMAGE" | "ICON" = "IMAGE") => { const data = new FormData(); data.append("file", file); return apiClient.post<EmailAssetRecord>(`/organizations/${organizationId}/email-assets`, data, { params: { asset_kind: assetKind }, headers: { "Content-Type": "multipart/form-data", "Idempotency-Key": crypto.randomUUID() } }); },
+  upload: (organizationId: string, file: File, assetKind: "IMAGE" | "ICON" = "IMAGE") => { const data = new FormData(); data.append("file", file); return apiClient.post<EmailAssetRecord>(`/organizations/${organizationId}/email-assets`, data, { params: { asset_kind: assetKind }, headers: { "Content-Type": undefined, "Idempotency-Key": crypto.randomUUID() } as any }); },
 };
 export const eventEmailAssets = {
   list: (eventId: string) => apiClient.get<EmailAssetRecord[]>(`/events/${eventId}/emails/assets`),

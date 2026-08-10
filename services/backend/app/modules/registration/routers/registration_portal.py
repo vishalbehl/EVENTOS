@@ -35,9 +35,35 @@ from app.modules.registration.services.portal_service import verify_and_resolve_
 from app.core.dependencies.feature_gate import enforce_event_feature, enforce_event_operation, require_event_operation
 from app.modules.platform.services.metering_service import MeteringService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.platform.models.organization_console import UsageReservation
 
 router = APIRouter(tags=["registration_portal"])
+
+PUBLIC_REGISTRATION_CAPABILITIES = (
+    "FEAT_REGISTRATION_PORTAL", "FEAT_REGISTRATION_FORMS",
+    "FEAT_TICKET_CATEGORIES", "FEAT_COUPON_CODES",
+    "FEAT_PAYMENT_GATEWAY", "FEAT_QR_CONFIRMATION",
+)
+PUBLIC_REGISTRATION_LIMITS = ("max_registrations", "max_ticket_categories")
+
+
+async def _public_capability_result(db: AsyncSession, event: Event) -> dict[str, Any]:
+    """Resolve public registration access without exposing commercial lineage."""
+    try:
+        return await CapabilityService.resolve_event(
+            db, event.organization_id, event.id, environment=settings.environment.upper()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "RESOLUTION_UNAVAILABLE"},
+        ) from exc
+
+
+async def _require_public_registration(db: AsyncSession, event: Event) -> dict[str, Any]:
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
+    return await _public_capability_result(db, event)
 
 DEFAULT_FIELDS = [
     {
@@ -231,6 +257,48 @@ async def update_registration_form_config(
 
 # ── Public Registration Portal Endpoints ─────────────────────────
 
+@router.get("/portal/registration/{event_id}/capabilities")
+async def public_registration_capabilities(
+    event_id: uuid.UUID,
+    response: Response,
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+    db: AsyncSession = Depends(get_db),
+):
+    event = await db.scalar(select(Event).where(Event.id == event_id))
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    result = await _public_capability_result(db, event)
+    feature_rows = {
+        key: {
+            "enabled": bool(result.get("features", {}).get(key, {}).get("enabled")),
+            "reason_code": result.get("features", {}).get(key, {}).get("reason_code"),
+            "value": result.get("features", {}).get(key, {}).get("value"),
+        }
+        for key in PUBLIC_REGISTRATION_CAPABILITIES
+    }
+    limit_rows = {
+        key: {
+            "allowed": result.get("limits", {}).get(key, {}).get("allowed"),
+            "remaining": result.get("limits", {}).get(key, {}).get("remaining"),
+            "reason_code": result.get("limits", {}).get(key, {}).get("reason_code"),
+        }
+        for key in PUBLIC_REGISTRATION_LIMITS
+    }
+    etag = f'"{result["resolution_version"]}"'
+    if if_none_match == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "public, max-age=30, must-revalidate"
+    return {
+        "event_id": str(event.id),
+        "resolution_version": result["resolution_version"],
+        "availability": result.get("availability", {}),
+        "features": feature_rows,
+        "limits": limit_rows,
+        "freshness_at": result.get("freshness_at"),
+    }
+
+
 @router.get("/portal/registration/{event_id}/form")
 async def get_public_registration_form(
     event_id: uuid.UUID,
@@ -254,6 +322,7 @@ async def get_public_registration_form(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found."
         )
+    capabilities = await _require_public_registration(db, event)
     # Load form config
     config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
     config_result = await db.execute(config_stmt)
@@ -297,7 +366,15 @@ async def get_public_registration_form(
             field["options"] = allowed_roles
 
     reg_settings = event.registration_settings or {}
-    payment_enabled = reg_settings.get("payment_enabled", False)
+    payment_enabled = bool(reg_settings.get("payment_enabled", False)) and bool(
+        capabilities["features"].get("FEAT_PAYMENT_GATEWAY", {}).get("enabled")
+    )
+    coupon_enabled = bool(
+        capabilities["features"].get("FEAT_COUPON_CODES", {}).get("enabled")
+    )
+    uploads_enabled = bool(
+        capabilities["features"].get("FEAT_REGISTRATION_FORMS", {}).get("enabled")
+    )
     active_gateway = reg_settings.get("active_gateway", "simulated")
     
     stripe_pub_key = ""
@@ -328,6 +405,8 @@ async def get_public_registration_form(
         "fields": fields_copy,
         "currency": event.currency or "INR",
         "payment_enabled": payment_enabled,
+        "coupon_enabled": coupon_enabled,
+        "uploads_enabled": uploads_enabled,
         "active_gateway": active_gateway,
         "stripe_publishable_key": stripe_pub_key,
         "active_tier": active_tier,
@@ -652,7 +731,7 @@ async def public_registration_upload(
         db,
         event.organization_id,
         event.id,
-        "registration.submit",
+        "registration.forms.manage",
     )
 
     request_fingerprint = hashlib.sha256(
@@ -872,11 +951,18 @@ async def public_checkout_payment(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
     await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
+    capabilities = await _public_capability_result(db, event)
         
     reg_settings = event.registration_settings or {}
-    payment_enabled = reg_settings.get("payment_enabled", False)
+    payment_configured = bool(reg_settings.get("payment_enabled", False))
+    payment_enabled = payment_configured and bool(
+        capabilities["features"].get("FEAT_PAYMENT_GATEWAY", {}).get("enabled")
+    )
     active_gateway = reg_settings.get("active_gateway", "simulated")
-    if payment_enabled:
+    # A commercially disabled payment feature must never silently turn a paid
+    # event into a free registration.  The operation gate returns the stable
+    # entitlement denial used by the public capability response.
+    if payment_configured:
         await enforce_event_operation(db, event.organization_id, event.id, "registration.payments.manage")
     if payload.promo_code:
         await enforce_event_operation(db, event.organization_id, event.id, "registration.coupons.manage")

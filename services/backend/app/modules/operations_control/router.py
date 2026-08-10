@@ -2,31 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant_context import TenantContextGuard
+from app.config import settings
+from app.core.encryption import decrypt, encrypt
 from app.dependencies import StepUpAuth, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.deployment_management.models import Risk, RiskAction, RiskComment, RiskEvidence
 from app.modules.events.models.event import Event
 from app.modules.files.models.file import Asset
 from app.modules.identity.models.user import User
-from app.modules.operations_control.models import (
-    JobControlRequest,
-    VenueOperationalIncident,
-    VenueReadinessAttestation,
-    VenueSupplierAssignment,
-    VenueSupplierContact,
-)
+from app.modules.operations_control.models import JobControlRequest, SourceApiKey
 from app.modules.operations_planning.models import Project
-from app.modules.procurement.models import Vendor
+from app.modules.platform.models.organization import Organization
 from app.modules.search.models.search import SearchJob
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.technology_services.models import RequestAssignment, ServiceRequest, ServiceSlaTarget
@@ -55,7 +52,7 @@ def _audit(db: AsyncSession, actor: User, org_id: uuid.UUID, resource_type: str,
         resource_id=resource_id,
         action_type=action,
         new_state={"reason": reason, **(state or {})},
-        is_sensitive=action in {"JOB_CANCEL_REQUESTED", "SEARCH_REINDEX_REQUESTED", "RISK_ACCEPTED", "VENUE_CREDENTIAL_CHANGED"},
+        is_sensitive=action in {"JOB_CANCEL_REQUESTED", "SEARCH_REINDEX_REQUESTED", "RISK_ACCEPTED", "VENUE_CREDENTIAL_CHANGED", "SOURCE_API_KEY_CREATED", "SOURCE_API_KEY_REVOKED"},
     ))
 
 
@@ -157,65 +154,101 @@ class RiskDecision(BaseModel):
     reason: str = Field(min_length=12, max_length=2000)
 
 
-class SupplierAssignmentIn(BaseModel):
+class SourceKeyCreate(BaseModel):
     organization_id: uuid.UUID
     event_id: uuid.UUID
-    vendor_id: uuid.UUID
-    contract_reference: Optional[str] = None
-    responsibility_scope: dict[str, Any] = Field(default_factory=dict)
-    starts_on: Optional[date] = None
-    ends_on: Optional[date] = None
-    reason: str = Field(min_length=12)
+    source_type: Literal["registration_server", "venue_server"] = "registration_server"
+    name: str = Field(default="Registration Server", min_length=2, max_length=120)
+    permissions: dict[str, bool] = Field(default_factory=lambda: {"read": True, "push": True})
+    expires_at: Optional[datetime] = None
+    reason: str = Field(default="Source API key created from Operations Console.", min_length=12, max_length=1000)
+
+    @field_validator("expires_at")
+    @classmethod
+    def expires_at_must_be_future(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return value
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        if value <= _now():
+            raise ValueError("Expiration date and time must be in the future.")
+        return value
 
 
-class SupplierAssignmentPatch(BaseModel):
+class SourceKeyRevoke(BaseModel):
     organization_id: uuid.UUID
-    contract_reference: Optional[str] = None
-    responsibility_scope: Optional[dict[str, Any]] = None
-    starts_on: Optional[date] = None
-    ends_on: Optional[date] = None
-    status: Optional[Literal["ACTIVE", "SUSPENDED", "COMPLETED", "CANCELLED"]] = None
-    reason: str = Field(min_length=12)
+    reason: str = Field(min_length=12, max_length=1000)
 
 
-class IncidentResolution(BaseModel):
-    organization_id: uuid.UUID
-    resolution: str = Field(min_length=12, max_length=5000)
-    reason: str = Field(min_length=12)
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-class SupplierContactIn(BaseModel):
-    organization_id: uuid.UUID
-    name: str = Field(min_length=2, max_length=150)
-    role: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    is_primary: bool = False
-    reason: str = Field(min_length=12)
+def _status_by_counts(*, failed: int = 0, stale: int = 0, active: int = 0, total: int = 0) -> str:
+    if failed > 0:
+        return "DEGRADED"
+    if stale > 0:
+        return "STALE"
+    if active > 0 or total > 0:
+        return "HEALTHY"
+    return "UNAVAILABLE"
 
 
-class AttestationIn(BaseModel):
-    organization_id: uuid.UUID
-    category: str
-    status: Literal["READY", "NOT_READY", "CONDITIONAL", "UNKNOWN"]
-    statement: str = Field(min_length=5)
-    evidence_asset_id: Optional[uuid.UUID] = None
-    attested_by_name: str
-    valid_until: Optional[datetime] = None
-    reason: str = Field(min_length=12)
+def _source_url() -> str:
+    return f"{settings.API_BASE_URL.rstrip('/')}/api/v1/registration-source"
 
 
-class IncidentIn(BaseModel):
-    organization_id: uuid.UUID
-    title: str = Field(min_length=3)
-    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-    description: Optional[str] = None
-    owner_user_id: Optional[uuid.UUID] = None
-    reason: str = Field(min_length=12)
+def _mask_api_key(raw_key: str | None) -> str | None:
+    if not raw_key:
+        return None
+    if len(raw_key) <= 14:
+        return "••••" + raw_key[-4:]
+    return f"{raw_key[:7]}••••••••••{raw_key[-6:]}"
+
+
+def _decrypt_source_key(key: SourceApiKey) -> str | None:
+    encrypted = getattr(key, "api_key_encrypted", None)
+    if not encrypted:
+        return None
+    try:
+        return decrypt(encrypted)
+    except Exception:
+        return None
+
+
+def _source_key_dict(key: SourceApiKey, organization: Organization | None = None, event: Event | None = None) -> dict[str, Any]:
+    raw_key = _decrypt_source_key(key)
+    source_url = _source_url()
+    return {
+        "id": str(key.id),
+        "event_id": str(key.event_id),
+        "organization_id": str(key.organization_id),
+        "event_name": event.name if event else None,
+        "organization_name": organization.name if organization else None,
+        "name": key.name,
+        "key_prefix": key.key_prefix,
+        "masked_key": _mask_api_key(raw_key) or f"{key.key_prefix}••••••••••",
+        "api_key": raw_key,
+        "api_key_recoverable": raw_key is not None,
+        "api_url": source_url,
+        "source_url": source_url,
+        "source_type": key.source_type,
+        "permissions": key.permissions or {},
+        "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+        "revoked_at": key.revoked_at.isoformat() if key.revoked_at else None,
+        "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+        "created_by": str(key.created_by) if key.created_by else None,
+        "created_at": key.created_at.isoformat() if key.created_at else None,
+        "status": "REVOKED" if key.revoked_at else "EXPIRED" if key.expires_at and key.expires_at <= _now() else "ACTIVE",
+    }
 
 
 async def _event_for_org(db: AsyncSession, event_id: uuid.UUID, org_id: uuid.UUID) -> Event:
-    event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == org_id, Event.deleted_at.is_(None)))
+    event = await db.scalar(
+        select(Event)
+        .where(Event.id == event_id, Event.organization_id == org_id, Event.deleted_at.is_(None))
+        .execution_options(skip_tenant_filter=True)
+    )
     if event is None:
         raise _problem("NOT_FOUND", "Event not found.", 404)
     return event
@@ -237,35 +270,155 @@ async def _risk_for_org(db: AsyncSession, risk_id: uuid.UUID, org_id: uuid.UUID)
 
 
 @router.get("/overview")
-async def operations_overview(db: AsyncSession = Depends(get_db), _: User = Depends(require_super_admin)) -> dict[str, Any]:
+async def operations_overview(
+    organization_id: Optional[uuid.UUID] = None,
+    event_id: Optional[uuid.UUID] = None,
+    source_type: Optional[Literal["cloud", "venue_server", "registration_server"]] = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> dict[str, Any]:
+    checked_at = _now()
+    if event_id:
+        event = await db.scalar(select(Event).where(Event.id == event_id, Event.deleted_at.is_(None)))
+        if event is None:
+            raise _problem("NOT_FOUND", "Event not found.", 404)
+        if organization_id and event.organization_id != organization_id:
+            raise _problem("NOT_FOUND", "Event not found for this organization.", 404)
+        organization_id = event.organization_id
+
+    def scoped(stmt):
+        if organization_id is not None and hasattr(stmt.column_descriptions[0].get("entity"), "organization_id"):
+            stmt = stmt.where(stmt.column_descriptions[0]["entity"].organization_id == organization_id)
+        if event_id is not None and hasattr(stmt.column_descriptions[0].get("entity"), "event_id"):
+            stmt = stmt.where(stmt.column_descriptions[0]["entity"].event_id == event_id)
+        return stmt
+
     sources: list[dict[str, Any]] = []
-    checks = [
-        ("requests", "technology_services.service_requests"), ("risks", "deployment_management.risks"),
-        ("jobs", "search.search_jobs"), ("storage", "files.assets"),
-        ("venue", "venue.venue_supplier_assignments"),
-    ]
-    for name, table in checks:
-        try:
-            exists = bool(await db.scalar(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": table}))
-            sources.append({"key": name, "status": "HEALTHY" if exists else "UNAVAILABLE", "freshness_at": datetime.now(timezone.utc).isoformat() if exists else None, "detail": "Authoritative source available." if exists else "Source table is unavailable."})
-        except Exception:
-            sources.append({"key": name, "status": "DOWN", "freshness_at": None, "detail": "Source check failed."})
-    overall = "HEALTHY" if all(item["status"] == "HEALTHY" for item in sources) else "DEGRADED"
-    return {"overall_status": overall, "checked_at": datetime.now(timezone.utc), "sources": sources}
+
+    try:
+        db_row = (await db.execute(text("""
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE state='active') AS active,
+                   COUNT(*) FILTER (WHERE wait_event_type='Lock') AS waiting
+            FROM pg_stat_activity WHERE datname=current_database()
+        """))).one()
+        db_status = "DEGRADED" if db_row.waiting else "HEALTHY"
+        sources.append({"key": "cloud_db", "status": db_status, "freshness_at": checked_at.isoformat(), "detail": f"{db_row.active}/{db_row.total} active database connections; {db_row.waiting} waiting on locks."})
+    except Exception:
+        sources.append({"key": "cloud_db", "status": "DOWN", "freshness_at": None, "detail": "Database telemetry query failed."})
+
+    asset_stmt = select(func.count(Asset.id), func.coalesce(func.sum(Asset.file_size_bytes), 0))
+    if organization_id:
+        asset_stmt = asset_stmt.where(Asset.organization_id == organization_id)
+    try:
+        object_count, total_bytes = (await db.execute(asset_stmt)).one()
+        storage_status = "UNAVAILABLE" if object_count == 0 else "HEALTHY"
+        provider_note = "local metadata" if settings.STORAGE_MODE == "local" else f"{settings.STORAGE_MODE} metadata"
+        sources.append({"key": "storage", "status": storage_status, "freshness_at": checked_at.isoformat(), "detail": f"{object_count} tracked objects / {int(total_bytes)} bytes from {provider_note}."})
+    except Exception:
+        sources.append({"key": "storage", "status": "DOWN", "freshness_at": None, "detail": "Storage metadata query failed."})
+
+    job_stmt = select(VenueSyncJob.status, func.count(VenueSyncJob.id), func.max(VenueSyncJob.created_at)).group_by(VenueSyncJob.status)
+    if event_id:
+        job_stmt = job_stmt.where(VenueSyncJob.event_id == event_id)
+    try:
+        rows = (await db.execute(job_stmt)).all()
+        status_counts = {str(row[0]): int(row[1]) for row in rows}
+        newest = max((row[2] for row in rows if row[2]), default=None)
+        total = sum(status_counts.values())
+        sources.append({"key": "venue_sync", "status": _status_by_counts(failed=status_counts.get("failed", 0), active=status_counts.get("in_progress", 0) + status_counts.get("pending", 0), total=total), "freshness_at": newest.isoformat() if newest else None, "detail": f"{status_counts.get('completed', 0)} completed, {status_counts.get('pending', 0)} pending, {status_counts.get('failed', 0)} failed sync jobs."})
+    except Exception:
+        sources.append({"key": "venue_sync", "status": "DOWN", "freshness_at": None, "detail": "Venue sync job query failed."})
+
+    key_stmt = select(SourceApiKey)
+    if organization_id:
+        key_stmt = key_stmt.where(SourceApiKey.organization_id == organization_id)
+    if event_id:
+        key_stmt = key_stmt.where(SourceApiKey.event_id == event_id)
+    if source_type in {"registration_server", "venue_server"}:
+        key_stmt = key_stmt.where(SourceApiKey.source_type == source_type)
+    try:
+        keys = list((await db.scalars(key_stmt)).all())
+        active_keys = [key for key in keys if key.revoked_at is None and (key.expires_at is None or key.expires_at > checked_at)]
+        stale_keys = [key for key in active_keys if key.last_used_at and key.last_used_at < checked_at - timedelta(hours=2)]
+        latest_used = max((key.last_used_at for key in keys if key.last_used_at), default=None)
+        sources.append({"key": "source_api_keys", "status": _status_by_counts(stale=len(stale_keys), active=len(active_keys), total=len(keys)), "freshness_at": latest_used.isoformat() if latest_used else None, "detail": f"{len(active_keys)} active / {len(keys)} total source keys. Source URL: {_source_url()}"})
+    except Exception:
+        sources.append({"key": "source_api_keys", "status": "DOWN", "freshness_at": None, "detail": "Source API key query failed."})
+
+    device_stmt = select(RoomDevice)
+    if organization_id:
+        device_stmt = device_stmt.where(RoomDevice.organization_id == organization_id)
+    if event_id:
+        device_stmt = device_stmt.where(RoomDevice.event_id == event_id)
+    try:
+        devices = list((await db.scalars(device_stmt)).all())
+        online = [device for device in devices if device.status == "online"]
+        stale = [device for device in online if (device.last_heartbeat_at or device.last_heartbeat or checked_at) < checked_at - timedelta(minutes=2)]
+        latest_heartbeat = max(((device.last_heartbeat_at or device.last_heartbeat) for device in devices if (device.last_heartbeat_at or device.last_heartbeat)), default=None)
+        sources.append({"key": "devices", "status": _status_by_counts(stale=len(stale), active=len(online), total=len(devices)), "freshness_at": latest_heartbeat.isoformat() if latest_heartbeat else None, "detail": f"{len(online)}/{len(devices)} devices online; {len(stale)} stale heartbeats."})
+    except Exception:
+        sources.append({"key": "devices", "status": "DOWN", "freshness_at": None, "detail": "Device heartbeat query failed."})
+
+    requests_stmt = select(func.count(ServiceRequest.id))
+    if organization_id:
+        requests_stmt = requests_stmt.where(ServiceRequest.organization_id == organization_id)
+    if event_id:
+        requests_stmt = requests_stmt.where(ServiceRequest.event_id == event_id)
+    open_requests = await db.scalar(requests_stmt.where(ServiceRequest.status.notin_(["COMPLETED", "CLOSED", "REJECTED", "CANCELLED"]))) or 0
+    sources.append({"key": "requests", "status": "DEGRADED" if open_requests else "HEALTHY", "freshness_at": checked_at.isoformat(), "detail": f"{open_requests} open operational requests."})
+
+    risk_stmt = select(func.count(Risk.id)).join(Project, Project.id == Risk.project_id)
+    if organization_id:
+        risk_stmt = risk_stmt.where(Project.organization_id == organization_id)
+    if event_id:
+        risk_stmt = risk_stmt.where(Project.event_id == event_id)
+    open_risks = await db.scalar(risk_stmt.where(Risk.status.notin_(["RESOLVED", "CLOSED", "ACCEPTED"]))) or 0
+    sources.append({"key": "risks", "status": "DEGRADED" if open_risks else "HEALTHY", "freshness_at": checked_at.isoformat(), "detail": f"{open_risks} unresolved operational risks."})
+
+    priority = {"DOWN": 5, "DEGRADED": 4, "STALE": 3, "UNAVAILABLE": 2, "HEALTHY": 1}
+    worst = max(sources, key=lambda item: priority.get(item["status"], 0))["status"] if sources else "UNAVAILABLE"
+    overall = "HEALTHY" if worst == "HEALTHY" else worst
+    return {
+        "overall_status": overall,
+        "checked_at": checked_at,
+        "deployment_profile": settings.DEPLOYMENT_PROFILE,
+        "source_url": _source_url(),
+        "realtime": {"mode": "hybrid", "transport": "polling", "status": "CONNECTED"},
+        "scope": {"organization_id": str(organization_id) if organization_id else None, "event_id": str(event_id) if event_id else None, "source_type": source_type},
+        "sources": sources,
+    }
 
 
 @router.get("/storage")
-async def storage_telemetry(db: AsyncSession = Depends(get_db), _: User = Depends(require_super_admin)) -> dict[str, Any]:
-    total, size = (await db.execute(select(func.count(Asset.id), func.coalesce(func.sum(Asset.file_size_bytes), 0)))).one()
-    statuses = (await db.execute(select(Asset.processing_status, func.count(Asset.id), func.coalesce(func.sum(Asset.file_size_bytes), 0)).group_by(Asset.processing_status))).all()
+async def storage_telemetry(
+    organization_id: Optional[uuid.UUID] = None,
+    event_id: Optional[uuid.UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> dict[str, Any]:
+    if event_id:
+        event = await db.scalar(select(Event).where(Event.id == event_id, Event.deleted_at.is_(None)))
+        if event is None:
+            raise _problem("NOT_FOUND", "Event not found.", 404)
+        if organization_id and event.organization_id != organization_id:
+            raise _problem("NOT_FOUND", "Event not found for this organization.", 404)
+        organization_id = event.organization_id
+    base = select(Asset)
+    if organization_id:
+        base = base.where(Asset.organization_id == organization_id)
+    scoped_assets = base.subquery()
+    total, size = (await db.execute(select(func.count(scoped_assets.c.id), func.coalesce(func.sum(scoped_assets.c.file_size_bytes), 0)))).one()
+    statuses = (await db.execute(select(scoped_assets.c.processing_status, func.count(scoped_assets.c.id), func.coalesce(func.sum(scoped_assets.c.file_size_bytes), 0)).group_by(scoped_assets.c.processing_status))).all()
     return {
-        "provider_status": "UNVERIFIED",
-        "provider_detail": "Database metadata is authoritative; object-provider quota and reachability are not configured for this request path.",
+        "provider_status": "HEALTHY" if settings.STORAGE_MODE == "local" else "UNVERIFIED",
+        "provider_detail": "Local storage metadata is authoritative in local profile." if settings.STORAGE_MODE == "local" else "Database metadata is authoritative; object-provider quota and reachability are not configured for this request path.",
         "total_objects": total,
         "total_bytes": int(size),
         "capacity_bytes": None,
         "by_status": [{"status": row[0], "count": row[1], "bytes": int(row[2])} for row in statuses],
-        "freshness_at": datetime.now(timezone.utc),
+        "freshness_at": _now(),
+        "scope": {"organization_id": str(organization_id) if organization_id else None, "event_id": str(event_id) if event_id else None},
     }
 
 
@@ -452,114 +605,182 @@ async def resolve_risk(risk_id: uuid.UUID, body: RiskDecision, db: AsyncSession 
         await db.commit(); return _risk_dict(risk, project)
 
 
-@router.get("/venue/supplier-assignments")
-async def list_supplier_assignments(organization_id: Optional[uuid.UUID] = None, event_id: Optional[uuid.UUID] = None, db: AsyncSession = Depends(get_db), _: User = Depends(require_super_admin)) -> dict[str, Any]:
-    stmt = select(VenueSupplierAssignment, Vendor, Event).join(Vendor, Vendor.id == VenueSupplierAssignment.vendor_id).join(Event, Event.id == VenueSupplierAssignment.event_id).order_by(desc(VenueSupplierAssignment.created_at))
-    if organization_id: stmt = stmt.where(VenueSupplierAssignment.organization_id == organization_id)
-    if event_id: stmt = stmt.where(VenueSupplierAssignment.event_id == event_id)
-    rows = (await db.execute(stmt)).all()
-    return {"items": [_assignment_dict(a, v, e) for a, v, e in rows]}
-
-
-def _assignment_dict(a: VenueSupplierAssignment, vendor: Vendor, event: Event) -> dict[str, Any]:
-    return {"id": a.id, "organization_id": a.organization_id, "event_id": a.event_id, "event_name": event.name, "vendor_id": a.vendor_id, "supplier_name": vendor.name, "contract_reference": a.contract_reference, "responsibility_scope": a.responsibility_scope, "starts_on": a.starts_on, "ends_on": a.ends_on, "status": a.status, "created_at": a.created_at}
-
-
-@router.post("/venue/supplier-assignments", status_code=201)
-async def create_supplier_assignment(body: SupplierAssignmentIn, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128), db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        event = await _event_for_org(db, body.event_id, body.organization_id)
-        vendor = await db.get(Vendor, body.vendor_id)
-        if vendor is None or vendor.status != "ACTIVE": raise _problem("NOT_FOUND", "Active supplier not found.", 404)
-        existing = await db.scalar(select(VenueSupplierAssignment).where(VenueSupplierAssignment.event_id == body.event_id, VenueSupplierAssignment.vendor_id == body.vendor_id))
-        if existing: return _assignment_dict(existing, vendor, event)
-        assignment = VenueSupplierAssignment(organization_id=body.organization_id, event_id=body.event_id, vendor_id=body.vendor_id, contract_reference=body.contract_reference, responsibility_scope={**body.responsibility_scope, "idempotency_key": idempotency_key}, starts_on=body.starts_on, ends_on=body.ends_on, status="ACTIVE", created_by=actor.id)
-        db.add(assignment); await db.flush(); _audit(db, actor, body.organization_id, "venue_supplier_assignment", assignment.id, "VENUE_SUPPLIER_ASSIGNED", body.reason, {"event_id": str(event.id), "vendor_id": str(vendor.id)})
-        await db.commit(); return _assignment_dict(assignment, vendor, event)
-
-
-@router.patch("/venue/supplier-assignments/{assignment_id}")
-async def patch_supplier_assignment(assignment_id: uuid.UUID, body: SupplierAssignmentPatch, db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        assignment = await _assignment_for_org(db, assignment_id, body.organization_id)
-        for field in ("contract_reference", "responsibility_scope", "starts_on", "ends_on", "status"):
-            value = getattr(body, field)
-            if value is not None: setattr(assignment, field, value)
-        vendor = await db.get(Vendor, assignment.vendor_id); event = await _event_for_org(db, assignment.event_id, body.organization_id)
-        _audit(db, actor, body.organization_id, "venue_supplier_assignment", assignment.id, "VENUE_SUPPLIER_ASSIGNMENT_UPDATED", body.reason, {"status": assignment.status})
-        await db.commit(); return _assignment_dict(assignment, vendor, event)
-
-
-@router.delete("/venue/supplier-assignments/{assignment_id}")
-async def deactivate_supplier_assignment(assignment_id: uuid.UUID, organization_id: uuid.UUID, reason: str = Header(..., alias="X-Admin-Reason", min_length=12, max_length=1000), db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    async with TenantContextGuard.scoped(db, organization_id):
-        assignment = await _assignment_for_org(db, assignment_id, organization_id)
-        assignment.status = "CANCELLED"
-        _audit(db, actor, organization_id, "venue_supplier_assignment", assignment.id, "VENUE_SUPPLIER_ASSIGNMENT_CANCELLED", reason)
-        await db.commit(); return {"id": assignment.id, "status": assignment.status}
-
-
-async def _assignment_for_org(db: AsyncSession, assignment_id: uuid.UUID, org_id: uuid.UUID) -> VenueSupplierAssignment:
-    row = await db.scalar(select(VenueSupplierAssignment).where(VenueSupplierAssignment.id == assignment_id, VenueSupplierAssignment.organization_id == org_id))
-    if row is None: raise _problem("NOT_FOUND", "Supplier assignment not found.", 404)
-    return row
-
-
-@router.post("/venue/supplier-assignments/{assignment_id}/contacts", status_code=201)
-async def add_supplier_contact(assignment_id: uuid.UUID, body: SupplierContactIn, db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        assignment = await _assignment_for_org(db, assignment_id, body.organization_id)
-        if body.is_primary: await db.execute(text("UPDATE venue.venue_supplier_contacts SET is_primary=false WHERE assignment_id=:id"), {"id": assignment.id})
-        contact = VenueSupplierContact(organization_id=body.organization_id, assignment_id=assignment.id, name=body.name, role=body.role, email=body.email, phone=body.phone, is_primary=body.is_primary)
-        db.add(contact); await db.flush(); _audit(db, actor, body.organization_id, "venue_supplier_assignment", assignment.id, "VENUE_SUPPLIER_CONTACT_ADDED", body.reason, {"contact_id": str(contact.id)})
-        await db.commit(); return {"id": contact.id}
-
-
-@router.post("/venue/supplier-assignments/{assignment_id}/attestations", status_code=201)
-async def add_readiness_attestation(assignment_id: uuid.UUID, body: AttestationIn, db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        assignment = await _assignment_for_org(db, assignment_id, body.organization_id)
-        if body.evidence_asset_id:
-            asset = await db.scalar(select(Asset).where(Asset.id == body.evidence_asset_id, Asset.organization_id == body.organization_id, Asset.processing_status == "READY"))
-            if asset is None: raise _problem("EVIDENCE_NOT_READY", "Evidence asset was not found or is not ready.", 422)
-        row = VenueReadinessAttestation(organization_id=body.organization_id, assignment_id=assignment.id, category=body.category, status=body.status, statement=body.statement, evidence_asset_id=body.evidence_asset_id, attested_by_name=body.attested_by_name, valid_until=body.valid_until)
-        db.add(row); await db.flush(); _audit(db, actor, body.organization_id, "venue_supplier_assignment", assignment.id, "VENUE_READINESS_ATTESTED", body.reason, {"attestation_id": str(row.id), "status": row.status})
-        await db.commit(); return {"id": row.id, "status": row.status}
-
-
-@router.post("/venue/supplier-assignments/{assignment_id}/incidents", status_code=201)
-async def create_venue_incident(assignment_id: uuid.UUID, body: IncidentIn, db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        assignment = await _assignment_for_org(db, assignment_id, body.organization_id)
-        incident = VenueOperationalIncident(organization_id=body.organization_id, assignment_id=assignment.id, title=body.title, severity=body.severity, description=body.description, owner_user_id=body.owner_user_id)
-        db.add(incident); await db.flush(); _audit(db, actor, body.organization_id, "venue_incident", incident.id, "VENUE_INCIDENT_OPENED", body.reason, {"assignment_id": str(assignment.id), "severity": incident.severity})
-        await db.commit(); return {"id": incident.id, "status": incident.status}
-
-
-@router.post("/venue/incidents/{incident_id}/resolve")
-async def resolve_venue_incident(incident_id: uuid.UUID, body: IncidentResolution, step_up: StepUpAuth, db: AsyncSession = Depends(get_db), actor: User = Depends(require_super_admin)) -> dict[str, Any]:
-    del step_up
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        incident = await db.scalar(select(VenueOperationalIncident).where(VenueOperationalIncident.id == incident_id, VenueOperationalIncident.organization_id == body.organization_id))
-        if incident is None: raise _problem("NOT_FOUND", "Venue incident not found.", 404)
-        incident.status = "RESOLVED"; incident.resolution = body.resolution; incident.resolved_at = datetime.now(timezone.utc)
-        _audit(db, actor, body.organization_id, "venue_incident", incident.id, "VENUE_INCIDENT_RESOLVED", body.reason)
-        await db.commit(); return {"id": incident.id, "status": incident.status, "resolved_at": incident.resolved_at}
-
-
 @router.get("/venue/readiness")
-async def venue_readiness(organization_id: Optional[uuid.UUID] = None, event_id: Optional[uuid.UUID] = None, db: AsyncSession = Depends(get_db), _: User = Depends(require_super_admin)) -> dict[str, Any]:
-    stmt = select(VenueSupplierAssignment, Vendor, Event).join(Vendor, Vendor.id == VenueSupplierAssignment.vendor_id).join(Event, Event.id == VenueSupplierAssignment.event_id)
-    if organization_id: stmt = stmt.where(VenueSupplierAssignment.organization_id == organization_id)
-    if event_id: stmt = stmt.where(VenueSupplierAssignment.event_id == event_id)
-    result = []
-    for assignment, vendor, event in (await db.execute(stmt)).all():
-        attestations = list((await db.scalars(select(VenueReadinessAttestation).where(VenueReadinessAttestation.assignment_id == assignment.id).order_by(desc(VenueReadinessAttestation.attested_at)))).all())
-        devices = list((await db.scalars(select(RoomDevice).where(RoomDevice.supplier_assignment_id == assignment.id))).all())
-        open_incidents = await db.scalar(select(func.count(VenueOperationalIncident.id)).where(VenueOperationalIncident.assignment_id == assignment.id, VenueOperationalIncident.status != "RESOLVED")) or 0
-        sync_failures = await db.scalar(select(func.count(VenueSyncJob.id)).where(VenueSyncJob.event_id == event.id, VenueSyncJob.status == "failed")) or 0
-        result.append({**_assignment_dict(assignment, vendor, event), "readiness_status": attestations[0].status if attestations else "UNKNOWN", "latest_attestation_at": attestations[0].attested_at if attestations else None, "device_count": len(devices), "online_device_count": sum(1 for d in devices if d.status == "online"), "expired_credentials": sum(1 for d in devices if d.device_key_expires_at and d.device_key_expires_at <= datetime.now(timezone.utc)), "open_incidents": open_incidents, "sync_failures": sync_failures})
-    return {"items": result, "freshness_at": datetime.now(timezone.utc)}
+async def venue_readiness(
+    organization_id: Optional[uuid.UUID] = None,
+    event_id: Optional[uuid.UUID] = None,
+    source_type: Optional[Literal["cloud", "venue_server", "registration_server"]] = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> dict[str, Any]:
+    if event_id:
+        event = await db.scalar(
+            select(Event)
+            .where(Event.id == event_id, Event.deleted_at.is_(None))
+            .execution_options(skip_tenant_filter=True)
+        )
+        if event is None:
+            raise _problem("NOT_FOUND", "Event not found.", 404)
+        if organization_id and event.organization_id != organization_id:
+            raise _problem("NOT_FOUND", "Event not found for this organization.", 404)
+        organization_id = event.organization_id
+    sync_stmt = select(VenueSyncJob).execution_options(skip_tenant_filter=True)
+    if event_id:
+        sync_stmt = sync_stmt.where(VenueSyncJob.event_id == event_id)
+    sync_jobs = list((await db.scalars(sync_stmt.order_by(desc(VenueSyncJob.created_at)).limit(100))).all())
+    key_stmt = select(SourceApiKey).execution_options(skip_tenant_filter=True)
+    if organization_id:
+        key_stmt = key_stmt.where(SourceApiKey.organization_id == organization_id)
+    if event_id:
+        key_stmt = key_stmt.where(SourceApiKey.event_id == event_id)
+    if source_type in {"registration_server", "venue_server"}:
+        key_stmt = key_stmt.where(SourceApiKey.source_type == source_type)
+    source_keys = list((await db.scalars(key_stmt.order_by(desc(SourceApiKey.created_at)))).all())
+    device_stmt = select(RoomDevice).execution_options(skip_tenant_filter=True)
+    if organization_id:
+        device_stmt = device_stmt.where(RoomDevice.organization_id == organization_id)
+    if event_id:
+        device_stmt = device_stmt.where(RoomDevice.event_id == event_id)
+    devices = list((await db.scalars(device_stmt)).all())
+    active_keys = [key for key in source_keys if key.revoked_at is None and (key.expires_at is None or key.expires_at > _now())]
+    return {
+        "freshness_at": _now(),
+        "source_url": _source_url(),
+        "deployment_profile": settings.DEPLOYMENT_PROFILE,
+        "scope": {"organization_id": str(organization_id) if organization_id else None, "event_id": str(event_id) if event_id else None, "source_type": source_type},
+        "server_sync": {
+            "registration_server": {
+                "active_keys": len([key for key in active_keys if key.source_type == "registration_server"]),
+                "last_used_at": max((key.last_used_at for key in source_keys if key.source_type == "registration_server" and key.last_used_at), default=None),
+            },
+            "venue_server": {
+                "active_keys": len([key for key in active_keys if key.source_type == "venue_server"]),
+                "last_used_at": max((key.last_used_at for key in source_keys if key.source_type == "venue_server" and key.last_used_at), default=None),
+            },
+            "sync_jobs": {
+                "total": len(sync_jobs),
+                "pending": len([job for job in sync_jobs if job.status == "pending"]),
+                "in_progress": len([job for job in sync_jobs if job.status == "in_progress"]),
+                "completed": len([job for job in sync_jobs if job.status == "completed"]),
+                "failed": len([job for job in sync_jobs if job.status == "failed"]),
+                "last_completed_at": max((job.completed_at for job in sync_jobs if job.completed_at), default=None),
+            },
+            "devices": {
+                "total": len(devices),
+                "online": len([device for device in devices if device.status == "online"]),
+                "latest_heartbeat_at": max(((device.last_heartbeat_at or device.last_heartbeat) for device in devices if (device.last_heartbeat_at or device.last_heartbeat)), default=None),
+            },
+        },
+    }
+
+
+@router.get("/source-access")
+async def list_source_access(
+    organization_id: Optional[uuid.UUID] = None,
+    event_id: Optional[uuid.UUID] = None,
+    source_type: Optional[Literal["registration_server", "venue_server"]] = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+) -> dict[str, Any]:
+    if event_id:
+        event = await db.scalar(
+            select(Event)
+            .where(Event.id == event_id, Event.deleted_at.is_(None))
+            .execution_options(skip_tenant_filter=True)
+        )
+        if event is None:
+            raise _problem("NOT_FOUND", "Event not found.", 404)
+        if organization_id and event.organization_id != organization_id:
+            raise _problem("NOT_FOUND", "Event not found for this organization.", 404)
+        organization_id = event.organization_id
+    stmt = (
+        select(SourceApiKey, Organization, Event)
+        .join(Event, Event.id == SourceApiKey.event_id)
+        .join(Organization, Organization.id == SourceApiKey.organization_id)
+        .order_by(desc(SourceApiKey.created_at))
+        .execution_options(skip_tenant_filter=True)
+    )
+    if organization_id:
+        stmt = stmt.where(SourceApiKey.organization_id == organization_id)
+    if event_id:
+        stmt = stmt.where(SourceApiKey.event_id == event_id)
+    if source_type:
+        stmt = stmt.where(SourceApiKey.source_type == source_type)
+    rows = list((await db.execute(stmt)).all())
+    items = [_source_key_dict(key, organization, event) for key, organization, event in rows]
+    return {
+        "source_url": _source_url(),
+        "items": items,
+        "freshness_at": _now(),
+        "kpis": {
+            "total": len(items),
+            "active": len([item for item in items if item["status"] == "ACTIVE"]),
+            "revoked": len([item for item in items if item["status"] == "REVOKED"]),
+            "expired": len([item for item in items if item["status"] == "EXPIRED"]),
+            "used": len([item for item in items if item["last_used_at"]]),
+            "recoverable": len([item for item in items if item["api_key_recoverable"]]),
+            "registration_server": len([item for item in items if item["source_type"] == "registration_server"]),
+            "venue_server": len([item for item in items if item["source_type"] == "venue_server"]),
+        },
+    }
+
+
+@router.post("/source-access", status_code=201)
+async def create_source_access(
+    body: SourceKeyCreate,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+) -> dict[str, Any]:
+    async with TenantContextGuard.scoped(db, body.organization_id):
+        await _event_for_org(db, body.event_id, body.organization_id)
+        raw_key = ("regsrc_" if body.source_type == "registration_server" else "vensrc_") + secrets.token_urlsafe(32)
+        key = SourceApiKey(
+            id=uuid.uuid4(),
+            event_id=body.event_id,
+            organization_id=body.organization_id,
+            name=body.name.strip(),
+            key_prefix=raw_key[:16],
+            key_hash=hashlib.sha256(raw_key.encode("utf-8")).hexdigest(),
+            api_key_encrypted=encrypt(raw_key),
+            source_type=body.source_type,
+            permissions=body.permissions or {"read": True, "push": True},
+            expires_at=body.expires_at,
+            created_by=actor.id,
+        )
+        db.add(key)
+        await db.flush()
+        _audit(db, actor, body.organization_id, "source_api_key", key.id, "SOURCE_API_KEY_CREATED", body.reason, {"event_id": str(body.event_id), "source_type": body.source_type, "idempotency_key": idempotency_key})
+        await db.commit()
+        await db.refresh(key)
+        response = _source_key_dict(key)
+        response["api_key"] = raw_key
+        response["api_key_visible_once"] = False
+        response["source_url"] = _source_url()
+        return response
+
+
+@router.post("/source-access/{key_id}/revoke")
+async def revoke_source_access(
+    key_id: uuid.UUID,
+    body: SourceKeyRevoke,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+) -> dict[str, Any]:
+    async with TenantContextGuard.scoped(db, body.organization_id):
+        key = await db.scalar(select(SourceApiKey).where(SourceApiKey.id == key_id, SourceApiKey.organization_id == body.organization_id))
+        if key is None:
+            raise _problem("NOT_FOUND", "Source API key not found.", 404)
+        if key.revoked_at is None:
+            key.revoked_at = _now()
+            permissions = dict(key.permissions or {})
+            permissions["revoked_reason"] = body.reason
+            permissions["revoked_by"] = str(actor.id)
+            key.permissions = permissions
+            _audit(db, actor, body.organization_id, "source_api_key", key.id, "SOURCE_API_KEY_REVOKED", body.reason, {"event_id": str(key.event_id), "source_type": key.source_type})
+        await db.commit()
+        await db.refresh(key)
+        return _source_key_dict(key)
 
 
 async def _search_job_for_control(db: AsyncSession, source: str, job_id: str, org_id: uuid.UUID) -> SearchJob:

@@ -36,7 +36,9 @@ export function ThemeSwitcher({ className }: { className?: string }) {
                 theme === t.name ? "scale-110 border-[var(--pri)] shadow-[0_0_15px_var(--pri)]" : "hover:border-muted"
               )}
               style={{ 
-                background: t.name === 'void-indigo' ? '#6366F1' : 
+                background: t.name === 'dark' ? '#050505' :
+                            t.name === 'light' ? '#f0f1f3' :
+                            t.name === 'void-indigo' ? '#6366F1' : 
                             t.name === 'obsidian-rose' ? '#C084FC' : 
                             t.name === 'carbon-teal' ? '#14B8A6' : 
                             t.name === 'amber-noir' ? '#F59E0B' : 
@@ -44,8 +46,7 @@ export function ThemeSwitcher({ className }: { className?: string }) {
                             t.name === 'forest-ink' ? '#22C55E' : 
                             t.name === 'copper-oxide' ? '#D97706' : 
                             t.name === 'plasma-violet' ? '#8B5CF6' : 
-                            t.name === 'light' ? '#6366F1' : 
-                            '#1a1a1a' 
+                            '#050505' 
               }}
             >
               {theme === t.name && (

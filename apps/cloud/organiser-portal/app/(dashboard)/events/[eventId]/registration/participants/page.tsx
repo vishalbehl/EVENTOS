@@ -178,7 +178,7 @@ export default function ParticipantsDirectory() {
       ]);
       const [templatesRes, rolesRes] = await Promise.all([
         badgeTemplateAccess.enabled
-          ? apiGet<any[]>(`/events/${eventId}/print-templates?template_type=badge`)
+          ? apiGet<any[]>(`/events/${eventId}/print-templates`).then(res => (res || []).filter(t => t.template_type !== 'certificate'))
           : Promise.resolve([]),
         roleReadAccess.enabled
           ? apiGet<Role[]>(`/events/${eventId}/registration/roles`)
@@ -334,6 +334,8 @@ export default function ParticipantsDirectory() {
       toast.success("Selected participants archived.");
       setSelectedIds(new Set());
       fetchData();
+      setSelectedIds(new Set());
+      fetchData();
     } catch (err: any) {
       toast.error(err.message || "Failed to delete selected participants.");
     }
@@ -352,10 +354,6 @@ export default function ParticipantsDirectory() {
   };
 
   const printParticipants = async (list: Participant[]) => {
-    if (!badgeExportAccess.enabled || !badgeTemplateAccess.enabled) {
-      toast.error("Badge export is not available for this event or your role.");
-      return;
-    }
     if (list.length === 0) {
       toast.error("Select at least one participant to print.");
       return;
@@ -377,7 +375,7 @@ export default function ParticipantsDirectory() {
     try {
       const [freshEvent, freshTemplates] = await Promise.all([
         apiGet<any>(`/events/${eventId}`),
-        apiGet<any[]>(`/events/${eventId}/print-templates?template_type=badge`)
+        apiGet<any[]>(`/events/${eventId}/print-templates`).then(res => (res || []).filter(t => t.template_type !== 'certificate'))
       ]);
       printBadgeDesign = freshEvent?.registration_settings?.badge_design || {};
       setBadgeDesign(printBadgeDesign);

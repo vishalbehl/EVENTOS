@@ -1,0 +1,250 @@
+/* ============================================================
+   GrapesJS Style Manager — Dark Theme Override
+   Matches the builder's --background / --foreground / --border
+   CSS variable system.
+   ============================================================ */
+
+/* ── Sector container ──────────────────────────────────────── */
+.gjs-sm-sector {
+  border: none;
+  border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+}
+
+.gjs-sm-sector-title {
+  background: transparent !important;
+  border: none !important;
+  padding: 10px 16px !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+  color: var(--muted-foreground) !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  user-select: none !important;
+  transition: color 0.15s !important;
+}
+
+.gjs-sm-sector-title:hover {
+  color: var(--foreground) !important;
+}
+
+.gjs-sm-sector-caret {
+  color: currentColor !important;
+  font-size: 12px !important;
+}
+
+.gjs-sm-properties {
+  padding: 0 14px 12px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Individual property row ───────────────────────────────── */
+.gjs-sm-property {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  margin-bottom: 8px !important;
+}
+
+.gjs-sm-label {
+  font-size: 10.5px !important;
+  font-weight: 500 !important;
+  color: var(--muted-foreground) !important;
+  letter-spacing: 0 !important;
+  margin: 0 !important;
+}
+
+/* ── Inputs ────────────────────────────────────────────────── */
+.gjs-sm-property input[type="text"],
+.gjs-sm-property input[type="number"],
+.gjs-sm-property input[type="color"],
+.gjs-sm-property select,
+.gjs-sm-field input,
+.gjs-sm-field select,
+.gjs-fields input[type="text"],
+.gjs-fields input[type="number"] {
+  background: var(--background, #0d0d14) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 6px !important;
+  color: var(--foreground, #f8f8f8) !important;
+  font-size: 11.5px !important;
+  padding: 5px 8px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  outline: none !important;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+  font-family: inherit !important;
+}
+
+.gjs-sm-property input:focus,
+.gjs-sm-property select:focus,
+.gjs-sm-field input:focus,
+.gjs-sm-field select:focus {
+  border-color: var(--primary, #6366f1) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #6366f1) 20%, transparent) !important;
+}
+
+.gjs-sm-property select,
+.gjs-sm-field select {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 6px center !important;
+  padding-right: 22px !important;
+  cursor: pointer !important;
+}
+
+/* ── Unit selector ─────────────────────────────────────────── */
+.gjs-sm-unit,
+.gjs-field-units {
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 6px !important;
+  color: var(--muted-foreground, #888) !important;
+  font-size: 10px !important;
+  padding: 5px 4px !important;
+  cursor: pointer !important;
+  outline: none !important;
+  appearance: none !important;
+  min-width: 42px !important;
+}
+
+/* ── Composite property (margin/padding 4-side) ────────────── */
+.gjs-sm-composite {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 4px !important;
+}
+
+.gjs-sm-composite > .gjs-sm-property {
+  margin-bottom: 0 !important;
+}
+
+.gjs-field {
+  position: relative !important;
+}
+
+/* ── Color swatch ──────────────────────────────────────────── */
+.gjs-sm-color-picker-c,
+.sp-replacer {
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 6px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 3px 8px 3px 3px !important;
+  cursor: pointer !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.sp-preview,
+.gjs-sm-color-preview {
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 4px !important;
+  border: none !important;
+  flex-shrink: 0 !important;
+}
+
+.gjs-field-color-picker {
+  cursor: pointer !important;
+}
+
+/* ── Slider (opacity) ──────────────────────────────────────── */
+.gjs-sm-property input[type="range"],
+.gjs-field input[type="range"] {
+  accent-color: var(--primary, #6366f1) !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  height: 4px !important;
+  cursor: pointer !important;
+  width: 100% !important;
+}
+
+/* ── Radio buttons (text-align etc.) ──────────────────────── */
+.gjs-radio-item,
+.gjs-field-radio label {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 4px !important;
+  color: var(--muted-foreground, #888) !important;
+  cursor: pointer !important;
+  font-size: 11px !important;
+  padding: 4px 8px !important;
+  transition: background 0.15s, color 0.15s !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.gjs-radio-item:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: var(--foreground, #f8f8f8) !important;
+}
+
+.gjs-radio-item input:checked + label,
+.gjs-radio-item.gjs-radio-item-active {
+  background: color-mix(in srgb, var(--primary, #6366f1) 20%, transparent) !important;
+  border-color: color-mix(in srgb, var(--primary, #6366f1) 50%, transparent) !important;
+  color: var(--primary, #6366f1) !important;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+#gjs-sm-container::-webkit-scrollbar {
+  width: 4px;
+}
+#gjs-sm-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+#gjs-sm-container::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+}
+
+/* ── Remove default borders/backgrounds ────────────────────── */
+.gjs-sm-sector .gjs-sm-label {
+  font-weight: 500 !important;
+}
+.gjs-sm-stack {
+  border: none !important;
+  background: transparent !important;
+}
+
+/* ── Spectrum color picker theming ─────────────────────────── */
+.sp-container {
+  background: var(--card, #1a1a2e) !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.6) !important;
+}
+
+.sp-input {
+  background: var(--background, #0d0d14) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  color: var(--foreground, #f8f8f8) !important;
+  border-radius: 6px !important;
+}
+
+.sp-choose {
+  background: var(--primary, #6366f1) !important;
+  border: none !important;
+  border-radius: 6px !important;
+  color: white !important;
+}
+
+.sp-cancel {
+  color: var(--muted-foreground, #888) !important;
+}
+
+.sp-palette-row span.sp-thumb-el {
+  border-radius: 3px !important;
+}

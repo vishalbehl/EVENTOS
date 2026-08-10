@@ -2129,7 +2129,7 @@ export default function PortalDashboardPage() {
                           </div>
 
                           {/* Promo validation */}
-                          {formConfig?.payment_enabled && (
+                          {formConfig?.payment_enabled && formConfig?.coupon_enabled && (
                             <div className="space-y-2 text-left">
                               <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block">Apply Promo Coupon</label>
                               <div className="flex gap-2">
@@ -2810,6 +2810,13 @@ export default function PortalDashboardPage() {
                       }
 
                       if (field.type === "image" || field.type === "file") {
+                        if (formConfig?.uploads_enabled === false) {
+                          return (
+                            <div key={field.id} className="sm:col-span-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                              {field.label} uploads are unavailable for this event.
+                            </div>
+                          );
+                        }
                         return (
                           <div key={field.id} className="sm:col-span-2 space-y-1.5">
                             <label className="text-[9px] font-black text-[var(--muted)] uppercase tracking-widest block mb-1">

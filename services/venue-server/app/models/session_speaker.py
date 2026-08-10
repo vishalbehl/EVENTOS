@@ -22,6 +22,7 @@ class SessionSpeaker(Base):
     multiple speakers. Each row represents one speaker's slot in one session.
     talk_order controls playback sequence within the session.
     """
+    __table_args__ = {"schema": "presentations"}
     __tablename__ = "session_speakers"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -29,13 +30,13 @@ class SessionSpeaker(Base):
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
+        ForeignKey("events.sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="CASCADE"),
+        ForeignKey("presentations.speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

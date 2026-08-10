@@ -1108,6 +1108,7 @@ async def ensure_admin_user():
                 logger.info("Migrating default organization slug/name to Eventos...")
                 default_org.name = "Eventos"
                 default_org.slug = "Eventos"
+                default_org.is_platform_org = True
                 await db.flush()
 
             # 2. Check if any organization exists
@@ -1120,46 +1121,41 @@ async def ensure_admin_user():
                     id=uuid.uuid4(),
                     name="Eventos",
                     slug="Eventos",
-                    is_platform_org=True
+                    is_platform_org=True,
+                    is_internal_unrestricted=True,
                 )
                 db.add(org)
                 await db.flush()
 
-            # Ensure OrganizationSubscription exists for all organizations to prevent 404s
-            from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
-            from datetime import timezone, datetime, timedelta
-            
-            plan_res = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.name == "Enterprise"))
-            ent_plan = plan_res.scalar_one_or_none()
-            if not ent_plan:
-                plan_res = await db.execute(select(SubscriptionPlan))
-                ent_plan = plan_res.scalars().first()
-
             all_orgs_res = await db.execute(select(Organization))
+            # Startup validation keeps the durable bypass exclusive to the
+            # canonical seed tenant. Clear any copied/invalid marker before
+            # enabling Eventos so the partial unique index is never contested.
+            invalid_unrestricted = await db.execute(
+                update(Organization)
+                .where(
+                    Organization.slug != "Eventos",
+                    Organization.is_internal_unrestricted.is_(True),
+                )
+                .values(is_internal_unrestricted=False)
+            )
+            if invalid_unrestricted.rowcount:
+                logger.warning(
+                    "Cleared is_internal_unrestricted from {} non-Eventos organization(s).",
+                    invalid_unrestricted.rowcount,
+                )
+            await db.flush()
+
             for target_org in all_orgs_res.scalars().all():
                 if target_org.slug != "Eventos":
                     continue
                 
-                # Platform status does not grant commercial capacity. The
-                # seeded subscription and its typed plan assignments are the
-                # authority used by the canonical resolver.
-                if ent_plan:
-                    target_org.is_platform_org = True
-                
-                sub_res = await db.execute(select(OrganizationSubscription).where(OrganizationSubscription.organization_id == target_org.id))
-                org_sub = sub_res.scalar_one_or_none()
-                if not org_sub and ent_plan:
-                    logger.info(f"No subscription found for organization {target_org.name}. Seeding default active Enterprise subscription...")
-                    org_sub = OrganizationSubscription(
-                        id=uuid.uuid4(),
-                        organization_id=target_org.id,
-                        plan_id=ent_plan.id,
-                        status="ACTIVE",
-                        trial_ends_at=None,
-                        current_period_end=datetime.now(timezone.utc) + timedelta(days=365)
-                    )
-                    db.add(org_sub)
-                    await db.flush()
+                # This durable marker, not a subscription or legacy plan
+                # column, grants the canonical main tenant every capability
+                # with unlimited metered allowances.
+                target_org.is_platform_org = True
+                target_org.is_internal_unrestricted = True
+                await db.flush()
                     
             # 2. Check if any Super Admin exists
             result = await db.execute(select(User).where(User.role == "super_admin"))

@@ -1,0 +1,6 @@
+{
+  "name": "registration-execution-schema-contract",
+  "version": 1,
+  "updated_at": "2026-08-09",
+  "description": "Shared table and column contract for Cloud backend, Venue Server, Registration Server, shared Registration PostgreSQL, and SQLite fallback generation."
+}

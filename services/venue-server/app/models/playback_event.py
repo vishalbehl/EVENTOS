@@ -32,6 +32,7 @@ class PlaybackEvent(Base):
         video_pause         → Embedded video paused
         error               → App reported an error (details in JSONB)
     """
+    __table_args__ = {"schema": "presentations"}
     __tablename__ = "playback_events"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -39,13 +40,13 @@ class PlaybackEvent(Base):
     )
     queue_entry_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_queue.id", ondelete="CASCADE"),
+        ForeignKey("presentations.presentation_queue.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     device_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("room_devices.id", ondelete="CASCADE"),
+        ForeignKey("venue.room_devices.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

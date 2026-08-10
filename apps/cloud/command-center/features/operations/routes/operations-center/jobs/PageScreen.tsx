@@ -3,8 +3,10 @@
 import React, { useState, useEffect } from "react";
 import { 
   JobExecution,
+  useAdminOrgs,
   useBackgroundJobs,
   useJobControl,
+  useOrgEvents,
 } from "@/services/super-admin-service";
 import { toast } from "sonner";
 import { 
@@ -45,10 +47,13 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; status: "active"
   failed: { bg: "bg-red-500/10 border-red-500/20", text: "text-red-400", status: "failed", icon: AlertCircle },
   retrying: { bg: "bg-purple-500/10 border-purple-500/20", text: "text-purple-400", status: "warning", icon: RefreshCw },
 };
+const rows = <T,>(value: T[] | { items?: T[] } | undefined): T[] => Array.isArray(value) ? value : value?.items ?? [];
 
 export default function JobsMonitorPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [queueFilter, setQueueFilter] = useState<string>("ALL");
+  const [organizationId, setOrganizationId] = useState("");
+  const [eventId, setEventId] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 15;
 
@@ -57,6 +62,10 @@ export default function JobsMonitorPage() {
   const [controlTarget, setControlTarget] = useState<{ job: JobExecution; action: "retry" | "cancel" } | null>(null);
   const [controlReason, setControlReason] = useState("");
   const jobControl = useJobControl();
+  const organizations = useAdminOrgs({ limit: 200 });
+  const events = useOrgEvents(organizationId);
+  const organizationRows = rows(organizations.data);
+  const eventRows = rows<{ id: string; name: string }>(events.data as any);
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
   const {
@@ -67,6 +76,8 @@ export default function JobsMonitorPage() {
   } = useBackgroundJobs({
     status: statusFilter || undefined,
     queue: queueFilter === "ALL" ? undefined : queueFilter,
+    organization_id: organizationId || undefined,
+    event_id: eventId || undefined,
     skip: (page - 1) * pageSize,
     limit: pageSize,
   });
@@ -173,6 +184,32 @@ export default function JobsMonitorPage() {
               <option value="venue-sync" className="bg-surface">Venue Sync</option>
             </select>
           </div>
+          <select
+            aria-label="Jobs organization filter"
+            value={organizationId}
+            onChange={(e) => {
+              setOrganizationId(e.target.value);
+              setEventId("");
+              setPage(1);
+            }}
+            className="rounded-xl border border-border bg-surface px-3 py-2 text-xs font-bold text-[var(--text-secondary)]"
+          >
+            <option value="">All organizations</option>
+            {organizationRows.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
+          </select>
+          <select
+            aria-label="Jobs event filter"
+            value={eventId}
+            onChange={(e) => {
+              setEventId(e.target.value);
+              setPage(1);
+            }}
+            disabled={!organizationId}
+            className="rounded-xl border border-border bg-surface px-3 py-2 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-50"
+          >
+            <option value="">All events</option>
+            {eventRows.map((event: { id: string; name: string }) => <option key={event.id} value={event.id}>{event.name}</option>)}
+          </select>
 
         </div>
       </div>

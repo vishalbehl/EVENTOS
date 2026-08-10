@@ -2,6 +2,7 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import type { UploadStatus, FileUploadStatus, StationStatus, ValidationResult } from "@/types/models";
+import { runtimeConfig } from "@/lib/runtime-config";
 
 // ── Tailwind class merger ─────────────────────────────────
 export function cn(...inputs: ClassValue[]) {
@@ -257,7 +258,7 @@ export function getAssetUrl(path: string | null | undefined): string {
   if (!path) return "";
   if (path.startsWith("http")) return path;
   
-  const base = process.env.NEXT_PUBLIC_ASSETS_URL || "http://127.0.0.1:8000/api/v1/storage/assets";
+  const base = runtimeConfig.assetsOrigin;
   return `${base}/${path}`;
 }
 
@@ -267,7 +268,7 @@ export function eventPath(eventId: string, sub?: string): string {
 }
 
 export function speakerUploadUrl(eventId: string, token: string): string {
-  const base = process.env.NEXT_PUBLIC_SPEAKER_PORTAL_URL ?? "http://localhost:3002";
+  const base = runtimeConfig.speakerPortalOrigin;
   return `${base}/${eventId}/${token}`;
 }
 

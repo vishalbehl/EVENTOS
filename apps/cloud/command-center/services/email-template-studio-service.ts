@@ -7,6 +7,7 @@ export type EmailStudioRecord = {
   template_type: string;
   target_type: string;
   scope_type: "PLATFORM" | "ORGANIZATION" | "EVENT";
+  organization_id?: string | null;
   subject: string;
   preheader?: string | null;
   body_html: string;
@@ -43,6 +44,10 @@ export const platformEmailTemplates = {
   rollback: (id: string, version: number, versionId: string, reason: string) => apiClient.post<EmailStudioRecord>(`/platform/communications/email-templates/${id}/rollback`, { version_id: versionId, reason }, { headers: headers(version) }),
   preview: (id: string, payload: object) => apiClient.post<EmailStudioPreview>(`/platform/communications/email-templates/${id}/preview`, { ...payload, preview_data_profile: "representative" }),
   testSend: (id: string, recipientEmail: string, payload: object) => apiClient.post(`/platform/communications/email-templates/${id}/test-send`, { ...payload, recipient_email: recipientEmail, preview_data_profile: "representative" }, { headers: headers() }),
+  delete: (id: string) => apiClient.delete(`/platform/communications/email-templates/${id}`),
+  duplicate: (id: string) => apiClient.post<EmailStudioRecord>(`/platform/communications/email-templates/${id}/duplicate`),
+  updateScope: (id: string, scopeType: "PLATFORM" | "ORGANIZATION", organizationId?: string | null) => apiClient.put<EmailStudioRecord>(`/platform/communications/email-templates/${id}/scope`, { scope_type: scopeType, organization_id: organizationId }),
+  listOrganizations: () => apiClient.get<Array<{ id: string; name: string; slug?: string }>>("/platform/communications/email-templates/organizations-list"),
 };
 
 export const platformEmailComponents = {

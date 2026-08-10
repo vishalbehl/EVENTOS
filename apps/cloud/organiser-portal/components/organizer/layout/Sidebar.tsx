@@ -189,6 +189,7 @@ export function Sidebar() {
       label: "Design Studio",
       icon: Palette,
       subItems: [
+        { label: "Website Builder", icon: Globe, href: `/events/${eventId}/website/builder` },
         { label: "Badge Designer", icon: Contact, href: `/events/${eventId}/design-studio/badges` },
         { label: "Certificate Designer", icon: Award, href: `/events/${eventId}/design-studio/certificates` },
         { label: "Email Designer", icon: Mail, href: `/events/${eventId}/design-studio/emails` },

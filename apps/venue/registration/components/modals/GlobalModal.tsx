@@ -85,7 +85,7 @@ export function GlobalModal() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeModal}
-            className="fixed inset-0 bg-[var(--base)]/90 backdrop-blur-xl z-[9998]" 
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9998]" 
           />
           
           {/* Modal Container */}
@@ -94,12 +94,12 @@ export function GlobalModal() {
               initial={{ scale: 0.9, opacity: 0, y: 50 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 50 }}
-              className="w-full max-w-7xl glass-3d border-default rounded-[4rem] p-10 md:p-16 shadow-[0_100px_200px_color-mix(in_srgb,var(--base)_80%,transparent)] overflow-y-auto max-h-[95vh] no-scrollbar pointer-events-auto relative"
+              className="w-full max-w-7xl bg-[var(--card)] border border-[var(--border)] rounded-[4rem] p-10 md:p-16 shadow-2xl overflow-y-auto max-h-[95vh] no-scrollbar pointer-events-auto relative text-[var(--text)]"
             >
               {/* Close Button - Moved and styled to not overlap */}
               <button 
                 onClick={closeModal}
-                className="absolute top-8 right-8 h-12 w-12 rounded-full glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--text)] transition-all z-[100] shadow-xl group"
+                className="absolute top-8 right-8 h-12 w-12 rounded-full border border-[var(--border)] bg-[var(--surf)] flex items-center justify-center text-muted hover:text-[var(--text)] transition-all z-[100] shadow-xl group"
               >
                 <X className="h-5 w-5 group-hover:rotate-90 transition-transform" />
               </button>

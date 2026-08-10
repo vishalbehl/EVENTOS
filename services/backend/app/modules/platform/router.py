@@ -3130,6 +3130,9 @@ async def get_database_stats(
 async def get_background_jobs(
     status: Optional[str] = None,
     queue: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
+    event_id: Optional[UUID] = None,
+    source: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
@@ -3297,6 +3300,12 @@ async def get_background_jobs(
 
     if queue and queue != "ALL":
         items = [item for item in items if item.get("queue") == queue]
+    if source:
+        items = [item for item in items if item.get("source") == source]
+    if organization_id:
+        items = [item for item in items if item.get("organization_id") == str(organization_id)]
+    if event_id:
+        items = [item for item in items if item.get("event_id") == str(event_id)]
     if status:
         normalized_filter = normalize_status(status)
         items = [item for item in items if item.get("status") == normalized_filter]
@@ -4137,13 +4146,19 @@ async def get_organization_events(
     """List all events of an organization along with participant counts."""
     from app.modules.registration.models.participant import Participant
     
-    stmt = select(Event).where(Event.organization_id == org_id)
+    stmt = (
+        select(Event)
+        .where(Event.organization_id == org_id)
+        .execution_options(skip_tenant_filter=True)
+    )
     events = (await db.execute(stmt)).scalars().all()
     
     output = []
     for e in events:
         reg_count = await db.scalar(
-            select(func.count(Participant.id)).where(Participant.event_id == e.id)
+            select(func.count(Participant.id))
+            .where(Participant.event_id == e.id)
+            .execution_options(skip_tenant_filter=True)
         ) or 0
         output.append({
             "id": str(e.id),

@@ -6,6 +6,7 @@ import axios, {
   InternalAxiosRequestConfig,
 } from "axios";
 
+import { runtimeConfig } from "@/lib/runtime-config";
 import { useAuthStore } from "@/store/use-auth-store";
 
 export interface ProblemDetails {
@@ -74,7 +75,7 @@ export function parseDownloadFilename(disposition?: string) {
   return encodedFilename ? decodeURIComponent(encodedFilename) : plainFilename;
 }
 
-const API_BASE_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1`;
+const API_BASE_URL = `${runtimeConfig.apiOrigin}/api/v1`;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 function newRequestId() {

@@ -29,6 +29,7 @@ class SRRStation(Base):
         error       → Technical issue reported
         locked      → Taken offline by technician
     """
+    __table_args__ = {"schema": "venue"}
     __tablename__ = "srr_stations"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -36,7 +37,7 @@ class SRRStation(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -54,7 +55,7 @@ class SRRStation(Base):
     )
     assigned_speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="SET NULL"),
+        ForeignKey("presentations.speakers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

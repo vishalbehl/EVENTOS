@@ -506,26 +506,29 @@ async def get_current_event(
         @router.get("/events/{event_id}/sessions")
         async def list_sessions(event: CurrentEvent): ...
     """
-    result = await db.execute(
-        select(Event).where(Event.id == event_id, Event.deleted_at.is_(None))
-    )
+    from loguru import logger
+    logger.info(f"CurrentEvent: fetching event {event_id} for user {user.id} ({user.role})")
+    
+    stmt = select(Event).where(Event.id == event_id, Event.deleted_at.is_(None))
+    if user.role in ("super_admin", "system_admin"):
+        logger.info(f"CurrentEvent: Skipping tenant filter for {user.role}")
+        stmt = stmt.execution_options(skip_tenant_filter=True)
+        
+    result = await db.execute(stmt)
     event = result.scalar_one_or_none()
 
     if event is None:
+        logger.warning(f"CurrentEvent: Event {event_id} not found in DB.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Event {event_id} not found.",
         )
 
-    if event.organization_id != user.organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Event {event_id} not found.",
-        )
-
+    logger.info(f"DEBUG: CurrentEvent user.role = {user.role}, user.org = {user.organization_id}, event.org = {event.organization_id}")
     # Apply restricted-workspace assignment checks after tenant ownership.
-    if user.role != "super_admin":
+    if user.role not in ("super_admin", "system_admin"):
         if event.organization_id != user.organization_id:
+            print("DEBUG: CurrentEvent raising 404 because orgs do not match")
             # Return 404 not 403 — don't leak existence of other orgs' events
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

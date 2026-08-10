@@ -12,8 +12,6 @@ if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.speaker import Speaker
     from app.models.srr_station import SRRStation
-    from app.models.user import User
-
 
 class SRRCheckin(Base):
     """
@@ -26,6 +24,7 @@ class SRRCheckin(Base):
         manual   → Technician manually searched and checked in speaker
         token    → Speaker typed their token at kiosk
     """
+    __table_args__ = {"schema": "venue"}
     __tablename__ = "srr_checkins"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -33,25 +32,24 @@ class SRRCheckin(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="CASCADE"),
+        ForeignKey("presentations.speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     station_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("srr_stations.id", ondelete="SET NULL"),
+        ForeignKey("venue.srr_stations.id", ondelete="SET NULL"),
         nullable=True,
     )
     # Technician who performed manual check-in (NULL for self-service QR)
     checked_in_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -78,7 +76,6 @@ class SRRCheckin(Base):
     station: Mapped[Optional["SRRStation"]] = relationship(
         "SRRStation", back_populates="checkins"
     )
-    technician: Mapped[Optional["User"]] = relationship("User")
 
     def __repr__(self) -> str:
         return (

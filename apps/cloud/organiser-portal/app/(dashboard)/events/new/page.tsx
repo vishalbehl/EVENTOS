@@ -550,7 +550,7 @@ function NewEventPageInner() {
             upload,
             {
               headers: {
-                "Content-Type": "multipart/form-data",
+                "Content-Type": undefined,
                 "Idempotency-Key": crypto.randomUUID(),
               },
             }

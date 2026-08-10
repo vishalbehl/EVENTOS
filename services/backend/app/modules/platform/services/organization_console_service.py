@@ -120,7 +120,7 @@ class OrganizationConsoleService:
             attention.append(AttentionItem(key="mfa-gap", severity="WARNING", title="MFA coverage incomplete", detail=f"{active_user_count - mfa_user_count} active users do not have MFA enabled.", destination=f"/organizations/{organization_id}?view=security"))
         if open_security_events:
             attention.append(AttentionItem(key="security-events", severity="CRITICAL", title="Security events require review", detail=f"{open_security_events} high or critical events are recorded.", destination=f"/organizations/{organization_id}?view=security"))
-        if not subscription:
+        if not subscription and not org.is_internal_unrestricted:
             attention.append(AttentionItem(key="subscription", severity="WARNING", title="No subscription is recorded", detail="Commercial entitlements cannot be resolved without a subscription record.", destination=f"/organizations/{organization_id}?view=billing"))
 
         executive_summary = self._executive_summary(org.name, active_event_count, active_user_count, mfa_score, connection_count, open_security_events, subscription)
@@ -143,7 +143,7 @@ class OrganizationConsoleService:
         }
         return OrganizationConsoleSummary(
             generated_at=now,
-            organization={"id": str(org.id), "name": org.name, "slug": org.slug, "logo_url": org.logo_url, "is_active": org.is_active, "created_at": org.created_at, "country": org.country, "timezone": org.timezone, "currency": org.currency},
+            organization={"id": str(org.id), "name": org.name, "slug": org.slug, "logo_url": org.logo_url, "is_active": org.is_active, "is_internal_unrestricted": org.is_internal_unrestricted, "created_at": org.created_at, "country": org.country, "timezone": org.timezone, "currency": org.currency},
             subscription={"id": str(subscription.id), "status": subscription.status, "plan_id": str(subscription.plan_id), "plan_name": subscription.plan.name if subscription.plan else "Unknown", "current_period_end": subscription.current_period_end} if subscription else None,
             metrics=metrics, health_score=health_score, health_status=health_status,
             health_factors=factors, attention=attention, availability=availability,

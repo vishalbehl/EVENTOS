@@ -2,20 +2,19 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base, SoftDeleteMixin
-
-if TYPE_CHECKING:
-    from app.modules.events.models.event import Event
+from app.modules.events.models.event import Event
 
 
 class PrintTemplate(Base, SoftDeleteMixin):
-    """
-    Stores badge and certificate templates (absolute coordinates, font types, canvas parameters).
-    """
     __tablename__ = "print_templates"
 
     id: Mapped[uuid.UUID] = mapped_column(

@@ -32,7 +32,7 @@ export default function RegistrationSettings() {
   const eid = eventId as string
 
   return (
-    <div className="min-h-screen p-6 space-y-6">
+    <div className="w-full max-w-full overflow-x-hidden p-6 space-y-6">
       {/* ── Page Header ── */}
       <div className="flex items-end justify-between">
         <div>

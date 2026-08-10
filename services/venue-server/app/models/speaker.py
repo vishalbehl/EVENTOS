@@ -10,12 +10,11 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.event import Event
-    from app.models.user import User
+
     from app.models.session_speaker import SessionSpeaker
     from app.models.presentation_file import PresentationFile
     from app.models.srr_checkin import SRRCheckin
     from app.models.srr_activity_log import SRRActivityLog
-    from app.models.email_log import EmailLog
 
 
 class Speaker(Base):
@@ -26,6 +25,7 @@ class Speaker(Base):
     A speaker belongs to exactly one event. If the same person
     speaks at two events, they get two speaker records.
     """
+    __table_args__ = {"schema": "presentations"}
     __tablename__ = "speakers"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -33,14 +33,13 @@ class Speaker(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     # Optional link to a system user account (if speaker is also an organizer)
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -90,7 +89,7 @@ class Speaker(Base):
 
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="speakers")
-    user: Mapped[Optional["User"]] = relationship("User")
+
     session_speakers: Mapped[List["SessionSpeaker"]] = relationship(
         "SessionSpeaker",
         back_populates="speaker",
@@ -107,9 +106,6 @@ class Speaker(Base):
     )
     srr_activity_logs: Mapped[List["SRRActivityLog"]] = relationship(
         "SRRActivityLog", back_populates="speaker"
-    )
-    email_logs: Mapped[List["EmailLog"]] = relationship(
-        "EmailLog", back_populates="speaker"
     )
 
     @property

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.participant import Participant
+from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.badge_models import Badge, BadgeHistory
 from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.events.models.capacity_rule import CapacityRule
@@ -156,6 +157,24 @@ async def helper_approve_registration(
     if not event_obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
     await enforce_event_operation(db, event_obj.organization_id, event_obj.id, "registration.approve", user_id=reviewer_id)
+    role_obj = await db.scalar(
+        select(ParticipantRole).where(
+            ParticipantRole.event_id == reg.event_id,
+            func.lower(ParticipantRole.name) == role.lower(),
+        )
+    )
+    if role_obj is None:
+        role_obj = await db.scalar(
+            select(ParticipantRole)
+            .where(
+                ParticipantRole.event_id == reg.event_id,
+                ParticipantRole.is_default.is_(True),
+            )
+            .order_by(ParticipantRole.sort_order.asc(), ParticipantRole.created_at.asc())
+            .limit(1)
+        )
+    if role_obj is not None:
+        role = role_obj.name
     reservation = await UsageReservationService.reserve(db, organization_id=event_obj.organization_id, event_id=reg.event_id, limit_key="max_registrations", quantity=1, unit="registration", idempotency_key=f"registration-approval:{reg.id}", metadata={"registration_id": str(reg.id)})
 
     role_price = 0.0
@@ -182,7 +201,8 @@ async def helper_approve_registration(
         last_name=last_name,
         email=email,
         phone=phone,
-        role=role,
+        role_id=role_obj.id if role_obj else None,
+        role_rel=role_obj,
         company=company,
         designation=designation,
         country=country,

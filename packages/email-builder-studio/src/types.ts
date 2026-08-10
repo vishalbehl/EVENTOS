@@ -9,6 +9,7 @@ export type StudioTemplate = {
   preheader?: string;
   stableKey: string;
   scopeType: "PLATFORM" | "ORGANIZATION" | "EVENT";
+  organizationId?: string | null;
   lifecycleState: "DRAFT" | "PUBLISHED" | "ARCHIVED" | "LEGACY";
   version: number;
   designerJson: EmailDocument | null;
@@ -91,7 +92,15 @@ export type EmailBuilderStudioProps = {
   readOnly?: boolean;
   busy?: boolean;
   scopeLabel: string;
+  organizations?: Array<{ id: string; name: string; slug?: string }>;
   onSelectTemplate?: (id: string) => void;
+  onDeleteTemplate?: (id: string) => Promise<void> | void;
+  onDuplicateTemplate?: (id: string) => Promise<StudioTemplate | void>;
+  onUpdateScope?: (
+    id: string,
+    scopeType: "PLATFORM" | "ORGANIZATION",
+    organizationId?: string | null,
+  ) => Promise<void>;
   onCreateTemplate?: (template: {
     name: string;
     stableKey: string;

@@ -3,12 +3,18 @@
 import { useEffect, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
-  Loader2, Calendar, MapPin, Globe, Mail, Phone, FileText,
+  Loader2, Calendar, MapPin, Globe, Mail, Phone, FileText, AlertCircle,
   X, Check, HelpCircle, User, LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  hasPublicFeature,
+  publicCapabilityReason,
+  RegistrationCapabilitiesProvider,
+  usePublicRegistrationCapabilityQuery,
+} from "@/lib/capabilities";
 
 const THEME_PRESETS: Record<string, { bg: string, surf: string, card: string, color: string, sec: string }> = {
   midnight: { bg: '#080410', surf: '#120924', card: '#1d0f3a', color: '#7c3aed', sec: '#a78bfa' },
@@ -54,6 +60,7 @@ export default function EventPortalLayout({
   const { eventId } = useParams<{ eventId: string }>();
   const pathname = usePathname();
   const router = useRouter();
+  const capabilityState = usePublicRegistrationCapabilityQuery(eventId);
 
   const [themeColors, setThemeColors] = useState(THEME_PRESETS.midnight);
   const [config, setConfig] = useState<any>(null);
@@ -68,7 +75,14 @@ export default function EventPortalLayout({
 
   // Fetch event config
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || capabilityState.isLoading) return;
+    if (
+      capabilityState.isError
+      || !hasPublicFeature(capabilityState.data, "FEAT_REGISTRATION_PORTAL")
+    ) {
+      setLoading(false);
+      return;
+    }
     const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
     fetch(`${apiBase}/api/v1/portal/registration/${eventId}/form`)
@@ -84,20 +98,9 @@ export default function EventPortalLayout({
       })
       .catch(err => {
         console.error("Layout branding fetch failed", err);
-        // Fallback to avoid stuck loading screen
-        setConfig({
-          event_name: "Event",
-          is_live: true,
-          branding_settings: {
-            theme: "midnight",
-            header_images: DEFAULT_BANNERS,
-            footer_show_logo: true,
-          }
-        });
-        setThemeColors(THEME_PRESETS.midnight);
         setLoading(false);
       });
-  }, [eventId]);
+  }, [eventId, capabilityState.data, capabilityState.isError, capabilityState.isLoading]);
 
   // Slideshow interval handler
   useEffect(() => {
@@ -182,12 +185,28 @@ export default function EventPortalLayout({
     return parts.join(", ");
   };
 
-  if (loading || !config) {
+  if (capabilityState.isLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#080912]">
         <Loader2 className="h-8 w-8 text-indigo-400 animate-spin" />
       </div>
     );
+  }
+
+  if (capabilityState.isError || !hasPublicFeature(capabilityState.data, "FEAT_REGISTRATION_PORTAL")) {
+    const reason = publicCapabilityReason(capabilityState.data).replaceAll("_", " ").toLowerCase();
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#080912] px-6 text-center text-[#E8EAFF]">
+        <AlertCircle className="h-9 w-9 text-indigo-400" aria-hidden="true" />
+        <h1 className="text-xl font-black">Registration unavailable</h1>
+        <p className="max-w-md text-sm text-white/60">This event cannot accept registrations right now ({reason}).</p>
+        <button type="button" onClick={capabilityState.refetch} className="rounded-xl border border-white/15 px-4 py-2 text-sm font-bold">Retry</button>
+      </div>
+    );
+  }
+
+  if (!config) {
+    return <div className="min-h-screen flex items-center justify-center bg-[#080912] text-sm text-white/60">Registration information is unavailable.</div>;
   }
 
   const activeBanners = (config.branding_settings?.header_images && config.branding_settings.header_images.length > 0)
@@ -197,7 +216,7 @@ export default function EventPortalLayout({
   const logoUrl = config.branding_settings?.logo_url || config.logo_url || "/logo/1.png";
 
   return (
-    <>
+    <RegistrationCapabilitiesProvider value={capabilityState}>
       <style dangerouslySetInnerHTML={{
         __html: `
         :root {
@@ -601,6 +620,6 @@ export default function EventPortalLayout({
           )}
         </AnimatePresence>
       </div>
-    </>
+    </RegistrationCapabilitiesProvider>
   );
 }

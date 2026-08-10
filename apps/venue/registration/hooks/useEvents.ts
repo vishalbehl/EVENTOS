@@ -77,6 +77,7 @@ export function useActivity(eventId?: string, limit: number = 10) {
     refetchInterval: 15000,
   });
 }
+
 export function useDeleteEvent() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -128,13 +129,19 @@ export function useRoomBreakdown(eventId?: string) {
 /** Triggers a file download by creating a temporary anchor element. */
 export function useExportDownload(eventId: string) {
   return async (format: "csv" | "xlsx" | "pdf") => {
-    // We need the bearer token for the download URL
-    const storage = typeof window !== "undefined"
-      ? localStorage.getItem("obsidian-auth-storage")
-      : null;
-    const token = storage ? JSON.parse(storage)?.state?.accessToken : null;
+    let token = null;
+    try {
+      const storage = typeof window !== "undefined"
+        ? localStorage.getItem("obsidian-auth-storage")
+        : null;
+      if (storage && storage !== "undefined" && storage !== "null" && storage.trim() !== "") {
+        token = JSON.parse(storage)?.state?.accessToken;
+      }
+    } catch (e) {
+      console.error("Failed to parse auth storage token", e);
+    }
 
-    const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000") + "/api/v1";
+    const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001") + "/api/v1";
     const url = `${apiBase}/events/${eventId}/analytics/export?format=${format}`;
 
     const res = await fetch(url, {
@@ -147,7 +154,6 @@ export function useExportDownload(eventId: string) {
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;
-    // Derive filename from Content-Disposition header if present
     const cd = res.headers.get("Content-Disposition") || "";
     const match = cd.match(/filename="?([^"]+)"?/);
     a.download = match ? match[1] : `analytics.${format}`;

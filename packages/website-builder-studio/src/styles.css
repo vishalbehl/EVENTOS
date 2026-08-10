@@ -1,0 +1,566 @@
+/* Studio Dark Theme & Glassmorphism Overrides for GrapesJS */
+@import 'grapesjs/dist/css/grapes.min.css';
+
+.gjs-studio-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+/* Studio Header Bar */
+.gjs-studio-header {
+  height: 56px;
+  background-color: var(--card);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 100;
+}
+
+.gjs-studio-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--foreground);
+}
+
+.gjs-studio-badge {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.06em;
+}
+
+.gjs-studio-badge-admin {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.gjs-studio-badge-tenant {
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* Segmented Viewport Switcher */
+.gjs-studio-devices {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-surface-3, rgba(255,255,255,0.03));
+  border: 1px solid var(--border);
+  padding: 3px;
+  border-radius: 12px;
+}
+
+.gjs-device-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gjs-device-btn:hover {
+  color: var(--foreground);
+}
+
+.gjs-device-btn.active {
+  background: var(--primary);
+  color: var(--foreground);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--primary) 40%, transparent);
+}
+
+/* Studio Actions Cluster */
+.gjs-studio-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gjs-action-btn {
+  padding: 7px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gjs-action-btn-secondary {
+  background: var(--bg-surface-hover, rgba(255,255,255,0.04));
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.gjs-action-btn-secondary:hover {
+  background: var(--border);
+  color: var(--foreground);
+  border-color: var(--border-strong, rgba(255,255,255,0.15));
+}
+
+.gjs-action-btn-primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary) 100%);
+  color: var(--foreground);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--primary) 40%, transparent);
+}
+
+.gjs-action-btn-primary:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+/* Main Editor Body */
+.gjs-studio-body {
+  display: flex;
+  flex: 1;
+  min-height: 0; /* critical for flex children to not overflow */
+  overflow: hidden;
+  position: relative;
+  background-color: var(--background);
+}
+
+/* Sidebar Drawer */
+.gjs-studio-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.gjs-sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.gjs-sidebar-tabs::-webkit-scrollbar { display: none; }
+
+.gjs-tab-btn {
+  flex: 1;
+  min-width: 44px;
+  padding: 10px 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.gjs-tab-btn:hover {
+  color: var(--foreground);
+}
+
+.gjs-tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.gjs-sidebar-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.gjs-sidebar-content::-webkit-scrollbar { width: 4px; }
+.gjs-sidebar-content::-webkit-scrollbar-track { background: transparent; }
+.gjs-sidebar-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+
+/* Right Inspector Sidebar */
+.gjs-studio-inspector {
+  width: 268px;
+  min-width: 268px;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.gjs-inspector-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.gjs-inspector-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Import Panel pulse animation */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Page context menu button — show on hover */
+.page-ctx-trigger {
+  opacity: 0 !important;
+  transition: opacity 0.15s !important;
+}
+div:hover > div > .page-ctx-trigger,
+div:hover .page-ctx-trigger {
+  opacity: 1 !important;
+}
+
+/* GrapesJS Block Category & Glass Card Styling */
+.gjs-blocks-c {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.gjs-block-category {
+  grid-column: 1 / -1 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.12em !important;
+  color: var(--text-secondary) !important;
+  margin: 16px 0 8px 0 !important;
+  padding-left: 2px !important;
+  float: none !important;
+  width: 100% !important;
+}
+
+.gjs-block {
+  float: none !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 84px !important;
+  background: var(--bg-surface-4, rgba(255,255,255,0.02)) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  padding: 10px 6px !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+  cursor: grab !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  overflow: hidden !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.gjs-block:hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent) !important;
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 20px -4px color-mix(in srgb, var(--primary) 20%, transparent) !important;
+}
+
+.gjs-block-custom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.gjs-block-icon-wrapper {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.gjs-block-label,
+.gjs-block-name,
+.gjs-block .gjs-block-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--foreground) !important;
+  margin-top: 4px !important;
+  line-height: 1.25 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  hyphens: auto !important;
+  text-align: center !important;
+  padding: 0 2px !important;
+  box-sizing: border-box !important;
+}
+
+/* Center Canvas Container */
+.gjs-studio-canvas-container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--background);
+  position: relative;
+  overflow: hidden; /* GrapesJS manages its own iframe scrolling */
+}
+
+#gjs-canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* GrapesJS Inspector & Property Manager Theme Overrides */
+.gjs-sm-sectors {
+  padding: 0 !important;
+}
+
+.gjs-sm-sector {
+  border-bottom: 1px solid var(--border) !important;
+  padding: 8px 0 !important;
+}
+
+.gjs-sm-sector-title {
+  background: transparent !important;
+  border: none !important;
+  color: var(--foreground) !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.03em !important;
+  padding: 10px 12px !important;
+  cursor: pointer !important;
+  transition: color 0.2s !important;
+}
+
+.gjs-sm-sector-title:hover {
+  color: var(--primary) !important;
+}
+
+.gjs-sm-properties {
+  padding: 8px 12px 16px 12px !important;
+}
+
+.gjs-sm-property {
+  margin-bottom: 12px !important;
+}
+
+.gjs-sm-label {
+  color: var(--text-secondary) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  margin-bottom: 6px !important;
+}
+
+.gjs-field,
+.gjs-sm-field,
+.gjs-clm-field,
+.gjs-sm-composite {
+  background: var(--bg-surface-3, rgba(255,255,255,0.03)) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--foreground) !important;
+  border-radius: 8px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  box-shadow: none !important;
+  transition: all 0.2s !important;
+}
+
+.gjs-field:focus-within,
+.gjs-sm-field:focus-within {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent) !important;
+}
+
+.gjs-field select,
+.gjs-sm-field select,
+.gjs-field input,
+.gjs-sm-field input {
+  color: var(--foreground) !important;
+  background: transparent !important;
+  border: none !important;
+  font-size: 12px !important;
+}
+
+.gjs-field select option {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+}
+
+/* Layer Tree Styling */
+.gjs-layers {
+  padding: 0 !important;
+}
+
+.gjs-layer {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  border-radius: 8px !important;
+  padding: 8px 10px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  transition: background 0.15s !important;
+}
+
+.gjs-layer:hover {
+  background: var(--bg-surface-hover, rgba(255,255,255,0.04)) !important;
+  color: var(--foreground) !important;
+}
+
+.gjs-layer.gjs-selected {
+  background: color-mix(in srgb, var(--primary) 20%, transparent) !important;
+  color: var(--primary) !important;
+  font-weight: 700 !important;
+}
+
+/* GrapesJS canvas wrapper — must fill container */
+.gjs-cv-canvas {
+  background-color: var(--background) !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* GrapesJS iframe — full size, browser handles internal scroll */
+.gjs-frame {
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  min-height: 100% !important;
+}
+
+/* The wrapper holding the frame */
+.gjs-cv-canvas__frames {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.gjs-pn-views-container,
+.gjs-pn-commands,
+.gjs-pn-options {
+  display: none !important;
+}
+
+/* ── Contextual Style Manager Visiblity ── */
+.gjs-sm-sectors .gjs-sm-sector {
+  display: none !important;
+}
+
+/* Fallback: if no contextual class is applied, show all */
+.gjs-sm-sectors:not(.show-general):not(.show-flex):not(.show-dimension):not(.show-typography):not(.show-decorations):not(.show-extra) .gjs-sm-sector {
+  display: block !important;
+}
+
+/* Explicit visibility based on active contextual class */
+.gjs-sm-sectors.show-general #gjs-sm-general { display: block !important; }
+.gjs-sm-sectors.show-flex #gjs-sm-flex { display: block !important; }
+.gjs-sm-sectors.show-dimension #gjs-sm-dimension { display: block !important; }
+.gjs-sm-sectors.show-typography #gjs-sm-typography { display: block !important; }
+.gjs-sm-sectors.show-decorations #gjs-sm-decorations { display: block !important; }
+.gjs-sm-sectors.show-extra #gjs-sm-extra { display: block !important; }
+
+/* ── GrapesJS Trait Manager Theme Overrides ── */
+.gjs-trt-traits {
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+}
+
+.gjs-trt-trait {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+}
+
+.gjs-trt-label {
+  color: var(--text-secondary) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  text-align: left !important;
+  width: auto !important;
+  padding: 0 !important;
+}
+
+.gjs-trt-trait .gjs-field,
+.gjs-trt-trait .gjs-field select,
+.gjs-trt-trait .gjs-field input {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Block settings icon in traits */
+.gjs-trt-header {
+  color: var(--foreground) !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.03em !important;
+  padding: 10px 12px !important;
+  margin-bottom: 8px !important;
+  background: transparent !important;
+  border-bottom: 1px solid var(--border) !important;
+}

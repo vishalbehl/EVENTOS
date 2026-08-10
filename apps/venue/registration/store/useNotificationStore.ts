@@ -42,7 +42,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     
     const token = useAuthStore.getState().accessToken;
     if (!token) return;
-    const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8000', {
+    const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8001', {
       path: '/socket.io',
       transports: ['websocket'],
       auth: { token },

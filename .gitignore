@@ -4,6 +4,7 @@ dist/
 build/
 out/
 coverage/
+apps/venue/registration/electron-dist/
 __pycache__/
 .pytest_cache/
 .venv/
@@ -32,3 +33,5 @@ excel_templates/
 .agents/
 md files/
 tools/
+CLAUDE.md
+devrun.ps1

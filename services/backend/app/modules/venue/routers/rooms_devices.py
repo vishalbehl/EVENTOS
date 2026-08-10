@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import DeviceAuth, StepUpAuth, get_db, get_current_user, get_current_event, CurrentEvent
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.operations_control.models import VenueCredentialOperation, VenueSupplierAssignment
+from app.modules.operations_control.models import VenueCredentialOperation
 from app.modules.venue.models.room_device import RoomDevice
 from app.modules.identity.models.user import User
 from app.modules.events.models.room import Room
@@ -33,7 +33,6 @@ class DeviceRegisterRequest(BaseModel):
     hostname: Optional[str] = None
     os_version: Optional[str] = None
     app_version: Optional[str] = None
-    supplier_assignment_id: Optional[uuid.UUID] = None
 
 
 class DeviceResponse(BaseModel):
@@ -101,16 +100,6 @@ async def register_device(
     room = await db.scalar(select(Room).where(Room.id == room_id, Room.event_id == event.id))
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found.")
-    if payload.supplier_assignment_id:
-        assignment = await db.scalar(select(VenueSupplierAssignment).where(
-            VenueSupplierAssignment.id == payload.supplier_assignment_id,
-            VenueSupplierAssignment.organization_id == event.organization_id,
-            VenueSupplierAssignment.event_id == event.id,
-            VenueSupplierAssignment.status == "ACTIVE",
-        ))
-        if assignment is None:
-            raise HTTPException(status_code=404, detail="Supplier assignment not found.")
-
     reservation = await UsageReservationService.reserve(
         db,
         organization_id=event.organization_id,
@@ -126,7 +115,6 @@ async def register_device(
         organization_id=event.organization_id,
         event_id=event.id,
         room_id=room_id,
-        supplier_assignment_id=payload.supplier_assignment_id,
         device_key_hash=hashlib.sha256(plain_key.encode("utf-8")).hexdigest(),
         device_key_expires_at=expires_at,
         device_type=payload.device_type,

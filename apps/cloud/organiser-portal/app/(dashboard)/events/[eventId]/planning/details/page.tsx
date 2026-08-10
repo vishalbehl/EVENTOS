@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { useEvent, useUpdateEvent } from "@/hooks/useEvents";
 import { useSessions } from "@/hooks/useSessions";
@@ -112,6 +113,8 @@ export default function EventSettingsPage() {
       notes: "",
       map_coords: "",
     },
+    registration_enabled: true,
+    speaker_enabled: true,
   });
 
   // Venue Facilities checklist
@@ -198,6 +201,8 @@ export default function EventSettingsPage() {
         notes: vDetails.notes || "",
         map_coords: vDetails.map_coords || "",
       },
+      registration_enabled: (event as any).registration_settings?.enabled ?? true,
+      speaker_enabled: (event as any).speaker_settings?.enabled ?? true,
     }));
   }, [event]);
 
@@ -261,6 +266,14 @@ export default function EventSettingsPage() {
         map_link: form.map_link || null,
         venue_images: form.venue_images || [],
         venue_details: form.venue_details,
+        registration_settings: {
+          ...((event as any)?.registration_settings || {}),
+          enabled: form.registration_enabled
+        },
+        speaker_settings: {
+          ...((event as any)?.speaker_settings || {}),
+          enabled: form.speaker_enabled
+        }
       };
       if (form.start_date) eventPayload.start_date = form.start_date;
       if (form.end_date) eventPayload.end_date = form.end_date;
@@ -290,7 +303,7 @@ export default function EventSettingsPage() {
         formData,
         {
           headers: {
-            "Content-Type": "multipart/form-data",
+            "Content-Type": undefined,
             "Idempotency-Key": crypto.randomUUID(),
           },
         }
@@ -860,6 +873,30 @@ export default function EventSettingsPage() {
                         rows={4}
                         className="rounded-xl border border-white/10 bg-[#12131a] text-xs text-[var(--text)]"
                       />
+                    </div>
+
+                    <div className="space-y-4 pt-4 border-t border-white/5">
+                      <h4 className="text-[10px] font-black uppercase text-muted tracking-wider">Module Access</h4>
+                      <div className="flex items-center justify-between p-4 rounded-xl border border-white/10 bg-[#12131a]">
+                        <div>
+                          <p className="text-xs font-bold text-[var(--text)]">Registration Module</p>
+                          <p className="text-[10px] text-muted mt-1">Enable or disable the on-site registration portal and dashboards.</p>
+                        </div>
+                        <Switch
+                          checked={form.registration_enabled}
+                          onCheckedChange={(checked) => setForm({ ...form, registration_enabled: checked })}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between p-4 rounded-xl border border-white/10 bg-[#12131a]">
+                        <div>
+                          <p className="text-xs font-bold text-[var(--text)]">Speaker Module</p>
+                          <p className="text-[10px] text-muted mt-1">Enable or disable the speaker management and presentation portal.</p>
+                        </div>
+                        <Switch
+                          checked={form.speaker_enabled}
+                          onCheckedChange={(checked) => setForm({ ...form, speaker_enabled: checked })}
+                        />
+                      </div>
                     </div>
 
                     {isAdmin && (

@@ -53,38 +53,38 @@ class IPAllowlistMiddleware:
             await self.app(scope, receive, send)
             return
 
+        user_allowed_ips_str = None
+        
         # 3. Retrieve user allowed_ips from DB
         async with AsyncSessionLocal() as db:
             user = await db.get(User, user_id)
-            if not user or not user.allowed_ips:
-                await self.app(scope, receive, send)
-                return
+            if user and user.allowed_ips:
+                user_allowed_ips_str = user.allowed_ips.strip()
 
-            allowed_ips_str = user.allowed_ips.strip()
-            if not allowed_ips_str:
-                await self.app(scope, receive, send)
-                return
+        if not user_allowed_ips_str:
+            await self.app(scope, receive, send)
+            return
 
-            # 4. Resolve the client through the canonical trusted-proxy policy.
-            client_ip = resolve_client_ip(request)
+        # 4. Resolve the client through the canonical trusted-proxy policy.
+        client_ip = resolve_client_ip(request)
 
-            if not client_ip:
-                logger.warning(f"IPAllowlist Denied: Could not resolve client IP for user={user_id}")
-                response = JSONResponse(
-                    status_code=403,
-                    content={"detail": "IP address access denied."}
-                )
-                await response(scope, receive, send)
-                return
+        if not client_ip:
+            logger.warning(f"IPAllowlist Denied: Could not resolve client IP for user={user_id}")
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": "IP address access denied."}
+            )
+            await response(scope, receive, send)
+            return
 
-            # 5. Verify IP is in allowlist (supports CIDR and single IPs)
-            if not ip_is_allowed(client_ip, allowed_ips_str):
-                logger.warning(f"IPAllowlist Denied: client_ip={client_ip} not in allowlist={allowed_ips_str} for user={user_id}")
-                response = JSONResponse(
-                    status_code=403,
-                    content={"detail": "IP address access denied."}
-                )
-                await response(scope, receive, send)
-                return
+        # 5. Verify IP is in allowlist (supports CIDR and single IPs)
+        if not ip_is_allowed(client_ip, user_allowed_ips_str):
+            logger.warning(f"IPAllowlist Denied: client_ip={client_ip} not in allowlist={user_allowed_ips_str} for user={user_id}")
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": "IP address access denied."}
+            )
+            await response(scope, receive, send)
+            return
 
         await self.app(scope, receive, send)

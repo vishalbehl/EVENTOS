@@ -146,7 +146,7 @@ export const uploadEmailAsset = async (
   formData.append("file", file)
   return apiClient.post(`/events/${eventId}/emails/assets/upload`, formData, {
     headers: {
-      "Content-Type": "multipart/form-data",
+      "Content-Type": undefined,
       "Idempotency-Key": crypto.randomUUID(),
     },
   })

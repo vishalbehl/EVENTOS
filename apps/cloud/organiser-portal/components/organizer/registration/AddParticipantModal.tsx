@@ -120,7 +120,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
     data.append("file", file);
     try {
       const result = await apiClient.post<any>(`/portal/registration/${eventId}/upload`, data, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined } as any,
       });
       setValue(field.id, result.url);
       toast.success(`${field.label} uploaded.`);
@@ -149,6 +149,12 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       }
     });
 
+    // Ensure a composed display name is sent so server-side profile matching
+    // uses the same full name the user sees in the form.
+    if (!payload.name) {
+      payload.name = `${(payload.first_name || "").toString().trim()} ${(payload.last_name || "").toString().trim()}`.trim();
+    }
+
     return payload;
   };
 
@@ -169,10 +175,39 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
 
     setSubmitting(true);
     try {
-      await apiPost(`/events/${eventId}/participants`, buildPayload(), {
-        headers: { "Idempotency-Key": crypto.randomUUID() },
-      });
-      toast.success("Participant registered successfully.");
+      const key = crypto.randomUUID();
+      const submitWith = async (payload: Record<string, any>) =>
+        apiPost(`/events/${eventId}/participants`, payload, {
+          headers: { "Idempotency-Key": key },
+        });
+
+      const payload = buildPayload();
+      try {
+        await submitWith(payload);
+        toast.success("Participant registered successfully.");
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail;
+        if (err?.response?.status === 409 && detail?.code === "PROFILE_MERGE_REQUIRED") {
+          const confirmed = window.confirm(
+            `${detail.message}\n\nMerge this registration into the existing profile?`
+          );
+          if (!confirmed) {
+            setSubmitting(false);
+            return;
+          }
+          await submitWith({ ...payload, confirm_merge: true });
+          toast.success("Profile merged with the existing participant.");
+        } else if (err?.response?.status === 402 || err?.response?.data?.detail?.code === "QUOTA_EXHAUSTED") {
+          const detail = err?.response?.data?.detail;
+          toast.error(
+            detail?.code === "QUOTA_EXHAUSTED"
+              ? `Registration quota exhausted (${detail.used}/${detail.allowed}). Upgrade the plan, purchase an add-on, or waitlist via review instead.`
+              : formatApiError(err, "Payment required to register more participants.")
+          );
+        } else {
+          throw err;
+        }
+      }
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -216,13 +251,18 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       const data = new FormData();
       data.append("file", importFile);
       const result = await apiClient.post<any>(`/events/${eventId}/participants/import-excel`, data, {
-        headers: { "Content-Type": "multipart/form-data", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": undefined, "Idempotency-Key": crypto.randomUUID() } as any,
       });
       setImportResult(result);
       toast.success("Spreadsheet processed successfully.");
       onSuccess();
     } catch (err: any) {
-      toast.error(formatApiError(err, "Failed to import Excel file."));
+      const detail = err?.response?.data?.detail;
+      if (detail?.code === "QUOTA_EXHAUSTED") {
+        toast.error(`Registration quota exhausted (${detail.used}/${detail.allowed}). Upgrade the plan to add more participants.`);
+      } else {
+        toast.error(formatApiError(err, "Failed to import Excel file."));
+      }
     } finally {
       setImporting(false);
     }

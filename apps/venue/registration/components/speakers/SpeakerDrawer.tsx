@@ -131,7 +131,7 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={onClose}
-        className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[90]"
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[90]"
       />
 
       {/* Drawer Panel — fixed, no scroll affecting page */}
@@ -143,10 +143,10 @@ export function SpeakerDrawer({ speaker, eventId, onClose }: SpeakerDrawerProps)
         className="fixed right-0 top-0 h-[100dvh] w-[600px] max-w-full z-[100] flex flex-col"
         style={{ willChange: "transform" }}
       >
-        <div className="h-full flex flex-col glass-3d border-l border-default shadow-[-50px_0_100px_color-mix(in_srgb,var(--base)_50%,transparent)]">
+        <div className="h-full flex flex-col bg-[var(--card)] border-l border-[var(--border)] shadow-2xl text-[var(--text)]">
 
           {/* ── Header ─────────────────────────────────────── */}
-          <div className="flex-shrink-0 p-7 border-b border-default">
+          <div className="flex-shrink-0 p-7 border-b border-[var(--border)] bg-[var(--surf)]">
             {/* Action buttons row */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">

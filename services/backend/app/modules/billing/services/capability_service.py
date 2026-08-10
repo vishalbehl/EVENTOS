@@ -39,6 +39,14 @@ class CapabilityService:
         return bool(value)
 
     @staticmethod
+    def _internal_feature_value(definition: dict[str, Any]) -> Any:
+        value_type = definition.get("value_type", "BOOLEAN")
+        if value_type in {"TIER", "ENUM"}:
+            allowed_values = definition.get("allowed_values", [])
+            return allowed_values[-1] if allowed_values else True
+        return True
+
+    @staticmethod
     async def sync_catalogue(db: AsyncSession) -> dict[str, Any]:
         rows = {row.key: row for row in (await db.scalars(select(FeatureCatalog))).all()}
         created: list[str] = []
@@ -147,6 +155,7 @@ class CapabilityService:
         event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == organization_id))
         if not organization or not event:
             raise LookupError("Event does not belong to the selected organization")
+        internal_unrestricted = organization.has_unrestricted_capabilities
         resolved = await EventEntitlementService.resolve(db, organization_id, event_id, explain=True)
         catalogue = {row.key: row for row in (await db.scalars(select(FeatureCatalog).where(FeatureCatalog.is_active.is_(True)))).all()}
         flags = await PlatformFlagService.evaluate(db, organization_id=organization_id, event_id=event_id, user_id=user_id, environment=environment)
@@ -221,32 +230,35 @@ class CapabilityService:
             enabled = CapabilityService._enabled(raw_value)
             reason_code = None if enabled else "NOT_ENTITLED"
             restriction = restriction_by_key.get(key) or broad_restriction
-            if not resolved["availability"]["available"]:
-                enabled, reason_code = False, "CONTRACT_REQUIRED"
-            elif not organization.is_active or organization.suspended_at:
-                enabled, reason_code = False, "SUSPENDED"
-            elif str(getattr(event, "status", "")).lower() in {"suspended", "archived", "cancelled"}:
-                enabled, reason_code = False, "SUSPENDED"
-            elif restriction:
-                enabled, reason_code = False, restriction.reason_code or "SECURITY_RESTRICTED"
+            if not internal_unrestricted:
+                if not resolved["availability"]["available"]:
+                    enabled, reason_code = False, "CONTRACT_REQUIRED"
+                elif not organization.is_active or organization.suspended_at:
+                    enabled, reason_code = False, "SUSPENDED"
+                elif str(getattr(event, "status", "")).lower() in {"suspended", "archived", "cancelled"}:
+                    enabled, reason_code = False, "SUSPENDED"
+                elif restriction:
+                    enabled, reason_code = False, restriction.reason_code or "SECURITY_RESTRICTED"
             relevant_flags = {flag_key: flag for flag_key, flag in flags.items() if key in (flag.get("target_capabilities") or [])}
             kill = next((flag for flag in relevant_flags.values() if flag["flag_type"] == "KILL_SWITCH" and flag["value"] is True), None)
             rollout_disabled = next((flag for flag in relevant_flags.values() if flag["flag_type"] in {"RELEASE", "OPERATIONAL"} and flag["value"] is False), None)
-            if kill:
-                enabled, reason_code = False, "SECURITY_RESTRICTED"
-            elif rollout_disabled:
-                enabled, reason_code = False, "ROLLOUT_DISABLED"
-            elif (
-                enabled
-                and key in provider_feature_channels
-                and provider_feature_channels[key] not in provider_channels
-            ):
-                enabled, reason_code = False, "PROVIDER_UNAVAILABLE"
+            if not internal_unrestricted:
+                if kill:
+                    enabled, reason_code = False, "SECURITY_RESTRICTED"
+                elif rollout_disabled:
+                    enabled, reason_code = False, "ROLLOUT_DISABLED"
+                elif (
+                    enabled
+                    and key in provider_feature_channels
+                    and provider_feature_channels[key] not in provider_channels
+                ):
+                    enabled, reason_code = False, "PROVIDER_UNAVAILABLE"
             backend_mode = definition.get("backend_mode", "NOT_IMPLEMENTED")
-            if enabled and backend_mode == "PROVIDER_REQUIRED":
-                enabled, reason_code = False, "PROVIDER_UNAVAILABLE"
-            elif enabled and backend_mode == "NOT_IMPLEMENTED":
-                enabled, reason_code = False, "ROLLOUT_DISABLED"
+            if not internal_unrestricted:
+                if enabled and backend_mode == "PROVIDER_REQUIRED":
+                    enabled, reason_code = False, "PROVIDER_UNAVAILABLE"
+                elif enabled and backend_mode == "NOT_IMPLEMENTED":
+                    enabled, reason_code = False, "ROLLOUT_DISABLED"
             meta = catalogue.get(key)
             features[key] = {
                 "key": key,
@@ -279,7 +291,7 @@ class CapabilityService:
         # Bad legacy catalogue/contract data must fail closed even if it
         # bypassed publish-time validation. Dependency failures can cascade, so
         # resolve them to a stable state before evaluating conflicts.
-        changed = True
+        changed = not internal_unrestricted
         while changed:
             changed = False
             for capability in features.values():
@@ -299,12 +311,13 @@ class CapabilityService:
                     changed = True
 
         conflicted: set[str] = set()
-        for key, capability in features.items():
-            if not capability["enabled"]:
-                continue
-            for conflict in capability["conflicts"]:
-                if features.get(conflict, {}).get("enabled", False):
-                    conflicted.update({key, conflict})
+        if not internal_unrestricted:
+            for key, capability in features.items():
+                if not capability["enabled"]:
+                    continue
+                for conflict in capability["conflicts"]:
+                    if features.get(conflict, {}).get("enabled", False):
+                        conflicted.update({key, conflict})
         for key in conflicted:
             capability = features[key]
             active_conflicts = sorted(
@@ -391,7 +404,9 @@ class CapabilityService:
                 "is_maintenance": event.is_maintenance,
                 "is_read_only": event.is_read_only,
                 "mutation_reason_code": (
-                    "EVENT_MAINTENANCE"
+                    None
+                    if internal_unrestricted
+                    else "EVENT_MAINTENANCE"
                     if event.is_maintenance
                     else "EVENT_READ_ONLY"
                     if event.is_read_only
@@ -422,6 +437,7 @@ class CapabilityService:
         organization = await db.get(Organization, organization_id)
         if not organization:
             raise LookupError("Organization not found")
+        internal_unrestricted = organization.has_unrestricted_capabilities
         base = await EntitlementResolver.resolve_org_entitlements(db, organization_id, explain=True)
         now = datetime.now(timezone.utc)
         flags = await PlatformFlagService.evaluate(db, organization_id=organization_id, event_id=None, user_id=user_id, environment=environment)
@@ -429,26 +445,36 @@ class CapabilityService:
         source_features = base.get("features", {})
         features: dict[str, Any] = {}
         for key in sorted(set(FEATURE_DEFINITIONS) | set(source_features)):
-            source = source_features.get(key, {})
+            definition = FEATURE_DEFINITIONS.get(key, {})
+            source = (
+                {
+                    "value": CapabilityService._internal_feature_value(definition),
+                    "enabled": True,
+                    "source_type": "INTERNAL_UNRESTRICTED_BASELINE",
+                }
+                if internal_unrestricted
+                else source_features.get(key, {})
+            )
             value = source.get("value", source.get("enabled", False))
             enabled = CapabilityService._enabled(value)
             reason = None if enabled else "NOT_ENTITLED"
             restriction = next((item for item in restrictions if item.capability_key in {None, key}), None)
             relevant_flags = {flag_key: flag for flag_key, flag in flags.items() if key in (flag.get("target_capabilities") or [])}
-            if not organization.is_active or organization.suspended_at:
-                enabled, reason = False, "SUSPENDED"
-            elif restriction:
-                enabled, reason = False, restriction.reason_code
-            elif any(flag["flag_type"] == "KILL_SWITCH" and flag["value"] is True for flag in relevant_flags.values()):
-                enabled, reason = False, "SECURITY_RESTRICTED"
-            elif any(flag["flag_type"] in {"RELEASE", "OPERATIONAL"} and flag["value"] is False for flag in relevant_flags.values()):
-                enabled, reason = False, "ROLLOUT_DISABLED"
-            definition = FEATURE_DEFINITIONS.get(key, {})
+            if not internal_unrestricted:
+                if not organization.is_active or organization.suspended_at:
+                    enabled, reason = False, "SUSPENDED"
+                elif restriction:
+                    enabled, reason = False, restriction.reason_code
+                elif any(flag["flag_type"] == "KILL_SWITCH" and flag["value"] is True for flag in relevant_flags.values()):
+                    enabled, reason = False, "SECURITY_RESTRICTED"
+                elif any(flag["flag_type"] in {"RELEASE", "OPERATIONAL"} and flag["value"] is False for flag in relevant_flags.values()):
+                    enabled, reason = False, "ROLLOUT_DISABLED"
             backend_mode = definition.get("backend_mode", "NOT_IMPLEMENTED")
-            if enabled and backend_mode == "PROVIDER_REQUIRED":
-                enabled, reason = False, "PROVIDER_UNAVAILABLE"
-            elif enabled and backend_mode == "NOT_IMPLEMENTED":
-                enabled, reason = False, "ROLLOUT_DISABLED"
+            if not internal_unrestricted:
+                if enabled and backend_mode == "PROVIDER_REQUIRED":
+                    enabled, reason = False, "PROVIDER_UNAVAILABLE"
+                elif enabled and backend_mode == "NOT_IMPLEMENTED":
+                    enabled, reason = False, "ROLLOUT_DISABLED"
             features[key] = {
                 "key": key,
                 "name": key,
@@ -458,7 +484,11 @@ class CapabilityService:
                 "enabled": enabled,
                 "reason_code": reason,
                 "source": source.get("source_type"),
-                "sources": base.get("sources", {}).get(key, []),
+                "sources": (
+                    [{"source": "INTERNAL_UNRESTRICTED_BASELINE", "source_ref": "Eventos", "value": value}]
+                    if internal_unrestricted
+                    else base.get("sources", {}).get(key, [])
+                ),
                 "flags": relevant_flags,
                 "upgrade_url": "/subscriptions",
                 "owner_console": definition.get("owner_console", "BUSINESS"),
@@ -478,7 +508,7 @@ class CapabilityService:
             if definition.get("scope") != "ORGANIZATION":
                 continue
             item = source_limits.get(key, {})
-            allowed = item.get("limit_value")
+            allowed = None if internal_unrestricted else item.get("limit_value")
             if key == "max_events":
                 used = int(await db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id, Event.deleted_at.is_(None), ~func.lower(Event.status).in_(["archived", "cancelled"]))) or 0)
             elif key == "max_users":
@@ -516,7 +546,7 @@ class CapabilityService:
                 "remaining": remaining,
                 "unit": definition.get("unit"),
                 "period": definition.get("period"),
-                "source": item.get("source_type"),
+                "source": "INTERNAL_UNRESTRICTED_BASELINE" if internal_unrestricted else item.get("source_type"),
                 "enforcement_mode": enforcement_mode,
                 "overage_policy": item.get("overage_policy") or {"action": "DENY"},
                 "reason_code": (

@@ -188,9 +188,15 @@ async def list_roles(
     )
     roles = result.scalars().all()
 
-    # ── Auto-seed for events created before this feature was added ──
-    # Legacy events are backfilled by an explicit governed job. Reads never
-    # create commercial resources as a side effect.
+    # Auto-seed default platform roles if an event has no roles configured yet
+    if not roles:
+        await seed_default_roles(event.id, db, commit=True)
+        result = await db.execute(
+            select(ParticipantRole)
+            .where(ParticipantRole.event_id == event.id)
+            .order_by(ParticipantRole.sort_order, ParticipantRole.name)
+        )
+        roles = result.scalars().all()
 
     return roles
 

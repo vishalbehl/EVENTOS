@@ -70,14 +70,14 @@ export function EmailCampaignDialog({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200]"
           />
           <div className="fixed inset-0 flex items-center justify-center z-[210] pointer-events-none p-4">
             <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="w-full max-w-lg glass-3d rounded-[2.5rem] border-default shadow-2xl pointer-events-auto overflow-hidden"
+              className="w-full max-w-lg bg-[var(--card)] rounded-[2.5rem] border border-[var(--border)] shadow-2xl pointer-events-auto overflow-hidden text-[var(--text)]"
             >
               <div className="p-8">
                 {/* Header */}
@@ -99,7 +99,7 @@ export function EmailCampaignDialog({
                   </div>
                   <button
                     onClick={onClose}
-                    className="h-10 w-10 rounded-full border border-default flex items-center justify-center text-muted hover:text-[var(--text)] transition-all"
+                    className="h-10 w-10 rounded-full border border-[var(--border)] bg-[var(--surf)] flex items-center justify-center text-muted hover:text-[var(--text)] transition-all"
                   >
                     <X className="h-4 w-4" />
                   </button>

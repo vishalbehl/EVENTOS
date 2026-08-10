@@ -1,5 +1,7 @@
-*, *::before, *::after {
-  transition: background-color 200ms ease, border-color 200ms ease, color 100ms ease;
+button, a, input, select, textarea, [role="button"], [data-motion="standard"] {
+  transition-property: background-color, border-color, color, opacity, box-shadow, transform;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-standard);
 }
 
 .no-transition,
@@ -9,12 +11,21 @@
   transition: none !important;
 }
 
-body { background: var(--base); color: var(--text); }
+html {
+  background: var(--base);
+}
+
+body {
+  background: var(--base);
+  color: var(--text);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
 .sidebar { background: var(--surf); border-right: 0.5px solid var(--border); }
-.card, .modal, .drawer { background: var(--card); border: 0.5px solid var(--border); }
-.btn-primary { background: var(--pri); color: white; }
+.card, .modal, .drawer, [role="dialog"] { background: var(--card); border: 1px solid var(--border); color: var(--text); }
+.btn-primary { background: var(--pri); color: var(--primary-foreground); }
 .btn-secondary { border: 0.5px solid var(--border); color: var(--text); }
-.btn-ghost { color: var(--pri); }
+.btn-ghost { color: var(--text); }
 .btn-danger { background: color-mix(in srgb, var(--dan) 12%, transparent); color: var(--dan); }
 .input { border: 0.5px solid var(--border); color: var(--text); background: transparent; }
 .input:focus { border-color: var(--pri); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent); }
@@ -35,49 +46,89 @@ body { background: var(--base); color: var(--text); }
 
 .glass-3d,
 .glass-card {
-  background: color-mix(in srgb, var(--card) 88%, transparent);
-  border: 0.5px solid var(--border);
-  backdrop-filter: blur(20px);
-  box-shadow:
-    0 10px 30px color-mix(in srgb, var(--base) 68%, transparent),
-    inset 0 1px 1px color-mix(in srgb, var(--text) 10%, transparent);
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-panel);
 }
 
-.theme-swatch {
-  background: var(--swatch-base);
+.venue-profile-menu {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-overlay) !important;
+  backdrop-filter: blur(18px);
 }
 
-.theme-swatch::after {
-  background: var(--swatch-pri);
+.venue-profile-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: var(--radius-control);
+  padding: 0.625rem 0.75rem;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
 }
 
-.theme-swatch[data-active="true"] {
-  border-color: var(--pri);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent);
+.venue-profile-menu-item:hover,
+.venue-profile-menu-item:focus-visible {
+  background: var(--raised) !important;
+  color: var(--text) !important;
+  text-decoration: none;
 }
 
-.theme-swatch-void-indigo { --swatch-base: var(--theme-void-indigo-base); --swatch-pri: var(--theme-void-indigo-pri); }
-.theme-swatch-obsidian-rose { --swatch-base: var(--theme-obsidian-rose-base); --swatch-pri: var(--theme-obsidian-rose-pri); }
-.theme-swatch-carbon-teal { --swatch-base: var(--theme-carbon-teal-base); --swatch-pri: var(--theme-carbon-teal-pri); }
-.theme-swatch-amber-noir { --swatch-base: var(--theme-amber-noir-base); --swatch-pri: var(--theme-amber-noir-pri); }
-.theme-swatch-slate-aurora { --swatch-base: var(--theme-slate-aurora-base); --swatch-pri: var(--theme-slate-aurora-pri); }
-.theme-swatch-forest-ink { --swatch-base: var(--theme-forest-ink-base); --swatch-pri: var(--theme-forest-ink-pri); }
-.theme-swatch-copper-oxide { --swatch-base: var(--theme-copper-oxide-base); --swatch-pri: var(--theme-copper-oxide-pri); }
-.theme-swatch-plasma-violet { --swatch-base: var(--theme-plasma-violet-base); --swatch-pri: var(--theme-plasma-violet-pri); }
-.theme-swatch-light { --swatch-base: var(--theme-light-base); --swatch-pri: var(--theme-light-pri); }
-
-.neomorphic-inset {
-  box-shadow: 
-    inset 4px 4px 8px color-mix(in srgb, black 30%, transparent),
-    inset -4px -4px 8px color-mix(in srgb, white 5%, transparent);
-  background: color-mix(in srgb, var(--card) 95%, transparent);
+.venue-profile-menu-item.danger {
+  color: var(--dan);
 }
 
-/* Global native select dropdown styling to follow theme design */
+.venue-profile-menu-item.danger:hover,
+.venue-profile-menu-item.danger:focus-visible {
+  background: color-mix(in srgb, var(--dan) 14%, var(--card)) !important;
+  color: var(--dan) !important;
+}
+
+.venue-workstation-shell a:hover,
+.venue-workstation-shell button:hover {
+  text-decoration: none;
+}
+
+.venue-sidebar-tooltip {
+  pointer-events: none;
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  z-index: 9999;
+  transform: translate(4px, -50%);
+  white-space: nowrap;
+  border-radius: var(--radius-control);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, var(--text));
+  background-color: var(--card) !important;
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--raised) 42%, transparent), transparent) !important;
+  color: var(--text) !important;
+  box-shadow: 0 18px 48px rgb(var(--shadow-color) / 0.42), inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
+  opacity: 0;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  isolation: isolate;
+  transition: opacity 140ms var(--ease-standard), transform 140ms var(--ease-standard);
+}
+
+.group:hover > .venue-sidebar-tooltip,
+.group:focus-visible > .venue-sidebar-tooltip,
+.group:focus-within > .venue-sidebar-tooltip {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
 select {
-  background-color: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 12px !important;
+  background-color: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
   color: var(--text) !important;
   font-weight: 600 !important;
   outline: none !important;
@@ -86,13 +137,13 @@ select {
 }
 
 select:hover {
-  background-color: rgba(255, 255, 255, 0.08) !important;
-  border-color: rgba(255, 255, 255, 0.15) !important;
+  background-color: var(--bg-surface-hover) !important;
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text)) !important;
 }
 
 select:focus {
-  border-color: var(--pri) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent) !important;
+  border-color: var(--text) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent) !important;
 }
 
 select option, select optgroup {
@@ -100,5 +151,3 @@ select option, select optgroup {
   color: var(--text) !important;
   font-weight: 600 !important;
 }
-
-

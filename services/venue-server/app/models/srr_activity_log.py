@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.srr_station import SRRStation
     from app.models.speaker import Speaker
-    from app.models.user import User
+
     from app.models.presentation_file import PresentationFile
 
 
@@ -32,6 +32,7 @@ class SRRActivityLog(Base):
         lock       → Station locked
         unlock     → Station unlocked
     """
+    __table_args__ = {"schema": "venue"}
     __tablename__ = "srr_activity_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -39,30 +40,29 @@ class SRRActivityLog(Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey("events.events.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     station_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("srr_stations.id", ondelete="SET NULL"),
+        ForeignKey("venue.srr_stations.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("speakers.id", ondelete="SET NULL"),
+        ForeignKey("presentations.speakers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     performed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     file_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="SET NULL"),
+        ForeignKey("presentations.presentation_files.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -86,7 +86,7 @@ class SRRActivityLog(Base):
     speaker: Mapped[Optional["Speaker"]] = relationship(
         "Speaker", back_populates="srr_activity_logs"
     )
-    technician: Mapped[Optional["User"]] = relationship("User")
+
     file: Mapped[Optional["PresentationFile"]] = relationship(
         "PresentationFile", back_populates="srr_activity_logs"
     )

@@ -1,13 +1,15 @@
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:8000';
+import { runtimeConfig } from "@/lib/runtime-config";
+
+const SOCKET_URL = runtimeConfig.wsOrigin;
 
 class SocketService {
   public socket: Socket | null = null;
   private currentToken: string | null = null;
 
   connect(token: string) {
-    if (process.env.NEXT_PUBLIC_DISABLE_REALTIME === '1') return;
+    if (runtimeConfig.disableRealtime) return;
     if (this.socket && this.currentToken === token) return;
     
     // If token changed or socket exists, clean up first

@@ -105,7 +105,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200]"
         />
       )}
       {isOpen && (
@@ -114,9 +114,9 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
             initial={{ scale: 0.95, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 20 }}
-            className="w-full max-w-2xl glass-3d rounded-[2.5rem] border-default shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden"
+            className="w-full max-w-2xl bg-[var(--card)] rounded-[2.5rem] border border-[var(--border)] shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden text-[var(--text)]"
           >
-            <div className="p-8 border-b border-default flex-shrink-0">
+            <div className="p-8 border-b border-[var(--border)] bg-[var(--surf)] flex-shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="h-12 w-12 rounded-2xl bg-[var(--pri)]/10 flex items-center justify-center">
@@ -127,7 +127,7 @@ export function CreateSessionDialog({ isOpen, onClose, eventId }: CreateSessionD
                     <p className="text-[11px] font-bold text-muted uppercase tracking-widest mt-0.5">Define a new academic slot</p>
                   </div>
                 </div>
-                <button onClick={onClose} className="h-10 w-10 rounded-full border border-default flex items-center justify-center text-muted hover:text-[var(--text)]">
+                <button onClick={onClose} className="h-10 w-10 rounded-full border border-[var(--border)] bg-[var(--card)] flex items-center justify-center text-muted hover:text-[var(--text)]">
                   <X className="h-4 w-4" />
                 </button>
               </div>

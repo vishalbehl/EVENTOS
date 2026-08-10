@@ -15,7 +15,7 @@ export default function EmailDesignerPage() {
         <div className="absolute bottom-[-10%] left-[-5%] w-[300px] h-[300px] rounded-full blur-[100px] opacity-[0.06]" style={{ background: 'var(--color-accent-cyan)' }} />
       </div>
 
-      <div className="relative z-10 flex flex-col h-full min-h-0 p-6 gap-5">
+      <div className="relative z-10 flex flex-col h-full min-h-0">
         <CapabilityBoundary featureKey="FEAT_EMAIL_NOTIFICATIONS">
           <EventEmailStudio eventId={params.eventId as string} />
         </CapabilityBoundary>

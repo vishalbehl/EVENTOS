@@ -21,11 +21,15 @@ class Settings(BaseSettings):
     app_name: str = "conf-platform-backend"
     api_v1_prefix: str = "/api/v1"
     API_BASE_URL: str = "http://127.0.0.1:8000"
+    DEPLOYMENT_PROFILE: str = "local"       # local | staging | production
     environment: str = "development"        # development | staging | production
     debug: bool = False
     PUBLIC_DEMO_SIGNUP_ENABLED: bool = False
     PUBLIC_DEMO_PLAN_NAME: str = "Free Trial"
     PUBLIC_DEMO_RETENTION_DAYS: int = 14
+    # This is deliberately opt-in and intended only for isolated tests.  Local
+    # development must exercise the same entitlement denials as production.
+    ALLOW_TEST_CAPABILITY_BYPASS: bool = False
 
     # ── Database ──────────────────────────────────────────
     # Sync URL used by Alembic migrations & legacy sync code
@@ -186,6 +190,24 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def normalize_environment_profile(self) -> "Settings":
+        profile = (self.DEPLOYMENT_PROFILE or self.environment or "local").strip().lower()
+        if profile in {"dev", "development"}:
+            profile = "local"
+        if profile in {"prod", "production"}:
+            profile = "production"
+        if profile not in {"local", "staging", "production"}:
+            raise ValueError("DEPLOYMENT_PROFILE must be one of: local, staging, production")
+        self.DEPLOYMENT_PROFILE = profile
+        if self.environment in {"dev", "local"}:
+            self.environment = "development"
+        if profile == "production":
+            self.environment = "production"
+        elif profile == "staging" and self.environment == "development":
+            self.environment = "staging"
+        return self
+
+    @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if not self.is_production:
             return self
@@ -253,7 +275,7 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.environment == "production"
+        return self.environment == "production" or self.DEPLOYMENT_PROFILE == "production"
 
 
 settings = Settings()

@@ -141,7 +141,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200]"
         />
       )}
       {isOpen && (
@@ -150,7 +150,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
           initial={{ scale: 0.95, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.95, opacity: 0, y: 20 }}
-          className="w-full max-w-3xl glass-3d rounded-[2.5rem] border-default shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden"
+          className="w-full max-w-3xl bg-[var(--card)] rounded-[2.5rem] border border-[var(--border)] shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden text-[var(--text)]"
         >
           {loading ? (
             <div className="p-20 flex flex-col items-center justify-center gap-4">
@@ -160,7 +160,7 @@ export function SessionDetailDialog({ isOpen, onClose, sessionId, eventId }: Ses
           ) : session ? (
             <>
               {/* Header */}
-              <div className="p-8 border-b border-default flex-shrink-0 bg-gradient-to-br from-[var(--pri)]/5 to-transparent">
+              <div className="p-8 border-b border-[var(--border)] flex-shrink-0 bg-[var(--surf)]">
                 <div className="flex items-start justify-between gap-6 mb-8">
                   <div className="flex items-center gap-5">
                     <div className="h-16 w-16 rounded-3xl bg-[var(--pri)]/10 border border-[var(--pri)]/20 flex items-center justify-center text-xl font-black text-[var(--pri)]">

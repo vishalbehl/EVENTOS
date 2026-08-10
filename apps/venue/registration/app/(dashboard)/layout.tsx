@@ -8,6 +8,7 @@ import { useSocket } from "@/hooks/use-socket";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { cn } from "@/lib/utils";
+import { resolveApiBaseUrl } from "@/lib/api-client";
 
 export default function DashboardLayout({
   children,
@@ -31,7 +32,7 @@ export default function DashboardLayout({
       if (isAuthenticated && accessToken && !user) {
         console.log("[Auth] Fetching user profile...");
         try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
+          const response = await fetch(`${resolveApiBaseUrl()}/auth/me`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
           });
           if (response.ok) {

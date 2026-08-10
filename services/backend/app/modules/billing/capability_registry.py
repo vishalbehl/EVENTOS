@@ -114,6 +114,32 @@ FEATURE_DEFINITIONS: dict[str, dict[str, Any]] = {
     "FEAT_SLA": _feature("ORGANIZATION", ["/help-support"], value_type="TIER", values=["STANDARD", "PRIORITY", "MISSION_CRITICAL"], operations=["support.sla.apply"], owner="SUPPORT"),
 }
 
+# Registration is rolled out as an independently enforceable commercial
+# domain.  Keeping its keys together prevents legacy compatibility fallbacks
+# from silently re-enabling a registration capability that a contract omits.
+REGISTRATION_CAPABILITY_KEYS = frozenset({
+    "FEAT_REGISTRATION_PORTAL",
+    "FEAT_REGISTRATION_FORMS",
+    "FEAT_TICKET_CATEGORIES",
+    "FEAT_COUPON_CODES",
+    "FEAT_PAYMENT_GATEWAY",
+    "FEAT_REGISTRATION_ANALYTICS",
+    "FEAT_BULK_IMPORT",
+    "FEAT_QR_CONFIRMATION",
+    "FEAT_ATTENDEE_CHECKIN",
+    "FEAT_BADGE_TEMPLATES",
+    "FEAT_CERTIFICATE_TEMPLATES",
+    "FEAT_AUTO_CERTIFICATE",
+})
+
+REGISTRATION_LIMIT_KEYS = frozenset({
+    "max_registrations",
+    "max_ticket_categories",
+    "max_badge_templates",
+    "max_certificate_templates",
+    "max_exports_per_event",
+})
+
 
 OPERATION_FEATURES: dict[str, str] = {}
 for _feature_key, _definition in FEATURE_DEFINITIONS.items():

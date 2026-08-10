@@ -159,6 +159,15 @@ async def get_portal_dashboard(
     Return the full attendee dashboard.
     JWT provides email + event_id — no extra query params needed.
     """
+    event = await db.get(Event, portal_user.event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.read",
+    )
     try:
         data = await get_dashboard_data(
             email=portal_user.email,

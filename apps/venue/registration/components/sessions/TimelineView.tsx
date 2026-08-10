@@ -267,7 +267,7 @@ export function TimelineView({ sessions, timezone, onSelectSession }: TimelineVi
       {/* Tooltip */}
       {tooltip && (
         <div
-          className="fixed z-[100] glass-3d border-default rounded-2xl p-5 shadow-2xl pointer-events-none max-w-sm animate-in fade-in zoom-in duration-200"
+          className="fixed z-[100] bg-[var(--card)] border border-[var(--border)] text-[var(--text)] rounded-2xl p-5 shadow-2xl pointer-events-none max-w-sm animate-in fade-in zoom-in duration-200"
           style={{ top: Math.max(20, tooltip.y - 140), left: tooltip.x }}
         >
           <div className="space-y-3">

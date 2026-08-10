@@ -22,8 +22,8 @@ ALLOWED_BLOCK_TYPES = {
     "EmailLayout", "Avatar", "Button", "ColumnsContainer", "Container",
     "Divider", "Heading", "Html", "Image", "Spacer", "Text",
 }
-MAX_DOCUMENT_BYTES = 512 * 1024
-MAX_HTML_BYTES = 1024 * 1024
+MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
+MAX_HTML_BYTES = 10 * 1024 * 1024
 VARIABLE_REGISTRY: dict[str, set[str]] = {
     "speaker": {
         "EventName", "ConferenceName", "SpeakerName", "SpeakerEmail", "UploadLink",
@@ -120,16 +120,12 @@ def render_draft_snapshot(
     return rendered_subject, rendered_html, plain_text
 
 
-def _walk_block_types(value: Any) -> Iterable[str]:
-    if isinstance(value, dict):
-        block_type = value.get("type")
-        if isinstance(block_type, str):
-            yield block_type
-        for child in value.values():
-            yield from _walk_block_types(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_block_types(child)
+def _walk_block_types(designer_json: dict[str, Any]) -> Iterable[str]:
+    for node in designer_json.values():
+        if isinstance(node, dict):
+            block_type = node.get("type")
+            if isinstance(block_type, str):
+                yield block_type
 
 
 def _plain_text(html: str) -> str:
@@ -204,13 +200,16 @@ def validate_designer_payload(
     _validate_schema_v4_metadata(designer_json)
     if re.search(r"(?i)<\s*(script|iframe|object|embed|form)\b", body_html):
         raise HTTPException(status_code=422, detail={"code": "UNSAFE_EMAIL_HTML"})
-    if re.search(r"(?i)(javascript:|data:text/html|on\w+\s*=)", body_html):
+    if re.search(
+        r"(?i)(javascript:|data:text/html|\bon(?:click|load|error|mouse|focus|blur|change|submit|key|touch|pointer|animation|drag|scroll|select)\w*\s*=)",
+        body_html,
+    ):
         raise HTTPException(status_code=422, detail={"code": "UNSAFE_EMAIL_URL_OR_HANDLER"})
     for raw_url in re.findall(r"(?i)(?:href|src)\s*=\s*[\"']\s*([^\"']+)", body_html):
         if raw_url.startswith(("{{", "#", "/")):
             continue
         scheme = raw_url.split(":", 1)[0].lower() if ":" in raw_url else ""
-        if scheme and scheme not in {"http", "https", "mailto", "tel"}:
+        if scheme and scheme not in {"http", "https", "mailto", "tel", "data"}:
             raise HTTPException(status_code=422, detail={"code": "UNSAFE_EMAIL_URL_PROTOCOL", "protocol": scheme})
     if body_html.count("{{#each") != body_html.count("{{/each}}"):
         raise HTTPException(status_code=422, detail={"code": "INVALID_EMAIL_REPEATER"})
@@ -290,22 +289,17 @@ async def list_effective_templates(
                 or_(*conditions),
                 EmailTemplate.target_type == target_type,
                 EmailTemplate.deleted_at.is_(None),
-                EmailTemplate.current_published_version_id.is_not(None),
             )
-            .order_by(EmailTemplate.updated_at.desc())
+            .order_by(EmailTemplate.scope_type, EmailTemplate.updated_at.desc())
             .execution_options(skip_tenant_filter=True)
         )
     ).all()
-    precedence = {"PLATFORM": 0, "ORGANIZATION": 1, "EVENT": 2}
-    effective: dict[tuple[str, str], EmailTemplate] = {}
+    result: list[tuple[EmailTemplate, str]] = []
     for row in rows:
         if not designer_enabled and row.scope_type != "PLATFORM":
             continue
-        key = (row.stable_key, row.target_type)
-        current = effective.get(key)
-        if current is None or precedence[row.scope_type] > precedence[current.scope_type]:
-            effective[key] = row
-    return [(row, row.scope_type) for row in effective.values()]
+        result.append((row, row.scope_type))
+    return result
 
 
 async def resolve_template(

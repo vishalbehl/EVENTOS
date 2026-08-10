@@ -152,6 +152,15 @@ from app.modules.venue.models.venue_activity_log import VenueActivityLog
 from app.modules.venue.models.venue_telemetry import DeviceHeartbeat, RoomRuntimeEvent, WebsocketEvent
 from app.modules.venue.models.venue_infrastructure import VenueNetworkEvent, VenueSecurityEvent, SyncTransferLog
 from app.modules.venue.models.printer import Printer
+from app.modules.venue.models.registration_execution import (
+    RegistrationVenueOrganization, RegistrationVenueUser, RegistrationCompanion, RegistrationRoomDevice,
+    RegistrationParticipantRole, RegistrationParticipantRegistration, RegistrationParticipantExtension,
+    VenueCheckInGate, VenueCheckIn, VenueScanEvent, VenueExecutionBadge,
+    VenueExecutionBadgeHistory, VenueExecutionBadgePrintJob, VenueNodeAssignment,
+    VenueNodeOperation, VenueKit, VenueParticipantKit, VenueSyncOutbox,
+    VenueParticipantActionLog, VenueNetworkConfiguration, VenueEventReportSnapshot,
+    VenueEventReportAudit,
+)
 
 from app.modules.communications.models.email_template import EmailTemplate
 from app.modules.communications.models.email_campaign import EmailCampaign
@@ -278,9 +287,7 @@ from app.modules.deployment_management.models import (
 )
 
 from app.modules.operations_control.models import (
-    JobControlRequest, VenueSupplierAssignment, VenueSupplierContact,
-    VenueReadinessAttestation, VenueOperationalIncident,
-    VenueCredentialOperation,
+    JobControlRequest, SourceApiKey, VenueCredentialOperation,
 )
 
 # Register after every mapped class is loaded so capability revisions can be

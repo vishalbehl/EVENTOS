@@ -318,11 +318,8 @@ TABLE_SCHEMAS = {
 
     # operations control extensions
     "risk_evidence": "deployment_management",
-    "venue_supplier_assignments": "venue",
-    "venue_supplier_contacts": "venue",
-    "venue_readiness_attestations": "venue",
-    "venue_operational_incidents": "venue",
     "venue_credential_operations": "venue",
+    "source_api_keys": "operations",
 
     # sponsors
     "sponsors": "sponsors",
@@ -596,7 +593,16 @@ def _tenant_models() -> tuple[type, ...]:
 @event.listens_for(Session, "do_orm_execute")
 def _do_orm_execute(execute_state):
     org_id = tenant_org_id.get()
-    if org_id and not execute_state.execution_options.get("skip_tenant_filter", False):
+    skip = execute_state.execution_options.get("skip_tenant_filter", False)
+    stmt_skip = execute_state.statement._execution_options.get("skip_tenant_filter", False) if hasattr(execute_state.statement, '_execution_options') else False
+    
+    # Check if either the execution_options or the statement's execution options have it
+    effective_skip = skip or stmt_skip
+    
+    from loguru import logger
+    logger.info(f"do_orm_execute: org_id={org_id}, skip={skip}, stmt_skip={stmt_skip}, effective_skip={effective_skip}")
+    
+    if org_id and not effective_skip:
         for model in _tenant_models():
             execute_state.statement = execute_state.statement.options(
                 with_loader_criteria(

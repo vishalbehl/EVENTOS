@@ -9,6 +9,7 @@ from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.billing.capability_registry import OPERATION_PERMISSIONS, feature_for_operation
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
+from app.modules.platform.models.organization import Organization
 from app.modules.rbac.services.permission_service import get_user_permissions
 
 
@@ -111,7 +112,7 @@ async def enforce_org_feature(db, organization_id: uuid.UUID, feature_key: str, 
     feature = result["features"].get(feature_key)
     if not feature or not feature["enabled"]:
         from app.config import settings
-        if settings.environment == "development":
+        if settings.ALLOW_TEST_CAPABILITY_BYPASS:
             return feature or {"key": feature_key, "enabled": True, "value": True}
         raise EntitlementRequiredException(
             feature_key,
@@ -230,7 +231,11 @@ async def enforce_event_operation(
 ):
     await _enforce_actor_permission(db, user_id, operation, event_id=event_id)
     actor = await db.get(User, user_id) if user_id else None
-    if not actor or not _is_platform_bypass(actor):
+    organization = await db.get(Organization, organization_id)
+    internal_unrestricted = bool(
+        organization and organization.has_unrestricted_capabilities
+    )
+    if (not actor or not _is_platform_bypass(actor)) and not internal_unrestricted:
         event = await db.scalar(
             select(Event).where(
                 Event.id == event_id,
@@ -289,7 +294,7 @@ async def enforce_event_feature(
     feature = result["features"].get(feature_key)
     if not feature or not feature["enabled"]:
         from app.config import settings
-        if settings.environment == "development":
+        if settings.ALLOW_TEST_CAPABILITY_BYPASS:
             return feature or {"key": feature_key, "enabled": True, "value": True}
         raise EntitlementRequiredException(
             feature_key,

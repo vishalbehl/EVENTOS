@@ -132,33 +132,3 @@ class Participant(Base, SoftDeleteMixin):
         return f"<Participant id={self.id} regno={self.regno} name={self.name}>"
 
 
-from sqlalchemy import event, text
-
-@event.listens_for(Participant, "before_insert")
-def before_insert_participant(mapper, connection, target: Participant):
-    if target.role_id is None and hasattr(target, "_role_str") and target._role_str:
-        res = connection.execute(
-            text("SELECT id FROM registration.roles WHERE event_id = :event_id AND name = :name"),
-            {"event_id": target.event_id, "name": target._role_str}
-        ).fetchone()
-        if res:
-            target.role_id = res[0]
-        else:
-            # Fallback to the first default/active role for the event
-            res = connection.execute(
-                text("SELECT id FROM registration.roles WHERE event_id = :event_id AND is_default = true LIMIT 1"),
-                {"event_id": target.event_id}
-            ).fetchone()
-            if res:
-                target.role_id = res[0]
-
-@event.listens_for(Participant, "before_update")
-def before_update_participant(mapper, connection, target: Participant):
-    if hasattr(target, "_role_str") and target._role_str:
-        res = connection.execute(
-            text("SELECT id FROM registration.roles WHERE event_id = :event_id AND name = :name"),
-            {"event_id": target.event_id, "name": target._role_str}
-        ).fetchone()
-        if res:
-            target.role_id = res[0]
-        target._role_str = None

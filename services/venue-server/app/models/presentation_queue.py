@@ -32,6 +32,7 @@ class PresentationQueue(Base):
         completed  → Presentation finished
         skipped    → Skipped by technician override
     """
+    __table_args__ = {"schema": "presentations"}
     __tablename__ = "presentation_queue"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -39,26 +40,26 @@ class PresentationQueue(Base):
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
+        ForeignKey("events.sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     session_speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("session_speakers.id", ondelete="CASCADE"),
+        ForeignKey("presentations.session_speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("presentation_files.id", ondelete="RESTRICT"),
+        ForeignKey("presentations.presentation_files.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     # The room PC that will play / is playing this file
     device_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("room_devices.id", ondelete="SET NULL"),
+        ForeignKey("venue.room_devices.id", ondelete="SET NULL"),
         nullable=True,
     )
 

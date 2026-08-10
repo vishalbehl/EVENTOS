@@ -27,6 +27,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@eventos/website-builder-studio": [
+        "../../../packages/website-builder-studio/src/index.ts"
+      ],
+      "@eventos/email-builder-studio": [
+        "../../../packages/email-builder-studio/src/index.ts"
       ]
     }
   },

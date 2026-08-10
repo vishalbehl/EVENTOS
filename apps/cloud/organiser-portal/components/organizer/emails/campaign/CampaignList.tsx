@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { sendCampaign, resendFailed, deleteCampaign, Campaign } from '@/services/email-service'
 import { toast } from 'sonner'
-import { CapabilityAction } from '@/lib/capabilities'
+import { CapabilityAction, useOperationAccess } from '@/lib/capabilities'
 
 interface Props {
     campaigns: Campaign[]
@@ -22,6 +22,7 @@ interface Props {
 }
 
 export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }: Props) {
+    const campaignReadAccess = useOperationAccess('communications.campaign.read')
     const handleSend = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
         try {
@@ -78,7 +79,13 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                            {campaigns.length === 0 ? (
+                            {!campaignReadAccess.enabled ? (
+                                <tr>
+                                    <td colSpan={6} className="p-12 text-center text-[var(--muted)] uppercase text-[10px] font-black tracking-widest opacity-50">
+                                        Campaign access is unavailable for this event.
+                                    </td>
+                                </tr>
+                            ) : campaigns.length === 0 ? (
                                 <tr>
                                     <td colSpan={6} className="p-12 text-center text-[var(--muted)] uppercase text-[10px] font-black tracking-widest opacity-50">
                                         No campaigns found in current sector

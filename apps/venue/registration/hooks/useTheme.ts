@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 
 export type Theme = 
+  | 'dark'
+  | 'light'
   | 'void-indigo' 
   | 'obsidian-rose' 
   | 'carbon-teal' 
@@ -10,10 +12,11 @@ export type Theme =
   | 'slate-aurora' 
   | 'forest-ink' 
   | 'copper-oxide' 
-  | 'plasma-violet' 
-  | 'light';
+  | 'plasma-violet';
 
 export const THEMES: { name: Theme; label: string }[] = [
+  { name: 'dark', label: 'Monochrome Dark' },
+  { name: 'light', label: 'Monochrome Light' },
   { name: 'void-indigo', label: 'Void indigo' },
   { name: 'obsidian-rose', label: 'Obsidian rose' },
   { name: 'carbon-teal', label: 'Carbon teal' },
@@ -22,11 +25,10 @@ export const THEMES: { name: Theme; label: string }[] = [
   { name: 'forest-ink', label: 'Forest ink' },
   { name: 'copper-oxide', label: 'Copper oxide' },
   { name: 'plasma-violet', label: 'Plasma violet' },
-  { name: 'light', label: 'Light' },
 ];
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>('void-indigo');
+  const [theme, setThemeState] = useState<Theme>('dark');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {

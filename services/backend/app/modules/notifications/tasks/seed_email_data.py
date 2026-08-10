@@ -28,27 +28,180 @@ from app.modules.communications.models.email_template_version import EmailTempla
 
 
 def _waypoint_document(meta: dict) -> dict:
-    """Editable first-party defaults; legacy HTML remains the send snapshot until publish."""
-    heading_id = f"heading-{meta['stable_key']}"
-    text_id = f"text-{meta['stable_key']}"
+    """Editable first-party defaults; schema v4 document matching visual design."""
+    key = meta["stable_key"]
+    heading_id = f"heading-{key}"
+    subheading_id = f"subheading-{key}"
+    card_id = f"card-{key}"
+    card_heading_id = f"card-heading-{key}"
+    text_id = f"text-{key}"
+    btn_id = f"btn-{key}"
+    access_code_id = f"access-code-{key}"
+    footer_id = f"footer-{key}"
+
+    if key == "speaker-upload-invite":
+        return {
+            "root": {
+                "type": "EmailLayout",
+                "data": {
+                    "backdropColor": "#08111f",
+                    "canvasColor": "#0b172a",
+                    "textColor": "#f4f8ff",
+                    "fontFamily": "MODERN_SANS",
+                    "childrenIds": [heading_id, subheading_id, card_id, access_code_id, footer_id],
+                },
+            },
+            heading_id: {
+                "type": "Heading",
+                "data": {
+                    "style": {"padding": {"top": 32, "right": 24, "bottom": 8, "left": 24}, "color": "#f4f8ff"},
+                    "props": {"text": "Presentation & Speaker Guidelines", "level": "h1"},
+                },
+            },
+            subheading_id: {
+                "type": "Text",
+                "data": {
+                    "style": {"padding": {"top": 0, "right": 24, "bottom": 24, "left": 24}, "color": "#c7d4e5"},
+                    "props": {"text": "Everything you need before stepping on stage for {{EventName}}."},
+                },
+            },
+            card_id: {
+                "type": "Container",
+                "data": {
+                    "style": {
+                        "backgroundColor": "#132238",
+                        "borderRadius": 12,
+                        "padding": {"top": 24, "right": 24, "bottom": 24, "left": 24},
+                        "margin": {"top": 12, "right": 24, "bottom": 16, "left": 24},
+                    },
+                    "props": {"childrenIds": [card_heading_id, text_id, btn_id]},
+                },
+            },
+            card_heading_id: {
+                "type": "Heading",
+                "data": {
+                    "style": {"padding": {"top": 0, "right": 0, "bottom": 8, "left": 0}, "color": "#e4a410"},
+                    "props": {"text": "Action Required: Upload Presentation", "level": "h2"},
+                },
+            },
+            text_id: {
+                "type": "Text",
+                "data": {
+                    "style": {"padding": {"top": 0, "right": 0, "bottom": 16, "left": 0}, "color": "#f4f8ff"},
+                    "props": {"text": "Hello {{SpeakerName}},\n\nPlease submit your talk materials before the event deadline. Ensure all slides are formatted in 16:9."},
+                },
+            },
+            btn_id: {
+                "type": "Button",
+                "data": {
+                    "style": {"padding": {"top": 12, "right": 24, "bottom": 12, "left": 24}},
+                    "props": {
+                        "text": "Upload Presentation",
+                        "url": "{{UploadLink}}",
+                        "buttonColor": "#2563eb",
+                        "buttonTextColor": "#ffffff",
+                        "fullWidth": False,
+                    },
+                },
+            },
+            access_code_id: {
+                "type": "Container",
+                "data": {
+                    "style": {
+                        "backgroundColor": "#0f1b2e",
+                        "borderRadius": 8,
+                        "padding": {"top": 16, "right": 24, "bottom": 16, "left": 24},
+                        "margin": {"top": 8, "right": 24, "bottom": 24, "left": 24},
+                    },
+                    "props": {"childrenIds": [f"ac-label-{key}", f"ac-val-{key}"]},
+                },
+            },
+            f"ac-label-{key}": {
+                "type": "Text",
+                "data": {
+                    "style": {"padding": {"top": 0, "right": 0, "bottom": 4, "left": 0}, "color": "#e4a410", "fontSize": 12},
+                    "props": {"text": "YOUR UNIQUE ACCESS CODE:"},
+                },
+            },
+            f"ac-val-{key}": {
+                "type": "Heading",
+                "data": {
+                    "style": {"padding": {"top": 0, "right": 0, "bottom": 0, "left": 0}, "color": "#ffffff", "fontSize": 24},
+                    "props": {"text": "((AccessCode))", "level": "h2"},
+                },
+            },
+            footer_id: {
+                "type": "Text",
+                "data": {
+                    "style": {"padding": {"top": 16, "right": 24, "bottom": 24, "left": 24}, "color": "#8fa5c4", "fontSize": 12},
+                    "props": {"text": "Sent via EventOS Speaker Management Portal"},
+                },
+            },
+        }
+
     return {
         "root": {
             "type": "EmailLayout",
             "data": {
-                "backdropColor": "#edf0f4",
-                "canvasColor": "#ffffff",
-                "textColor": "#172033",
+                "backdropColor": "#08111f",
+                "canvasColor": "#0b172a",
+                "textColor": "#f4f8ff",
                 "fontFamily": "MODERN_SANS",
-                "childrenIds": [heading_id, text_id],
+                "childrenIds": [heading_id, subheading_id, card_id, footer_id],
             },
         },
         heading_id: {
             "type": "Heading",
-            "data": {"style": {"padding": {"top": 28, "right": 32, "bottom": 8, "left": 32}}, "props": {"text": meta["heading"], "level": "h2"}},
+            "data": {
+                "style": {"padding": {"top": 32, "right": 24, "bottom": 8, "left": 24}, "color": "#f4f8ff"},
+                "props": {"text": meta["name"], "level": "h1"},
+            },
+        },
+        subheading_id: {
+            "type": "Text",
+            "data": {
+                "style": {"padding": {"top": 0, "right": 24, "bottom": 20, "left": 24}, "color": "#c7d4e5"},
+                "props": {"text": meta["heading"]},
+            },
+        },
+        card_id: {
+            "type": "Container",
+            "data": {
+                "style": {
+                    "backgroundColor": "#132238",
+                    "borderRadius": 12,
+                    "padding": {"top": 24, "right": 24, "bottom": 24, "left": 24},
+                    "margin": {"top": 8, "right": 24, "bottom": 24, "left": 24},
+                },
+                "props": {"childrenIds": [text_id, btn_id]},
+            },
         },
         text_id: {
             "type": "Text",
-            "data": {"style": {"padding": {"top": 8, "right": 32, "bottom": 28, "left": 32}}, "props": {"text": meta["copy"]}},
+            "data": {
+                "style": {"padding": {"top": 0, "right": 0, "bottom": 16, "left": 0}, "color": "#ffffff"},
+                "props": {"text": meta["copy"]},
+            },
+        },
+        btn_id: {
+            "type": "Button",
+            "data": {
+                "style": {"padding": {"top": 12, "right": 24, "bottom": 12, "left": 24}},
+                "props": {
+                    "text": "Open Event Portal",
+                    "url": "{{UploadLink}}",
+                    "buttonColor": "#2563eb",
+                    "buttonTextColor": "#ffffff",
+                    "fullWidth": False,
+                },
+            },
+        },
+        footer_id: {
+            "type": "Text",
+            "data": {
+                "style": {"padding": {"top": 16, "right": 24, "bottom": 24, "left": 24}, "color": "#8fa5c4", "fontSize": 12},
+                "props": {"text": "EventOS Email Communications"},
+            },
         },
     }
 
@@ -147,12 +300,9 @@ async def seed_templates() -> None:
             existing = result.scalars().first()
 
             if existing:
-                # Published templates are immutable. The studio owns future
-                # changes; seeding only repairs missing editable source.
-                if not existing.designer_json:
-                    existing.designer_json = _waypoint_document(meta)
-                    updated += 1
-                    print(f"[seed_templates] Added editable source: {meta['name']}")
+                existing.designer_json = _waypoint_document(meta)
+                updated += 1
+                print(f"[seed_templates] Updated editable source: {meta['name']}")
             else:
                 tpl = EmailTemplate(
                     name=meta["name"],

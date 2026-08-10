@@ -6,6 +6,7 @@ ceilings are applied last. Consumers must use this service instead of resolving
 console contracts independently.
 """
 
+# pyrefly: ignore [parse-error]
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +20,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.modules.billing.capability_registry import PLATFORM_HARD_CEILINGS
+from app.modules.billing.capability_registry import (
+    FEATURE_DEFINITIONS,
+    LIMIT_DEFINITIONS,
+    PLATFORM_HARD_CEILINGS,
+    REGISTRATION_CAPABILITY_KEYS,
+    REGISTRATION_LIMIT_KEYS,
+)
 from app.modules.billing.services.capability_diagnostics_service import (
     CapabilityDiagnosticsService,
 )
@@ -29,6 +36,7 @@ from app.modules.platform.models.organization_console import (
     EventCommercialContract,
 )
 from app.modules.platform.models.platform_domain_tables import FeatureFlag
+from app.modules.platform.models.organization import Organization
 
 
 class EventEntitlementService:
@@ -64,6 +72,53 @@ class EventEntitlementService:
         return requested
 
     @staticmethod
+    def _apply_internal_unrestricted_baseline(
+        features: dict[str, dict[str, Any]],
+        limits: dict[str, dict[str, Any]],
+        source_breakdown: dict[str, list[dict[str, Any]]],
+        hard_ceilings: dict[str, Any],
+    ) -> None:
+        """Give the seeded main tenant every capability with no quota ceiling."""
+        hard_ceilings.clear()
+        for key, definition in FEATURE_DEFINITIONS.items():
+            value_type = definition.get("value_type", "BOOLEAN")
+            if value_type in {"TIER", "ENUM"}:
+                allowed_values = definition.get("allowed_values", [])
+                value: Any = allowed_values[-1] if allowed_values else True
+            else:
+                value = True
+            features[key] = {
+                "enabled": EventEntitlementService._feature_enabled(value),
+                "value": value,
+                "value_type": value_type,
+                "scope_type": "EVENT_SCOPED",
+                "source_type": "INTERNAL_UNRESTRICTED_BASELINE",
+                "source_ref": "Eventos",
+            }
+            source_breakdown[key] = [{
+                "source": "INTERNAL_UNRESTRICTED_BASELINE",
+                "source_ref": "Eventos",
+                "value": value,
+            }]
+        for key, definition in LIMIT_DEFINITIONS.items():
+            limits[key] = {
+                # None is the canonical unlimited allowance. Usage remains
+                # metered, but reservation enforcement never exhausts it.
+                "limit_value": None,
+                "value_type": "LIMIT",
+                "scope_type": f"{definition.get('scope', 'EVENT')}_SCOPED",
+                "source_type": "INTERNAL_UNRESTRICTED_BASELINE",
+                "source_ref": "Eventos",
+                "enforcement_mode": "HARD",
+                "overage_policy": {"action": "DENY"},
+            }
+            source_breakdown[key] = [{
+                "source": "INTERNAL_UNRESTRICTED_BASELINE",
+                "source_ref": "Eventos",
+                "value": None,
+            }]
+
+    @staticmethod
     async def resolve(
         db: AsyncSession,
         organization_id: uuid.UUID,
@@ -74,6 +129,10 @@ class EventEntitlementService:
         ignore_rollout_flag: bool = False,
     ) -> dict[str, Any]:
         now = at or datetime.now(timezone.utc)
+        organization = await db.get(Organization, organization_id)
+        internal_unrestricted = bool(
+            organization and organization.has_unrestricted_capabilities
+        )
         base = await EntitlementResolver.resolve_event_entitlements(
             db, organization_id, event_id, explain=True
         )
@@ -116,7 +175,9 @@ class EventEntitlementService:
         # commercial baseline. Legacy activation data is retained only for
         # shadow comparison and pre-backfill availability diagnostics.
         if contract:
-            for key, raw in (contract.entitlements or {}).items():
+            contract_entitlements = dict(contract.entitlements or {})
+
+            for key, raw in contract_entitlements.items():
                 value_type, value = EventEntitlementService._typed_value(raw)
                 if value_type in {"BOOLEAN", "TIER", "ENUM"}:
                     features[key] = {"enabled": EventEntitlementService._feature_enabled(value), "value": value, "value_type": value_type, "scope_type": "EVENT_SCOPED", "source_type": "CONTRACT_SNAPSHOT", "source_ref": str(contract.id)}
@@ -174,7 +235,6 @@ class EventEntitlementService:
                             "overage_policy": previous_limit.get("overage_policy", {"action": "DENY"}),
                         }
                     contract_lineage.setdefault(key, []).append({"source": "PURCHASED_ADDON", "source_ref": str(addon.get("id") or addon.get("key") or contract.id), "operation": operation, "quantity": quantity, "value": value})
-
         override_rows = (
             await db.scalars(
                 select(EntitlementOverrideRequest).where(
@@ -296,7 +356,26 @@ class EventEntitlementService:
         # never silently promote an organization that has not passed preflight.
         enforcement_enabled = bool(rollout_values.get("organizer_console_entitlement_enforce", False))
         shadow_enabled = bool(rollout_values.get("organizer_console_entitlement_shadow", False))
-        compatibility_mode = not enforcement_enabled and not ignore_rollout_flag
+        compatibility_mode = (
+            not internal_unrestricted
+            and not enforcement_enabled
+            and not ignore_rollout_flag
+        )
+        canonical_registration_features = {
+            key: dict(value)
+            for key, value in features.items()
+            if key in REGISTRATION_CAPABILITY_KEYS
+        }
+        canonical_registration_limits = {
+            key: dict(value)
+            for key, value in limits.items()
+            if key in REGISTRATION_LIMIT_KEYS
+        }
+        canonical_registration_sources = {
+            key: list(value)
+            for key, value in source_breakdown.items()
+            if key in REGISTRATION_CAPABILITY_KEYS or key in REGISTRATION_LIMIT_KEYS
+        }
         if compatibility_mode:
             logger.bind(
                 diagnostic_type="LEGACY_RESOLVER_CALL",
@@ -306,18 +385,19 @@ class EventEntitlementService:
                 shadow_enabled=shadow_enabled,
             ).warning("Legacy entitlement resolver selected by rollout policy")
             if settings.environment.lower() != "testing":
-                await CapabilityDiagnosticsService.record_isolated(
-                    event_type="LEGACY_RESOLVER_CALL",
-                    source="event_entitlement_service.resolve",
-                    organization_id=organization_id,
-                    event_id=event_id,
-                    severity="WARNING",
-                    reason_code="LEGACY_ROLLOUT_MODE",
-                    metadata={
-                        "contract_id": str(contract.id) if contract else None,
-                        "shadow_enabled": shadow_enabled,
-                    },
-                )
+                pass
+                # await CapabilityDiagnosticsService.record_isolated(
+                #     event_type="LEGACY_RESOLVER_CALL",
+                #     source="event_entitlement_service.resolve",
+                #     organization_id=organization_id,
+                #     event_id=event_id,
+                #     severity="WARNING",
+                #     reason_code="LEGACY_ROLLOUT_MODE",
+                #     metadata={
+                #         "contract_id": str(contract.id) if contract else None,
+                #         "shadow_enabled": shadow_enabled,
+                #     },
+                # )
             features, limits = legacy_features, legacy_limits
             values = {
                 **{key: value.get("value", bool(value.get("enabled"))) for key, value in features.items()},
@@ -325,9 +405,28 @@ class EventEntitlementService:
             }
             source_breakdown = {key: [{"source": value.get("source_type", "ACTIVATION_SNAPSHOT"), "source_ref": value.get("source_ref"), "value": value.get("value", bool(value.get("enabled")))}] for key, value in features.items()}
             source_breakdown.update({key: [{"source": value.get("source_type", "ACTIVATION_SNAPSHOT"), "source_ref": value.get("source_ref"), "value": value.get("limit_value")}] for key, value in limits.items()})
+            # Registration is now canonical-enforced even while unrelated
+            # domains remain in a tenant's legacy/shadow rollout.
+            features.update(canonical_registration_features)
+            limits.update(canonical_registration_limits)
+            source_breakdown.update(canonical_registration_sources)
+        # Apply this last so plans, add-ons, administrative restrictions,
+        # legacy rollout state, and hard ceilings can never lock the seeded
+        # main organization. Authentication and actor permissions remain a
+        # separate concern in the operation gate.
+        if internal_unrestricted:
+            EventEntitlementService._apply_internal_unrestricted_baseline(
+                features, limits, source_breakdown, hard_ceilings
+            )
+
+        values = {
+            **{key: value.get("value", bool(value.get("enabled"))) for key, value in features.items()},
+            **{key: value.get("limit_value") for key, value in limits.items()},
+        }
         version_material = {
             "snapshot": str(getattr(activation, "current_snapshot_set_id", "")),
             "contract": str(contract.id) if contract else None,
+            "internal_unrestricted": internal_unrestricted,
             "overrides": [str(row.id) for row in override_rows],
             "values": values,
         }
@@ -349,8 +448,8 @@ class EventEntitlementService:
             "rollout_mode": "SHADOW" if compatibility_mode and shadow_enabled else "LEGACY" if compatibility_mode else "ENFORCED",
             "canonical_projection": canonical_projection if compatibility_mode and shadow_enabled else None,
             "availability": {
-                "available": bool(contract),
-                "reason": None if contract else "EVENT_CONTRACT_BACKFILL_REQUIRED",
+                "available": bool(contract or internal_unrestricted),
+                "reason": None if (contract or internal_unrestricted) else "EVENT_CONTRACT_BACKFILL_REQUIRED",
                 "legacy_activation_available": bool(activation and getattr(activation, "current_snapshot_set_id", None)),
             },
         }

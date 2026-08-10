@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { GlobalModal } from "@/components/modals/GlobalModal";
 
 export const metadata: Metadata = {
-  title: "Event OS | Ecosystem Control",
-  description: "Advanced administrative terminal for ecosystem management.",
+  title: "EVENTOS | Registration Software",
+  description: "Onsite Registration, Badge Printing & Onsite Ecosystem Control Software",
 };
 
 export default function RootLayout({
@@ -16,14 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
+        <Script id="eventos-theme-bootstrap" strategy="beforeInteractive">
+          {`
               (function() {
                 try {
-                  var themes = ['void-indigo','obsidian-rose','carbon-teal','amber-noir','slate-aurora','forest-ink','copper-oxide','plasma-violet','light'];
-                  var saved = localStorage.getItem('eventos-theme');
-                  var theme = themes.indexOf(saved) >= 0 ? saved : 'void-indigo';
+                  var saved = localStorage.getItem('eventos-theme') || localStorage.getItem('theme');
+                  var theme = (saved === 'light') ? 'light' : 'dark';
                   document.documentElement.setAttribute('data-theme', theme);
                   if (theme !== 'light') {
                     document.documentElement.classList.add('dark');
@@ -32,9 +31,8 @@ export default function RootLayout({
                   }
                 } catch (e) {}
               })();
-            `,
-          }}
-        />
+            `}
+        </Script>
       </head>
       <body className="min-h-screen">
         <Providers>

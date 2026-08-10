@@ -48,7 +48,7 @@ from app.websocket.auth import (
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=settings.CORS_ORIGINS,
+    cors_allowed_origins="*" if not settings.is_production else settings.CORS_ORIGINS,
     logger=False,
     engineio_logger=False,
     ping_interval=settings.WS_HEARTBEAT_INTERVAL,

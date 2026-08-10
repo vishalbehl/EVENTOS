@@ -62,11 +62,24 @@ class UsageReservationService:
         if event_id is not None and not event:
             raise HTTPException(status_code=404, detail="Event not found")
         try:
-            resolved = (
-                await EntitlementResolver.resolve_org_entitlements(db, organization_id, explain=True)
-                if definition.get("scope") == "ORGANIZATION" and event_id is None
-                else await EventEntitlementService.resolve(db, organization_id, event_id, explain=True)
-            )
+            policy_organization = await db.get(Organization, organization_id)
+            if policy_organization and policy_organization.has_unrestricted_capabilities:
+                resolved = {
+                    "limits": {
+                        limit_key: {
+                            "limit_value": None,
+                            "enforcement_mode": "HARD",
+                            "source_type": "INTERNAL_UNRESTRICTED_BASELINE",
+                        }
+                    },
+                    "hard_ceilings": {},
+                }
+            else:
+                resolved = (
+                    await EntitlementResolver.resolve_org_entitlements(db, organization_id, explain=True)
+                    if definition.get("scope") == "ORGANIZATION" and event_id is None
+                    else await EventEntitlementService.resolve(db, organization_id, event_id, explain=True)
+                )
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

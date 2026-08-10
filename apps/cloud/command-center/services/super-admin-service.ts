@@ -2286,15 +2286,20 @@ export interface QueueStat {
   freshness_at?: string
 }
 
-export interface OperationsSourceStatus { key: string; status: "HEALTHY" | "DEGRADED" | "DOWN" | "UNAVAILABLE" | "STALE"; freshness_at?: string | null; detail: string }
-export interface OperationsOverview { overall_status: string; checked_at: string; sources: OperationsSourceStatus[] }
-export interface StorageTelemetry { provider_status: string; provider_detail: string; total_objects: number; total_bytes: number; capacity_bytes: number | null; by_status: Array<{ status: string; count: number; bytes: number }>; freshness_at: string }
+export type OperationsHealthStatus = "HEALTHY" | "DEGRADED" | "DOWN" | "UNAVAILABLE" | "STALE";
+export type OperationsSourceType = "cloud" | "registration_server" | "venue_server";
+export interface OperationsScopeParams { organization_id?: string; event_id?: string; source_type?: OperationsSourceType }
+export interface OperationsSourceStatus { key: string; status: OperationsHealthStatus; freshness_at?: string | null; detail: string }
+export interface OperationsOverview { overall_status: OperationsHealthStatus; checked_at: string; deployment_profile?: string; source_url?: string; realtime?: { mode: string; transport: string; status: string }; scope?: OperationsScopeParams; sources: OperationsSourceStatus[] }
+export interface StorageTelemetry { provider_status: string; provider_detail: string; total_objects: number; total_bytes: number; capacity_bytes: number | null; by_status: Array<{ status: string; count: number; bytes: number }>; freshness_at: string; scope?: OperationsScopeParams }
 export interface OperationalRequest { id: string; organization_id: string; event_id: string; request_number: string; title: string; description?: string | null; status: string; priority: string; request_type: string; version: number; created_at: string; updated_at: string }
 export interface CursorResponse<T> { items: T[]; next_cursor?: string | null; has_next: boolean }
 export interface OperationalRisk { id: string; organization_id: string; event_id: string; project_id: string; title: string; description?: string | null; severity: string; probability: string; category?: string | null; impact?: string | null; owner_user_id?: string | null; due_date?: string | null; mitigation_plan?: string | null; status: string; version: number; accepted_by?: string | null; accepted_at?: string | null; resolved_at?: string | null }
 export interface OperationsProject { id: string; organization_id: string; event_id: string; name: string; project_code: string; status: string }
-export interface VenueReadinessItem { id: string; organization_id: string; event_id: string; event_name: string; vendor_id: string; supplier_name: string; contract_reference?: string | null; responsibility_scope: Record<string, unknown>; starts_on?: string | null; ends_on?: string | null; status: string; readiness_status: string; latest_attestation_at?: string | null; device_count: number; online_device_count: number; expired_credentials: number; open_incidents: number; sync_failures: number }
-export interface ProcurementVendor { id: string; name: string; type: string; status: string; city: string; country: string }
+export interface OperationsSourceAccessKey { id: string; event_id: string; organization_id: string; event_name?: string | null; organization_name?: string | null; name: string; key_prefix: string; masked_key?: string | null; api_key?: string | null; api_key_recoverable?: boolean; api_url?: string; source_type: "registration_server" | "venue_server"; permissions: Record<string, boolean>; expires_at?: string | null; revoked_at?: string | null; last_used_at?: string | null; created_by?: string | null; created_at?: string | null; status: "ACTIVE" | "REVOKED" | "EXPIRED"; api_key_visible_once?: boolean; source_url?: string }
+export interface OperationsSourceAccessKpis { total: number; active: number; revoked: number; expired: number; used: number; recoverable: number; registration_server: number; venue_server: number }
+export interface OperationsSourceAccessResponse { source_url: string; items: OperationsSourceAccessKey[]; freshness_at: string; kpis?: OperationsSourceAccessKpis }
+export interface VenueReadinessResponse { freshness_at: string; source_url?: string; deployment_profile?: string; scope?: OperationsScopeParams; server_sync?: { registration_server: { active_keys: number; last_used_at?: string | null }; venue_server: { active_keys: number; last_used_at?: string | null }; sync_jobs: { total: number; pending: number; in_progress: number; completed: number; failed: number; last_completed_at?: string | null }; devices: { total: number; online: number; latest_heartbeat_at?: string | null } } }
 
 export const useDatabaseStats = () =>
   useQuery({
@@ -2304,17 +2309,17 @@ export const useDatabaseStats = () =>
     staleTime: 15_000,
   });
 
-export const useOperationsOverview = () => useQuery({
-  queryKey: platformKey('operations-overview'),
-  queryFn: () => apiClient.get<OperationsOverview>('/platform/operations/overview'),
-  refetchInterval: 30_000,
+export const useOperationsOverview = (params?: OperationsScopeParams) => useQuery({
+  queryKey: platformKey('operations-overview', params),
+  queryFn: () => apiClient.get<OperationsOverview>('/platform/operations/overview', { params }),
+  refetchInterval: 10_000,
   staleTime: 10_000,
 });
 
-export const useStorageTelemetry = () => useQuery({
-  queryKey: platformKey('operations-storage'),
-  queryFn: () => apiClient.get<StorageTelemetry>('/platform/operations/storage'),
-  refetchInterval: 30_000,
+export const useStorageTelemetry = (params?: Pick<OperationsScopeParams, 'organization_id' | 'event_id'>) => useQuery({
+  queryKey: platformKey('operations-storage', params),
+  queryFn: () => apiClient.get<StorageTelemetry>('/platform/operations/storage', { params }),
+  refetchInterval: 15_000,
   staleTime: 10_000,
 });
 
@@ -2355,22 +2360,39 @@ export const useRiskMutation = () => {
   });
 };
 
-export const useVenueReadiness = (params?: Record<string, string | undefined>) => useQuery({
+export const useVenueReadiness = (params?: OperationsScopeParams) => useQuery({
   queryKey: platformKey('operations-venue-readiness', params),
-  queryFn: () => apiClient.get<{ items: VenueReadinessItem[]; freshness_at: string }>('/platform/operations/venue/readiness', { params }),
-  refetchInterval: 30_000,
+  queryFn: () => apiClient.get<VenueReadinessResponse>('/platform/operations/venue/readiness', { params }),
+  refetchInterval: 10_000,
 });
 
-export const useProcurementVendors = () => useQuery({
-  queryKey: platformKey('procurement-vendors'),
-  queryFn: () => apiClient.get<ProcurementVendor[]>('/vendors', { params: { status: 'ACTIVE', limit: 200 } }),
+export const useOperationsSourceAccess = (params?: OperationsScopeParams) => useQuery({
+  queryKey: platformKey('operations-source-access', params),
+  queryFn: () => apiClient.get<OperationsSourceAccessResponse>('/platform/operations/source-access', { params }),
+  refetchInterval: 10_000,
 });
 
-export const useVenueMutation = () => {
+export const useCreateOperationsSourceAccess = () => {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: { path: string; body: Record<string, unknown>; idempotencyKey?: string }) => apiClient.post(`/platform/operations/venue/${input.path}`, input.body, { headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : undefined }),
-    onSuccess: () => client.invalidateQueries({ queryKey: platformKey('operations-venue-readiness') }),
+    mutationFn: (input: { body: Record<string, unknown>; idempotencyKey: string }) => apiClient.post<OperationsSourceAccessKey>('/platform/operations/source-access', input.body, { headers: { 'Idempotency-Key': input.idempotencyKey } }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: platformKey('operations-source-access') });
+      client.invalidateQueries({ queryKey: platformKey('operations-venue-readiness') });
+      client.invalidateQueries({ queryKey: platformKey('operations-overview') });
+    },
+  });
+};
+
+export const useRevokeOperationsSourceAccess = () => {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { keyId: string; body: { organization_id: string; reason: string } }) => apiClient.post<OperationsSourceAccessKey>(`/platform/operations/source-access/${input.keyId}/revoke`, input.body),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: platformKey('operations-source-access') });
+      client.invalidateQueries({ queryKey: platformKey('operations-venue-readiness') });
+      client.invalidateQueries({ queryKey: platformKey('operations-overview') });
+    },
   });
 };
 
@@ -2390,7 +2412,7 @@ export const useTriggerSearchReindex = () => {
   });
 };
 
-export const useBackgroundJobs = (params?: { status?: string; queue?: string; skip?: number; limit?: number }) =>
+export const useBackgroundJobs = (params?: { status?: string; queue?: string; organization_id?: string; event_id?: string; source?: string; skip?: number; limit?: number }) =>
   useQuery({
     queryKey: platformKey('bg-jobs', params),
     queryFn: () => apiClient.get<any>('/platform/operations/jobs', { params }),

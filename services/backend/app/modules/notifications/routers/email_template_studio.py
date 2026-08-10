@@ -106,6 +106,81 @@ async def _branding_policy(db: AsyncSession) -> EmailBrandingPolicy:
     return row
 
 
+async def _duplicate_template_record(
+    db: AsyncSession,
+    *,
+    source_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    new_scope_type: str | None = None,
+    new_org_id: uuid.UUID | None = None,
+    new_event_id: uuid.UUID | None = None,
+) -> EmailTemplate:
+    source = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == source_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if source is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    unique_suffix = uuid.uuid4().hex[:6]
+    copy_name = f"{source.name} (Copy)"
+    copy_key = f"{source.stable_key}-copy-{unique_suffix}"
+
+    new_scope = new_scope_type or source.scope_type
+    target_org = new_org_id if new_scope == "ORGANIZATION" else (source.organization_id if new_scope != "PLATFORM" else None)
+    target_event = new_event_id if new_scope == "EVENT" else None
+
+    draft = await db.scalar(select(EmailTemplateVersion).where(
+        EmailTemplateVersion.template_id == source.id,
+        EmailTemplateVersion.lifecycle_state == "DRAFT",
+    ))
+
+    subject = draft.subject if draft else source.subject
+    preheader = draft.preheader if draft else source.preheader
+    body_html = draft.body_html if draft else source.body_html
+    body_text = draft.body_text if draft else source.body_text
+    designer_json = draft.designer_json if draft else source.designer_json
+
+    new_family = EmailTemplate(
+        id=uuid.uuid4(),
+        scope_type=new_scope,
+        organization_id=target_org,
+        event_id=target_event,
+        parent_template_id=source.id,
+        name=copy_name,
+        stable_key=copy_key,
+        template_type=source.template_type,
+        target_type=source.target_type,
+        subject=subject,
+        preheader=preheader,
+        body_html=body_html,
+        body_text=body_text,
+        designer_json=designer_json or {},
+        version=1,
+        created_by=actor_id,
+    )
+    db.add(new_family)
+    await db.flush()
+
+    new_version = EmailTemplateVersion(
+        id=uuid.uuid4(),
+        template_id=new_family.id,
+        version_number=1,
+        lifecycle_state="DRAFT",
+        subject=subject,
+        preheader=preheader,
+        body_html=body_html,
+        body_text=body_text,
+        designer_json=designer_json or {},
+        created_by=actor_id,
+    )
+    db.add(new_version)
+    await db.commit()
+    return new_family
+
+
 async def _latest_state(db: AsyncSession, family: EmailTemplate) -> tuple[str, dict | None]:
     draft = await db.scalar(
         select(EmailTemplateVersion).where(
@@ -480,6 +555,112 @@ async def rollback_platform_template(
     return await _response(db, family, editable=True)
 
 
+@platform_router.get("/organizations-list")
+async def list_all_platform_organizations(
+    current_user: SuperAdminOnly,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.modules.platform.models.organization import Organization
+    rows = (await db.scalars(
+        select(Organization)
+        .where(Organization.is_active.is_(True))
+        .order_by(Organization.name)
+        .execution_options(skip_tenant_filter=True)
+    )).all()
+    return [{"id": str(org.id), "name": org.name, "slug": org.slug} for org in rows]
+
+
+@platform_router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_platform_template(
+    template_id: uuid.UUID,
+    current_user: SuperAdminOnly,
+    db: AsyncSession = Depends(get_db),
+):
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    template.deleted_at = datetime.now(timezone.utc)
+    template.deleted_by = current_user.id
+    await db.commit()
+    return None
+
+
+@platform_router.post("/{template_id}/duplicate", response_model=TemplateStudioResponse)
+async def duplicate_platform_template(
+    template_id: uuid.UUID,
+    current_user: SuperAdminOnly,
+    db: AsyncSession = Depends(get_db),
+):
+    new_family = await _duplicate_template_record(
+        db, source_id=template_id, actor_id=current_user.id, new_scope_type="PLATFORM"
+    )
+    return await _response(db, new_family, editable=True)
+
+
+@platform_router.put("/{template_id}/scope", response_model=TemplateStudioResponse)
+async def update_platform_template_scope(
+    template_id: uuid.UUID,
+    payload: dict,
+    current_user: SuperAdminOnly,
+    db: AsyncSession = Depends(get_db),
+):
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    scope_type = payload.get("scope_type", "PLATFORM")
+    organization_id_raw = payload.get("organization_id")
+    target_org_id = uuid.UUID(str(organization_id_raw)) if organization_id_raw else None
+
+    if scope_type == "ORGANIZATION":
+        if not target_org_id:
+            from app.modules.platform.models.organization import Organization
+            target_org_id = await db.scalar(select(Organization.id).where(Organization.is_active.is_(True)).execution_options(skip_tenant_filter=True))
+            if not target_org_id:
+                raise HTTPException(status_code=400, detail={"code": "NO_ORGANIZATION_AVAILABLE"})
+        template.scope_type = "ORGANIZATION"
+        template.organization_id = target_org_id
+        template.event_id = None
+    else:
+        template.scope_type = "PLATFORM"
+        template.organization_id = None
+        template.event_id = None
+
+    await db.commit()
+    return await _response(db, template, editable=True)
+
+
+@platform_router.put("/{template_id}/active-status", response_model=TemplateStudioResponse)
+async def update_platform_template_active_status(
+    template_id: uuid.UUID,
+    payload: dict,
+    current_user: SuperAdminOnly,
+    db: AsyncSession = Depends(get_db),
+):
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+    template.is_active = bool(payload.get("is_active", True))
+    await db.commit()
+    return await _response(db, template, editable=True)
+
+
 @organization_router.get("", response_model=list[TemplateStudioResponse])
 async def list_organization_templates(
     organization_id: uuid.UUID,
@@ -658,6 +839,103 @@ async def rollback_organization_template(
     return await _response(db, family, editable=True)
 
 
+@organization_router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_organization_template(
+    organization_id: uuid.UUID,
+    template_id: uuid.UUID,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_org_admin(db, actor, organization_id)
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    if template.scope_type == "PLATFORM":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "CANNOT_DELETE_PLATFORM_DEFAULT", "message": "Platform default templates cannot be deleted by organization users."}
+        )
+
+    if template.scope_type == "ORGANIZATION" and template.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    template.deleted_at = datetime.now(timezone.utc)
+    template.deleted_by = actor.id
+    await db.commit()
+    return None
+
+
+@organization_router.post("/{template_id}/duplicate", response_model=TemplateStudioResponse)
+async def duplicate_organization_template(
+    organization_id: uuid.UUID,
+    template_id: uuid.UUID,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_org_admin(db, actor, organization_id)
+    new_family = await _duplicate_template_record(
+        db,
+        source_id=template_id,
+        actor_id=actor.id,
+        new_scope_type="ORGANIZATION",
+        new_org_id=organization_id,
+    )
+    return await _response(db, new_family, editable=True)
+
+
+@organization_router.put("/{template_id}/scope", response_model=TemplateStudioResponse)
+async def update_org_template_scope(
+    organization_id: uuid.UUID,
+    template_id: uuid.UUID,
+    payload: dict,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_org_admin(db, actor, organization_id)
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.organization_id == organization_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+    scope_type = payload.get("scope_type", "ORGANIZATION")
+    template.scope_type = scope_type
+    await db.commit()
+    return await _response(db, template, editable=True)
+
+
+@organization_router.put("/{template_id}/active-status", response_model=TemplateStudioResponse)
+async def update_org_template_active_status(
+    organization_id: uuid.UUID,
+    template_id: uuid.UUID,
+    payload: dict,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_org_admin(db, actor, organization_id)
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.organization_id == organization_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+    template.is_active = bool(payload.get("is_active", True))
+    await db.commit()
+    return await _response(db, template, editable=True)
+
+
 @event_router.get("", response_model=list[TemplateStudioResponse], dependencies=[require_event_operation("communications.email.read")])
 async def list_event_studio_templates(
     event_id: uuid.UUID,
@@ -831,6 +1109,59 @@ async def rollback_event_template(
     db.add(_audit(actor=actor, family=family, action="EVENT_EMAIL_TEMPLATE_ROLLED_BACK", reason=payload.reason, version_id=restored.id))
     await db.commit()
     return await _response(db, family, editable=True)
+
+
+@event_router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_event_template(
+    event_id: uuid.UUID,
+    template_id: uuid.UUID,
+    event: CurrentEvent,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await enforce_event_operation(db, event.organization_id, event_id, "communications.email_designer.manage", user_id=actor.id)
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            EmailTemplate.id == template_id,
+            EmailTemplate.deleted_at.is_(None),
+        ).execution_options(skip_tenant_filter=True)
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    if template.scope_type == "PLATFORM":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "CANNOT_DELETE_PLATFORM_DEFAULT", "message": "Platform default templates cannot be deleted by event users."}
+        )
+
+    if template.scope_type == "EVENT" and template.event_id != event_id:
+        raise HTTPException(status_code=404, detail={"code": "EMAIL_TEMPLATE_NOT_FOUND"})
+
+    template.deleted_at = datetime.now(timezone.utc)
+    template.deleted_by = actor.id
+    await db.commit()
+    return None
+
+
+@event_router.post("/{template_id}/duplicate", response_model=TemplateStudioResponse)
+async def duplicate_event_template(
+    event_id: uuid.UUID,
+    template_id: uuid.UUID,
+    event: CurrentEvent,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await enforce_event_operation(db, event.organization_id, event_id, "communications.email_designer.manage", user_id=actor.id)
+    new_family = await _duplicate_template_record(
+        db,
+        source_id=template_id,
+        actor_id=actor.id,
+        new_scope_type="EVENT",
+        new_org_id=event.organization_id,
+        new_event_id=event_id,
+    )
+    return await _response(db, new_family, editable=True)
 
 
 @platform_component_router.get("", response_model=list[EmailFragmentResponse])
