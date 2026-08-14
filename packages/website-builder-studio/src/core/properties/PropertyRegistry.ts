@@ -54,6 +54,7 @@ export interface BaseProperty {
   id: string; // The property key, e.g., 'font-size', 'data-aos', 'text-content'
   label: string;
   type: string; // E.g., 'Text', 'Color', 'Select', 'Spacing'
+  target?: PropertyTarget;
   defaultValue?: any;
   required?: boolean;
   min?: number;
@@ -64,6 +65,13 @@ export interface BaseProperty {
   disabledWhen?: (values: Record<string, any>) => boolean;
   validator?: (value: any) => string | null; // Returns error message or null
 }
+
+export type PropertyTarget =
+  | { kind: 'content'; selector?: string }
+  | { kind: 'attribute'; name: string; selector?: string }
+  | { kind: 'style'; css: string; selector?: string; responsive?: boolean }
+  | { kind: 'class'; map?: Record<string, string>; selector?: string }
+  | { kind: 'component-state'; key: string };
 
 // Example specific property definitions (will expand these in Phase 3)
 export interface SelectProperty extends BaseProperty {
@@ -138,6 +146,12 @@ export interface ComponentManifest {
   supportsTheme?: boolean;
   supportsAnimation?: boolean;
   supportsResponsive?: boolean;
+  defaults?: Record<string, any>;
+  renderer?: string;
+  dataBinding?: {
+    fields: string[];
+    fallback?: 'mock' | 'empty' | 'manual';
+  };
   schema: ComponentPropertySchema;
 }
 
@@ -153,14 +167,181 @@ class PropertySchemaRegistry {
     return this.manifests.get(componentType);
   }
 
+  getAll(): ComponentManifest[] {
+    return Array.from(this.manifests.values());
+  }
+
   // Fallback manifest if a component hasn't been explicitly defined yet
   getFallback(componentType: string, tagName: string): ComponentManifest {
+    const normalizedType = String(componentType || '').toLowerCase();
+    const normalizedTag = String(tagName || '').toLowerCase();
+
+    if (
+      ['text', 'textnode', 'label'].includes(normalizedType) ||
+      ['p', 'span', 'strong', 'em', 'small', 'label', 'li'].includes(normalizedTag)
+    ) {
+      return {
+        id: componentType,
+        title: normalizedTag ? normalizedTag.toUpperCase() : 'Text',
+        category: 'Typography',
+        schema: {
+          groups: [
+            {
+              groupId: 'CONTENT',
+              properties: [
+                { id: 'data-content', type: 'Textarea', label: 'Text Content', target: { kind: 'content', selector: ':self' } },
+              ],
+            },
+            {
+              groupId: 'TYPOGRAPHY',
+              properties: [
+                { id: 'font-family', type: 'Text', label: 'Font Family', target: { kind: 'style', css: 'font-family' } },
+                { id: 'font-size', type: 'Text', label: 'Font Size', target: { kind: 'style', css: 'font-size' } },
+                { id: 'font-weight', type: 'Text', label: 'Font Weight', target: { kind: 'style', css: 'font-weight' } },
+                { id: 'line-height', type: 'Text', label: 'Line Height', target: { kind: 'style', css: 'line-height' } },
+                { id: 'letter-spacing', type: 'Text', label: 'Letter Spacing', target: { kind: 'style', css: 'letter-spacing' } },
+                { id: 'text-align', type: 'Select', label: 'Text Align', target: { kind: 'style', css: 'text-align' }, options: [
+                  { value: 'left', label: 'Left' },
+                  { value: 'center', label: 'Center' },
+                  { value: 'right', label: 'Right' },
+                  { value: 'justify', label: 'Justify' },
+                ] },
+                { id: 'color', type: 'Color', label: 'Text Color', target: { kind: 'style', css: 'color' } },
+              ],
+            },
+            {
+              groupId: 'SPACING',
+              properties: [
+                { id: 'margin', type: 'Spacing', label: 'Margin' },
+                { id: 'padding', type: 'Spacing', label: 'Padding' },
+              ],
+            },
+          ],
+        },
+      };
+    }
+
+    if (normalizedType === 'image' || normalizedTag === 'img') {
+      return {
+        id: componentType,
+        title: 'Image',
+        category: 'Media',
+        schema: {
+          groups: [
+            {
+              groupId: 'CONTENT',
+              properties: [
+                { id: 'src', type: 'Asset', label: 'Image', target: { kind: 'attribute', name: 'src', selector: ':self' } },
+                { id: 'alt', type: 'Text', label: 'Alt Text', target: { kind: 'attribute', name: 'alt', selector: ':self' } },
+              ],
+            },
+            {
+              groupId: 'MEDIA',
+              properties: [
+                { id: 'object-fit', type: 'Select', label: 'Object Fit', target: { kind: 'style', css: 'object-fit' }, options: [
+                  { value: 'cover', label: 'Cover' },
+                  { value: 'contain', label: 'Contain' },
+                  { value: 'fill', label: 'Fill' },
+                  { value: 'none', label: 'None' },
+                ] },
+                { id: 'object-position', type: 'Text', label: 'Object Position', target: { kind: 'style', css: 'object-position' } },
+                { id: 'aspect-ratio', type: 'Text', label: 'Aspect Ratio', target: { kind: 'style', css: 'aspect-ratio' } },
+              ],
+            },
+          ],
+        },
+      };
+    }
+
+    if (normalizedType === 'link' || normalizedTag === 'a') {
+      return {
+        id: componentType,
+        title: 'Link',
+        category: 'Buttons',
+        schema: {
+          groups: [
+            {
+              groupId: 'CONTENT',
+              properties: [
+                { id: 'data-label', type: 'Text', label: 'Label', target: { kind: 'content', selector: ':self' } },
+                { id: 'href', type: 'Link', label: 'Link', target: { kind: 'attribute', name: 'href' } },
+                { id: 'target', type: 'Select', label: 'Open In', target: { kind: 'attribute', name: 'target' }, options: [
+                  { value: '_self', label: 'Same Tab' },
+                  { value: '_blank', label: 'New Tab' },
+                ] },
+              ],
+            },
+            {
+              groupId: 'TYPOGRAPHY',
+              properties: [
+                { id: 'color', type: 'Color', label: 'Text Color', target: { kind: 'style', css: 'color' } },
+                { id: 'font-size', type: 'Text', label: 'Font Size', target: { kind: 'style', css: 'font-size' } },
+                { id: 'font-weight', type: 'Text', label: 'Font Weight', target: { kind: 'style', css: 'font-weight' } },
+                { id: 'text-decoration', type: 'Select', label: 'Decoration', target: { kind: 'style', css: 'text-decoration' }, options: [
+                  { value: 'none', label: 'None' },
+                  { value: 'underline', label: 'Underline' },
+                ] },
+              ],
+            },
+          ],
+        },
+      };
+    }
+
+    if (normalizedType === 'button' || normalizedTag === 'button') {
+      return {
+        id: componentType,
+        title: 'Button',
+        category: 'Buttons',
+        schema: {
+          groups: [
+            {
+              groupId: 'CONTENT',
+              properties: [
+                { id: 'data-label', type: 'Text', label: 'Label', target: { kind: 'content', selector: ':self' } },
+                { id: 'href', type: 'Link', label: 'Link', target: { kind: 'attribute', name: 'href' } },
+              ],
+            },
+            {
+              groupId: 'STYLE',
+              properties: [
+                { id: 'background', type: 'Color', label: 'Background', target: { kind: 'style', css: 'background' } },
+                { id: 'color', type: 'Color', label: 'Text Color', target: { kind: 'style', css: 'color' } },
+                { id: 'border-radius', type: 'Text', label: 'Radius', target: { kind: 'style', css: 'border-radius' } },
+              ],
+            },
+          ],
+        },
+      };
+    }
+
     return {
       id: componentType,
       title: tagName || componentType,
       category: 'Basic',
       schema: {
         groups: [
+          {
+            groupId: 'CONTENT',
+            properties: [
+              { id: 'data-content', type: 'Textarea', label: 'Content', target: { kind: 'content', selector: ':self' } },
+            ],
+          },
+          {
+            groupId: 'STYLE',
+            properties: [
+              { id: 'background', type: 'Color', label: 'Background', target: { kind: 'style', css: 'background' } },
+              { id: 'color', type: 'Color', label: 'Text Color', target: { kind: 'style', css: 'color' } },
+              { id: 'border-radius', type: 'Text', label: 'Radius', target: { kind: 'style', css: 'border-radius' } },
+            ],
+          },
+          {
+            groupId: 'SPACING',
+            properties: [
+              { id: 'margin', type: 'Spacing', label: 'Margin' },
+              { id: 'padding', type: 'Spacing', label: 'Padding' },
+            ],
+          },
           {
             groupId: 'ADVANCED',
             properties: [

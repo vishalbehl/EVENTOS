@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "source": "Aceternity UI free registry",
+  "sourcePackageCount": 109,
+  "fidelityReviewedComponentCount": 5,
+  "components": [
+    {
+      "name": "aurora-background",
+      "componentType": "aceternity-aurora-background",
+      "html": "./aurora-background/component.html",
+      "json": "./aurora-background/component.json"
+    },
+    {
+      "name": "spotlight",
+      "componentType": "aceternity-spotlight",
+      "html": "./spotlight/component.html",
+      "json": "./spotlight/component.json"
+    },
+    {
+      "name": "background-gradient",
+      "componentType": "aceternity-background-gradient",
+      "html": "./background-gradient/component.html",
+      "json": "./background-gradient/component.json"
+    },
+    {
+      "name": "bento-grid",
+      "componentType": "aceternity-bento-grid",
+      "html": "./bento-grid/component.html",
+      "json": "./bento-grid/component.json"
+    },
+    {
+      "name": "grid",
+      "componentType": "aceternity-grid",
+      "html": "./grid/component.html",
+      "json": "./grid/component.json"
+    }
+  ]
+}

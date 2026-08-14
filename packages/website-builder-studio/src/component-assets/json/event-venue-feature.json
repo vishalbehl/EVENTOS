@@ -1,0 +1,1 @@
+{ "id": "event-venue-feature", "canonical": "json", "htmlFile": "../html/event-venue-feature.html", "components": [{ "type": "section", "attributes": { "data-component-asset-id": "event-venue-feature" }, "components": "event-venue-feature.html" }] }

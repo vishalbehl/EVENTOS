@@ -22,6 +22,14 @@ import { apiClient } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import { toast } from "sonner";
 
+const isCheckedInForBadgePrint = (participant: any) =>
+  Boolean(
+    participant?.checked_in ||
+      participant?.is_checked_in ||
+      participant?.checked_in_at ||
+      String(participant?.checkin_status || "").toLowerCase() === "checked_in"
+  );
+
 export default function BadgePrintPage() {
   const [participants, setParticipants] = useState<any[]>([]);
   const [selectedP, setSelectedP] = useState<any>(null);
@@ -29,6 +37,7 @@ export default function BadgePrintPage() {
   const [printing, setPrinting] = useState(false);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("All");
+  const [paidFilter, setPaidFilter] = useState("All");
   const [printer, setPrinter] = useState("PRN-Zebra-01");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 25;
@@ -77,6 +86,17 @@ export default function BadgePrintPage() {
     return Array.from(set).sort();
   }, [participants]);
 
+  // Dynamically inherit all distinct payment statuses present in dataset (e.g. Paid, Unpaid, Free, Complimentary)
+  const availablePaidStatuses = useMemo(() => {
+    const set = new Set<string>(["Paid", "Unpaid"]);
+    participants.forEach((p) => {
+      if (p.paid_status && typeof p.paid_status === "string" && p.paid_status.trim() !== "") {
+        set.add(p.paid_status.trim());
+      }
+    });
+    return Array.from(set).sort();
+  }, [participants]);
+
   const filteredParticipants = useMemo(() => {
     const q = query.toLowerCase().trim();
     const list = participants.filter((p) => {
@@ -87,7 +107,11 @@ export default function BadgePrintPage() {
         (p.email && p.email.toLowerCase().includes(q)) ||
         (p.company && p.company.toLowerCase().includes(q));
       const matchesRole = roleFilter === "All" || p.role === roleFilter;
-      return matchesSearch && matchesRole;
+      const matchesPaid =
+        paidFilter === "All" ||
+        (p.paid_status && p.paid_status.toLowerCase() === paidFilter.toLowerCase()) ||
+        (!p.paid_status && paidFilter.toLowerCase() === "unpaid");
+      return matchesSearch && matchesRole && matchesPaid;
     });
     return list.sort((a, b) => {
       const valA = ((sortField === "regno" ? a.regno : a.name) || "").toLowerCase();
@@ -95,7 +119,7 @@ export default function BadgePrintPage() {
       const cmp = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: "base" });
       return sortDirection === "asc" ? cmp : -cmp;
     });
-  }, [participants, query, roleFilter, sortField, sortDirection]);
+  }, [participants, query, roleFilter, paidFilter, sortField, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(filteredParticipants.length / pageSize));
   const paginated = filteredParticipants.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -147,6 +171,10 @@ export default function BadgePrintPage() {
 
   const handlePrint = async () => {
     if (!selectedP) return;
+    if (!isCheckedInForBadgePrint(selectedP)) {
+      toast.error(`Not printed for ${selectedP.name || selectedP.regno}: not checked in.`);
+      return;
+    }
     try {
       setPrinting(true);
       let url = pdfPreviewUrl;
@@ -212,6 +240,17 @@ export default function BadgePrintPage() {
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>
+
+            <select
+              value={paidFilter}
+              onChange={(e) => { setPaidFilter(e.target.value); setCurrentPage(1); }}
+              className="h-9 px-3 rounded-xl border border-[var(--border)] text-xs font-bold bg-[var(--card)] text-[var(--text)]"
+            >
+              <option value="All">All Payments</option>
+              {availablePaidStatuses.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
             <div className="relative flex-1">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)]" />
               <Input
@@ -242,26 +281,28 @@ export default function BadgePrintPage() {
                   </th>
                   <th className="p-3">Role</th>
                   <th className="p-3">Company</th>
+                  <th className="p-3">Check-in</th>
                   <th className="p-3">Badge</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)] font-semibold text-[var(--text)]">
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="py-20 text-center text-[var(--muted)]">
+                    <td colSpan={6} className="py-20 text-center text-[var(--muted)]">
                       <RefreshCw className="w-5 h-5 animate-spin mx-auto text-[var(--pri)] mb-2" />
                       Loading print queue...
                     </td>
                   </tr>
                 ) : paginated.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-16 text-center text-[var(--muted)] text-xs font-bold">
+                    <td colSpan={6} className="py-16 text-center text-[var(--muted)] text-xs font-bold">
                       No participants found matching filters.
                     </td>
                   </tr>
                 ) : (
                   paginated.map((p) => {
                     const isSelected = selectedP?.id === p.id;
+                    const isCheckedIn = isCheckedInForBadgePrint(p);
                     return (
                       <tr
                         key={p.id}
@@ -283,6 +324,15 @@ export default function BadgePrintPage() {
                           </span>
                         </td>
                         <td className="p-3 text-[var(--muted)] text-xs">{p.company || "N/A"}</td>
+                        <td className="p-3">
+                          <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded-full border ${
+                            isCheckedIn
+                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                              : "bg-red-500/10 text-red-500 border-red-500/20"
+                          }`}>
+                            {isCheckedIn ? "Checked In" : "Not Checked In"}
+                          </span>
+                        </td>
                         <td className="p-3">
                           <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded-full border ${
                             p.badge_status === "printed" || p.badge_status === "reprinted"
@@ -331,11 +381,12 @@ export default function BadgePrintPage() {
                 </div>
                 <Button
                   onClick={handlePrint}
-                  disabled={printing || compilingPreview}
+                  disabled={printing || compilingPreview || !isCheckedInForBadgePrint(selectedP)}
                   className="bg-[var(--pri)] text-[var(--primary-contrast)] font-extrabold gap-2 h-9 px-5 shadow-md text-xs shrink-0"
+                  title={!isCheckedInForBadgePrint(selectedP) ? "Participant must check in before badge printing." : undefined}
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  {compilingPreview ? "Compiling..." : printing ? "Printing..." : "Print Badge"}
+                  {!isCheckedInForBadgePrint(selectedP) ? "Check-in Required" : compilingPreview ? "Compiling..." : printing ? "Printing..." : "Print Badge"}
                 </Button>
               </div>
 
@@ -350,11 +401,11 @@ export default function BadgePrintPage() {
                   <span className="text-[var(--text)] truncate">{selectedP.company || "N/A"}</span>
                 </div>
                 <span className={`ml-auto shrink-0 px-2.5 py-0.5 text-[10px] font-black uppercase rounded-full border ${
-                  selectedP.badge_status === "printed" || selectedP.badge_status === "reprinted"
+                  isCheckedInForBadgePrint(selectedP)
                     ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                    : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                    : "bg-red-500/10 text-red-500 border-red-500/20"
                 }`}>
-                  {selectedP.badge_status || "Pending"}
+                  {isCheckedInForBadgePrint(selectedP) ? "Checked In" : "Not Checked In"}
                 </span>
               </div>
 

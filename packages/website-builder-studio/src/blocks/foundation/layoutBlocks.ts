@@ -22,7 +22,7 @@ export function registerLayoutBlocks(editor: Editor) {
     category: 'Layout',
     content: {
       tagName: 'section',
-      attributes: { class: 'ev-section' },
+      attributes: { class: 'ev-section', 'data-gjs-type': 'section' },
       style: { padding: '60px 24px', width: '100%', boxSizing: 'border-box', minHeight: '120px' },
       components: [{ tagName: 'div', attributes: { class: 'ev-container' }, style: { maxWidth: '1100px', margin: '0 auto' } }],
     },
@@ -87,26 +87,26 @@ export function registerLayoutBlocks(editor: Editor) {
     label: card(icon('<rect x="2" y="4" width="20" height="16" rx="3"/><line x1="2" y1="9" x2="22" y2="9"/>'), 'Card'),
     category: 'Layout',
     content: `
-      <div data-gjs-type="container" style="background: var(--muted); border: 1px solid var(--border); border-radius: 16px; padding: 24px; box-sizing: border-box; min-height: 120px;"></div>`,
+      <div data-gjs-type="card" style="background: var(--muted); border: 1px solid var(--border); border-radius: 16px; padding: 24px; box-sizing: border-box; min-height: 120px;"></div>`,
   });
 
   bm.add('layout-spacer', {
     label: card(icon('<line x1="12" y1="4" x2="12" y2="20"/><polyline points="8 8 12 4 16 8"/><polyline points="8 16 12 20 16 16"/>'), 'Spacer'),
     category: 'Layout',
-    content: `<div data-gjs-type="container" style="height: 60px; width: 100%; flex-shrink: 0;"></div>`,
+    content: `<div data-gjs-type="spacer" style="height: 60px; width: 100%; flex-shrink: 0;"></div>`,
   });
 
   bm.add('layout-divider', {
     label: card(icon('<line x1="3" y1="12" x2="21" y2="12"/>'), 'Divider'),
     category: 'Layout',
-    content: `<hr data-gjs-type="container" style="border: none; border-top: 1px solid var(--border); margin: 0; width: 100%;" />`,
+    content: `<hr data-gjs-type="divider" style="border: none; border-top: 1px solid var(--border); margin: 0; width: 100%;" />`,
   });
 
   bm.add('layout-accordion', {
     label: card(icon('<rect x="3" y="3" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="17" width="18" height="4" rx="1"/>'), 'Accordion'),
     category: 'Layout',
     content: `
-      <div data-gjs-type="container" style="display: flex; flex-direction: column; gap: 8px; width: 100%; box-sizing: border-box;">
+      <div data-gjs-type="accordion" style="display: flex; flex-direction: column; gap: 8px; width: 100%; box-sizing: border-box;">
         ${[1, 2, 3].map(i => `
           <details style="background: var(--muted); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
             <summary style="padding: 14px 18px; font-weight: 600; font-size: 15px; cursor: pointer; color: var(--foreground); list-style: none;">Accordion Item ${i}</summary>
@@ -119,7 +119,7 @@ export function registerLayoutBlocks(editor: Editor) {
     label: card(icon('<path d="M3 12 Q6 6 9 12 Q12 18 15 12 Q18 6 21 12"/>'), 'Wave Divider'),
     category: 'Layout',
     content: `
-      <div data-gjs-type="container" style="width: 100%; overflow: hidden; line-height: 0; margin-bottom: -1px;">
+      <div data-gjs-type="divider" style="width: 100%; overflow: hidden; line-height: 0; margin-bottom: -1px;">
         <svg viewBox="0 0 1440 60" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="display: block; width: 100%; height: 60px;">
           <path d="M0,30 C360,60 1080,0 1440,30 L1440,60 L0,60 Z" fill="var(--bg-surface-hover, var(--muted))"/>
         </svg>

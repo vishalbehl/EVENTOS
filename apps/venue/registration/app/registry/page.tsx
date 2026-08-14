@@ -19,6 +19,7 @@ type KitStat = {
 
 type RoleItem = { role: string; count: number };
 type HourItem = { hour: string; count: number };
+type PaymentStatusItem = { status: string; count: number };
 
 type Summary = {
   total_participants: number;
@@ -29,12 +30,32 @@ type Summary = {
   badges_printed: number;
   paid_count: number;
   unpaid_count: number;
+  payment_breakdown?: PaymentStatusItem[];
   kits: KitStat[];
   kits_total_distributed: number;
   kits_total_quantity: number;
   role_breakdown: RoleItem[];
   checkin_by_hour: HourItem[];
 };
+
+export const PAYMENT_STATUS_COLORS: Record<string, string> = {
+  paid: "#10b981",          // Emerald
+  unpaid: "#f43f5e",        // Rose
+  pending: "#f59e0b",       // Amber
+  "partially paid": "#0ea5e9", // Sky Blue
+  partial: "#0ea5e9",
+  refunded: "#a855f7",      // Purple
+  complimentary: "#6366f1", // Indigo
+  "complimentary / n/a": "#6366f1",
+  free: "#6366f1",
+  waived: "#14b8a6",        // Teal
+  exempted: "#14b8a6",
+  unspecified: "#94a3b8",
+};
+
+export function getPaymentColor(status: string): string {
+  return PAYMENT_STATUS_COLORS[(status || "").trim().toLowerCase()] || "#94a3b8";
+}
 
 // ─── Colour palette ──────────────────────────────────────────────────────────
 
@@ -174,38 +195,60 @@ function KitProgressRow({ kit }: { kit: KitStat }) {
   );
 }
 
-// ─── Mini two-segment donut ───────────────────────────────────────────────────
+// ─── Multi-Segment Donut Chart ────────────────────────────────────────────────
 
-function MiniDonut({ a, b, colorA, colorB, labelA, labelB }: {
-  a: number; b: number; colorA: string; colorB: string; labelA: string; labelB: string;
+function MultiSegmentDonut({
+  data,
+  total,
+  size = 86,
+  strokeWidth = 12,
+}: {
+  data: { label: string; count: number; color: string }[];
+  total: number;
+  size?: number;
+  strokeWidth?: number;
 }) {
-  const size = 80; const sw = 12;
-  const r = (size - sw) / 2;
-  const circ = 2 * Math.PI * r;
-  const total = a + b || 1;
-  const dashA = (a / total) * circ;
-  const gapA = circ - dashA;
-  const cx = size / 2;
-  return (
-    <div className="flex items-center gap-3">
+  const r = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * r;
+  const center = size / 2;
+
+  if (total === 0 || data.length === 0) {
+    return (
       <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
-        <circle cx={cx} cy={cx} r={r} fill="none" stroke={colorB} strokeWidth={sw} />
-        <circle cx={cx} cy={cx} r={r} fill="none" stroke={colorA} strokeWidth={sw}
-          strokeDasharray={`${dashA} ${gapA}`} strokeLinecap="round" />
+        <circle cx={center} cy={center} r={r} fill="none" stroke="var(--border)" strokeWidth={strokeWidth} />
       </svg>
-      <div className="space-y-1">
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: colorA }} />
-          <span className="text-[10px] text-[var(--muted)]">{labelA}</span>
-          <span className="text-[10px] font-black text-[var(--text)]">{a}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: colorB }} />
-          <span className="text-[10px] text-[var(--muted)]">{labelB}</span>
-          <span className="text-[10px] font-black text-[var(--text)]">{b}</span>
-        </div>
-      </div>
-    </div>
+    );
+  }
+
+  let accumulatedPct = 0;
+
+  return (
+    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
+      <circle cx={center} cy={center} r={r} fill="none" stroke="var(--border)" strokeWidth={strokeWidth} />
+      {data.map((item, index) => {
+        const itemPct = item.count / total;
+        const dash = itemPct * circumference;
+        const gap = circumference - dash;
+        const offset = -accumulatedPct * circumference;
+        accumulatedPct += itemPct;
+
+        return (
+          <circle
+            key={`${item.label}-${index}`}
+            cx={center}
+            cy={center}
+            r={r}
+            fill="none"
+            stroke={item.color}
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${dash} ${gap}`}
+            strokeDashoffset={offset}
+            strokeLinecap="butt"
+            style={{ transition: "stroke-dasharray 0.8s ease, stroke-dashoffset 0.8s ease" }}
+          />
+        );
+      })}
+    </svg>
   );
 }
 
@@ -369,20 +412,76 @@ export default function RegistryDashboardPage() {
           </Card>
 
           <Card title="Payment Breakdown">
-            <MiniDonut a={s?.paid_count ?? 0} b={s?.unpaid_count ?? 0}
-              colorA="#14b8a6" colorB="var(--border)" labelA="Paid" labelB="Unpaid" />
-            {s && s.total_participants > 0 && (
-              <div>
-                <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-[var(--muted)]">Payment rate</span>
-                  <span className="font-black text-teal-400">{((s.paid_count / s.total_participants) * 100).toFixed(1)}%</span>
+            {(() => {
+              const breakdown = (s?.payment_breakdown || [])
+                .filter((item) => item && item.status && item.count > 0);
+
+              const chartItems = breakdown.map((item) => ({
+                label: item.status,
+                count: item.count,
+                color: getPaymentColor(item.status),
+              }));
+
+              const totalCount = breakdown.reduce((acc, b) => acc + b.count, 0);
+              const paidCount = breakdown.find((b) => b.status.toLowerCase() === "paid")?.count ?? (s?.paid_count ?? 0);
+              const paidPct = s && s.total_participants > 0 ? ((paidCount / s.total_participants) * 100).toFixed(1) : "0.0";
+
+              if (chartItems.length === 0) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <CreditCard className="mb-2 h-8 w-8 text-[var(--border)]" />
+                    <p className="text-[11px] font-bold text-[var(--muted)]">No payment status data available yet</p>
+                    <p className="mt-1 text-[10px] text-[var(--muted)]">Live statuses will appear here as soon as participants have payment values.</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <MultiSegmentDonut data={chartItems} total={totalCount} size={84} strokeWidth={12} />
+                    <div className="flex-1 space-y-1.5 max-h-36 overflow-y-auto custom-scrollbar pr-1">
+                      {chartItems.map((item) => (
+                        <div key={item.label} className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                            <span className="font-bold text-[var(--muted)] truncate">{item.label}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            <span className="font-black text-[var(--text)] tabular-nums">{item.count}</span>
+                            <span className="text-[10px] text-[var(--muted)] font-mono">
+                              ({totalCount > 0 ? Math.round((item.count / totalCount) * 100) : 0}%)
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Multi-status progress bar */}
+                  <div>
+                    <div className="flex justify-between text-[10px] mb-1.5">
+                      <span className="text-[var(--muted)] font-bold">Settlement Rate (Paid)</span>
+                      <span className="font-black text-emerald-500">{paidPct}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-[var(--border)] overflow-hidden flex">
+                      {chartItems.map((item) => {
+                        const pct = totalCount > 0 ? (item.count / totalCount) * 100 : 0;
+                        if (pct <= 0) return null;
+                        return (
+                          <div
+                            key={`bar-${item.label}`}
+                            className="h-full transition-all duration-700 first:rounded-l-full last:rounded-r-full"
+                            style={{ width: `${pct}%`, backgroundColor: item.color }}
+                            title={`${item.label}: ${item.count} (${pct.toFixed(1)}%)`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-[var(--border)] overflow-hidden">
-                  <div className="h-full rounded-full bg-teal-400 transition-all duration-700"
-                    style={{ width: `${(s.paid_count / s.total_participants) * 100}%` }} />
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </Card>
         </div>
 

@@ -242,7 +242,7 @@ async def _apply_operation(db: AsyncSession, assignment: VenueNodeAssignment, op
         timestamp = operation.occurred_at.astimezone(timezone.utc)
         db.add(BadgeScan(id=uuid.uuid4(), event_id=assignment.event_id, participant_id=participant.id, companion_id=companion.id if companion else None, station_id=station.id, station_name=station.station_name, station_type=station.station_type, badge_code=badge_code, scan_type="check_in", status="success", created_at=timestamp))
         db.add(VenueCheckIn(id=uuid.uuid4(), event_id=assignment.event_id, participant_id=participant.id, companion_id=companion.id if companion else None, checkin_gate_id=station.id, gate_name=station.station_name, gate_type=station.station_type, gate_capacity=station.station_capacity, badge_code=badge_code, scan_type="check_in", status="success", checkin_time=timestamp, method=str(payload.get("method") or "offline"), device_id=str(assignment.device_id), operation_id=operation.operation_id, created_at=timestamp))
-        db.add(ParticipantActionLog(participant_id=participant.id, action_type="checkin", performed_by=str(assignment.device_id), details=f"Offline node {assignment.id}; rule {station.id}"))
+        db.add(ParticipantActionLog(participant_id=participant.id, action_type="checkin", performed_by=str(assignment.device_id), details=f"Checked in at {station.station_name} (Offline Workstation)"))
         return "applied", None
 
     if action == "check_out":
@@ -252,7 +252,7 @@ async def _apply_operation(db: AsyncSession, assignment: VenueNodeAssignment, op
         timestamp = operation.occurred_at.astimezone(timezone.utc)
         attendance.checkout_time = timestamp
         attendance.duration = max(0, int((timestamp - attendance.checkin_time).total_seconds() // 60))
-        db.add(ParticipantActionLog(participant_id=participant.id, action_type="checkout", performed_by=str(assignment.device_id), details=f"Offline node {assignment.id}"))
+        db.add(ParticipantActionLog(participant_id=participant.id, action_type="checkout", performed_by=str(assignment.device_id), details="Checked out (Offline Workstation)"))
         return "applied", None
 
     if action in {"badge_issue", "badge_reprint"}:
@@ -269,7 +269,8 @@ async def _apply_operation(db: AsyncSession, assignment: VenueNodeAssignment, op
         if printer_id:
             try: db.add(BadgePrintJob(id=uuid.uuid4(), badge_id=badge.id, printer_id=uuid.UUID(str(printer_id)), status="queued", queued_at=badge.issued_at))
             except ValueError: return _operation_error("Invalid printer_id")
-        db.add(ParticipantActionLog(participant_id=participant.id, action_type="badge_reprint" if action == "badge_reprint" else "badge_print", performed_by=str(assignment.device_id), details=f"Offline node {assignment.id}"))
+        badge_label = f"Badge {'reprinted' if action == 'badge_reprint' else 'printed'}: {badge.badge_code} (Offline Workstation)"
+        db.add(ParticipantActionLog(participant_id=participant.id, action_type="badge_reprint" if action == "badge_reprint" else "badge_print", performed_by=str(assignment.device_id), details=badge_label))
         return "applied", None
 
     if action == "kit_issue":
@@ -281,7 +282,7 @@ async def _apply_operation(db: AsyncSession, assignment: VenueNodeAssignment, op
         if issued >= kit.max_per_participant: return _operation_error("Participant already received the maximum allowed kits")
         db.add(ParticipantKit(id=uuid.uuid4(), participant_id=participant.id, kit_id=kit.id, status="Issued", issued_by=str(assignment.device_id), issued_at=operation.occurred_at.astimezone(timezone.utc)))
         kit.distributed_quantity += 1
-        db.add(ParticipantActionLog(participant_id=participant.id, action_type="kit_issue", performed_by=str(assignment.device_id), details=f"Offline node {assignment.id}; kit {kit.id}"))
+        db.add(ParticipantActionLog(participant_id=participant.id, action_type="kit_issue", performed_by=str(assignment.device_id), details=f"Kit issued: {kit.kit_name} (Offline Workstation)"))
         return "applied", None
 
     if action == "registration_update":
@@ -290,7 +291,9 @@ async def _apply_operation(db: AsyncSession, assignment: VenueNodeAssignment, op
         if not isinstance(updates, dict): return _operation_error("Registration changes must be an object")
         for key, value in updates.items():
             if key in allowed_fields: setattr(participant, key, value)
-        db.add(ParticipantActionLog(participant_id=participant.id, action_type="registration_update", performed_by=str(assignment.device_id), details=f"Offline node {assignment.id}"))
+        changed_keys = [k.replace('_', ' ').title() for k in updates.keys() if k in allowed_fields]
+        details_label = f"Profile updated: {', '.join(changed_keys)} (Offline Workstation)" if changed_keys else "Profile updated (Offline Workstation)"
+        db.add(ParticipantActionLog(participant_id=participant.id, action_type="registration_update", performed_by=str(assignment.device_id), details=details_label))
         return "applied", None
     return _operation_error(f"Unsupported offline operation '{action}'")
 

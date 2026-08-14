@@ -17,6 +17,34 @@ export type VenueNodeAssignment = {
 };
 
 const STORAGE_KEY = "venue-node-configuration";
+export const VENUE_SCANNING_STATION_STORAGE_KEY = "venue-scanning-selected-station-id";
+
+export function readSavedScanningStationId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(VENUE_SCANNING_STATION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveScanningStationId(stationId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (stationId) {
+      window.localStorage.setItem(VENUE_SCANNING_STATION_STORAGE_KEY, stationId);
+    } else {
+      window.localStorage.removeItem(VENUE_SCANNING_STATION_STORAGE_KEY);
+    }
+  } catch {}
+}
+
+export function clearSavedScanningStationId(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(VENUE_SCANNING_STATION_STORAGE_KEY);
+  } catch {}
+}
 
 export function readVenueNodeConfiguration(): VenueNodeConfiguration | null {
   if (typeof window === "undefined") return null;

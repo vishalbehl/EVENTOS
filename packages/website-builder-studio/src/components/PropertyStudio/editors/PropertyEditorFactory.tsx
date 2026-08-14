@@ -1,28 +1,61 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Component } from 'grapesjs';
 import type { PropertyDefinition, SelectProperty, TextProperty, BaseProperty } from '../../../core/properties/PropertyRegistry';
-import { usePropertySync, useSpacingSync } from '../../../core/properties/usePropertySync';
+import { commitGrapesComponentToDocument, findTargetComponent, readPropertyTarget, usePropertySync, useSpacingSync } from '../../../core/properties/usePropertySync';
+import type { PageConfig, ResponsiveDevice } from '../../../types';
+import { SOCIAL_ICON_OPTIONS, lucideIconUrl, socialIconName } from '../../../core/iconLibrary';
 
 interface BaseEditorProps {
   property: PropertyDefinition;
   component: Component;
+  pages?: PageConfig[];
+  device?: ResponsiveDevice;
+}
+
+function effectiveValue(value: any, computedValue: any, defaultValue: any = ''): any {
+  if (value !== null && typeof value !== 'undefined' && value !== '') return value;
+  if (computedValue !== null && typeof computedValue !== 'undefined' && computedValue !== '') return computedValue;
+  return defaultValue ?? '';
+}
+
+function canvasDocument(component: Component): Document | null {
+  const el = component.getView()?.el;
+  return el?.ownerDocument || null;
+}
+
+function resolveCssColor(component: Component, raw: string): string {
+  if (!raw) return '#000000';
+  const doc = canvasDocument(component);
+  if (!doc) return raw.startsWith('#') ? raw : '#000000';
+  const probe = doc.createElement('span');
+  probe.style.position = 'absolute';
+  probe.style.opacity = '0';
+  probe.style.pointerEvents = 'none';
+  probe.style.color = raw;
+  doc.body.appendChild(probe);
+  const resolved = doc.defaultView?.getComputedStyle(probe).color || raw;
+  probe.remove();
+  const rgb = resolved.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!rgb) return raw.startsWith('#') ? raw : '#000000';
+  return `#${[rgb[1], rgb[2], rgb[3]].map(part => Number(part).toString(16).padStart(2, '0')).join('')}`;
 }
 
 // ---------------------------------------------------------------------------
 // TEXT
 // ---------------------------------------------------------------------------
-export const TextEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, computedValue, updateValue } = usePropertySync(component, property);
+export const TextEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
   const prop = property as TextProperty;
+  const displayValue = effectiveValue(value, computedValue, property.defaultValue);
 
   return (
     <div className="mb-3">
       <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">{property.label}</label>
       <input
         type="text"
-        value={value || ''}
+        value={displayValue || ''}
         onChange={(e) => updateValue(e.target.value)}
-        placeholder={prop.placeholder || computedValue || property.defaultValue?.toString() || ''}
+        placeholder={prop.placeholder || property.defaultValue?.toString() || ''}
         className="w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50"
       />
     </div>
@@ -32,16 +65,17 @@ export const TextEditor: React.FC<BaseEditorProps> = ({ property, component }) =
 // ---------------------------------------------------------------------------
 // TEXTAREA
 // ---------------------------------------------------------------------------
-export const TextareaEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, computedValue, updateValue } = usePropertySync(component, property);
+export const TextareaEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
+  const displayValue = effectiveValue(value, computedValue, property.defaultValue);
 
   return (
     <div className="mb-3">
       <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">{property.label}</label>
       <textarea
-        value={value || ''}
+        value={displayValue || ''}
         onChange={(e) => updateValue(e.target.value)}
-        placeholder={computedValue || property.defaultValue?.toString() || ''}
+        placeholder={property.defaultValue?.toString() || ''}
         rows={3}
         className="w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all resize-y placeholder:text-muted-foreground/50"
       />
@@ -52,19 +86,19 @@ export const TextareaEditor: React.FC<BaseEditorProps> = ({ property, component 
 // ---------------------------------------------------------------------------
 // NUMBER (plain)
 // ---------------------------------------------------------------------------
-export const NumberEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, computedValue, updateValue } = usePropertySync(component, property);
+export const NumberEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
   const prop = property as BaseProperty;
-  const numericComputed = computedValue ? computedValue.replace(/[^0-9.]/g, '') : '';
+  const numericComputed = String(effectiveValue(value, computedValue, property.defaultValue)).replace(/[^0-9.-]/g, '');
 
   return (
     <div className="mb-3">
       <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">{property.label}</label>
       <input
         type="number"
-        value={value !== '' ? value : ''}
+        value={value !== '' && typeof value !== 'undefined' ? value : numericComputed}
         onChange={(e) => updateValue(e.target.value)}
-        placeholder={numericComputed || property.defaultValue?.toString() || ''}
+        placeholder={property.defaultValue?.toString() || ''}
         min={prop.min}
         max={prop.max}
         step={prop.step}
@@ -77,13 +111,13 @@ export const NumberEditor: React.FC<BaseEditorProps> = ({ property, component })
 // ---------------------------------------------------------------------------
 // SLIDER (for Number with min+max+step)
 // ---------------------------------------------------------------------------
-export const SliderEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, updateValue } = usePropertySync(component, property);
+export const SliderEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
   const prop = property as BaseProperty;
   const min = prop.min ?? 0;
   const max = prop.max ?? 100;
   const step = prop.step ?? 1;
-  const numericVal = parseFloat(value) || min;
+  const numericVal = parseFloat(effectiveValue(value, computedValue, property.defaultValue || min)) || min;
 
   return (
     <div className="mb-3">
@@ -116,12 +150,12 @@ export const SliderEditor: React.FC<BaseEditorProps> = ({ property, component })
 // ---------------------------------------------------------------------------
 // SELECT
 // ---------------------------------------------------------------------------
-export const SelectEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, computedValue, updateValue } = usePropertySync(component, property);
+export const SelectEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
   const prop = property as SelectProperty;
 
-  let displayValue = value;
-  if (!value && computedValue) {
+  let displayValue = effectiveValue(value, '', property.defaultValue);
+  if (!displayValue && computedValue) {
     const matchedOpt = prop.options?.find(o => o.value === computedValue);
     if (matchedOpt) displayValue = matchedOpt.value;
   }
@@ -155,8 +189,8 @@ export const SelectEditor: React.FC<BaseEditorProps> = ({ property, component })
 // ---------------------------------------------------------------------------
 // TOGGLE
 // ---------------------------------------------------------------------------
-export const ToggleEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, updateValue } = usePropertySync(component, property);
+export const ToggleEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, updateValue } = usePropertySync(component, property, device);
   const isChecked = value === true || value === 'true' || value === '1';
 
   return (
@@ -193,8 +227,10 @@ const THEME_COLORS = [
   { name: 'Border', var: 'var(--border)' },
 ];
 
-export const ColorEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, computedValue, updateValue } = usePropertySync(component, property);
+export const ColorEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
+  const displayValue = effectiveValue(value, computedValue, property.defaultValue);
+  const pickerValue = resolveCssColor(component, String(displayValue || '#000000'));
 
   return (
     <div className="mb-4">
@@ -206,27 +242,27 @@ export const ColorEditor: React.FC<BaseEditorProps> = ({ property, component }) 
             type="button"
             title={color.name}
             onClick={() => updateValue(color.var)}
-            className={`w-5 h-5 rounded-full border shadow-sm transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-background ${value === color.var ? 'ring-2 ring-primary ring-offset-1 ring-offset-background scale-110' : 'border-border'}`}
-            style={{ backgroundColor: color.var }}
+            className={`w-5 h-5 rounded-full border shadow-sm transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-background ${displayValue === color.var ? 'ring-2 ring-primary ring-offset-1 ring-offset-background scale-110' : 'border-border'}`}
+            style={{ backgroundColor: resolveCssColor(component, color.var) }}
           />
         ))}
       </div>
       <div className="flex items-center gap-2">
         <input
           type="color"
-          value={value?.startsWith('var') ? '#000000' : (value || '#000000')}
+          value={pickerValue}
           onChange={(e) => updateValue(e.target.value)}
           className="w-6 h-6 rounded cursor-pointer border border-border p-0 bg-transparent"
           title="Custom color"
         />
         <input
           type="text"
-          value={value || ''}
+          value={displayValue || ''}
           onChange={(e) => updateValue(e.target.value)}
-          placeholder={computedValue || 'var(--primary) or #hex'}
+          placeholder="var(--primary) or #hex"
           className="flex-1 bg-background border border-border rounded-md px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono transition-all placeholder:text-muted-foreground/50"
         />
-        {value && (
+        {displayValue && (
           <button
             type="button"
             onClick={() => updateValue('')}
@@ -239,49 +275,104 @@ export const ColorEditor: React.FC<BaseEditorProps> = ({ property, component }) 
   );
 };
 
+export const DateTimeEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, computedValue, updateValue } = usePropertySync(component, property, device);
+  const toLocalValue = (raw: string) => {
+    if (!raw) return '';
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return raw.slice(0, 16);
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  };
+  const fromLocalValue = (raw: string) => raw ? new Date(raw).toISOString() : '';
+
+  return (
+    <div className="mb-3">
+      <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">{property.label}</label>
+      <input
+        type="datetime-local"
+        value={toLocalValue(effectiveValue(value, computedValue, property.defaultValue) || '')}
+        onChange={(event) => updateValue(fromLocalValue(event.target.value))}
+        className="w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
+      />
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // SPACING (visual box-model editor)
 // ---------------------------------------------------------------------------
 // SpacingEditor uses useSpacingSync which writes individual CSS sides (e.g.
 // margin-top, margin-right) because GrapesJS does NOT support shorthand margin/padding.
-export const SpacingEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
+export const SpacingEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
   const prop = property.id as 'margin' | 'padding';
-  const { values, computed, updateSide } = useSpacingSync(component, prop);
+  const { values, computed, updateSide } = useSpacingSync(component, prop, device);
+  const units = ['px', '%', 'rem', 'em', 'vh', 'vw', 'auto'];
+  const parseCssValue = (raw: string) => {
+    const value = raw || '';
+    if (value === 'auto') return { number: '', unit: 'auto' };
+    const match = value.match(/^(-?\d+(?:\.\d+)?)(px|%|rem|em|vh|vw)?$/);
+    return {
+      number: match?.[1] ?? value.replace(/[^\d.-]/g, ''),
+      unit: match?.[2] ?? 'px',
+    };
+  };
+  const commitSide = (side: keyof typeof values, number: string, unit: string) => {
+    if (unit === 'auto') {
+      updateSide(side, 'auto');
+      return;
+    }
+    if (!number.trim()) {
+      updateSide(side, '');
+      return;
+    }
+    updateSide(side, `${number}${unit}`);
+  };
 
   const sides = [
-    { key: 'top' as const,    label: 'T', pos: 'absolute top-1.5 left-1/2 -translate-x-1/2' },
-    { key: 'bottom' as const, label: 'B', pos: 'absolute bottom-1.5 left-1/2 -translate-x-1/2' },
-    { key: 'left' as const,   label: 'L', pos: 'absolute left-1.5 top-1/2 -translate-y-1/2' },
-    { key: 'right' as const,  label: 'R', pos: 'absolute right-1.5 top-1/2 -translate-y-1/2' },
+    { key: 'top' as const, label: 'Top' },
+    { key: 'right' as const, label: 'Right' },
+    { key: 'bottom' as const, label: 'Bottom' },
+    { key: 'left' as const, label: 'Left' },
   ];
 
   return (
     <div className="mb-4">
-      <label className="block text-[11px] font-medium text-muted-foreground mb-2">{property.label}</label>
-      <div className="relative w-full max-w-[180px] aspect-[4/3] mx-auto bg-muted/20 border border-border rounded-lg flex items-center justify-center">
-        {sides.map(({ key, pos }) => (
-          <div key={key} className={pos}>
-            <input
-              type="text"
-              value={values[key]}
-              onChange={(e) => updateSide(key, e.target.value)}
-              onBlur={(e) => {
-                // Auto-append 'px' if user typed a bare number
-                const v = e.target.value;
-                if (v && /^\d+(\.\d+)?$/.test(v)) updateSide(key, `${v}px`);
-              }}
-              placeholder={computed[key] ? computed[key].replace('px', '') : '0'}
-              className="w-12 h-6 text-center text-[10px] bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all font-mono placeholder:text-muted-foreground/50"
-            />
-          </div>
-        ))}
-        <div className="text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest">
-          {property.id === 'margin' ? 'MARGIN' : 'PADDING'}
-        </div>
+      <div className="mb-2 flex items-center justify-between">
+        <label className="text-[11px] font-medium text-muted-foreground">{property.label}</label>
+        <span className="text-[9px] uppercase tracking-wider text-muted-foreground/50">{device || 'desktop'}</span>
       </div>
-      {/* Quick presets row */}
+      <div className="space-y-1.5 rounded-lg border border-border bg-muted/10 p-2">
+        {sides.map(({ key, label }) => {
+          const sideValue = values[key] || computed[key] || '0px';
+          const parsed = parseCssValue(sideValue);
+          const computedHint = computed[key] || '0px';
+          return (
+            <div key={key} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-muted-foreground">{label}</span>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_58px] overflow-hidden rounded-md border border-border bg-background focus-within:border-primary">
+                <input
+                  type="number"
+                  value={parsed.number}
+                  onChange={(e) => commitSide(key, e.target.value, parsed.unit)}
+                  {...(parsed.unit === 'auto' ? { disabled: true } : {})}
+                  placeholder={computedHint.replace(/[^\d.-]/g, '') || '0'}
+                  className="h-7 min-w-0 border-0 bg-transparent px-2 text-[11px] font-mono text-foreground outline-none disabled:opacity-50"
+                />
+                <select
+                  value={parsed.unit}
+                  onChange={(e) => commitSide(key, parsed.number, e.target.value)}
+                  className="h-7 border-0 border-l border-border bg-muted/20 px-1 text-[11px] font-semibold text-foreground outline-none"
+                >
+                  {units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+                </select>
+              </div>
+            </div>
+          );
+        })}
+      </div>
       <div className="flex gap-1 mt-2 justify-center">
-        {['0', '8px', '16px', '24px', '48px'].map(preset => (
+        {['0px', '8px', '16px', '24px', '48px'].map(preset => (
           <button
             key={preset}
             type="button"
@@ -298,8 +389,8 @@ export const SpacingEditor: React.FC<BaseEditorProps> = ({ property, component }
 // ---------------------------------------------------------------------------
 // EVENT DATA SOURCE
 // ---------------------------------------------------------------------------
-export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, updateValue } = usePropertySync(component, property);
+export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, updateValue } = usePropertySync(component, property, device);
 
   return (
     <div className="mb-4">
@@ -311,10 +402,11 @@ export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, com
             onChange={(e) => updateValue(e.target.value)}
             className="w-full bg-background border border-border rounded-md pl-2.5 pr-7 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all appearance-none"
           >
-            <option value="" disabled hidden>Select Data Source...</option>
-            <option value="manual">Manual (Static)</option>
-            <option value="event-snapshot">Current Event Snapshot</option>
-            <option value="collection">Global Collection</option>
+            <option value="" disabled hidden>Choose data source...</option>
+            <option value="current-event">Current event</option>
+            <option value="snapshot">Saved snapshot</option>
+            <option value="manual">Manual (static)</option>
+            <option value="mock">Mock fallback</option>
           </select>
           <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
             <svg className="w-3 h-3 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -322,10 +414,13 @@ export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, com
             </svg>
           </div>
         </div>
-        {value === 'event-snapshot' && (
+        {(value === 'current-event' || value === 'snapshot') && (
           <div className="text-[10px] bg-primary/10 text-primary p-2 rounded flex items-center gap-1.5">
-            <span>●</span> Connected to Live Event Data
+            <span aria-hidden="true">&#9679;</span> {value === 'current-event' ? 'Connected to current event' : 'Using saved event snapshot'}
           </div>
+        )}
+        {value === 'mock' && (
+          <div className="rounded bg-amber-500/10 p-2 text-[10px] text-amber-300">Using builder mock data</div>
         )}
       </div>
     </div>
@@ -335,8 +430,8 @@ export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, com
 // ---------------------------------------------------------------------------
 // ASSET (Image / File picker)
 // ---------------------------------------------------------------------------
-export const AssetEditor: React.FC<BaseEditorProps> = ({ property, component }) => {
-  const { value, updateValue } = usePropertySync(component, property);
+export const AssetEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, updateValue } = usePropertySync(component, property, device);
 
   return (
     <div className="mb-4">
@@ -357,7 +452,16 @@ export const AssetEditor: React.FC<BaseEditorProps> = ({ property, component }) 
           />
           <button
             type="button"
-            onClick={() => alert('Asset Library will open here.')}
+            onClick={() => window.dispatchEvent(new CustomEvent('wb:open-asset-picker', {
+              detail: {
+                select: (asset: { url?: string; svg?: string }) => {
+                  const source = asset.url || (asset.svg
+                    ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(asset.svg)}`
+                    : '');
+                  if (source) updateValue(source);
+                },
+              },
+            }))}
             className="px-2.5 py-1.5 bg-primary/10 text-primary text-xs font-medium rounded-md hover:bg-primary/20 transition-colors shrink-0 border border-primary/20"
             title="Browse assets"
           >
@@ -372,6 +476,247 @@ export const AssetEditor: React.FC<BaseEditorProps> = ({ property, component }) 
             >✕</button>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// LINK (page-aware href editor)
+// ---------------------------------------------------------------------------
+export const LinkEditor: React.FC<BaseEditorProps> = ({ property, component, pages = [], device }) => {
+  const { value, updateValue } = usePropertySync(component, property, device);
+  const [linkType, setLinkType] = useState<'page' | 'anchor' | 'external' | 'email' | 'phone' | 'file' | 'registration' | 'speaker-portal' | 'custom-route'>('page');
+  const [anchorIds, setAnchorIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const raw = String(value || '');
+    if (raw.startsWith('#')) setLinkType('anchor');
+    else if (raw.startsWith('mailto:')) setLinkType('email');
+    else if (raw.startsWith('tel:')) setLinkType('phone');
+    else if (/^https?:\/\//i.test(raw)) setLinkType('external');
+    else if (raw && pages.some(page => (page.isHomePage ? '/' : `/${page.slug}`) === raw.split('#')[0])) setLinkType('page');
+  }, [pages, value]);
+
+  useEffect(() => {
+    const doc = canvasDocument(component);
+    if (!doc) return;
+    const ids = Array.from(doc.querySelectorAll<HTMLElement>('[id]'))
+      .map(element => element.id)
+      .filter(Boolean);
+    setAnchorIds(Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b)));
+  }, [component, value]);
+
+  const resolveHref = (type: string, rawValue: string) => {
+    if (type === 'page') {
+      const page = pages.find(p => p.id === rawValue);
+      return page ? (page.isHomePage ? '/' : `/${page.slug}`) : rawValue;
+    }
+    if (type === 'anchor') return rawValue.startsWith('#') ? rawValue : `#${rawValue}`;
+    if (type === 'email') return rawValue.startsWith('mailto:') ? rawValue : `mailto:${rawValue}`;
+    if (type === 'phone') return rawValue.startsWith('tel:') ? rawValue : `tel:${rawValue}`;
+    return rawValue;
+  };
+
+  const updateLink = (type: typeof linkType, rawValue: string) => {
+    const href = resolveHref(type, rawValue);
+    updateValue(href);
+    const mapping = readPropertyTarget(property);
+    const target = findTargetComponent(component, mapping.selector);
+    const attrs = { ...(target.getAttributes() as Record<string, string>) };
+    delete attrs['data-page-id'];
+    delete attrs['data-anchor-id'];
+    attrs['data-link-type'] = type;
+    if (type === 'page') attrs['data-page-id'] = rawValue;
+    if (type === 'anchor') attrs['data-anchor-id'] = rawValue.replace(/^#/, '');
+    target.setAttributes(attrs);
+    commitGrapesComponentToDocument(target);
+    if (target !== component) commitGrapesComponentToDocument(component);
+  };
+
+  return (
+    <div className="mb-3 space-y-2">
+      <label className="block text-[11px] font-medium text-muted-foreground">{property.label}</label>
+      <div className="grid grid-cols-2 gap-1.5">
+        <select
+          value={linkType}
+          onChange={(e) => setLinkType(e.target.value as any)}
+          className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          <option value="page">Page</option>
+          <option value="anchor">Section</option>
+          <option value="external">External</option>
+          <option value="email">Email</option>
+          <option value="phone">Phone</option>
+          <option value="file">File download</option>
+          <option value="registration">Registration page</option>
+          <option value="speaker-portal">Speaker portal</option>
+          <option value="custom-route">Custom route</option>
+        </select>
+        {linkType === 'page' ? (
+          <select
+            value={pages.find(p => (p.isHomePage ? '/' : `/${p.slug}`) === value)?.id || ''}
+            onChange={(e) => updateLink(linkType, e.target.value)}
+            className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            <option value="">Select page...</option>
+            {pages.map(page => (
+              <option key={page.id} value={page.id}>{page.name}</option>
+            ))}
+          </select>
+        ) : linkType === 'anchor' && anchorIds.length ? (
+          <select
+            value={String(value || '').replace(/^#/, '')}
+            onChange={(e) => updateLink(linkType, e.target.value)}
+            className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            <option value="">Select section...</option>
+            {anchorIds.map(id => (
+              <option key={id} value={id}>#{id}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={value || ''}
+            onChange={(e) => updateLink(linkType, e.target.value)}
+            placeholder={linkType === 'anchor' ? '#speakers' : linkType === 'external' ? 'https://...' : 'Target'}
+            className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        )}
+      </div>
+      {linkType === 'anchor' && !anchorIds.length && (
+        <div className="text-[9px] text-muted-foreground/70">
+          Add an HTML ID to a section first, then link to it as #section-id.
+        </div>
+      )}
+      <div className="text-[9px] text-muted-foreground/60 truncate">Resolved: {value || 'No link set'}</div>
+    </div>
+  );
+};
+
+type SocialLinkItem = {
+  platform: string;
+  label: string;
+  url: string;
+};
+
+const defaultSocialLinks = (): SocialLinkItem[] => SOCIAL_ICON_OPTIONS.slice(0, 4).map(option => ({
+  platform: option.platform,
+  label: option.label,
+  url: option.url,
+}));
+
+function parseSocialLinks(raw: unknown): SocialLinkItem[] {
+  if (!raw) return defaultSocialLinks();
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!Array.isArray(parsed)) return defaultSocialLinks();
+    return parsed.map((item, index) => {
+      const platform = String(item.platform || item.icon || `social-${index + 1}`).toLowerCase();
+      const option = SOCIAL_ICON_OPTIONS.find(candidate => candidate.platform === platform);
+      return {
+        platform,
+        label: String(item.label || option?.label || platform),
+        url: String(item.url || item.href || option?.url || '#'),
+      };
+    });
+  } catch {
+    return defaultSocialLinks();
+  }
+}
+
+export const SocialLinksEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
+  const { value, updateValue } = usePropertySync(component, property, device);
+  const items = parseSocialLinks(value);
+
+  const commit = (next: SocialLinkItem[]) => {
+    updateValue(JSON.stringify(next));
+  };
+
+  const updateItem = (index: number, patch: Partial<SocialLinkItem>) => {
+    const next = items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item);
+    const changed = next[index];
+    if (patch.platform) {
+      const option = SOCIAL_ICON_OPTIONS.find(candidate => candidate.platform === patch.platform);
+      next[index] = {
+        ...changed,
+        label: option?.label || changed.label,
+        url: changed.url && changed.url !== '#' ? changed.url : option?.url || '#',
+      };
+    }
+    commit(next);
+  };
+
+  const addItem = () => {
+    const option = SOCIAL_ICON_OPTIONS.find(candidate => !items.some(item => item.platform === candidate.platform)) || SOCIAL_ICON_OPTIONS[0];
+    commit([...items, { platform: option.platform, label: option.label, url: option.url }]);
+  };
+
+  const removeItem = (index: number) => {
+    commit(items.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  return (
+    <div className="mb-4 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-[11px] font-medium text-muted-foreground">{property.label}</label>
+        <button
+          type="button"
+          onClick={addItem}
+          className="rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/20"
+        >
+          Add icon
+        </button>
+      </div>
+      <div className="space-y-2">
+        {items.map((item, index) => {
+          const iconUrl = lucideIconUrl(socialIconName(item.platform));
+          return (
+            <div key={`${item.platform}-${index}`} className="rounded-md border border-border bg-muted/10 p-2">
+              <div className="mb-2 flex items-center gap-2">
+                <span
+                  className="h-5 w-5 shrink-0 text-primary"
+                  style={{
+                    backgroundColor: 'currentColor',
+                    WebkitMask: `url("${iconUrl}") center / contain no-repeat`,
+                    mask: `url("${iconUrl}") center / contain no-repeat`,
+                  }}
+                />
+                <select
+                  value={item.platform}
+                  onChange={event => updateItem(index, { platform: event.target.value })}
+                  className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  {SOCIAL_ICON_OPTIONS.map(option => (
+                    <option key={option.platform} value={option.platform}>{option.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => removeItem(index)}
+                  className="shrink-0 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground hover:border-destructive/40 hover:text-destructive"
+                >
+                  Remove
+                </button>
+              </div>
+              <input
+                type="text"
+                value={item.label}
+                onChange={event => updateItem(index, { label: event.target.value })}
+                placeholder="Label"
+                className="mb-1.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <input
+                type="text"
+                value={item.url}
+                onChange={event => updateItem(index, { url: event.target.value })}
+                placeholder="https://..."
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -397,17 +742,13 @@ export const PropertyEditorFactory: React.FC<BaseEditorProps> = (props) => {
     case 'Select':      return <SelectEditor {...props} />;
     case 'Toggle':      return <ToggleEditor {...props} />;
     case 'Color':       return <ColorEditor {...props} />;
+    case 'DateTime':    return <DateTimeEditor {...props} />;
     case 'Spacing':     return <SpacingEditor {...props} />;
     case 'EventDataSource': return <EventDataSourceEditor {...props} />;
     case 'Asset':       return <AssetEditor {...props} />;
+    case 'Link':        return <LinkEditor {...props} />;
+    case 'SocialLinks': return <SocialLinksEditor {...props} />;
     default:
-      return (
-        <div className="mb-3 opacity-40">
-          <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">{property.label}</label>
-          <div className="text-[10px] text-muted-foreground border border-dashed border-border rounded p-2 text-center bg-background/50">
-            [{type}] Editor coming soon
-          </div>
-        </div>
-      );
+      return null;
   }
 };

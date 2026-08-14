@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "id": "aceternity-spotlight",
+  "name": "Spotlight",
+  "kind": "component",
+  "group": "Aceternity",
+  "description": "Focused radial spotlight section for event announcements and hero statements.",
+  "tags": [
+    "aceternity",
+    "background",
+    "hero",
+    "spotlight"
+  ],
+  "preview": {
+    "accent": "#8b5cf6",
+    "background": "#070812",
+    "title": "Spotlight",
+    "subtitle": "Editable component"
+  },
+  "componentType": "aceternity-spotlight",
+  "componentVersion": 1,
+  "htmlFile": "./component.html",
+  "officialSource": {
+    "documentationUrl": "https://ui.aceternity.com/components/spotlight",
+    "registryUrl": "https://ui.aceternity.com/registry/spotlight.json",
+    "localRegistryPath": "./registry/spotlight.json",
+    "author": "Manu Arora <hi@manuarora.in>",
+    "licenseUrl": "https://ui.aceternity.com/licence",
+    "dependencies": []
+  },
+  "settings": [
+    {
+      "groupId": "CONTENT",
+      "properties": [
+        {
+          "id": "data-heading",
+          "type": "Text",
+          "label": "Heading",
+          "target": {
+            "kind": "content",
+            "selector": "h1,h2,h3"
+          }
+        },
+        {
+          "id": "data-description",
+          "type": "Text",
+          "label": "Description",
+          "target": {
+            "kind": "content",
+            "selector": "p"
+          }
+        },
+        {
+          "id": "background-color",
+          "type": "Color",
+          "label": "Background",
+          "defaultValue": "#06070d",
+          "target": {
+            "kind": "style",
+            "css": "background-color",
+            "selector": ":self"
+          }
+        },
+        {
+          "id": "heading-color",
+          "type": "Color",
+          "label": "Heading color",
+          "defaultValue": "#f8fafc",
+          "target": {
+            "kind": "style",
+            "css": "color",
+            "selector": "h1,h2,h3"
+          }
+        },
+        {
+          "id": "text-color",
+          "type": "Color",
+          "label": "Text color",
+          "defaultValue": "#aeb7c8",
+          "target": {
+            "kind": "style",
+            "css": "color",
+            "selector": "p"
+          }
+        },
+        {
+          "id": "effect-primary",
+          "type": "Color",
+          "label": "Effect primary",
+          "defaultValue": "#8b5cf6",
+          "target": {
+            "kind": "style",
+            "css": "--ac-primary",
+            "selector": ":self"
+          }
+        },
+        {
+          "id": "effect-secondary",
+          "type": "Color",
+          "label": "Effect secondary",
+          "defaultValue": "#22d3ee",
+          "target": {
+            "kind": "style",
+            "css": "--ac-secondary",
+            "selector": ":self"
+          }
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "theme": true,
+    "animation": true,
+    "responsive": true
+  }
+}

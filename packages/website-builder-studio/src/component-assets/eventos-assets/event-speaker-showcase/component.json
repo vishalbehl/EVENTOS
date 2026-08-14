@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "event-speaker-showcase",
+  "name": "Speaker Showcase",
+  "kind": "section",
+  "group": "Event",
+  "description": "Speaker grid with photo cards and editable speaker text.",
+  "tags": [
+    "speakers",
+    "cards",
+    "event"
+  ],
+  "preview": {
+    "accent": "#a78bfa",
+    "background": "#060914",
+    "title": "Featured speakers",
+    "subtitle": "Speaker grid"
+  },
+  "components": [
+    {
+      "type": "section",
+      "attributes": {
+        "data-component-asset-id": "event-speaker-showcase"
+      },
+      "components": "<section data-gjs-type=\"speaker-grid\" data-component-type=\"speaker-grid\" style=\"padding:96px 32px;background:#060914;color:#ffffff;box-sizing:border-box;\">\n  <div style=\"max-width:1180px;margin:0 auto;\">\n    <p style=\"margin:0 0 10px;color:#a78bfa;text-transform:uppercase;font-size:13px;font-weight:900;letter-spacing:.12em;\">Featured speakers</p>\n    <h2 style=\"margin:0 0 34px;font-size:44px;line-height:1.12;color:#ffffff;\">Industry voices with sharp points of view</h2>\n    <div style=\"display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;\">\n      <article style=\"padding:22px;border-radius:20px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);\"><img src=\"https://i.pravatar.cc/320?u=tech-speaker-1\" alt=\"Dr. Sarah Chen\" style=\"width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:16px;margin-bottom:18px;\" /><h3 style=\"font-size:22px;margin:0 0 6px;color:#ffffff;\">Dr. Sarah Chen</h3><p style=\"margin:0;color:#94a3b8;\">AI Research Lead</p></article>\n      <article style=\"padding:22px;border-radius:20px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);\"><img src=\"https://i.pravatar.cc/320?u=tech-speaker-2\" alt=\"Prof. James Park\" style=\"width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:16px;margin-bottom:18px;\" /><h3 style=\"font-size:22px;margin:0 0 6px;color:#ffffff;\">Prof. James Park</h3><p style=\"margin:0;color:#94a3b8;\">Systems Architect</p></article>\n      <article style=\"padding:22px;border-radius:20px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);\"><img src=\"https://i.pravatar.cc/320?u=tech-speaker-3\" alt=\"Elena Rostova\" style=\"width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:16px;margin-bottom:18px;\" /><h3 style=\"font-size:22px;margin:0 0 6px;color:#ffffff;\">Elena Rostova</h3><p style=\"margin:0;color:#94a3b8;\">Product Strategy VP</p></article>\n    </div>\n  </div>\n</section>"
+    }
+  ],
+  "css": "",
+  "htmlFile": "./component.html"
+}

@@ -5,14 +5,62 @@ interface BlockSearchFilterProps {
   editor: Editor | null;
 }
 
-const CATEGORIES = [
-  { id: 'all', label: 'All Components' },
+const ADVANCED_LABELS = [
+  'accordion',
+  'tabs',
+  'carousel',
+  'masonry',
+  'timeline',
+  'lightbox',
+  'parallax',
+  'glass',
+  'tilt',
+  'map',
+  'sticky',
+  'marquee',
+  'countdown',
+];
+
+const CATEGORIES: { id: string; label: string; match?: (category: string, label: string) => boolean }[] = [
+  { id: 'all', label: 'All' },
+  {
+    id: 'basic',
+    label: 'Basic',
+    match: category => ['Layout', 'Typography', 'Media', 'Buttons', 'Forms', 'Headers', 'Navigation', 'Utilities'].includes(category),
+  },
+  {
+    id: 'advanced',
+    label: 'Advanced',
+    match: (_category, label) => ADVANCED_LABELS.some(term => label.includes(term)),
+  },
+  {
+    id: 'event',
+    label: 'Event',
+    match: category => [
+      'Hero & Headers',
+      'Event Overview',
+      'Event Statistics',
+      'Countdown Timers',
+      'Speakers & Committee',
+      'Program & Agenda',
+      'Sponsors & Partners',
+      'Tickets & Registration',
+      'Venue & Travel',
+      'Gallery & Media',
+      'Marketing & CTA',
+      'Contact & Footer',
+      'Overview & Stats',
+      'Speakers & Program',
+      'Venue & Contact',
+    ].includes(category),
+  },
   { id: 'Hero & Headers', label: 'Hero & Headers' },
   { id: 'Layout', label: 'Layout' },
   { id: 'Typography', label: 'Typography' },
   { id: 'Media', label: 'Media' },
   { id: 'Buttons', label: 'Buttons' },
   { id: 'Forms', label: 'Forms' },
+  { id: 'Headers', label: 'Headers' },
   { id: 'Navigation', label: 'Navigation' },
   { id: 'Event Overview', label: 'Event Overview' },
   { id: 'Event Statistics', label: 'Event Statistics' },
@@ -60,7 +108,8 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
           : '';
 
         const matchesQuery = !q || label.includes(q);
-        const matchesCategory = activeCategory === 'all' || categoryTitle === activeCategory;
+        const active = CATEGORIES.find(category => category.id === activeCategory);
+        const matchesCategory = activeCategory === 'all' || active?.match?.(categoryTitle, label) || categoryTitle === activeCategory;
         const visible = matchesQuery && matchesCategory;
 
         if (visible) {
@@ -75,7 +124,8 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
         const titleEl = catEl.querySelector('.gjs-title');
         const title = titleEl?.textContent?.trim() || '';
         const hasVisibleBlocks = visibleCategories.has(title);
-        const matchesCategory = activeCategory === 'all' || title === activeCategory;
+        const active = CATEGORIES.find(category => category.id === activeCategory);
+        const matchesCategory = activeCategory === 'all' || active?.match?.(title, '') || title === activeCategory;
         
         if (matchesCategory && hasVisibleBlocks) {
           catEl.classList.remove('filter-hidden');
@@ -125,6 +175,29 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
           display: none !important;
         }
       `}</style>
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', scrollbarWidth: 'none' }}>
+        {CATEGORIES.slice(0, 6).map(cat => (
+          <button
+            key={cat.id}
+            type="button"
+            onClick={() => setActiveCategory(cat.id)}
+            style={{
+              flex: '0 0 auto',
+              padding: '7px 12px',
+              borderRadius: 7,
+              border: activeCategory === cat.id ? '1px solid color-mix(in srgb, var(--primary) 65%, transparent)' : '1px solid var(--border)',
+              background: activeCategory === cat.id ? 'color-mix(in srgb, var(--primary) 18%, transparent)' : 'var(--bg-surface-hover, rgba(255,255,255,0.04))',
+              color: activeCategory === cat.id ? 'var(--pri, var(--primary))' : 'var(--foreground)',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
+
       {/* Category Dropdown */}
       <div style={{ position: 'relative' }}>
         <select

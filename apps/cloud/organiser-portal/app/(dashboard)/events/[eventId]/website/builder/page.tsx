@@ -1,14 +1,16 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
-import type { WebsiteProjectData, EventDataSnapshot, ThemePalette, WebsiteBuilderStudioProps } from '@eventos/website-builder-studio';
+import type { WebsiteAsset, WebsiteProjectData, EventDataSnapshot, WebsiteBuilderStudioProps, WebsitePublishOptions } from '@eventos/website-builder-studio/studio';
+import { eventWebsiteBuilder, type WebsiteDeploymentRecord, type WebsiteDomainRecord, type WebsiteDraftRecord, type WebsiteEditorSessionRecord, type WebsiteRevisionSummary } from '@/services/website-builder-service';
 
 // Dynamically import WebsiteBuilderStudio with SSR disabled for GrapesJS DOM compatibility
 const WebsiteBuilderStudio = dynamic<WebsiteBuilderStudioProps>(
-  () => import('@eventos/website-builder-studio').then((mod) => mod.WebsiteBuilderStudio),
+  () => import('@eventos/website-builder-studio/studio').then((mod) => mod.WebsiteBuilderStudio),
   {
     ssr: false,
     loading: () => (
@@ -26,13 +28,20 @@ export default function OrganiserWebsiteBuilderPage() {
   const eventId = params?.eventId as string;
 
   const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState<WebsiteDraftRecord | null>(null);
+  const [deployment, setDeployment] = useState<WebsiteDeploymentRecord | null>(null);
+  const [revisions, setRevisions] = useState<WebsiteRevisionSummary[]>([]);
+  const [domains, setDomains] = useState<WebsiteDomainRecord[]>([]);
+  const [editorSession, setEditorSession] = useState<WebsiteEditorSessionRecord | null>(null);
+  const [domainInput, setDomainInput] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [initialData, setInitialData] = useState<WebsiteProjectData | undefined>(undefined);
-  const [theme, setTheme] = useState<Partial<ThemePalette>>({
-    primary: '#7c3aed',
-    secondary: '#f43f5e',
-    background: '#080912',
-    surface: '#0c0e1a',
-  });
+  const [portalReady, setPortalReady] = useState(false);
+  const draftVersionRef = useRef<number>(1);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
   const [eventSnapshot, setEventSnapshot] = useState<EventDataSnapshot>({
     eventName: 'Annual Innovation Summit 2026',
     startDate: '2026-10-24T10:00:00Z',
@@ -65,20 +74,215 @@ export default function OrganiserWebsiteBuilderPage() {
   });
 
   useEffect(() => {
-    // In production, fetch event branding, data bindings, & saved website project JSON from backend
-    const timer = setTimeout(() => setLoading(false), 400);
-    return () => clearTimeout(timer);
+    let mounted = true;
+
+    async function loadWebsiteDraft() {
+      if (!eventId) return;
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const record = await eventWebsiteBuilder.getDraft(eventId);
+        if (!mounted) return;
+        draftVersionRef.current = record.version;
+        setDraft(record);
+        setInitialData({
+          id: record.site_id,
+          publishSlug: record.site_slug,
+          name: record.document.site.siteName || 'Event website',
+          document: record.document,
+          siteSettings: record.document.site,
+          assets: record.document.assets,
+          theme: record.document.tokens.theme,
+          updatedAt: record.updated_at,
+        });
+        try {
+          const snapshot = await eventWebsiteBuilder.fetchEventSnapshot(eventId);
+          if (mounted) setEventSnapshot(snapshot);
+        } catch (snapshotError) {
+          console.warn('[Organiser Portal] Event snapshot unavailable; using the visible mock fallback.', snapshotError);
+        }
+        try {
+          const activeDeployment = await eventWebsiteBuilder.getCurrentDeployment(eventId);
+          if (mounted) setDeployment(activeDeployment);
+        } catch {
+          if (mounted) setDeployment(null);
+        }
+        try {
+          const history = await eventWebsiteBuilder.listRevisions(eventId);
+          if (mounted) setRevisions(history);
+        } catch {
+          if (mounted) setRevisions([]);
+        }
+        try {
+          const domainRows = await eventWebsiteBuilder.listDomains(eventId);
+          if (mounted) setDomains(domainRows);
+        } catch {
+          if (mounted) setDomains([]);
+        }
+      } catch (error) {
+        if (!mounted) return;
+        console.error('[Organiser Portal] Failed to load website draft:', error);
+        setLoadError('Draft could not be loaded from the server. Editing with local mock data until the connection is restored.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    loadWebsiteDraft();
+    return () => {
+      mounted = false;
+    };
+  }, [eventId]);
+
+  useEffect(() => {
+    if (!eventId) return;
+    let mounted = true;
+
+    const heartbeat = async () => {
+      try {
+        const session = await eventWebsiteBuilder.acquireEditorSession(eventId);
+        if (mounted) setEditorSession(session);
+      } catch (error) {
+        console.error('[Organiser Portal] Website editor lease failed:', error);
+        if (mounted) setEditorSession(null);
+      }
+    };
+
+    void heartbeat();
+    const timer = window.setInterval(() => void heartbeat(), 20_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+      void eventWebsiteBuilder.releaseEditorSession(eventId).catch(() => undefined);
+    };
   }, [eventId]);
 
   const handleSave = async (data: WebsiteProjectData) => {
-    console.log('[Organiser Portal] Saving website draft:', data);
-    // API call to backend /events/{eventId}/website/draft
+    if (editorSession?.mode !== 'EDITOR') throw new Error('This website is open in read-only mode.');
+    if (!data.document) {
+      throw new Error('Website document was not generated by the studio.');
+    }
+    let saved: WebsiteDraftRecord;
+    try {
+      saved = await eventWebsiteBuilder.saveDraft(eventId, draftVersionRef.current || draft?.version || 1, data.document);
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'WEBSITE_DRAFT_CONFLICT') throw error;
+
+      const latest = await eventWebsiteBuilder.getDraft(eventId);
+      draftVersionRef.current = latest.version;
+      saved = await eventWebsiteBuilder.saveDraft(eventId, latest.version, data.document);
+    }
+    draftVersionRef.current = saved.version;
+    setDraft(saved);
+    setInitialData({
+      id: saved.site_id,
+      publishSlug: saved.site_slug,
+      name: saved.document.site.siteName || 'Event website',
+      document: saved.document,
+      siteSettings: saved.document.site,
+      assets: saved.document.assets,
+      theme: saved.document.tokens.theme,
+      updatedAt: saved.updated_at,
+    });
   };
 
-  const handlePublish = async (data: WebsiteProjectData) => {
-    console.log('[Organiser Portal] Publishing website:', data);
-    // API call to backend /events/{eventId}/website/publish
-    alert('🎉 Website published successfully! Public landing page is live.');
+  const handlePublish = async (data: WebsiteProjectData, options: WebsitePublishOptions) => {
+    if (editorSession?.mode !== 'EDITOR') throw new Error('This website is open in read-only mode.');
+    if (!data.document) {
+      throw new Error('Website document was not generated by the studio.');
+    }
+    const validation = await eventWebsiteBuilder.validate(eventId, data.document);
+    if (!validation.valid) {
+      alert('Publish validation failed. Fix the website diagnostics before publishing.');
+      return;
+    }
+    await handleSave(data);
+    const publishedDeployment = await eventWebsiteBuilder.publish(eventId, options);
+    setDeployment(publishedDeployment);
+    setRevisions(await eventWebsiteBuilder.listRevisions(eventId));
+    setDomains(await eventWebsiteBuilder.listDomains(eventId));
+    alert(`Website published as deployment ${publishedDeployment.deployment_id}.`);
+  };
+
+  const handleCreatePreview = async (data: WebsiteProjectData, previewId?: string) => {
+    if (!data.document) throw new Error('Website document was not generated by the studio.');
+    const preview = await eventWebsiteBuilder.createPreview(eventId, data.document, previewId);
+    return { previewId: preview.preview_id, url: preview.url, expiresAt: preview.expires_at };
+  };
+
+  const handleFetchEventData = async () => {
+    const snapshot = await eventWebsiteBuilder.fetchEventSnapshot(eventId);
+    setEventSnapshot(snapshot);
+    return snapshot;
+  };
+
+  const handleSearchImages = async (query: string): Promise<WebsiteAsset[]> => {
+    const results = await eventWebsiteBuilder.searchOpenverse(eventId, query);
+    return results.map((item): WebsiteAsset => ({
+      id: `openverse_${item.id}`,
+      type: 'image',
+      title: item.title,
+      url: item.thumbnail || item.url || undefined,
+      source: 'openverse',
+      creator: item.creator || undefined,
+      license: item.license || undefined,
+      attribution: item.attribution || undefined,
+      savedAt: new Date().toISOString(),
+    }));
+  };
+
+  const handlePersistAsset = async (asset: WebsiteAsset): Promise<WebsiteAsset> => {
+    const saved = await eventWebsiteBuilder.saveAsset(eventId, asset);
+    return {
+      ...asset,
+      id: saved.id,
+      source: (saved.source as WebsiteAsset['source']) || asset.source,
+      url: saved.url || asset.url,
+      creator: saved.creator || asset.creator,
+      license: saved.license || asset.license,
+      attribution: saved.attribution || asset.attribution,
+      savedAt: saved.created_at,
+    };
+  };
+
+  const handleUploadAsset = async (file: File): Promise<WebsiteAsset> => {
+    const saved = await eventWebsiteBuilder.uploadAsset(eventId, file);
+    return {
+      id: saved.id,
+      type: saved.kind === 'svg' ? 'svg' : 'image',
+      title: String(saved.metadata.title || file.name),
+      url: saved.url || undefined,
+      source: 'upload',
+      creator: saved.creator || undefined,
+      license: saved.license || undefined,
+      attribution: saved.attribution || undefined,
+      savedAt: saved.created_at,
+    };
+  };
+
+  const handleRollback = async (revisionId: string) => {
+    const rolledBack = await eventWebsiteBuilder.rollback(eventId, revisionId);
+    setDeployment(rolledBack);
+    setRevisions(await eventWebsiteBuilder.listRevisions(eventId));
+    alert(`Website rolled back to revision ${revisionId}.`);
+  };
+
+  const handleAddDomain = async () => {
+    const value = domainInput.trim();
+    if (!value) return;
+    const created = await eventWebsiteBuilder.createDomain(eventId, value);
+    setDomains((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+    setDomainInput('');
+  };
+
+  const handleRefreshDomain = async (domainId: string) => {
+    const updated = await eventWebsiteBuilder.refreshDomain(eventId, domainId);
+    setDomains((current) => current.map((item) => item.id === updated.id ? updated : item));
+  };
+
+  const handleDeleteDomain = async (domainId: string) => {
+    await eventWebsiteBuilder.deleteDomain(eventId, domainId);
+    setDomains((current) => current.filter((item) => item.id !== domainId));
   };
 
   const handleBack = () => {
@@ -89,21 +293,101 @@ export default function OrganiserWebsiteBuilderPage() {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#080912] text-white">
         <Loader2 className="h-8 w-8 text-indigo-500 animate-spin" />
+        <span className="ml-3 font-semibold text-slate-300">Loading website draft...</span>
       </div>
     );
   }
 
-  return (
+  if (!portalReady) return null;
+
+  // The dashboard content pane establishes a containing block for fixed
+  // children. Portal the editor so its canvas and toolbars use the viewport.
+  return createPortal(
     <div className="flex-1 flex flex-col h-[calc(100vh-70px)] w-full overflow-hidden bg-[#080912]">
+      {loadError ? (
+        <div className="border-b border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-100">
+          {loadError}
+        </div>
+      ) : null}
+      {editorSession?.mode === 'VIEWER' ? (
+        <div className="border-b border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-100">
+          Read-only session. Another editor currently holds the editing lease; this view will become editable when the lease is released.
+        </div>
+      ) : null}
+      {deployment ? (
+        <div className="flex items-center justify-between gap-3 border-b border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-100">
+          <span className="uppercase tracking-wide">
+            Published deployment active: {deployment.deployment_id} - {deployment.activated_at || 'activation pending'}
+          </span>
+          {deployment.public_url ? (
+            <a
+              href={deployment.public_url}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded border border-emerald-300/30 px-2 py-1 text-xs normal-case text-emerald-50 hover:bg-emerald-300/10"
+            >
+              Open live site
+            </a>
+          ) : null}
+          {revisions.length ? (
+            <select
+              className="max-w-xs rounded border border-emerald-300/30 bg-[#080912] px-2 py-1 text-xs normal-case text-white"
+              defaultValue=""
+              onChange={(event) => {
+                const revisionId = event.target.value;
+                event.target.value = "";
+                if (revisionId) handleRollback(revisionId);
+              }}
+            >
+              <option value="">Rollback to revision...</option>
+              {revisions.map((revision) => (
+                <option key={revision.revision_id} value={revision.revision_id}>
+                  #{revision.revision_number} {revision.reason} - {new Date(revision.created_at).toLocaleString()}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-700/70 bg-slate-950 px-4 py-2 text-xs text-slate-200">
+        <span className="font-semibold uppercase tracking-wide text-slate-400">Domains</span>
+        <input
+          value={domainInput}
+          onChange={(event) => setDomainInput(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') handleAddDomain(); }}
+          placeholder="www.example.com"
+          className="h-7 min-w-48 rounded border border-slate-700 bg-[#080912] px-2 text-xs text-white outline-none focus:border-indigo-400"
+        />
+        <button type="button" onClick={handleAddDomain} className="h-7 rounded border border-slate-600 px-2 font-semibold text-slate-100 hover:bg-slate-800">
+          Add domain
+        </button>
+        {domains.map((domain) => (
+          <span key={domain.id} className="inline-flex flex-wrap items-center gap-2 rounded border border-slate-700 px-2 py-1" title={`Add TXT ${domain.verification_record_name} = ${domain.verification_record_value}`}>
+            <span>{domain.domain}</span>
+            <span className="text-slate-400">DNS {domain.dns_state}</span>
+            <span className="text-slate-400">TLS {domain.tls_state}</span>
+            {domain.dns_state !== 'VERIFIED' ? <code className="max-w-80 truncate text-[10px] text-amber-200">TXT {domain.verification_record_name}</code> : null}
+            <button type="button" onClick={() => handleRefreshDomain(domain.id)} className="text-indigo-300 hover:text-indigo-100">Refresh</button>
+            <button type="button" onClick={() => handleDeleteDomain(domain.id)} className="text-rose-300 hover:text-rose-100">Remove</button>
+          </span>
+        ))}
+      </div>
       <WebsiteBuilderStudio
         mode="ORGANIZER_TENANT"
         initialData={initialData}
-        theme={theme}
         eventSnapshot={eventSnapshot}
+        eventId={eventId}
+        onFetchEventData={handleFetchEventData}
+        onSearchImages={handleSearchImages}
+        onPersistAsset={handlePersistAsset}
+        onUploadAsset={handleUploadAsset}
         onSave={handleSave}
         onPublish={handlePublish}
+        onCreatePreview={handleCreatePreview}
         onBack={handleBack}
+        readOnly={!editorSession || editorSession.mode !== 'EDITOR'}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }

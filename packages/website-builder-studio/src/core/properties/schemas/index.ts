@@ -2,8 +2,9 @@ import { Registry } from '../PropertyRegistry';
 
 // Foundation - Layout
 import { 
-  SectionManifest, ContainerManifest, GridManifest, 
-  TabsManifest, AccordionManifest 
+  SectionManifest, ContainerManifest, GridManifest,
+  CardManifest, SpacerManifest, DividerManifest,
+  TabsManifest, AccordionManifest
 } from './foundation/layout';
 
 // Foundation - Typography
@@ -12,9 +13,7 @@ import {
 } from './foundation/typography';
 
 // Foundation - Media
-import { 
-  ImageManifest, VideoManifest, GalleryManifest, LottieManifest 
-} from './foundation/media';
+import { ImageManifest, VideoManifest, GalleryManifest } from './foundation/media';
 
 // Foundation - Forms & Buttons
 import { 
@@ -26,7 +25,7 @@ import {
 
 // Foundation - Navigation
 import { 
-  NavbarManifest, FooterManifest 
+  HeaderManifest, NavbarManifest, FooterManifest 
 } from './foundation/navigation';
 
 // Event - Core
@@ -35,33 +34,45 @@ import {
   AgendaManifest, PricingManifest, CountdownManifest, 
   VenueManifest, StatisticsManifest, CommitteeManifest 
 } from './event/event';
+import { ComponentLibraryManifests } from './componentLibrary';
+import { ACETERNITY_BUILDER_MANIFESTS } from '../../../component-assets/aceternity/adapters';
 
 const ALL_MANIFESTS = [
   // Layout
-  SectionManifest, ContainerManifest, GridManifest, 
+  SectionManifest, ContainerManifest, GridManifest,
+  CardManifest, SpacerManifest, DividerManifest,
   TabsManifest, AccordionManifest,
   
   // Typography
   HeadingManifest, ParagraphManifest, BlockquoteManifest,
   
   // Media
-  ImageManifest, VideoManifest, GalleryManifest, LottieManifest,
+  ImageManifest, VideoManifest, GalleryManifest,
   
   // Forms & Buttons
   ButtonManifest, ButtonGroupManifest,
   ContactFormManifest, NewsletterManifest,
   
   // Navigation
-  NavbarManifest, FooterManifest,
+  HeaderManifest, NavbarManifest, FooterManifest,
   
   // Event Specific
   HeroManifest, SpeakerGridManifest, SponsorGridManifest, 
   AgendaManifest, PricingManifest, CountdownManifest, 
-  VenueManifest, StatisticsManifest, CommitteeManifest
+  VenueManifest, StatisticsManifest, CommitteeManifest,
+  ...ComponentLibraryManifests,
+  ...ACETERNITY_BUILDER_MANIFESTS,
 ];
 
 // Register all components
 ALL_MANIFESTS.forEach(manifest => {
+  if (manifest.category === 'Event') {
+    manifest.supportsData = true;
+    manifest.dataBinding = {
+      fields: ['eventName', 'speakers', 'sessions', 'sponsors', 'venue', 'stats'],
+      fallback: 'mock',
+    };
+  }
   Registry.register(manifest);
 });
 

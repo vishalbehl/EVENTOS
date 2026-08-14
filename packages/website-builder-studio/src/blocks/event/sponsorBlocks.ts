@@ -37,7 +37,7 @@ export function registerSponsorBlocks(editor: Editor, s?: EventDataSnapshot) {
     label: card(icon('<rect x="3" y="4" width="18" height="4" rx="1"/><rect x="5" y="11" width="14" height="4" rx="1"/><rect x="7" y="18" width="10" height="3" rx="1"/>'), 'Sponsors Tiered'),
     category: 'Sponsors & Partners',
     content: `
-      <section data-gjs-type="sponsor-grid" style="padding: 80px 24px; background: var(--base, var(--background)); box-sizing: border-box;">
+      <section data-gjs-type="pricing" data-currency="USD" data-show-sold-out="true" data-highlight="true" data-features="true" style="padding: 80px 24px; background: var(--base, var(--background)); box-sizing: border-box;">
         <div style="max-width: 1100px; margin: 0 auto;">
           <div style="text-align: center; margin-bottom: 60px;">
             <p style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: var(--pri, var(--primary)); margin: 0 0 12px 0;">Our Supporters</p>
@@ -126,23 +126,23 @@ export function registerRegistrationBlocks(editor: Editor, s?: EventDataSnapshot
         <div style="max-width: 1000px; margin: 0 auto;">
           <div style="text-align: center; margin-bottom: 56px;">
             <p style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: var(--pri, var(--primary)); margin: 0 0 12px 0;">Secure Your Seat</p>
-            <h2 style="font-size: 42px; font-weight: 900; color: var(--foreground); margin: 0 0 12px 0; letter-spacing: -0.02em;">Registration</h2>
+            <h2 data-role="section-title" style="font-size: 42px; font-weight: 900; color: var(--foreground); margin: 0 0 12px 0; letter-spacing: -0.02em;">Registration</h2>
             <p style="font-size: 16px; color: var(--muted-foreground);">Choose the ticket that best suits your attendance needs.</p>
           </div>
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; align-items: stretch;">
+          <div data-role="cards-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; align-items: stretch;">
             ${tickets.map(t => `
-              <div style="background: ${t.isHighlighted ? 'var(--muted)' : 'var(--muted)'}; border: ${t.isHighlighted ? '2px solid var(--pri, var(--primary))' : '1px solid var(--border)'}; border-radius: 20px; padding: 28px; display: flex; flex-direction: column; gap: 16px; position: relative; box-sizing: border-box;">
-                ${t.isHighlighted ? `<div style="position: absolute; top: -1px; left: 50%; transform: translateX(-50%); background: var(--pri, var(--primary)); color: var(--background); padding: 4px 16px; border-radius: 0 0 10px 10px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;">Most Popular</div>` : ''}
+              <div data-role="card" data-highlighted="${t.isHighlighted ? 'true' : 'false'}" data-sold-out="false" style="background: ${t.isHighlighted ? 'var(--muted)' : 'var(--muted)'}; border: ${t.isHighlighted ? '2px solid var(--pri, var(--primary))' : '1px solid var(--border)'}; border-radius: 20px; padding: 28px; display: flex; flex-direction: column; gap: 16px; position: relative; box-sizing: border-box;">
+                ${t.isHighlighted ? `<div data-role="popular" style="position: absolute; top: -1px; left: 50%; transform: translateX(-50%); background: var(--pri, var(--primary)); color: var(--background); padding: 4px 16px; border-radius: 0 0 10px 10px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;">Most Popular</div>` : ''}
                 <div>
                   <h3 style="font-size: 20px; font-weight: 800; color: var(--foreground); margin: 0 0 6px 0;">${t.name}</h3>
                   <p style="font-size: 13px; color: var(--muted-foreground); margin: 0 0 16px 0; line-height: 1.5;">${t.description || ''}</p>
-                  <div style="font-size: 42px; font-weight: 900; color: ${t.isHighlighted ? 'var(--pri, var(--primary))' : 'var(--foreground)'}; line-height: 1; letter-spacing: -0.02em;">$${t.price}<span style="font-size: 16px; font-weight: 500; color: var(--muted-foreground); margin-left: 4px;">${t.currency}</span></div>
+                  <div data-role="price" data-price="${t.price}" style="font-size: 42px; font-weight: 900; color: ${t.isHighlighted ? 'var(--pri, var(--primary))' : 'var(--foreground)'}; line-height: 1; letter-spacing: -0.02em;">$${t.price}<span data-role="currency" style="font-size: 16px; font-weight: 500; color: var(--muted-foreground); margin-left: 4px;">${t.currency}</span></div>
                   ${t.deadline ? `<p style="font-size: 12px; color: var(--muted-foreground); margin: 6px 0 0 0;">Deadline: ${new Date(t.deadline).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>` : ''}
                 </div>
-                <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; flex: 1;">
+                <ul data-role="features" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; flex: 1;">
                   ${(t.benefits || []).map(b => `<li style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted-foreground);"><span style="color: var(--pri, var(--primary)); flex-shrink: 0;">✓</span>${b}</li>`).join('')}
                 </ul>
-                <a href="${t.registrationUrl || '#register'}" style="display: block; text-align: center; background: ${t.isHighlighted ? 'var(--pri, var(--primary))' : 'var(--border-subtle, var(--muted))'}; color: ${t.isHighlighted ? 'var(--background)' : 'var(--foreground)'}; padding: 13px 24px; border-radius: 10px; font-weight: 700; font-size: 14px; text-decoration: none; ${t.isHighlighted ? 'box-shadow: 0 8px 20px color-mix(in srgb, var(--primary) 30%, transparent);' : 'border: 1px solid var(--muted);'}">Register — ${t.name}</a>
+                <a data-gjs-type="button" href="${t.registrationUrl || '#register'}" style="display: block; text-align: center; background: ${t.isHighlighted ? 'var(--pri, var(--primary))' : 'var(--border-subtle, var(--muted))'}; color: ${t.isHighlighted ? 'var(--background)' : 'var(--foreground)'}; padding: 13px 24px; border-radius: 10px; font-weight: 700; font-size: 14px; text-decoration: none; ${t.isHighlighted ? 'box-shadow: 0 8px 20px color-mix(in srgb, var(--primary) 30%, transparent);' : 'border: 1px solid var(--muted);'}">Register — ${t.name}</a>
               </div>`).join('')}
           </div>
         </div>

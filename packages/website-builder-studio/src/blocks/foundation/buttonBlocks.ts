@@ -61,9 +61,9 @@ export function registerButtonBlocks(editor: Editor) {
     label: card(icon('<rect x="2" y="7" width="8" height="10" rx="2"/><rect x="14" y="7" width="8" height="10" rx="2"/>'), 'Button Group'),
     category: 'Buttons',
     content: `
-      <div data-gjs-type="button" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
-        <a href="#" style="display: inline-flex; align-items: center; background: var(--pri, var(--primary)); color: var(--background); padding: 13px 28px; border-radius: 10px; font-weight: 700; text-decoration: none; font-size: 14px;">Primary Action</a>
-        <a href="#" style="display: inline-flex; align-items: center; background: var(--border-subtle, var(--muted)); color: var(--foreground); border: 1px solid var(--border-strong, var(--muted)); padding: 13px 28px; border-radius: 10px; font-weight: 600; text-decoration: none; font-size: 14px;">Secondary</a>
+      <div data-gjs-type="button-group" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+        <a data-gjs-type="button" href="#" style="display: inline-flex; align-items: center; background: var(--pri, var(--primary)); color: var(--background); padding: 13px 28px; border-radius: 10px; font-weight: 700; text-decoration: none; font-size: 14px;">Primary Action</a>
+        <a data-gjs-type="button" href="#" style="display: inline-flex; align-items: center; background: var(--border-subtle, var(--muted)); color: var(--foreground); border: 1px solid var(--border-strong, var(--muted)); padding: 13px 28px; border-radius: 10px; font-weight: 600; text-decoration: none; font-size: 14px;">Secondary</a>
       </div>`,
   });
 }

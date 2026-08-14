@@ -51,10 +51,10 @@ export function registerFormBlocks(editor: Editor) {
     label: card(icon('<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>'), 'Newsletter Form'),
     category: 'Forms',
     content: `
-      <div data-gjs-type="contact-form" style="padding: 48px 24px; text-align: center; background: var(--muted); border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent); border-radius: 20px; box-sizing: border-box;">
+      <div data-gjs-type="newsletter" style="padding: 48px 24px; text-align: center; background: var(--muted); border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent); border-radius: 20px; box-sizing: border-box;">
         <h3 style="font-size: 28px; font-weight: 800; color: var(--foreground); margin: 0 0 8px 0;">Stay Updated</h3>
         <p style="font-size: 16px; color: var(--muted-foreground); margin: 0 0 28px 0;">Get the latest news, speaker announcements, and schedule updates delivered to your inbox.</p>
-        <form style="display: flex; gap: 12px; max-width: 480px; margin: 0 auto; flex-wrap: wrap; justify-content: center;">
+        <form data-gjs-type="newsletter" style="display: flex; gap: 12px; max-width: 480px; margin: 0 auto; flex-wrap: wrap; justify-content: center;">
           <input type="email" placeholder="Enter your email address" style="${inputStyle} max-width: 320px;" />
           <button type="submit" style="background: var(--pri, var(--primary)); color: var(--background); border: none; padding: 13px 24px; border-radius: 10px; font-weight: 700; cursor: pointer; white-space: nowrap;">Subscribe</button>
         </form>

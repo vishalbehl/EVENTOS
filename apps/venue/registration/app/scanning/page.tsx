@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
-import { clearVenueNodeConfiguration, fetchVenueNodeBootstrap } from "@/lib/node-workstation";
+import { fetchVenueNodeBootstrap, readSavedScanningStationId, saveScanningStationId } from "@/lib/node-workstation";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -350,7 +350,9 @@ export default function RealScanningPage() {
     try {
       setLoadingStations(true);
       const res: any = await apiClient.get("/venue/scanning/stations");
-      const list: Station[] = Array.isArray(res) ? res : [];
+      const list: Station[] = (Array.isArray(res) ? res : []).filter(
+        (s) => !s.station_name?.toLowerCase().includes("initial") && !s.station_name?.toLowerCase().includes("intake")
+      );
       setStations(list);
       let assignedGate: string | null = null;
       const bootstrap = await fetchVenueNodeBootstrap();
@@ -363,39 +365,60 @@ export default function RealScanningPage() {
           const scanningAssignments = workstations.filter((ws) => ws.assignment_status !== "revoked" && ws.mode === "scanning" && ws.capacity_rule_id);
           if (scanningAssignments.length === 1) {
             assignedGate = scanningAssignments[0].capacity_rule_id;
-            clearVenueNodeConfiguration();
           }
         } catch {
           // Non-admin scanner users may not read workstation inventory. In
-          // that case the node bootstrap or local node-agent assignment must
-          // provide the gate.
         }
       }
+
+      if (!assignedGate) {
+        const savedGate = readSavedScanningStationId();
+        if (savedGate && list.some((s) => s.id === savedGate)) {
+          assignedGate = savedGate;
+        }
+      }
+
       if (!assignedGate && list.length === 1) {
         assignedGate = list[0].id;
       }
       if (assignedGate) {
         setAssignedStationId(assignedGate);
         setSelectedStationId(assignedGate);
+        saveScanningStationId(assignedGate);
       } else {
         setAssignedStationId(null);
         setSelectedStationId("");
       }
-    } catch (e) { console.error("fetchStations:", e); }
-    finally { setLoadingStations(false); }
+    } catch (e) {
+      console.error("fetchStations:", e);
+    } finally {
+      setLoadingStations(false);
+    }
   };
 
   const fetchRecentScans = useCallback(async (stationId?: string) => {
+    const id = stationId ?? selectedStationId;
+    if (!id) {
+      setRecentScans([]);
+      return;
+    }
     try {
-      const id = stationId ?? selectedStationId;
-      const qs = id ? `?limit=40&station_id=${encodeURIComponent(id)}` : "?limit=40";
-      const res: any = await apiClient.get(`/venue/scanning/recent${qs}`);
+      const res: any = await apiClient.get(`/venue/scanning/recent?limit=40&station_id=${encodeURIComponent(id)}`);
       setRecentScans(Array.isArray(res) ? res : []);
-    } catch (e) { console.error("fetchRecentScans:", e); }
+    } catch (e) {
+      console.error("fetchRecentScans:", e);
+    }
   }, [selectedStationId]);
 
   useEffect(() => { fetchStations(); }, []);
-  useEffect(() => { if (selectedStationId) fetchRecentScans(selectedStationId); }, [selectedStationId]);
+  useEffect(() => {
+    if (selectedStationId) {
+      setRecentScans([]);
+      fetchRecentScans(selectedStationId);
+    } else {
+      setRecentScans([]);
+    }
+  }, [selectedStationId]);
 
   // ── Camera ────────────────────────────────────────────────────────────────
 
@@ -419,7 +442,6 @@ export default function RealScanningPage() {
 
   const stopCamera = useCallback(() => {
     cameraRequestRef.current += 1;
-    qrLoopRef.current = false;
     cancelAnimationFrame(rafRef.current);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -523,8 +545,6 @@ export default function RealScanningPage() {
     return () => { qrLoopRef.current = false; cancelAnimationFrame(rafRef.current); };
   }, [cameraActive, tickQR]);
 
-  // ── Scan ──────────────────────────────────────────────────────────────────
-
   const performScan = useCallback(async (query: string) => {
     if (!query.trim() || scanningRef.current) return;
     try {
@@ -572,7 +592,6 @@ export default function RealScanningPage() {
       setPopupResult(res);
       setShowOverrideModal(false);
       toast.success("Admin Override approved!");
-      fetchRecentScans(selectedStationId);
       fetchStations();
     } catch (err: any) {
       toast.error(err?.message || err?.detail || "Override authentication failed.");
@@ -592,6 +611,9 @@ export default function RealScanningPage() {
       });
       setAssignedStationId(res.capacity_rule_id);
       setSelectedStationId(res.capacity_rule_id);
+      saveScanningStationId(res.capacity_rule_id);
+      setRecentScans([]);
+      fetchRecentScans(res.capacity_rule_id);
       setShowGateModal(false);
       setPendingGateId(null);
       toast.success(`Workstation gate activated: ${res.gate_name}`);
@@ -603,14 +625,10 @@ export default function RealScanningPage() {
     }
   };
 
-  // ── Print Badge ────────────────────────────────────────────────────────────
-
   const selectedStation = stations.find((s) => s.id === selectedStationId);
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden gap-3">
-
-      {/* Header */}
       <div className="shrink-0 bg-[var(--card)] p-4 rounded-2xl border border-[var(--border)] shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[var(--pri)] text-[var(--primary-contrast)] flex items-center justify-center">
@@ -627,9 +645,6 @@ export default function RealScanningPage() {
             </div>
             <select
               value={selectedStationId}
-              // Gate selection is never a normal operator control. A bound
-              // workstation receives its gate from Admin assignment; changing
-              // it is exposed only through the authenticated Change gate flow.
               disabled
               onChange={(e) => setSelectedStationId(e.target.value)}
               className="bg-transparent text-base font-black text-[var(--text)] border-none focus:outline-none cursor-pointer max-w-xs"
@@ -642,7 +657,16 @@ export default function RealScanningPage() {
                     </option>
                   ))}
             </select>
-            {assignedStationId ? <div className="flex items-center gap-2 mt-1"><p className="text-[10px] font-bold text-emerald-500">Bound gate — changes require Admin authorization.</p><Button type="button" variant="outline" className="h-7 px-2 text-[10px] font-bold" onClick={() => { const firstOther = stations.find((station) => station.id !== assignedStationId); if (firstOther) { setPendingGateId(firstOther.id); setShowGateModal(true); } else toast.error("No other check-in gates are configured."); }}>Change gate</Button></div> : <div className="flex items-center gap-2 mt-1"><p className="text-[10px] font-bold text-amber-500">This workstation is not bound yet. Log in as Admin on this device, import/sync local DB, then assign this workstation from Admin Devices.</p></div>}
+            {assignedStationId ? (
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-[10px] font-bold text-emerald-500">Bound gate — changes require Admin authorization.</p>
+                <Button type="button" variant="outline" className="h-7 px-2 text-[10px] font-bold" onClick={() => { const firstOther = stations.find((station) => station.id !== assignedStationId); if (firstOther) { setPendingGateId(firstOther.id); setShowGateModal(true); } else toast.error("No other check-in gates are configured."); }}>Change gate</Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-[10px] font-bold text-amber-500">This workstation is not bound yet. Log in as Admin on this device, import/sync local DB, then assign this workstation from Admin Devices.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -767,7 +791,7 @@ export default function RealScanningPage() {
               <div className="flex items-center justify-between flex-1 ml-2">
                 <div>
                   <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text)]">Gate Scans</h4>
-                  <p className="text-[9px] text-[var(--muted)] mt-0.5">{selectedStation?.station_name || "All stations"}</p>
+                  <p className="text-[9px] text-[var(--muted)] mt-0.5">{selectedStation?.station_name || "No gate assigned"}</p>
                 </div>
                 <button onClick={() => fetchRecentScans(selectedStationId)}
                   className="p-1.5 rounded-lg hover:bg-[var(--raised)] text-[var(--muted)]">
@@ -780,7 +804,9 @@ export default function RealScanningPage() {
           {drawerOpen && (
             <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2">
               {recentScans.length === 0 ? (
-                <p className="text-[11px] text-[var(--muted)] text-center py-8">No scans at this gate yet.</p>
+                <p className="text-[11px] text-[var(--muted)] text-center py-8">
+                  {selectedStation ? `No scans recorded at ${selectedStation.station_name} yet.` : "Select or assign a gate to view history."}
+                </p>
               ) : (
                 recentScans.map((s) => (
                   <div key={s.id} className={`p-2.5 rounded-xl border space-y-1 ${

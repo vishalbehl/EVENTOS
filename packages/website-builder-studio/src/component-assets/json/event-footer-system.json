@@ -1,0 +1,1 @@
+{ "id": "event-footer-system", "canonical": "json", "htmlFile": "../html/event-footer-system.html", "components": [{ "type": "footer", "attributes": { "data-component-asset-id": "event-footer-system" }, "components": "event-footer-system.html" }] }

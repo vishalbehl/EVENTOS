@@ -207,10 +207,10 @@ export default function RegistrationDashboard() {
       toast.error("No delegate data available to export.");
       return;
     }
-    
+
     const headers = ["Registration No", "Full Name", "Email", "Phone", "Company", "Role", "Payment Status", "Source", "Registration Date"];
     const csvRows = [headers.join(",")];
-    
+
     participants.forEach(p => {
       const values = [
         `"${p.regno || ""}"`,
@@ -246,11 +246,45 @@ export default function RegistrationDashboard() {
   }, [reportsStats]);
 
   const paymentChartData = useMemo(() => {
-    return [
-      { name: "Paid", value: reportsStats.paid || 0, color: "#10b981" },
-      { name: "Unpaid", value: reportsStats.unpaid || 0, color: "#ef4444" }
-    ].filter(item => item.value > 0);
-  }, [reportsStats]);
+    const paymentColors: Record<string, string> = {
+      paid: "#10b981",
+      unpaid: "#ef4444",
+      pending: "#f59e0b",
+      "partially paid": "#0ea5e9",
+      partial: "#0ea5e9",
+      refunded: "#a855f7",
+      complimentary: "#6366f1",
+      "complimentary / n/a": "#6366f1",
+      free: "#6366f1",
+      waived: "#14b8a6",
+      exempted: "#14b8a6",
+      unspecified: "#94a3b8",
+    };
+
+    if (reportsStats.payment_breakdown && Object.keys(reportsStats.payment_breakdown).length > 0) {
+      return Object.entries(reportsStats.payment_breakdown)
+        .map(([name, value]) => ({
+          name,
+          value: Number(value),
+          color: paymentColors[name.toLowerCase()] || "#94a3b8",
+        }))
+        .filter((item) => item.value > 0);
+    }
+
+    const counts: Record<string, number> = {};
+    participants.forEach((p) => {
+      const st = p.paid_status || "Paid";
+      counts[st] = (counts[st] || 0) + 1;
+    });
+
+    return Object.entries(counts)
+      .map(([name, value]) => ({
+        name,
+        value,
+        color: paymentColors[name.toLowerCase()] || "#94a3b8",
+      }))
+      .filter((item) => item.value > 0);
+  }, [reportsStats, participants]);
 
   const timelineData = useMemo(() => {
     const dailyCounts: Record<string, number> = {};
@@ -272,7 +306,7 @@ export default function RegistrationDashboard() {
     const DAYS_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const HOURS_ARR = Array.from({ length: 24 }, (_, i) => i);
     const matrix = Array.from({ length: 7 }, () => Array(24).fill(0));
-    
+
     statsData.daily_heatmap?.forEach((cell: any) => {
       const d = Math.min(6, Math.max(0, parseInt(cell.day)));
       const h = Math.min(23, Math.max(0, parseInt(cell.hour)));
@@ -381,35 +415,33 @@ export default function RegistrationDashboard() {
             </div>
           </div>
         </div>
-        
+
         {/* Tab Switcher & Action controls */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center rounded-2xl border border-white/5 bg-white/5 p-1 gap-1 h-12">
             <button
               onClick={() => setActiveTab("metrics")}
-              className={`h-9 px-5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === "metrics"
-                  ? "bg-[var(--pri)] text-white shadow-lg"
-                  : "text-muted hover:text-[var(--text)]"
-              }`}
+              className={`h-9 px-5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === "metrics"
+                ? "bg-[var(--pri)] text-white shadow-lg"
+                : "text-muted hover:text-[var(--text)]"
+                }`}
             >
               Metrics
             </button>
             <button
               onClick={() => setActiveTab("reports")}
-              className={`h-9 px-5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === "reports"
-                  ? "bg-[var(--pri)] text-white shadow-lg"
-                  : "text-muted hover:text-[var(--text)]"
-              }`}
+              className={`h-9 px-5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === "reports"
+                ? "bg-[var(--pri)] text-white shadow-lg"
+                : "text-muted hover:text-[var(--text)]"
+                }`}
             >
               Reports & CSV
             </button>
           </div>
 
-          <Button 
-            onClick={activeTab === "metrics" ? fetchDashboardData : fetchReportsData} 
-            disabled={loading || loadingReports} 
+          <Button
+            onClick={activeTab === "metrics" ? fetchDashboardData : fetchReportsData}
+            disabled={loading || loadingReports}
             className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${(loading || loadingReports) ? "animate-spin" : ""}`} />
@@ -417,9 +449,9 @@ export default function RegistrationDashboard() {
           </Button>
 
           {activeTab === "reports" && (
-            <Button 
-              onClick={handleExportCSV} 
-              disabled={loadingReports || participants.length === 0} 
+            <Button
+              onClick={handleExportCSV}
+              disabled={loadingReports || participants.length === 0}
               className="h-12 px-7 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-black uppercase tracking-widest text-[11px] rounded-full border border-emerald-500/20 hover-lift-3d"
             >
               <Download className="h-4 w-4 mr-2" />
@@ -477,8 +509,8 @@ export default function RegistrationDashboard() {
                     <AreaChart data={statsData.growth_trends}>
                       <defs>
                         <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#6366F1" stopOpacity={0.4}/>
-                          <stop offset="95%" stopColor="#6366F1" stopOpacity={0}/>
+                          <stop offset="5%" stopColor="#6366F1" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#6366F1" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -702,16 +734,20 @@ export default function RegistrationDashboard() {
                         )}
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-default/30 text-xs font-black uppercase tracking-widest text-center">
-                      <div className="text-emerald-500">
-                        <span className="block text-2xl font-black">{reportsStats.paid || 0}</span>
-                        <span>Paid</span>
-                      </div>
-                      <div className="text-red-500">
-                        <span className="block text-2xl font-black">{reportsStats.unpaid || 0}</span>
-                        <span>Unpaid</span>
-                      </div>
+
+                    <div className="flex flex-wrap gap-3 mt-6 pt-6 border-t border-default/30 text-xs font-black uppercase tracking-wider justify-around">
+                      {paymentChartData.length === 0 ? (
+                        <div className="text-muted text-center text-xs py-1">No payment data</div>
+                      ) : (
+                        paymentChartData.map((item) => (
+                          <div key={item.name} className="text-center px-2 py-1">
+                            <span className="block text-xl font-black" style={{ color: item.color }}>
+                              {item.value}
+                            </span>
+                            <span className="text-[10px] text-muted">{item.name}</span>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </Card>
                 </div>

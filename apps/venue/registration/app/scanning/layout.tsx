@@ -55,20 +55,11 @@ export default function ScanningLayout({ children }: { children: React.ReactNode
     }
     void fetchVenueNodeBootstrap().then((bootstrap) => {
       if (cancelled) return;
-      const assignedMode = bootstrap?.assignment?.mode;
       if (assignmentAllowsMode(bootstrap?.assignment, "scanning")) {
         setMode("scanning");
         setBlockedReason("");
-      } else if (assignedMode === "registration") {
-        if (mode !== "scanning") {
-          if (mode !== "registration") setMode("registration");
-          if (!pathname.startsWith("/registry")) router.replace("/registry");
-        }
-      } else if (assignedMode === "self_checkin") {
-        if (mode !== "self_checkin") setMode("self_checkin");
-        if (!pathname.startsWith("/self-checkin")) router.replace("/self-checkin");
-      } else if (!assignedMode) {
-        setBlockedReason("This workstation is not assigned to Scanning mode. Ask an admin to bind this PC before using operator modes.");
+      } else {
+        setBlockedReason("This workstation is not authorized for Gate Scanning mode. Please select an allowed mode from the login screen.");
       }
     }).catch((error) => {
       console.warn("Workstation bootstrap unavailable; blocking scanning mode.", error);
@@ -427,9 +418,16 @@ export default function ScanningLayout({ children }: { children: React.ReactNode
         </header>
 
         {/* Page Content Viewport-Locked */}
-        <div className="flex-1 min-h-0 overflow-y-auto bg-[var(--base)] p-4 sm:p-5 w-full custom-scrollbar">
+        <main
+          className={cn(
+            "flex-1 flex flex-col min-h-0 bg-[var(--base)] p-4 w-full",
+            pathname === "/scanning/history" || pathname === "/scanning"
+              ? "overflow-hidden"
+              : "overflow-y-auto custom-scrollbar"
+          )}
+        >
           {children}
-        </div>
+        </main>
       </div>
     </div>
   );

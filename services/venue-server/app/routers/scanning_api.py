@@ -47,6 +47,12 @@ async def get_scanning_stations(db: AsyncSession = Depends(get_database)):
     
     result = []
     for s in stations:
+        s_name_lower = (s.station_name or "").lower()
+        s_type_lower = (s.station_type or "").lower()
+        # Exclude initial participant check-in gates — they are reserved for desk & self check-in
+        if "initial" in s_name_lower or "intake" in s_name_lower or "initial" in s_type_lower:
+            continue
+
         # Count total successful check-ins at this station
         count_stmt = select(func.count(BadgeScan.id)).where(
             BadgeScan.station_id == s.id,
@@ -593,15 +599,26 @@ async def get_recent_scans(
         .order_by(desc(BadgeScan.created_at))
     )
 
-    # Filter by station when provided
+    # Filter strictly by station when provided
     if station_id:
         try:
             st_uuid = uuid.UUID(station_id)
-            stmt = stmt.where(BadgeScan.station_id == st_uuid)
+            station_rule = await db.get(VenueCapacityRule, st_uuid)
+            target_station_name = station_rule.station_name if station_rule else None
+            if target_station_name:
+                stmt = stmt.where(
+                    or_(
+                        BadgeScan.station_id == st_uuid,
+                        BadgeScan.station_name == target_station_name
+                    )
+                )
+            else:
+                stmt = stmt.where(BadgeScan.station_id == st_uuid)
         except ValueError:
-            pass  # ignore bad UUID, return all
-
-    stmt = stmt.limit(limit)
+            stmt = stmt.where(BadgeScan.station_name.ilike(f"%{station_id}%"))
+    else:
+        # If no station_id is supplied, return empty list to avoid displaying unassigned gate scans
+        return []
     rows = (await db.execute(stmt)).all()
 
     result = []
@@ -633,6 +650,7 @@ async def get_recent_scans(
             company = part.company if part else "N/A"
         result.append({
             "id": str(scan.id),
+            "participant_id": str(scan.participant_id) if scan.participant_id else (str(part.id) if part else (str(companion.id) if companion else None)),
             "participant_name": participant_name,
             "regno": regno,
             "role": role,

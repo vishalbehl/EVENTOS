@@ -12,6 +12,7 @@ export function registerHeroBlocks(editor: Editor, s?: EventDataSnapshot) {
   const endDate = s?.endDate ? new Date(s.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'October 26, 2026';
   const city = s?.venue?.city || 'San Francisco, CA';
   const banner = s?.banner || 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=1600&auto=format&fit=crop';
+  const videoSrc = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 
   // ── Hero 1: Classic Centered ──────────────────────────────────────────────
   bm.add('hero-classic', {
@@ -63,12 +64,13 @@ export function registerHeroBlocks(editor: Editor, s?: EventDataSnapshot) {
     label: card(icon('<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>'), 'Hero Video BG'),
     category: 'Hero & Headers',
     content: `
-      <section data-gjs-type="hero" data-variant="video" style="position: relative; min-height: 88vh; display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--background); text-align: center; padding: 80px 24px; box-sizing: border-box; background: var(--background);">
-        <div style="position: absolute; inset: 0; background: linear-gradient(135deg, var(--muted) 0%, var(--muted) 100%); z-index: 1;"></div>
+      <section data-gjs-type="hero" data-variant="video" data-video-src="${videoSrc}" style="position: relative; min-height: 88vh; display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--foreground); text-align: center; padding: 80px 24px; box-sizing: border-box; background: var(--background);">
+        <video data-role="hero-video" src="${videoSrc}" autoplay muted loop playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.44;"></video>
+        <div style="position: absolute; inset: 0; background: linear-gradient(135deg, rgba(8,9,18,.82) 0%, rgba(8,9,18,.52) 100%); z-index: 1;"></div>
         <div style="position: relative; z-index: 2; max-width: 860px; margin: 0 auto;">
           <p style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: var(--pri, var(--primary)); margin: 0 0 20px 0;">📅 ${startDate}–${endDate} · 📍 ${city}</p>
           <h1 style="font-size: clamp(40px, 7vw, 72px); font-weight: 900; line-height: 1.1; margin: 0 0 20px 0; letter-spacing: -0.02em;">${name}</h1>
-          <p style="font-size: 20px; color: var(--muted); margin: 0 auto 40px auto; max-width: 640px; line-height: 1.65;">${tagline}</p>
+          <p style="font-size: 20px; color: var(--muted-foreground); margin: 0 auto 40px auto; max-width: 640px; line-height: 1.65;">${tagline}</p>
           <a href="#register" style="background: var(--pri, var(--primary)); color: var(--background); padding: 16px 40px; border-radius: 12px; font-weight: 800; font-size: 16px; text-decoration: none; box-shadow: 0 16px 32px var(--muted);">Register Now →</a>
         </div>
       </section>`,

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { EventDataSnapshot } from '../types';
 
 export type ImportStatus = 'idle' | 'importing' | 'connected' | 'disconnected' | 'error';
@@ -52,6 +52,10 @@ export function useEventImport(
   const [error, setError] = useState<string | null>(null);
 
   const onChangeRef = useRef(onSnapshotChange);
+  const initialSnapshotKey = initialSnapshot
+    ? `${initialSnapshot.snapshotId || ''}:${initialSnapshot.snapshotCreatedAt || ''}`
+    : '';
+  const importedPropKeyRef = useRef(initialSnapshotKey);
   onChangeRef.current = onSnapshotChange;
 
   const importFromProp = useCallback((data: EventDataSnapshot) => {
@@ -85,6 +89,13 @@ export function useEventImport(
   const reconnect = useCallback((data: EventDataSnapshot) => {
     importFromProp(data);
   }, [importFromProp]);
+
+  useEffect(() => {
+    if (!initialSnapshot || status === 'disconnected') return;
+    if (initialSnapshotKey === importedPropKeyRef.current) return;
+    importedPropKeyRef.current = initialSnapshotKey;
+    importFromProp(initialSnapshot);
+  }, [initialSnapshot, initialSnapshotKey, importFromProp, status]);
 
   const reset = useCallback(() => {
     setSnapshot(null);

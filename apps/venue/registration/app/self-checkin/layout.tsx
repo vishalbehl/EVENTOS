@@ -38,8 +38,10 @@ export default function SelfCheckInLayout({ children }: { children: React.ReactN
           return;
         }
         if (!assignmentAllowsMode(bootstrap.assignment, "self_checkin")) {
-          router.replace(routeForAssignmentMode(assignedMode));
-          if (mounted) setHydrated(true);
+          if (mounted) {
+            setBlockedReason("This workstation is not authorized for Self Check-in mode. Please select an allowed mode from the login screen.");
+            setHydrated(true);
+          }
           return;
         }
         setMode("self_checkin");

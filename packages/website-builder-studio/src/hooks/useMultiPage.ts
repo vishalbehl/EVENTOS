@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import type { Editor } from 'grapesjs';
 import type { PageConfig, WebsiteProjectData } from '../types';
+import { buildWebsiteDocumentFromProject, projectDataFromWebsiteDocument } from '../core/documentModel';
 
 function generateId(): string {
   return `page_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -12,6 +13,97 @@ function generateSlug(name: string): string {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+const legacyTypeAliases: Record<string, string> = {
+  'contact-footer': 'footer',
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+export function normalizeLegacyComponentTypes(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === 'string') {
+    return value.replaceAll('data-gjs-type="contact-footer"', 'data-gjs-type="footer"');
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return undefined;
+    seen.add(value);
+    const normalized = value
+      .map(item => normalizeLegacyComponentTypes(item, seen))
+      .filter(item => typeof item !== 'undefined');
+    seen.delete(value);
+    return normalized;
+  }
+
+  if (!value || typeof value !== 'object') return value;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+
+  try {
+    // GrapesJS keeps child components in Backbone collections. A top-level
+    // collection's toJSON() does not always materialize every nested child, so
+    // recursively invoke toJSON before accepting an object as document data.
+    const maybeToJson = (value as { toJSON?: unknown }).toJSON;
+    const source = typeof maybeToJson === 'function'
+      ? (maybeToJson as () => unknown).call(value)
+      : value;
+    if (source !== value) return normalizeLegacyComponentTypes(source, seen);
+
+    if (isPlainObject(source)) {
+      const next: Record<string, unknown> = {};
+      Object.entries(source).forEach(([key, childValue]) => {
+        const normalized = key === 'type' && typeof childValue === 'string'
+          ? legacyTypeAliases[childValue] || childValue
+          : normalizeLegacyComponentTypes(childValue, seen);
+        if (typeof normalized !== 'undefined') next[key] = normalized;
+      });
+      return next;
+    }
+
+    return source;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function serializeComponents(editor: Editor): unknown {
+  ensureCanvasInstanceIds(editor);
+  return normalizeLegacyComponentTypes(editor.getComponents().toJSON());
+}
+
+function serializeStyles(editor: Editor): unknown {
+  return normalizeLegacyComponentTypes(editor.getStyle());
+}
+
+function generateInstanceId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `inst_${crypto.randomUUID()}`;
+  }
+  return `inst_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureCanvasInstanceIds(editor: Editor): void {
+  const visit = (component: any) => {
+    if (!component) return;
+    const attrs = typeof component.getAttributes === 'function' ? component.getAttributes() : {};
+    if (!attrs?.['data-wb-instance-id'] && typeof component.addAttributes === 'function') {
+      component.addAttributes({ 'data-wb-instance-id': generateInstanceId() });
+    }
+    const children = typeof component.components === 'function' ? component.components() : null;
+    if (children && typeof children.forEach === 'function') {
+      children.forEach((child: any) => visit(child));
+    }
+  };
+
+  const root = editor.getComponents();
+  if (root && typeof root.forEach === 'function') {
+    root.forEach((component: any) => visit(component));
+  }
 }
 
 export interface UseMultiPageReturn {
@@ -44,19 +136,30 @@ export interface UseMultiPageReturn {
  *   - One page is always marked isHomePage=true
  */
 export function useMultiPage(initialData?: WebsiteProjectData): UseMultiPageReturn {
+  const sourceInitialData = initialData?.document
+    ? projectDataFromWebsiteDocument(initialData.document)
+    : initialData;
+
   // Initialize pages from existing data or create a default home page
   const [pages, setPages] = useState<PageConfig[]>(() => {
-    if (initialData?.pages?.length) return initialData.pages;
+    if (sourceInitialData?.pages?.length) {
+      return sourceInitialData.pages.map(page => ({
+        ...page,
+        html: normalizeLegacyComponentTypes(page.html) as string,
+        components: normalizeLegacyComponentTypes(page.components),
+        styles: normalizeLegacyComponentTypes(page.styles),
+      }));
+    }
     const homeId = generateId();
     return [{
       id: homeId,
       name: 'Home',
       slug: '',
       isHomePage: true,
-      html: initialData?.html || '',
-      css: initialData?.css || '',
-      components: initialData?.components,
-      styles: initialData?.styles,
+      html: normalizeLegacyComponentTypes(sourceInitialData?.html || '') as string,
+      css: sourceInitialData?.css || '',
+      components: normalizeLegacyComponentTypes(sourceInitialData?.components),
+      styles: normalizeLegacyComponentTypes(sourceInitialData?.styles),
       seoTitle: '',
       seoDescription: '',
       createdAt: now(),
@@ -65,8 +168,8 @@ export function useMultiPage(initialData?: WebsiteProjectData): UseMultiPageRetu
   });
 
   const [activePageId, setActivePageId] = useState<string>(() => {
-    if (initialData?.activePageId) return initialData.activePageId;
-    return (initialData?.pages?.[0]?.id) ?? (pages[0]?.id ?? '');
+    if (sourceInitialData?.activePageId) return sourceInitialData.activePageId;
+    return (sourceInitialData?.pages?.[0]?.id) ?? (pages[0]?.id ?? '');
   });
 
   // Keep a ref for immediate access in callbacks
@@ -82,8 +185,8 @@ export function useMultiPage(initialData?: WebsiteProjectData): UseMultiPageRetu
             ...p,
             html: editor.getHtml(),
             css: editor.getCss() || '',
-            components: editor.getComponents() as unknown,
-            styles: editor.getStyle() as unknown,
+            components: serializeComponents(editor),
+            styles: serializeStyles(editor),
             updatedAt: now(),
           }
         : p
@@ -106,8 +209,8 @@ export function useMultiPage(initialData?: WebsiteProjectData): UseMultiPageRetu
               ...p,
               html: editor.getHtml(),
               css: editor.getCss() || '',
-              components: editor.getComponents() as unknown,
-              styles: editor.getStyle() as unknown,
+              components: serializeComponents(editor),
+              styles: serializeStyles(editor),
               updatedAt: now(),
             }
           : p
@@ -115,17 +218,17 @@ export function useMultiPage(initialData?: WebsiteProjectData): UseMultiPageRetu
     }
 
     // Load target page into canvas
-    const targetPage = pagesRef.current.find(p => p.id === pageId);
+      const targetPage = pagesRef.current.find(p => p.id === pageId);
     if (targetPage && editor) {
       if (targetPage.components) {
-        editor.setComponents(targetPage.components as string);
+        editor.setComponents(normalizeLegacyComponentTypes(targetPage.components) as any);
       } else if (targetPage.html) {
-        editor.setComponents(targetPage.html);
+        editor.setComponents(normalizeLegacyComponentTypes(targetPage.html) as any);
       } else {
         editor.setComponents('');
       }
       if (targetPage.styles) {
-        editor.setStyle(targetPage.styles as string);
+        editor.setStyle(normalizeLegacyComponentTypes(targetPage.styles) as any);
       } else if (targetPage.css) {
         editor.setStyle(targetPage.css);
       } else {
@@ -183,20 +286,27 @@ export function useMultiPage(initialData?: WebsiteProjectData): UseMultiPageRetu
     const latestPages = editor
       ? pagesRef.current.map(p =>
           p.id === currentId
-            ? { ...p, html: editor.getHtml(), css: editor.getCss() || '', components: editor.getComponents() as unknown, styles: editor.getStyle() as unknown, updatedAt: now() }
+            ? { ...p, html: editor.getHtml(), css: editor.getCss() || '', components: serializeComponents(editor), styles: serializeStyles(editor), updatedAt: now() }
             : p
         )
       : pagesRef.current;
 
-    return {
+    const projectData: WebsiteProjectData = {
       pages: latestPages,
       activePageId: currentId,
       // Legacy fields for backward compat
       html: latestPages.find(p => p.isHomePage)?.html || '',
       css: latestPages.find(p => p.isHomePage)?.css || '',
+      siteSettings: sourceInitialData?.siteSettings,
+      assets: sourceInitialData?.assets,
+      theme: sourceInitialData?.theme,
       updatedAt: now(),
     };
-  }, []);
+    return {
+      ...projectData,
+      document: buildWebsiteDocumentFromProject(projectData),
+    };
+  }, [sourceInitialData?.assets, sourceInitialData?.siteSettings, sourceInitialData?.theme]);
 
   const activePage = pages.find(p => p.id === activePageId);
 

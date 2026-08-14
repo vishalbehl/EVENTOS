@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { useEvent, useUpdateEvent } from '@/hooks/useEvents'
 import { apiClient } from '@/lib/api-client'
+import { copyToClipboard } from '@/lib/utils'
 import { toast } from 'sonner'
 
 const THEMES = [
@@ -59,11 +60,15 @@ export default function PortalTab({ eventId }: { eventId: string }) {
     }
   }
 
-  const copyLink = () => {
-    navigator.clipboard.writeText(portalUrl)
-    setCopied(true)
-    toast.success('Link copied!')
-    setTimeout(() => setCopied(false), 2000)
+  const copyLink = async () => {
+    const ok = await copyToClipboard(portalUrl)
+    if (ok) {
+      setCopied(true)
+      toast.success('Link copied!')
+      setTimeout(() => setCopied(false), 2000)
+    } else {
+      toast.error('Failed to copy link')
+    }
   }
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Edit3,
   Search,
@@ -33,6 +33,26 @@ import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { CountryStateEntry, fallbackCountryStates, fetchCountryStates, getStatesForCountry } from "@/lib/country-states";
+import { evaluatePolicyAction, VenueOperationalPolicy, DEFAULT_VENUE_POLICY } from "@/lib/policy-evaluator";
+
+const BULK_BADGE_PDF_BATCH_SIZE = 25;
+
+const isCheckedInForBadgePrint = (participant: any) =>
+  Boolean(
+    participant?.checked_in ||
+      participant?.is_checked_in ||
+      participant?.checked_in_at ||
+      String(participant?.checkin_status || "").toLowerCase() === "checked_in"
+  );
+
+const formatSkippedPrintNames = (participants: any[]) => {
+  const names = participants
+    .map((participant) => participant?.name || participant?.regno || "Unknown")
+    .filter(Boolean);
+  const visible = names.slice(0, 8).join(", ");
+  return names.length > 8 ? `${visible}, +${names.length - 8} more` : visible;
+};
 
 export interface Participant {
   id: string;
@@ -73,6 +93,32 @@ interface ParticipantTableProps {
   showPrintAction?: boolean;
 }
 
+export function getPaymentStatusBadgeClass(status?: string): string {
+  const s = (status || "Paid").trim().toLowerCase();
+  switch (s) {
+    case "paid":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+    case "unpaid":
+      return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+    case "pending":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+    case "partially paid":
+    case "partial":
+      return "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20";
+    case "refunded":
+      return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
+    case "complimentary":
+    case "complimentary / n/a":
+    case "free":
+      return "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20";
+    case "waived":
+    case "exempted":
+      return "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20";
+    default:
+      return "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
+  }
+}
+
 export default function ParticipantTable({
   participants,
   loading = false,
@@ -84,10 +130,12 @@ export default function ParticipantTable({
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("All");
   const [checkinFilter, setCheckinFilter] = useState<"All" | "CheckedIn" | "NotCheckedIn">("All");
+  const [paidFilter, setPaidFilter] = useState("All");
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [bulkActionInProgress, setBulkActionInProgress] = useState<"print" | "delete" | null>(null);
+  const [bulkPrintProgress, setBulkPrintProgress] = useState("");
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
 
   // Sorting state: Default sort by Registration Code (regno) in Ascending order
@@ -109,8 +157,10 @@ export default function ParticipantTable({
     company: "",
     designation: "",
     country: "",
+    state: "",
     paid_status: "Unpaid",
   });
+  const [countryStates, setCountryStates] = useState<CountryStateEntry[]>(fallbackCountryStates);
   const [companions, setCompanions] = useState<Companion[]>([]);
   const [loadingCompanions, setLoadingCompanions] = useState(false);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
@@ -125,6 +175,36 @@ export default function ParticipantTable({
     });
     return Array.from(set).sort();
   }, [participants]);
+
+  // Dynamically inherit all distinct payment statuses present in dataset (e.g. Paid, Unpaid, Free, Complimentary)
+  const availablePaidStatuses = useMemo(() => {
+    const set = new Set<string>(["Paid", "Unpaid"]);
+    participants.forEach((p) => {
+      if (p.paid_status && typeof p.paid_status === "string" && p.paid_status.trim() !== "") {
+        set.add(p.paid_status.trim());
+      }
+    });
+    return Array.from(set).sort();
+  }, [participants]);
+
+  const availableStates = useMemo(
+    () => getStatesForCountry(countryStates, editParticipantForm.country),
+    [countryStates, editParticipantForm.country]
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    fetchCountryStates()
+      .then((entries) => {
+        if (mounted) setCountryStates(entries);
+      })
+      .catch(() => {
+        if (mounted) setCountryStates(fallbackCountryStates);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Handle header click to toggle sorting
   const handleSortClick = (field: "regno" | "name") => {
@@ -155,7 +235,12 @@ export default function ParticipantTable({
         checkinFilter === "All" ||
         (checkinFilter === "CheckedIn" ? isCheckedIn : !isCheckedIn);
 
-      return matchesSearch && matchesRole && matchesCheckin;
+      const matchesPaid =
+        paidFilter === "All" ||
+        (p.paid_status && p.paid_status.toLowerCase() === paidFilter.toLowerCase()) ||
+        (!p.paid_status && paidFilter.toLowerCase() === "unpaid");
+
+      return matchesSearch && matchesRole && matchesCheckin && matchesPaid;
     });
 
     return list.sort((a, b) => {
@@ -165,12 +250,12 @@ export default function ParticipantTable({
       const cmp = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: "base" });
       return sortDirection === "asc" ? cmp : -cmp;
     });
-  }, [participants, searchTerm, roleFilter, checkinFilter, sortField, sortDirection]);
+  }, [participants, searchTerm, roleFilter, checkinFilter, paidFilter, sortField, sortDirection]);
 
   // Reset page to 1 whenever filters change
   useMemo(() => {
     setCurrentPage(1);
-  }, [searchTerm, roleFilter, pageSize]);
+  }, [searchTerm, roleFilter, checkinFilter, paidFilter, pageSize]);
 
   // Pagination calculation
   const totalEntries = filteredParticipants.length;
@@ -221,9 +306,97 @@ export default function ParticipantTable({
   const [actionLogs, setActionLogs] = useState<any[]>([]);
   const [capacityMatrix, setCapacityMatrix] = useState<any[]>([]);
   const [loadingActions, setLoadingActions] = useState(false);
+  const assignedCapacityMatrix = useMemo(() => {
+    if (!selectedParticipant) return [];
+    const participantRole = String(selectedParticipant.role || "").trim().toLowerCase();
+    return capacityMatrix.filter((station) => {
+      const allowedRoles = Array.isArray(station.allowed_roles) ? station.allowed_roles : [];
+      const cleanRoles = allowedRoles.map((role: any) => String(role || "").trim().toLowerCase()).filter(Boolean);
+      return station.is_role_allowed === true && (!cleanRoles.length || cleanRoles.includes("all") || cleanRoles.includes(participantRole));
+    });
+  }, [capacityMatrix, selectedParticipant]);
 
   // Badge PDF Preview State
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+
+  const formatActionLogLabel = (actionType: string) => {
+    switch (actionType) {
+      case "badge_print": return "Badge Print";
+      case "badge_reprint": return "Badge Reprint";
+      case "companion_badge_print": return "Companion Print";
+      case "companion_badge_reprint": return "Companion Reprint";
+      case "checkin": return "Gate Check-In";
+      case "checkout": return "Gate Check-Out";
+      case "checkin_reset": return "Check-In Reset";
+      case "kit_issue": return "Kit Issued";
+      case "kit_reset": return "Kit Reset";
+      case "participant_update": return "Profile Update";
+      case "self_checkin_update": return "Self Check-In Update";
+      case "registration_update": return "Registration Update";
+      default: return actionType ? actionType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Action";
+    }
+  };
+
+  const formatActionLogDetails = (log: any) => {
+    if (!log) return "Action performed";
+    const details = log.details;
+    if (!details) return formatActionLogLabel(log.action_type);
+    if (typeof details === "string") {
+      const s = details.trim();
+      if (s.startsWith("{") && s.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(s);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.before && parsed.after) {
+              const changes: string[] = [];
+              const b = parsed.before || {};
+              const a = parsed.after || {};
+              const keys = Array.from(new Set([...Object.keys(b), ...Object.keys(a)]));
+              const labels: Record<string, string> = {
+                paid_status: "Payment Status",
+                role: "Role",
+                first_name: "First Name",
+                last_name: "Last Name",
+                name: "Full Name",
+                email: "Email",
+                phone: "Phone",
+                company: "Company",
+                designation: "Designation",
+                country: "Country",
+                state: "State",
+                photo_url: "Photo",
+              };
+              for (const k of keys) {
+                if (["custom_fields", "created_at", "updated_at", "id"].includes(k)) continue;
+                const valB = String(b[k] ?? "").trim();
+                const valA = String(a[k] ?? "").trim();
+                if (valB !== valA) {
+                  const label = labels[k] || k.replace(/_/g, " ");
+                  if (valB && valA) changes.push(`${label} (${valB} → ${valA})`);
+                  else if (valA) changes.push(`${label} set to '${valA}'`);
+                  else if (valB) changes.push(`${label} cleared`);
+                }
+              }
+              const prefix = log.action_type === "self_checkin_update" ? "Self check-in update" : "Profile update";
+              return changes.length > 0 ? `${prefix}: ${changes.join(", ")}` : `${prefix}: Details modified`;
+            }
+            if (parsed.type === "delegate_checkin_reset") {
+              return parsed.station_id && parsed.station_id !== "all"
+                ? `Check-in reset for gate ID: ${parsed.station_id}`
+                : "Check-in reset for all gates";
+            }
+            if (parsed.type === "companion_checkin_reset") {
+              return `Check-in reset for companion ${parsed.companion_name || "companion"}`;
+            }
+          }
+        } catch {
+          // keep as string
+        }
+      }
+      return details;
+    }
+    return String(details);
+  };
 
   // Open Participant Modal & Load Companions + Action Logs
   const handleOpenParticipantModal = async (participant: Participant) => {
@@ -239,6 +412,7 @@ export default function ParticipantTable({
       company: participant.company || "",
       designation: participant.designation || "",
       country: participant.country || "",
+      state: participant.state || participant.custom_fields?.state || participant.custom_fields?.province || "",
       paid_status: participant.paid_status || "Unpaid",
     });
     setCompanions([]);
@@ -277,9 +451,76 @@ export default function ParticipantTable({
   const [showAdminResetCheckinModal, setShowAdminResetCheckinModal] = useState(false);
   const [resetCheckinUsername, setResetCheckinUsername] = useState("admin");
   const [resetCheckinPassword, setResetCheckinPassword] = useState("");
+  const [targetStationToReset, setTargetStationToReset] = useState<any | null>(null);
+
+  // Operational Policy & Admin Override State
+  const [policy, setPolicy] = useState<VenueOperationalPolicy>(DEFAULT_VENUE_POLICY);
+  const [showAdminOverrideModal, setShowAdminOverrideModal] = useState(false);
+  const [overrideAction, setOverrideAction] = useState<"checkin" | "print" | "reprint" | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideUsername, setOverrideUsername] = useState("admin");
+  const [overridePassword, setOverridePassword] = useState("");
+  const [isOverriding, setIsOverriding] = useState(false);
+
+  useEffect(() => {
+    apiClient.get("/venue/registration/policies").then((res: any) => {
+      if (res) setPolicy(res);
+    }).catch(() => {});
+  }, []);
+
+  const handleAdminOverrideSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedParticipant) return;
+    if (!overridePassword) {
+      toast.error("Admin password is required.");
+      return;
+    }
+
+    try {
+      setIsOverriding(true);
+      if (overrideAction === "checkin") {
+        await apiClient.post("/venue/registration/checkin", {
+          participant_id: selectedParticipant.id,
+          admin_override: true,
+          admin_username: overrideUsername,
+          admin_password: overridePassword,
+          override_reason: overrideReason,
+        });
+        toast.success(`Admin Override: Check-in approved for ${selectedParticipant.name}!`);
+        setShowAdminOverrideModal(false);
+        setSelectedParticipant((prev) => (prev ? { ...prev, checked_in: true, is_checked_in: true } : null));
+        setActionStats((prev) => ({ ...prev, checked_in: true, checkin_count: (prev.checkin_count || 0) + 1 }));
+        if (onRefresh) onRefresh();
+      } else if (overrideAction === "print" || overrideAction === "reprint") {
+        await apiClient.post(`/venue/registration/participants/${selectedParticipant.id}/print-badge`, {
+          admin_override: true,
+          admin_username: overrideUsername,
+          admin_password: overridePassword,
+        });
+        setShowAdminOverrideModal(false);
+        await handlePrintBadge(selectedParticipant, true);
+      }
+    } catch (err: any) {
+      const msg = typeof err === "string" ? err : err?.message || err?.detail || "Admin override verification failed.";
+      toast.error(msg);
+    } finally {
+      setIsOverriding(false);
+    }
+  };
 
   // 1. Handle Check In Action
   const handleCheckInAction = async (participant: Participant) => {
+    const checkinEval = evaluatePolicyAction(participant, "checkin", policy, actionStats);
+    if (!checkinEval.allowed) {
+      toast.error(checkinEval.reason || "Check-in blocked by policy.");
+      if (checkinEval.requiresAdminOverride) {
+        setOverrideAction("checkin");
+        setOverrideReason(checkinEval.reason || "Policy bypass");
+        setShowAdminOverrideModal(true);
+      }
+      return;
+    }
+
     try {
       setActionInProgress("checkin");
       toast.info(`Processing check-in for ${participant.name}...`);
@@ -368,11 +609,18 @@ export default function ParticipantTable({
   };
 
   // 2. Handle Print Badge Action
-  const handlePrintBadge = async (participant: Participant) => {
-    // Strict Check-In Guard
-    if (!participant.checked_in && !participant.is_checked_in && !actionStats.checked_in) {
-      toast.error(`Cannot print badge: Delegate '${participant.name}' has not completed initial check-in. Please check in first.`);
-      return;
+  const handlePrintBadge = async (participant: Participant, skipPolicyCheck = false) => {
+    if (!skipPolicyCheck) {
+      const printEval = evaluatePolicyAction(participant, "print", policy, actionStats);
+      if (!printEval.allowed) {
+        toast.error(printEval.reason || "Badge print blocked by policy.");
+        if (printEval.requiresAdminOverride) {
+          setOverrideAction("print");
+          setOverrideReason(printEval.reason || "Policy bypass");
+          setShowAdminOverrideModal(true);
+        }
+        return;
+      }
     }
 
     try {
@@ -416,9 +664,14 @@ export default function ParticipantTable({
 
   // 3. Handle Re-Print Badge Action
   const handleReprintBadgeAction = async (participant: Participant) => {
-    // Strict Check-In Guard
-    if (!participant.checked_in && !participant.is_checked_in && !actionStats.checked_in) {
-      toast.error(`Cannot reprint badge: Delegate '${participant.name}' has not completed initial check-in. Please check in first.`);
+    const reprintEval = evaluatePolicyAction(participant, "reprint", policy, actionStats);
+    if (!reprintEval.allowed) {
+      toast.error(reprintEval.reason || "Badge reprint blocked by policy.");
+      if (reprintEval.requiresAdminOverride) {
+        setOverrideAction("reprint");
+        setOverrideReason(reprintEval.reason || "Policy bypass");
+        setShowAdminOverrideModal(true);
+      }
       return;
     }
 
@@ -428,7 +681,7 @@ export default function ParticipantTable({
       await apiClient.post(`/venue/registration/participants/${participant.id}/reprint-badge`, {
         reason: "Delegate Request",
       });
-      await handlePrintBadge(participant);
+      await handlePrintBadge(participant, true);
       toast.success(`Badge reprinted for ${participant.name}!`);
     } catch (err: any) {
       const msg = typeof err === "string" ? err : err?.message || err?.detail || "Reprint request failed.";
@@ -440,9 +693,9 @@ export default function ParticipantTable({
 
   // 4. Handle Kit Distribution Action
   const handleKitDistributionAction = async (participant: Participant) => {
-    // Strict Check-In Guard
-    if (!participant.checked_in && !participant.is_checked_in && !actionStats.checked_in) {
-      toast.error(`Cannot issue kit: Delegate '${participant.name}' has not completed initial check-in. Please check in first.`);
+    const kitEval = evaluatePolicyAction(participant, "issue_kit", policy, actionStats);
+    if (!kitEval.allowed) {
+      toast.error(kitEval.reason || "Kit issuance blocked by policy.");
       return;
     }
 
@@ -515,23 +768,26 @@ export default function ParticipantTable({
         participant_id: selectedParticipant.id,
         admin_username: resetCheckinUsername,
         admin_password: resetCheckinPassword,
+        station_id: targetStationToReset?.station_id || undefined,
       });
-      toast.success(`Check-in state for '${selectedParticipant.name}' has been reset!`);
-
-      setSelectedParticipant((prev) => (prev ? { ...prev, checked_in: false, is_checked_in: false } : null));
-      setActionStats((prev) => ({ ...prev, checked_in: false, checkin_count: 0 }));
+      const gateName = targetStationToReset?.station_name ? `gate '${targetStationToReset.station_name}'` : "all check-in gates";
+      toast.success(`Check-in for ${gateName} has been reset for '${selectedParticipant.name}'!`);
 
       // Re-fetch actions to sync state
       try {
         const actRes: any = await apiClient.get(`/venue/registration/participants/${selectedParticipant.id}/actions`);
         if (actRes) {
-          if (actRes.action_stats) setActionStats(actRes.action_stats);
+          if (actRes.action_stats) {
+            setActionStats(actRes.action_stats);
+            setSelectedParticipant((prev) => (prev ? { ...prev, checked_in: actRes.action_stats.checked_in, is_checked_in: actRes.action_stats.checked_in } : null));
+          }
           if (Array.isArray(actRes.capacity_matrix)) setCapacityMatrix(actRes.capacity_matrix);
           if (Array.isArray(actRes.action_logs)) setActionLogs(actRes.action_logs);
         }
       } catch (_) {}
 
       setShowAdminResetCheckinModal(false);
+      setTargetStationToReset(null);
       setResetCheckinPassword("");
       if (onRefresh) onRefresh();
     } catch (err: any) {
@@ -558,6 +814,10 @@ export default function ParticipantTable({
         company: editParticipantForm.company.trim(),
         designation: editParticipantForm.designation.trim(),
         country: editParticipantForm.country.trim(),
+        custom_fields: {
+          ...(selectedParticipant.custom_fields || {}),
+          state: editParticipantForm.state.trim(),
+        },
         paid_status: editParticipantForm.paid_status.trim() || "Unpaid",
       });
       setSelectedParticipant(updated as Participant);
@@ -571,6 +831,7 @@ export default function ParticipantTable({
         company: updated.company || "",
         designation: updated.designation || "",
         country: updated.country || "",
+        state: updated.state || updated.custom_fields?.state || updated.custom_fields?.province || "",
         paid_status: updated.paid_status || "Unpaid",
       });
       setIsEditingParticipant(false);
@@ -604,24 +865,58 @@ export default function ParticipantTable({
 
   const handleBulkPrint = async () => {
     if (selectedParticipants.length === 0) return;
+    const printableParticipants = selectedParticipants.filter(isCheckedInForBadgePrint);
+    const skippedParticipants = selectedParticipants.filter((participant) => !isCheckedInForBadgePrint(participant));
+
+    if (skippedParticipants.length > 0) {
+      toast.warning(
+        `Not printed for ${formatSkippedPrintNames(skippedParticipants)} — not checked in.`
+      );
+    }
+
+    if (printableParticipants.length === 0) {
+      toast.error("No selected participants are checked in, so no badges were printed.");
+      return;
+    }
+
+    const batches: Participant[][] = [];
+    for (let start = 0; start < printableParticipants.length; start += BULK_BADGE_PDF_BATCH_SIZE) {
+      batches.push(printableParticipants.slice(start, start + BULK_BADGE_PDF_BATCH_SIZE));
+    }
+
     try {
       setBulkActionInProgress("print");
-      toast.info(`Generating ${selectedParticipants.length} selected badges...`);
+      setBulkPrintProgress(`Preparing ${printableParticipants.length} checked-in badge(s) in ${batches.length} PDF batch(es)...`);
+      toast.info(`Generating ${printableParticipants.length} checked-in badge(s) in ${batches.length} batch(es)...`);
       const activeTemplate = await loadActiveBadgeTemplate();
-      const pdf = await compileTemplateToPdf(selectedParticipants as any[], activeTemplate, { name: "EventX OS" });
-      const blobUrl = URL.createObjectURL(pdf.output("blob"));
-      window.open(blobUrl, "_blank");
-      await Promise.allSettled(
-        selectedParticipants.map((participant) =>
-          apiClient.post(`/venue/registration/participants/${participant.id}/print-badge`, {})
-        )
-      );
-      toast.success(`Bulk badge PDF ready for ${selectedParticipants.length} participants.`);
+
+      for (let index = 0; index < batches.length; index += 1) {
+        const batch = batches[index];
+        const startNumber = index * BULK_BADGE_PDF_BATCH_SIZE + 1;
+        const endNumber = startNumber + batch.length - 1;
+        setBulkPrintProgress(`Rendering batch ${index + 1}/${batches.length} · badges ${startNumber}-${endNumber}`);
+
+        const pdf = await compileTemplateToPdf(batch as any[], activeTemplate, { name: "EventX OS" });
+        const blobUrl = URL.createObjectURL(pdf.output("blob"));
+        window.open(blobUrl, "_blank");
+
+        setBulkPrintProgress(`Marking printed batch ${index + 1}/${batches.length} · badges ${startNumber}-${endNumber}`);
+        await Promise.allSettled(
+          batch.map((participant) =>
+            apiClient.post(`/venue/registration/participants/${participant.id}/print-badge`, {})
+          )
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 75));
+      }
+
+      toast.success(`Bulk badge PDFs ready for ${printableParticipants.length} checked-in participant(s).`);
       if (onRefresh) onRefresh();
     } catch (err: any) {
       const msg = typeof err === "string" ? err : err?.message || err?.detail || "Bulk print failed.";
       toast.error(msg);
     } finally {
+      setBulkPrintProgress("");
       setBulkActionInProgress(null);
     }
   };
@@ -688,6 +983,20 @@ export default function ParticipantTable({
             <option value="NotCheckedIn">Not Checked In Only</option>
           </select>
 
+          {/* Dynamic Payment Status Filter Dropdown */}
+          <select
+            value={paidFilter}
+            onChange={(e) => setPaidFilter(e.target.value)}
+            className="h-10 px-3 rounded-xl border border-[var(--border)] text-xs font-bold bg-[var(--card)] text-[var(--text)]"
+          >
+            <option value="All">All Payment Statuses</option>
+            {availablePaidStatuses.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+
           {/* Search Input */}
           <div className="relative flex-1 md:w-72">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)]" />
@@ -711,7 +1020,9 @@ export default function ParticipantTable({
         <div className="shrink-0 rounded-2xl border border-[var(--pri)]/30 bg-[var(--pri)]/10 p-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm">
           <div className="text-xs font-bold text-[var(--text)]">
             <span className="font-black text-[var(--pri)]">{selectedParticipantIds.length}</span> participant(s) selected
-            <span className="ml-2 text-[var(--muted)]">Bulk actions apply to the selected table rows.</span>
+            <span className="ml-2 text-[var(--muted)]">
+              {bulkPrintProgress || "Bulk actions apply to the selected table rows."}
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -852,11 +1163,9 @@ export default function ParticipantTable({
                     <td className="p-3.5 font-mono text-[var(--muted)]">{p.phone || "—"}</td>
                     <td className="p-3.5">
                       <span
-                        className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded-full border ${
-                          p.paid_status === "Paid"
-                            ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                            : "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                        }`}
+                        className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded-full border ${getPaymentStatusBadgeClass(
+                          p.paid_status
+                        )}`}
                       >
                         {p.paid_status || "Paid"}
                       </span>
@@ -947,6 +1256,13 @@ export default function ParticipantTable({
                     <span className="font-mono text-xs font-bold text-[var(--acc)]">{selectedParticipant.regno}</span>
                     <span className="px-2 py-0.5 bg-[var(--raised)] border border-[var(--border)] text-[10px] font-black uppercase rounded-full text-[var(--text)]">
                       {selectedParticipant.role || "Delegate"}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-full border ${getPaymentStatusBadgeClass(
+                        selectedParticipant.paid_status
+                      )}`}
+                    >
+                      {selectedParticipant.paid_status || "Paid"}
                     </span>
                   </div>
                 </div>
@@ -1099,8 +1415,6 @@ export default function ParticipantTable({
                       ["role", "Role"],
                       ["company", "Company"],
                       ["designation", "Designation"],
-                      ["country", "Country"],
-                      ["paid_status", "Payment Status"],
                     ].map(([field, label]) => (
                       <label key={field} className="space-y-1.5">
                         <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{label}</span>
@@ -1111,6 +1425,51 @@ export default function ParticipantTable({
                         />
                       </label>
                     ))}
+
+                    <label className="space-y-1.5">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Payment Status</span>
+                      <select
+                        value={editParticipantForm.paid_status}
+                        onChange={(event) => setEditParticipantForm((prev) => ({ ...prev, paid_status: event.target.value }))}
+                        className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-[var(--text)]"
+                      >
+                        {["Paid", "Unpaid", "Pending", "Partially Paid", "Refunded", "Complimentary", "Waived"].map((status) => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="space-y-1.5">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Country</span>
+                      <select
+                        value={editParticipantForm.country}
+                        onChange={(event) => {
+                          const country = event.target.value;
+                          setEditParticipantForm((prev) => ({ ...prev, country, state: "" }));
+                        }}
+                        className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-[var(--text)]"
+                      >
+                        <option value="">Select country</option>
+                        {countryStates.map((entry) => (
+                          <option key={entry.country} value={entry.country}>{entry.country}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="space-y-1.5">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">State / Province</span>
+                      <select
+                        value={editParticipantForm.state}
+                        onChange={(event) => setEditParticipantForm((prev) => ({ ...prev, state: event.target.value }))}
+                        disabled={!editParticipantForm.country || availableStates.length === 0}
+                        className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-[var(--text)] disabled:opacity-60"
+                      >
+                        <option value="">{availableStates.length ? "Select state / province" : "No state list available"}</option>
+                        {availableStates.map((state) => (
+                          <option key={state} value={state}>{state}</option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
                 </form>
               )}
@@ -1204,27 +1563,27 @@ export default function ParticipantTable({
                 )}
               </div>
 
-              {/* STATION ASSIGNED CHECK-IN MATRIX (non-default custom gates only, role-filtered) */}
+              {/* CHECK-IN GATES ASSIGNED */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
                   <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text)] flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 text-purple-500" />
-                    <span>Station Assigned ({capacityMatrix.filter(s => s.is_role_allowed).length})</span>
+                    <span>Check-in Gate(s) Assigned ({assignedCapacityMatrix.length})</span>
                   </h4>
                 </div>
 
                 {loadingActions ? (
-                  <div className="py-4 text-center text-xs text-[var(--muted)]">Evaluating station assignments...</div>
-                ) : capacityMatrix.filter(s => s.is_role_allowed).length === 0 ? (
+                  <div className="py-4 text-center text-xs text-[var(--muted)]">Evaluating check-in gates...</div>
+                ) : assignedCapacityMatrix.length === 0 ? (
                   <div className="p-4 rounded-xl border border-dashed border-[var(--border)] text-center text-xs text-[var(--muted)]">
-                    No gate stations assigned for this participant's role. Default initial check-in gate applies.
+                    No custom check-in gates assigned for this participant's role. Default registration desk / self check-in applies.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {capacityMatrix.filter(s => s.is_role_allowed).map((station) => (
+                    {assignedCapacityMatrix.map((station) => (
                       <div
                         key={station.station_id || station.station_name}
-                        className={`p-3 rounded-xl border flex flex-col justify-between space-y-2 ${
+                        className={`p-3 rounded-xl border flex flex-col justify-between space-y-2.5 ${
                           station.checked_in
                             ? "bg-emerald-500/5 border-emerald-500/30"
                             : "bg-[var(--surf)] border-[var(--border)]"
@@ -1234,7 +1593,7 @@ export default function ParticipantTable({
                           <div>
                             <p className="font-extrabold text-[var(--text)] text-xs">{station.station_name}</p>
                             <p className="text-[10px] text-[var(--muted)] font-mono mt-0.5">
-                              Type: {station.station_type} • Cap: {station.station_capacity.toLocaleString()}
+                              Type: {station.station_type} • Cap: {station.station_capacity ? station.station_capacity.toLocaleString() : "Unlimited"}
                             </p>
                           </div>
                           {station.checked_in ? (
@@ -1247,15 +1606,63 @@ export default function ParticipantTable({
                             </span>
                           )}
                         </div>
-                        {station.checked_in && station.checked_in_at && (
-                          <span className="text-[9px] text-[var(--muted)] font-mono">
-                            Checked at: {new Date(station.checked_in_at).toLocaleTimeString()}
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-[var(--border)]/60">
+                          <span className="text-[9px] text-[var(--muted)] font-mono truncate">
+                            {station.checked_in && station.checked_in_at
+                              ? `At: ${new Date(station.checked_in_at).toLocaleTimeString()}`
+                              : `Max: ${station.max_checkins_per_delegate || 1} entry`}
                           </span>
-                        )}
+                          {station.checked_in && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setResetCheckinUsername("admin");
+                                setResetCheckinPassword("");
+                                setTargetStationToReset(station);
+                                setShowAdminResetCheckinModal(true);
+                              }}
+                              className="h-6 px-2 text-[10px] font-bold text-amber-500 hover:text-amber-600 border-amber-500/30 hover:bg-amber-500/10 rounded-lg gap-1 shrink-0 shadow-xs"
+                              title={`Admin authorization required to reset ${station.station_name}`}
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Reset Gate</span>
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
+
+                {/* Reset All Check-in Gate(s) Action Button */}
+                <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surf)] p-3">
+                  <div>
+                    <p className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Reset All Check-in Gate(s)</span>
+                    </p>
+                    <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                      Requires Admin credentials to clear all gate check-ins and reset entry limits for this delegate.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setResetCheckinUsername("admin");
+                      setResetCheckinPassword("");
+                      setTargetStationToReset(null);
+                      setShowAdminResetCheckinModal(true);
+                    }}
+                    className="h-8 px-3 text-xs font-bold text-amber-500 hover:text-amber-600 border-amber-500/30 hover:bg-amber-500/10 rounded-xl gap-1.5 shrink-0 shadow-xs"
+                    title="Admin authorization required to clear all check-in gates"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset All Gates</span>
+                  </Button>
+                </div>
               </div>
 
               {/* Action Audit Trail Section */}
@@ -1275,25 +1682,35 @@ export default function ParticipantTable({
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                    {actionLogs.map((log) => (
-                      <div
-                        key={log.id}
-                        className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surf)] flex items-center justify-between text-xs"
-                      >
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-[var(--raised)] border border-[var(--border)] text-[var(--text)]">
-                              {log.action_type.replace("_", " ")}
-                            </span>
-                            <span className="font-bold text-[var(--text)] text-xs">{log.details || log.action_type}</span>
+                    {actionLogs.map((log) => {
+                      const label = formatActionLogLabel(log.action_type);
+                      const desc = formatActionLogDetails(log);
+                      const isAlert = log.action_type?.includes("reset");
+                      const isSuccess = log.action_type?.includes("print") || log.action_type === "checkin" || log.action_type === "kit_issue";
+                      return (
+                        <div
+                          key={log.id}
+                          className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surf)] flex items-center justify-between text-xs gap-3 hover:border-[var(--pri)]/40 transition-colors"
+                        >
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                                isAlert ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                                  : isSuccess ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                                    : "bg-[var(--raised)] text-[var(--text)] border-[var(--border)]"
+                              }`}>
+                                {label}
+                              </span>
+                              <span className="font-bold text-[var(--text)] text-xs break-words">{desc}</span>
+                            </div>
+                            <p className="text-[10px] text-[var(--muted)] font-mono">Operator: {log.performed_by || "REG-DESK-01"}</p>
                           </div>
-                          <p className="text-[10px] text-[var(--muted)] font-mono">Operator: {log.performed_by || "REG-DESK-01"}</p>
+                          <span className="font-mono text-[10px] text-[var(--muted)] shrink-0">
+                            {log.created_at ? new Date(log.created_at).toLocaleTimeString() : "Just Now"}
+                          </span>
                         </div>
-                        <span className="font-mono text-[10px] text-[var(--muted)] shrink-0">
-                          {log.created_at ? new Date(log.created_at).toLocaleTimeString() : "Just Now"}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1502,8 +1919,12 @@ export default function ParticipantTable({
                 <Lock className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-black text-[var(--text)]">Admin Check-In Reset</h3>
-                <p className="text-xs text-[var(--muted)]">Requires super-admin or admin credentials to clear check-in</p>
+                <h3 className="text-sm font-black text-[var(--text)]">
+                  {targetStationToReset ? `Admin Reset: ${targetStationToReset.station_name}` : "Admin Check-In Reset (All Gates)"}
+                </h3>
+                <p className="text-xs text-[var(--muted)]">
+                  {targetStationToReset ? `Clear check-in for '${targetStationToReset.station_name}'` : "Requires super-admin or admin credentials to clear check-in"}
+                </p>
               </div>
             </div>
 
@@ -1551,6 +1972,93 @@ export default function ParticipantTable({
                   className="h-9 px-5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs rounded-xl shadow-md gap-1.5"
                 >
                   {actionInProgress === "reset_checkin" ? "Verifying..." : "Confirm Check-In Reset"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Policy Override Modal */}
+      {showAdminOverrideModal && selectedParticipant && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3 border-b border-[var(--border)] pb-4">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center font-black shrink-0">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-[var(--text)]">
+                  Admin Policy Override
+                </h3>
+                <p className="text-xs text-[var(--muted)]">
+                  Bypass operational policy guardrail for '{selectedParticipant.name}'
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleAdminOverrideSubmit} className="space-y-4">
+              <div className="p-3 rounded-xl bg-purple-500/5 border border-purple-500/20 text-xs text-[var(--text)] space-y-1">
+                <div className="font-bold text-purple-500">Action: {overrideAction?.toUpperCase()}</div>
+                <div className="text-[11px] text-[var(--muted)]">{overrideReason}</div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] block mb-1">
+                  Admin Username
+                </label>
+                <Input
+                  type="text"
+                  required
+                  placeholder="admin"
+                  value={overrideUsername}
+                  onChange={(e) => setOverrideUsername(e.target.value)}
+                  className="h-10 bg-[var(--surf)] border-[var(--border)] text-xs font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] block mb-1">
+                  Admin Password
+                </label>
+                <Input
+                  type="password"
+                  required
+                  placeholder="Enter administrator password..."
+                  value={overridePassword}
+                  onChange={(e) => setOverridePassword(e.target.value)}
+                  className="h-10 bg-[var(--surf)] border-[var(--border)] text-xs font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] block mb-1">
+                  Override Justification / Notes
+                </label>
+                <Input
+                  type="text"
+                  placeholder="e.g. VIP exemption / Onsite cash payment collected"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  className="h-10 bg-[var(--surf)] border-[var(--border)] text-xs font-bold"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowAdminOverrideModal(false)}
+                  className="h-9 px-4 text-xs font-bold"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isOverriding || !overridePassword}
+                  className="h-9 px-5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl shadow-md gap-1.5"
+                >
+                  {isOverriding ? "Authorizing..." : "Authorize & Proceed"}
                 </Button>
               </div>
             </form>

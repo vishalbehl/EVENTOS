@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "source": "EVENTOS curated component and multi-page template library",
+  "assetCount": 10,
+  "assets": [
+    {
+      "id": "event-tech-hero",
+      "kind": "section",
+      "html": "./event-tech-hero/component.html",
+      "json": "./event-tech-hero/component.json"
+    },
+    {
+      "id": "event-speaker-showcase",
+      "kind": "section",
+      "html": "./event-speaker-showcase/component.html",
+      "json": "./event-speaker-showcase/component.json"
+    },
+    {
+      "id": "event-agenda-timeline",
+      "kind": "section",
+      "html": "./event-agenda-timeline/component.html",
+      "json": "./event-agenda-timeline/component.json"
+    },
+    {
+      "id": "event-sponsor-marquee",
+      "kind": "section",
+      "html": "./event-sponsor-marquee/component.html",
+      "json": "./event-sponsor-marquee/component.json"
+    },
+    {
+      "id": "event-venue-feature",
+      "kind": "section",
+      "html": "./event-venue-feature/component.html",
+      "json": "./event-venue-feature/component.json"
+    },
+    {
+      "id": "event-registration-band",
+      "kind": "section",
+      "html": "./event-registration-band/component.html",
+      "json": "./event-registration-band/component.json"
+    },
+    {
+      "id": "event-footer-system",
+      "kind": "section",
+      "html": "./event-footer-system/component.html",
+      "json": "./event-footer-system/component.json"
+    },
+    {
+      "id": "template-global-tech-summit",
+      "kind": "template",
+      "html": "./template-global-tech-summit/component.html",
+      "json": "./template-global-tech-summit/component.json"
+    },
+    {
+      "id": "template-academic-symposium",
+      "kind": "template",
+      "html": "./template-academic-symposium/component.html",
+      "json": "./template-academic-symposium/component.json"
+    },
+    {
+      "id": "template-expo-showcase",
+      "kind": "template",
+      "html": "./template-expo-showcase/component.html",
+      "json": "./template-expo-showcase/component.json"
+    }
+  ]
+}

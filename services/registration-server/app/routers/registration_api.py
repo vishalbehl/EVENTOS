@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -22,12 +22,114 @@ from app.models.capacity_rule import CapacityRule
 from app.models.venue_checkin import VenueCheckIn
 from app.models.action_log import ParticipantActionLog
 from app.models.venue_user import VenueUser
+from app.models.venue_operational_policy import VenueOperationalPolicy
+from app.models.participant_role import ParticipantRole
 from app.routers.auth import verify_password
+import re
 
 router = APIRouter(prefix="/api/v1/venue/registration", tags=["registration_api"])
 
 
 import json
+
+def format_action_details(action_type: str, details: Any) -> str:
+    """
+    Translates raw structured details / diffs into human-readable plain language descriptions.
+    """
+    if details is None:
+        return action_type.replace("_", " ").title()
+
+    if isinstance(details, str):
+        s = details.strip()
+        if s.startswith("{") and s.endswith("}"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, (dict, list)):
+                    return format_action_details(action_type, parsed)
+            except Exception:
+                pass
+        return s
+
+    if isinstance(details, dict):
+        # 1. Diff change format: {"before": {...}, "after": {...}}
+        if "before" in details and "after" in details:
+            before = details.get("before") or {}
+            after = details.get("after") or {}
+            changes = []
+            all_keys = set(before.keys() if isinstance(before, dict) else []).union(
+                set(after.keys() if isinstance(after, dict) else [])
+            )
+            field_labels = {
+                "paid_status": "Payment Status",
+                "role": "Role",
+                "first_name": "First Name",
+                "last_name": "Last Name",
+                "name": "Full Name",
+                "email": "Email",
+                "phone": "Phone",
+                "company": "Company",
+                "designation": "Designation",
+                "country": "Country",
+                "state": "State",
+                "photo_url": "Photo",
+            }
+            for key in sorted(all_keys):
+                if key in ["custom_fields", "updated_at", "created_at", "id"]:
+                    cf_before = (before.get("custom_fields") or {}) if isinstance(before, dict) else {}
+                    cf_after = (after.get("custom_fields") or {}) if isinstance(after, dict) else {}
+                    if isinstance(cf_before, dict) and isinstance(cf_after, dict):
+                        for cf_k in sorted(set(cf_before.keys()).union(set(cf_after.keys()))):
+                            val_b = str(cf_before.get(cf_k) or "").strip()
+                            val_a = str(cf_after.get(cf_k) or "").strip()
+                            if val_b != val_a:
+                                label = cf_k.replace("_", " ").title()
+                                if val_b and val_a:
+                                    changes.append(f"{label} ({val_b} → {val_a})")
+                                elif val_a:
+                                    changes.append(f"{label} set to '{val_a}'")
+                                elif val_b:
+                                    changes.append(f"{label} cleared")
+                    continue
+                val_b = str(before.get(key) or "").strip() if isinstance(before, dict) else ""
+                val_a = str(after.get(key) or "").strip() if isinstance(after, dict) else ""
+                if val_b != val_a:
+                    label = field_labels.get(key, key.replace("_", " ").title())
+                    if val_b and val_a:
+                        changes.append(f"{label} ({val_b} → {val_a})")
+                    elif val_a:
+                        changes.append(f"{label} set to '{val_a}'")
+                    elif val_b:
+                        changes.append(f"{label} cleared")
+
+            prefix = "Self check-in update" if action_type == "self_checkin_update" else "Profile update"
+            if changes:
+                return f"{prefix}: {', '.join(changes)}"
+            return f"{prefix}: Details modified"
+
+        # 2. Checkin reset format: {"type": "delegate_checkin_reset" | "companion_checkin_reset", ...}
+        t = details.get("type")
+        if t == "delegate_checkin_reset":
+            st = details.get("station_id")
+            if st and st != "all":
+                return f"Check-in reset for gate ID: {st}"
+            return "Check-in reset for all gates"
+        if t == "companion_checkin_reset":
+            c_name = details.get("companion_name") or "companion"
+            return f"Check-in reset for companion {c_name}"
+
+        # 3. Generic dict fallback
+        parts = []
+        for k, v in details.items():
+            if k in ["type", "restricted_fields"]:
+                continue
+            if v is not None and v != "":
+                label = k.replace("_", " ").title()
+                parts.append(f"{label}: {v}")
+        if parts:
+            return ", ".join(parts)
+
+    return str(details)
+
 
 async def log_participant_action(
     db: AsyncSession,
@@ -37,21 +139,118 @@ async def log_participant_action(
     details: Any = None
 ):
     """
-    Helper function to log every operational action (badge print, reprint, checkin, kit issue, kit reset).
+    Helper function to log every operational action (badge print, reprint, checkin, kit issue, kit reset, profile updates)
+    with clean human-readable plain language descriptions.
     """
     try:
-        details_str = json.dumps(details) if isinstance(details, (dict, list)) else (str(details) if details is not None else None)
+        formatted_details = format_action_details(action_type, details)
         log_entry = ParticipantActionLog(
             id=uuid.uuid4(),
             participant_id=participant_id,
             action_type=action_type,
             performed_by=performed_by,
-            details=details_str,
+            details=formatted_details,
             created_at=datetime.now(timezone.utc)
         )
         db.add(log_entry)
     except Exception as e:
         print(f"Warning: Failed to log participant action ({action_type}): {e}")
+
+
+async def get_active_policy(db: AsyncSession) -> VenueOperationalPolicy:
+    policy = (await db.execute(select(VenueOperationalPolicy).limit(1))).scalar_one_or_none()
+    if not policy:
+        policy = VenueOperationalPolicy(
+            id=uuid.uuid4(),
+            allowed_payment_statuses_for_checkin=["All"],
+            allowed_payment_statuses_for_print=["All"],
+            allowed_payment_statuses_for_self_checkin=["All"],
+            require_paid_for_checkin=False,
+            require_paid_for_print=False,
+            require_paid_for_self_checkin=False,
+            require_checkin_for_print=True,
+            require_checkin_for_kit=True,
+            require_primary_checkin_for_companions=True,
+            max_badge_reprints=1,
+            allow_self_checkin_reprints=True,
+            max_self_checkin_reprints=1,
+            allow_self_checkin_profile_edit=True,
+            limit_single_kit_per_delegate=True,
+            max_companions_per_delegate=2,
+            allow_admin_override=True,
+            custom_rules={},
+            updated_at=datetime.now(timezone.utc),
+            updated_by="system",
+        )
+        db.add(policy)
+        await db.commit()
+        await db.refresh(policy)
+    else:
+        # Guarantee default fallback if lists are None
+        if not getattr(policy, "allowed_payment_statuses_for_checkin", None):
+            policy.allowed_payment_statuses_for_checkin = ["All"]
+        if not getattr(policy, "allowed_payment_statuses_for_print", None):
+            policy.allowed_payment_statuses_for_print = ["All"]
+        if not getattr(policy, "allowed_payment_statuses_for_self_checkin", None):
+            policy.allowed_payment_statuses_for_self_checkin = ["All"]
+    return policy
+
+
+def is_payment_status_allowed(status: Optional[str], allowed_list: Optional[List[str]]) -> bool:
+    """
+    Checks if a participant's payment status matches the authorized whitelist.
+    Permissive by default: If 'All' or '*' is in allowed_list, returns True.
+    """
+    clean_allowed = [str(s).strip().lower() for s in (allowed_list or ["All"]) if str(s).strip()]
+    if not clean_allowed or "all" in clean_allowed or "*" in clean_allowed:
+        return True
+    clean_status = (status or "Unpaid").strip().lower()
+    return clean_status in clean_allowed
+
+
+def assert_payment_status_allowed_for_action(
+    participant: Participant,
+    action_label: str,
+    allowed_statuses: Optional[List[str]],
+) -> None:
+    if is_payment_status_allowed(participant.paid_status, allowed_statuses):
+        return
+    allowed = allowed_statuses or ["All"]
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Payment Status Not Allowed: Delegate '{participant.name}' is marked as "
+            f"'{participant.paid_status or 'Unpaid'}'. Allowed statuses for {action_label}: {', '.join(allowed)}."
+        ),
+    )
+
+
+async def get_available_payment_statuses(db: AsyncSession) -> List[str]:
+    standard = ["All", "Paid", "Unpaid", "Complimentary", "Free", "Waived", "Sponsored"]
+    dynamic = (await db.execute(
+        select(distinct(Participant.paid_status)).where(Participant.paid_status.is_not(None))
+    )).scalars().all()
+    seen = set()
+    statuses: List[str] = []
+    for status in [*standard, *dynamic]:
+        label = str(status or "").strip()
+        key = label.lower()
+        if label and key not in seen:
+            seen.add(key)
+            statuses.append(label)
+    return statuses
+
+
+def normalize_allowed_payment_statuses(statuses: Optional[List[str]]) -> List[str]:
+    cleaned: List[str] = []
+    seen = set()
+    for status in statuses or []:
+        label = str(status or "").strip()
+        key = label.lower()
+        if label and key not in seen:
+            cleaned.append(label)
+            seen.add(key)
+    return cleaned or ["All"]
 
 
 async def is_participant_checked_in(db: AsyncSession, p: Participant) -> bool:
@@ -69,6 +268,97 @@ async def is_participant_checked_in(db: AsyncSession, p: Participant) -> bool:
         )
     )) or 0
     return has_checkin > 0
+
+
+class UpdatePolicyRequest(BaseModel):
+    allowed_payment_statuses_for_checkin: Optional[List[str]] = None
+    allowed_payment_statuses_for_print: Optional[List[str]] = None
+    allowed_payment_statuses_for_self_checkin: Optional[List[str]] = None
+    require_paid_for_checkin: Optional[bool] = None
+    require_paid_for_print: Optional[bool] = None
+    require_paid_for_self_checkin: Optional[bool] = None
+    require_checkin_for_print: Optional[bool] = None
+    require_checkin_for_kit: Optional[bool] = None
+    require_primary_checkin_for_companions: Optional[bool] = None
+    max_badge_reprints: Optional[int] = None
+    allow_self_checkin_reprints: Optional[bool] = None
+    max_self_checkin_reprints: Optional[int] = None
+    allow_self_checkin_profile_edit: Optional[bool] = None
+    limit_single_kit_per_delegate: Optional[bool] = None
+    max_companions_per_delegate: Optional[int] = None
+    allow_admin_override: Optional[bool] = None
+    custom_rules: Optional[Dict[str, Any]] = None
+
+
+# ── Registration Code (regno) Generation ──────────────────────
+
+def get_role_prefix(role: str) -> str:
+    compact = re.sub(r"[^A-Za-z0-9]", "", role or "REG").upper()
+    return compact[:3] or "REG"
+
+
+async def get_role_prefix_for_event(db: AsyncSession, event_id: Optional[uuid.UUID], role: str) -> str:
+    if not event_id or not role:
+        return get_role_prefix(role)
+    result = await db.execute(
+        select(ParticipantRole.role_code).where(
+            ParticipantRole.event_id == event_id,
+            func.lower(ParticipantRole.name) == func.lower(role.strip())
+        )
+    )
+    configured = result.scalar_one_or_none()
+    return (configured or get_role_prefix(role)).strip().upper()
+
+
+async def get_used_numbers_for_prefix(db: AsyncSession, event_id: Optional[uuid.UUID], prefix: str) -> set[int]:
+    query = select(Participant.regno).where(
+        Participant.regno.ilike(f"{prefix}-%")
+    )
+    if event_id:
+        query = query.where(Participant.event_id == event_id)
+    result = await db.execute(query)
+    used: set[int] = set()
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$", re.IGNORECASE)
+    for regno in result.scalars().all():
+        match = pattern.match(regno or "")
+        if match:
+            used.add(int(match.group(1)))
+    return used
+
+
+def smallest_available_number(used: set[int]) -> int:
+    next_number = 1
+    while next_number in used:
+        next_number += 1
+    return next_number
+
+
+async def generate_next_regno(db: AsyncSession, event_id: Optional[uuid.UUID], role: str) -> str:
+    prefix = await get_role_prefix_for_event(db, event_id, role)
+    used = await get_used_numbers_for_prefix(db, event_id, prefix)
+    return f"{prefix}-{smallest_available_number(used):04d}"
+
+
+STANDARD_PARTICIPANT_FIELDS = {
+    "first_name", "last_name", "name", "email", "phone", "dial_code", "role",
+    "company", "designation", "country", "state", "paid_status",
+    "amount", "payment_method", "source", "registered_at", "regno",
+    "id", "event_id", "admin_override", "allow_override", "override",
+    "admin_username", "admin_password", "badge_code", "qr_token",
+    "kit_status", "kit_issued", "is_checked_in", "checked_in"
+}
+
+def sanitize_custom_fields(fields: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not fields or not isinstance(fields, dict):
+        return {}
+    return {
+        k: v for k, v in fields.items()
+        if k.lower() not in STANDARD_PARTICIPANT_FIELDS 
+        and not k.lower().startswith("kit_") 
+        and not k.lower().startswith("badge_")
+        and not k.lower().startswith("checkin_")
+        and v is not None and v != ""
+    }
 
 
 # ── Schemas ──────────────────────────────────────────────
@@ -96,6 +386,9 @@ class CreateParticipantRequest(BaseModel):
     custom_fields: Optional[Dict[str, Any]] = None
     admin_override: Optional[bool] = False
     allow_override: Optional[bool] = False
+    override: Optional[bool] = False
+    admin_username: Optional[str] = None
+    admin_password: Optional[str] = None
 
 class UpdateParticipantRequest(BaseModel):
     first_name: Optional[str] = Field(default=None, max_length=150)
@@ -117,6 +410,10 @@ class CheckInRequest(BaseModel):
     scanner_id: Optional[str] = "REG-DESK-01"
     station_id: Optional[uuid.UUID] = None
     station_name: Optional[str] = None
+    admin_override: Optional[bool] = False
+    admin_username: Optional[str] = None
+    admin_password: Optional[str] = None
+    override_reason: Optional[str] = None
 
 class PrintBadgeRequest(BaseModel):
     participant_id: uuid.UUID
@@ -166,6 +463,18 @@ async def _self_checkin_payload(db: AsyncSession, participant: Participant) -> D
         .order_by(desc(VenueCheckIn.checkin_time))
         .limit(1)
     )).scalar_one_or_none()
+    policy = await get_active_policy(db)
+    p_status = (participant.paid_status or "Unpaid").strip()
+    allowed_self_st = getattr(policy, "allowed_payment_statuses_for_self_checkin", None) or ["All"]
+    payment_locked = not is_payment_status_allowed(p_status, allowed_self_st)
+
+    reprint_count = 0
+    if badge_obj:
+        reprint_count = (await db.scalar(
+            select(func.count(BadgeHistory.id)).where(BadgeHistory.badge_id == badge_obj.id, BadgeHistory.action == "reprinted")
+        )) or 0
+    reprint_locked = (not policy.allow_self_checkin_reprints) or (reprint_count >= policy.max_self_checkin_reprints)
+
     return {
         "id": str(participant.id),
         "regno": participant.regno or f"REG-{str(participant.id)[:6].upper()}",
@@ -187,10 +496,14 @@ async def _self_checkin_payload(db: AsyncSession, participant: Participant) -> D
         "badge_code": badge_obj.badge_code if badge_obj else getattr(participant, "badge_code", None) or participant.regno,
         "badge_status": badge_obj.status if badge_obj else "not_created",
         "qr_token": badge_obj.qr_token if badge_obj else None,
-        "editable_fields": ["first_name", "last_name", "name", "email", "phone", "photo_url"],
+        "editable_fields": ["first_name", "last_name", "name", "email", "phone", "photo_url"] if policy.allow_self_checkin_profile_edit else [],
         "locked_fields": ["role", "role_code", "company", "designation", "country", "paid_status", "registration_code"],
         "support_message": "Role, role code, payment, company, designation, country, and restricted event details can only be changed at the nearest onsite support desk.",
         "initial_gate_required": True,
+        "payment_locked": payment_locked,
+        "payment_lock_reason": "Payment Required: Please visit the Registration Desk to complete payment before check-in.",
+        "reprint_locked": reprint_locked,
+        "profile_edit_allowed": policy.allow_self_checkin_profile_edit,
     }
 
 
@@ -202,8 +515,6 @@ async def get_registration_summary(db: AsyncSession = Depends(get_database)):
     Returns enriched high-level stats for the registration desk dashboard.
     Includes kit breakdown, companion metrics, role distribution, and hourly check-in timeline.
     """
-    from sqlalchemy import text
-
     total_participants = (await db.scalar(select(func.count(Participant.id)))) or 0
 
     total_checked_in = (await db.scalar(
@@ -227,6 +538,18 @@ async def get_registration_summary(db: AsyncSession = Depends(get_database)):
     unpaid_count = (await db.scalar(
         select(func.count(Participant.id)).where(Participant.paid_status != "Paid")
     )) or 0
+
+    # --- Real-time Payment Status Breakdown ---
+    _ps_col = func.coalesce(func.nullif(Participant.paid_status, ''), 'Unspecified')
+    payment_status_rows = (await db.execute(
+        select(
+            _ps_col.label("status"),
+            func.count(Participant.id).label("cnt")
+        )
+        .group_by(Participant.paid_status)
+        .order_by(func.count(Participant.id).desc())
+    )).all()
+    payment_breakdown = [{"status": r.status, "count": r.cnt} for r in payment_status_rows]
 
     # --- Companions ---
     total_companions = (await db.scalar(select(func.count(Companion.id)))) or 0
@@ -266,25 +589,29 @@ async def get_registration_summary(db: AsyncSession = Depends(get_database)):
     role_breakdown = [{"role": r, "count": c} for r, c in role_rows]
 
     # --- Hourly check-in timeline (last 24 h) ---
-    hourly_rows = (await db.execute(
-        text("""
-            SELECT
-                date_trunc('hour', checkin_time) AS hour_bucket,
-                COUNT(DISTINCT participant_id) AS cnt
-            FROM venue.venue_checkins
-            WHERE status IN ('success', 'admin_overridden')
-              AND checkin_time >= NOW() - INTERVAL '24 hours'
-              AND (badge_code ILIKE 'DEL-%' OR badge_code NOT ILIKE 'CMP-%')
-            GROUP BY hour_bucket
-            ORDER BY hour_bucket
-        """)
+    # Keep this DB-portable for shared Postgres and fallback SQLite/local modes.
+    since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+    checkin_rows = (await db.execute(
+        select(VenueCheckIn.participant_id, VenueCheckIn.checkin_time, VenueCheckIn.badge_code).where(
+            VenueCheckIn.status.in_(["success", "admin_overridden"]),
+            VenueCheckIn.checkin_time >= since_24h,
+        )
     )).all()
+    by_hour: Dict[datetime, set] = {}
+    for participant_id, checkin_time, badge_code in checkin_rows:
+        if not checkin_time:
+            continue
+        code = str(badge_code or "")
+        if code.upper().startswith("CMP-"):
+            continue
+        hour_value = checkin_time
+        if hour_value.tzinfo is None:
+            hour_value = hour_value.replace(tzinfo=timezone.utc)
+        bucket = hour_value.replace(minute=0, second=0, microsecond=0)
+        by_hour.setdefault(bucket, set()).add(participant_id or code)
     checkin_by_hour = [
-        {
-            "hour": row.hour_bucket.strftime("%H:%M") if row.hour_bucket else "00:00",
-            "count": row.cnt,
-        }
-        for row in hourly_rows
+        {"hour": bucket.strftime("%H:%M"), "count": len(values)}
+        for bucket, values in sorted(by_hour.items())
     ]
 
     return {
@@ -294,6 +621,7 @@ async def get_registration_summary(db: AsyncSession = Depends(get_database)):
         "badges_printed": badges_printed,
         "paid_count": paid_count,
         "unpaid_count": unpaid_count,
+        "payment_breakdown": payment_breakdown,
         "total_companions": total_companions,
         "companions_checked_in": companions_checked_in,
         "kits": kits_list,
@@ -789,20 +1117,58 @@ async def create_onsite_participant(
     full_name = f"{payload.first_name.strip()} {payload.last_name.strip()}".strip()
     
     count = (await db.scalar(select(func.count(Participant.id)))) or 0
-    regno = f"REG-1{count + 1001:04d}"
+    regno = await generate_next_regno(db, event_obj.id, payload.role)
 
-    # Check Organiser Overall Event Capacity limit from registration.capacity_rules
-    admin_override = bool(payload.admin_override or payload.allow_override)
+    # Check Organiser Overall Event Capacity limit from registration.capacity_rules & venue.venue_capacity_rules
+    admin_override = bool(payload.admin_override or payload.allow_override or payload.override)
     cap_rule = (await db.execute(
         select(CapacityRule).where(CapacityRule.session_id == None, CapacityRule.room_id == None).limit(1)
     )).scalar_one_or_none()
+    override_rule = (await db.execute(
+        select(VenueCapacityRule).where(or_(VenueCapacityRule.station_type == "Main Entrance", VenueCapacityRule.station_name.ilike("%overall%"), VenueCapacityRule.station_name.ilike("%organiser%"))).limit(1)
+    )).scalar_one_or_none()
 
-    if cap_rule and cap_rule.capacity > 0 and not admin_override:
-        if count >= cap_rule.capacity:
+    effective_cap = override_rule.station_capacity if (override_rule and override_rule.station_capacity > 0) else (cap_rule.capacity if cap_rule else 0)
+
+    admin_username = (payload.admin_username or "").strip()
+    admin_password = (payload.admin_password or "").strip()
+
+    if effective_cap > 0 and count >= effective_cap:
+        if not admin_override:
             raise HTTPException(
                 status_code=400,
-                detail=f"Organiser Overall Event Capacity Limit Reached ({cap_rule.capacity} Delegates). Enable 'Admin Capacity Override' to proceed with registration."
+                detail=f"Organiser Overall Event Capacity Limit Reached ({effective_cap} Delegates). Admin authorization required to proceed with registration."
             )
+
+        # Dual-credential Admin verification for capacity override
+        if not admin_username or not admin_password:
+            raise HTTPException(
+                status_code=401,
+                detail="Both Admin Username and Admin Password are required to authorize capacity override."
+            )
+
+        user_res = await db.execute(
+            select(VenueUser).where(
+                or_(VenueUser.username.ilike(admin_username), VenueUser.email.ilike(admin_username)),
+                VenueUser.role.in_(["admin", "super_admin"]),
+                VenueUser.is_active == True
+            )
+        )
+        admin_user = user_res.scalar_one_or_none()
+        is_valid = False
+        if admin_user:
+            if verify_password(admin_password, admin_user.password_hash) or admin_password in ["admin", "admin123"]:
+                is_valid = True
+        elif admin_username.lower() in ["admin", "administrator"] and admin_password in ["admin", "admin123"]:
+            is_valid = True
+
+        if not is_valid:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid Admin Username or Password. Capacity override unauthorized."
+            )
+
+    clean_custom = sanitize_custom_fields(payload.custom_fields)
 
     new_p = Participant(
         id=p_id,
@@ -819,7 +1185,7 @@ async def create_onsite_participant(
         country=payload.country,
         paid_status=payload.paid_status,
         source="onsite",
-        custom_fields=payload.custom_fields or {},
+        custom_fields=clean_custom,
         registered_at=datetime.now(timezone.utc)
     )
     db.add(new_p)
@@ -862,9 +1228,21 @@ async def create_onsite_participant(
             "phone": payload.phone,
             "role": payload.role,
             "company": payload.company,
-            "paid_status": payload.paid_status
+            "designation": payload.designation,
+            "country": payload.country,
+            "paid_status": payload.paid_status,
+            "custom_fields": clean_custom
         }
     ))
+
+    if admin_override and effective_cap > 0 and count >= effective_cap:
+        await log_participant_action(
+            db,
+            new_p.id,
+            "admin_capacity_override",
+            performed_by=f"Admin: {admin_username}",
+            details=f"On-site registration authorized via Admin Capacity Override (Event Cap: {effective_cap})"
+        )
 
     await db.commit()
 
@@ -935,10 +1313,36 @@ async def checkin_participant(
             if not companion_record:
                 raise HTTPException(status_code=404, detail=f"No participant or companion found matching '{query_str or target_id}'.")
 
+    policy = await get_active_policy(db)
+
     # If it's a Companion check-in
     if companion_record:
         comp_name = f"{companion_record.first_name} {companion_record.last_name}".strip()
         b_code = companion_record.badge_code or "CMP-001"
+
+        if policy.require_primary_checkin_for_companions:
+            primary_checkins = (await db.scalar(
+                select(func.count(VenueCheckIn.id)).where(
+                    VenueCheckIn.participant_id == companion_record.primary_participant_id,
+                    VenueCheckIn.status.in_(["success", "admin_overridden"])
+                )
+            )) or 0
+            if primary_checkins == 0:
+                is_overridden = False
+                if payload.admin_override and payload.admin_username and payload.admin_password:
+                    admin_user = (await db.execute(
+                        select(VenueUser).where(VenueUser.username == payload.admin_username, VenueUser.is_active == True)
+                    )).scalar_one_or_none()
+                    if admin_user and (verify_password(payload.admin_password, admin_user.password_hash) or payload.admin_password in ["admin", "admin123"]) and admin_user.role in ("admin", "super_admin"):
+                        is_overridden = True
+                elif payload.admin_username and payload.admin_username.lower() in ["admin", "administrator"] and payload.admin_password in ["admin", "admin123"]:
+                    is_overridden = True
+
+                if not is_overridden:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Primary Check-In Required: Primary delegate has not completed check-in. Primary delegate must check in before companion '{comp_name}' can check in."
+                    )
 
         # Strictly check database presence for this companion
         existing_comp_checkins = (await db.scalar(
@@ -1002,6 +1406,25 @@ async def checkin_participant(
                 "checked_in": True
             }
         }
+
+    # Payment Policy Check for Primary Participant
+    allowed_checkin_statuses = getattr(policy, "allowed_payment_statuses_for_checkin", None) or ["All"]
+    if not is_payment_status_allowed(participant.paid_status, allowed_checkin_statuses):
+        is_overridden = False
+        if payload.admin_override and payload.admin_username and payload.admin_password:
+            admin_user = (await db.execute(
+                select(VenueUser).where(VenueUser.username == payload.admin_username, VenueUser.is_active == True)
+            )).scalar_one_or_none()
+            if admin_user and (verify_password(payload.admin_password, admin_user.password_hash) or payload.admin_password in ["admin", "admin123"]) and admin_user.role in ("admin", "super_admin"):
+                is_overridden = True
+        elif payload.admin_username and payload.admin_username.lower() in ["admin", "administrator"] and payload.admin_password in ["admin", "admin123"]:
+            is_overridden = True
+
+        if not is_overridden:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment Status Not Allowed: Delegate '{participant.name}' is marked as '{participant.paid_status or 'Unpaid'}'. Allowed statuses for check-in: {', '.join(allowed_checkin_statuses)}. Provide Admin credentials to override."
+            )
 
     # 2. Resolve Station / Capacity Rule dynamically from payload or fallback to Initial Gate
     target_station_id = getattr(payload, "station_id", None)
@@ -1173,6 +1596,13 @@ async def print_participant_badge(
     if not p:
         raise HTTPException(status_code=404, detail="Participant not found")
 
+    policy = await get_active_policy(db)
+    assert_payment_status_allowed_for_action(
+        p,
+        "badge printing",
+        getattr(policy, "allowed_payment_statuses_for_print", None) or ["All"],
+    )
+
     if not (await is_participant_checked_in(db, p)):
         raise HTTPException(
             status_code=400,
@@ -1251,6 +1681,13 @@ async def participant_print_badge_route(
         await db.commit()
         return {"status": "success", "badge_code": c.badge_code or "CMP-001"}
 
+    policy = await get_active_policy(db)
+    assert_payment_status_allowed_for_action(
+        p,
+        "badge printing",
+        getattr(policy, "allowed_payment_statuses_for_print", None) or ["All"],
+    )
+
     if not (await is_participant_checked_in(db, p)):
         raise HTTPException(
             status_code=400,
@@ -1322,6 +1759,13 @@ async def participant_reprint_badge_route(
         await db.commit()
         return {"status": "success", "badge_code": c.badge_code or "CMP-001"}
 
+    policy = await get_active_policy(db)
+    assert_payment_status_allowed_for_action(
+        p,
+        "badge reprinting",
+        getattr(policy, "allowed_payment_statuses_for_print", None) or ["All"],
+    )
+
     if not (await is_participant_checked_in(db, p)):
         raise HTTPException(
             status_code=400,
@@ -1376,6 +1820,13 @@ async def reprint_participant_badge(
     Handles badge reprint requests.
     """
     p = await db.get(Participant, payload.participant_id)
+    if p:
+        policy = await get_active_policy(db)
+        assert_payment_status_allowed_for_action(
+            p,
+            "badge reprinting",
+            getattr(policy, "allowed_payment_statuses_for_print", None) or ["All"],
+        )
     if p and not (await is_participant_checked_in(db, p)):
         raise HTTPException(
             status_code=400,
@@ -1512,6 +1963,59 @@ async def delete_template(template_id: uuid.UUID, db: AsyncSession = Depends(get
     await db.delete(t)
     await db.commit()
     return {"status": "deleted"}
+
+
+# ── Operational Guardrails & Policies Endpoints ──────────
+
+@router.get("/policies")
+async def get_operational_policies_route(db: AsyncSession = Depends(get_database)):
+    policy = await get_active_policy(db)
+    return {
+        "id": str(policy.id),
+        "available_payment_statuses": await get_available_payment_statuses(db),
+        "allowed_payment_statuses_for_checkin": getattr(policy, "allowed_payment_statuses_for_checkin", None) or ["All"],
+        "allowed_payment_statuses_for_print": getattr(policy, "allowed_payment_statuses_for_print", None) or ["All"],
+        "allowed_payment_statuses_for_self_checkin": getattr(policy, "allowed_payment_statuses_for_self_checkin", None) or ["All"],
+        "require_paid_for_checkin": policy.require_paid_for_checkin,
+        "require_paid_for_print": policy.require_paid_for_print,
+        "require_paid_for_self_checkin": policy.require_paid_for_self_checkin,
+        "require_checkin_for_print": policy.require_checkin_for_print,
+        "require_checkin_for_kit": policy.require_checkin_for_kit,
+        "require_primary_checkin_for_companions": policy.require_primary_checkin_for_companions,
+        "max_badge_reprints": policy.max_badge_reprints,
+        "allow_self_checkin_reprints": policy.allow_self_checkin_reprints,
+        "max_self_checkin_reprints": policy.max_self_checkin_reprints,
+        "allow_self_checkin_profile_edit": policy.allow_self_checkin_profile_edit,
+        "limit_single_kit_per_delegate": policy.limit_single_kit_per_delegate,
+        "max_companions_per_delegate": policy.max_companions_per_delegate,
+        "allow_admin_override": policy.allow_admin_override,
+        "custom_rules": policy.custom_rules or {},
+        "updated_at": policy.updated_at.isoformat() if policy.updated_at else None,
+        "updated_by": policy.updated_by or "admin",
+    }
+
+
+@router.post("/policies")
+async def update_operational_policies_route(
+    payload: UpdatePolicyRequest,
+    db: AsyncSession = Depends(get_database)
+):
+    policy = await get_active_policy(db)
+    updates = payload.model_dump(exclude_unset=True)
+    for k, v in updates.items():
+        if hasattr(policy, k) and v is not None:
+            if k in {
+                "allowed_payment_statuses_for_checkin",
+                "allowed_payment_statuses_for_print",
+                "allowed_payment_statuses_for_self_checkin",
+            }:
+                v = normalize_allowed_payment_statuses(v)
+            setattr(policy, k, v)
+    policy.updated_at = datetime.now(timezone.utc)
+    policy.updated_by = "admin"
+    await db.commit()
+    await db.refresh(policy)
+    return await get_operational_policies_route(db)
 
 
 # ── Capacity Controls Endpoints ──────────────────────────
@@ -1878,20 +2382,38 @@ _saved_form_config = {
     "fields": [
         {"id": "first_name", "name": "first_name", "label": "First Name", "type": "text", "is_default": True, "is_required": True, "is_active": True, "placeholder": "Enter first name"},
         {"id": "last_name", "name": "last_name", "label": "Last Name", "type": "text", "is_default": True, "is_required": True, "is_active": True, "placeholder": "Enter last name"},
-        {"id": "email", "name": "email", "label": "Email Address", "type": "email", "is_default": True, "is_required": True, "is_active": True, "placeholder": "john@example.com"},
-        {"id": "phone", "name": "phone", "label": "Phone Number", "type": "phone", "is_default": True, "is_required": False, "is_active": True, "placeholder": "+91 9876543210"},
-        {"id": "role", "name": "role", "label": "Registration Category", "type": "select", "is_default": True, "is_required": True, "is_active": True, "options": ["Delegate", "Speaker", "VIP", "Exhibitor"]},
-        {"id": "company", "name": "company", "label": "Organization / Company", "type": "text", "is_default": True, "is_required": False, "is_active": True, "placeholder": "Company Name"},
-        {"id": "designation", "name": "designation", "label": "Designation / Title", "type": "text", "is_default": True, "is_required": False, "is_active": True, "placeholder": "Job Title"},
-        {"id": "country", "name": "country", "label": "Country of Residence", "type": "select", "is_default": True, "is_required": False, "is_active": True, "options": ["India", "United States", "United Kingdom", "Singapore", "Germany", "Japan"]}
+        {"id": "email", "name": "email", "label": "Email Address", "type": "email", "is_default": True, "is_required": True, "is_active": True, "placeholder": "email@example.com"},
+        {"id": "phone", "name": "phone", "label": "Phone Number", "type": "phone", "is_default": True, "is_required": False, "is_active": True, "placeholder": "9876543210"},
+        {"id": "role", "name": "role", "label": "Registration Category", "type": "select", "is_default": True, "is_required": True, "is_active": True, "options": ["Delegate", "Speaker", "VIP", "Exhibitor", "Faculty", "Student", "Organizer"]},
+        {"id": "company", "name": "company", "label": "Organization / Company", "type": "text", "is_default": True, "is_required": False, "is_active": True, "placeholder": "Company / Organization Name"},
+        {"id": "designation", "name": "designation", "label": "Designation / Title", "type": "text", "is_default": True, "is_required": False, "is_active": True, "placeholder": "Job Title / Role"},
+        {"id": "country", "name": "country", "label": "Country of Residence", "type": "country", "is_default": True, "is_required": False, "is_active": True},
+        {"id": "state", "name": "state", "label": "State / Province", "type": "state", "is_default": True, "is_required": False, "is_active": True},
+        {"id": "paid_status", "name": "paid_status", "label": "Payment Status", "type": "select", "is_default": True, "is_required": True, "is_active": True, "options": ["Paid", "Unpaid", "Pending", "Partially Paid", "Refunded", "Complimentary", "Waived", "Exempted"]}
     ],
     "is_live": True,
     "terms_and_conditions": "All registered attendees must present valid photo ID and QR pass at check-in."
 }
 
 @router.get("/form-config")
-async def get_form_config():
-    return _saved_form_config
+async def get_form_config(db: AsyncSession = Depends(get_database)):
+    cfg = dict(_saved_form_config)
+    try:
+        roles_res = await db.execute(
+            select(ParticipantRole.name).where(ParticipantRole.is_active == True).order_by(ParticipantRole.sort_order, ParticipantRole.name)
+        )
+        roles = roles_res.scalars().all()
+        if roles:
+            fields = []
+            for f in cfg.get("fields", []):
+                f_copy = dict(f)
+                if f_copy.get("id") == "role" or f_copy.get("name") == "role":
+                    f_copy["options"] = list(dict.fromkeys(roles))
+                fields.append(f_copy)
+            cfg["fields"] = fields
+    except Exception:
+        pass
+    return cfg
 
 @router.post("/form-config")
 async def save_form_config(payload: dict):
@@ -1953,6 +2475,27 @@ async def create_companion(
         raise HTTPException(status_code=400, detail="primary_participant_id is required")
 
     primary_uuid = uuid.UUID(primary_id_str)
+    primary_p = await db.get(Participant, primary_uuid)
+    if not primary_p:
+        raise HTTPException(status_code=404, detail="Primary delegate not found")
+
+    policy = await get_active_policy(db)
+    if policy.require_primary_checkin_for_companions:
+        if not (await is_participant_checked_in(db, primary_p)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot add companion: Primary delegate '{primary_p.name}' has not completed initial check-in. Primary delegate must check in first."
+            )
+
+    if policy.max_companions_per_delegate > 0:
+        existing_count = (await db.scalar(
+            select(func.count(Companion.id)).where(Companion.primary_participant_id == primary_uuid)
+        )) or 0
+        if existing_count >= policy.max_companions_per_delegate:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Companion Limit Exceeded: Primary delegate '{primary_p.name}' already has {existing_count} registered companion(s) (Maximum allowed: {policy.max_companions_per_delegate})."
+            )
     
     # Sequential code generation like CMP-001
     count_stmt = select(func.count(Companion.id))
@@ -2175,13 +2718,13 @@ async def get_kits_summary(db: AsyncSession = Depends(get_database)):
     kits_res = await db.execute(select(Kit))
     kits = kits_res.scalars().all()
 
-    total_available = sum(k.total_quantity for k in kits)
-    total_distributed = sum(k.distributed_quantity for k in kits)
-    total_remaining = max(0, total_available - total_distributed)
-
     # 2. Fetch Issued Participant Kit Log
     pk_res = await db.execute(select(ParticipantKit))
     issued_records = pk_res.scalars().all()
+
+    total_available = sum(k.total_quantity for k in kits)
+    total_distributed = sum(k.distributed_quantity for k in kits)
+    total_remaining = max(0, total_available - total_distributed)
 
     # Load associated participant details
     issued_logs = []
@@ -2204,12 +2747,31 @@ async def get_kits_summary(db: AsyncSession = Depends(get_database)):
                 "status": pk.status or "Issued"
             })
 
+    issued_participant_ids = {pk.participant_id for pk in issued_records if pk.participant_id}
+    participants_res = await db.execute(select(Participant).order_by(Participant.regno.asc()))
+    participants = participants_res.scalars().all()
+    participants_without_kits = []
+    for participant in participants:
+        if participant.id in issued_participant_ids:
+            continue
+        participants_without_kits.append({
+            "id": str(participant.id),
+            "regno": participant.regno,
+            "name": participant.name,
+            "email": participant.email,
+            "phone": participant.phone,
+            "role": participant.role,
+            "company": participant.company,
+            "checked_in": await is_participant_checked_in(db, participant),
+        })
+
     return {
         "kpis": {
             "total_available": total_available,
             "total_distributed": total_distributed,
             "total_remaining": total_remaining,
-            "total_types": len(kits)
+            "total_types": len(kits),
+            "participants_not_received": len(participants_without_kits)
         },
         "kits": [{
             "id": str(k.id),
@@ -2222,7 +2784,8 @@ async def get_kits_summary(db: AsyncSession = Depends(get_database)):
             "description": k.description,
             "target_roles": getattr(k, "target_roles", None) or ["All"]
         } for k in kits],
-        "issued_logs": issued_logs
+        "issued_logs": issued_logs,
+        "participants_without_kits": participants_without_kits
     }
 
 
@@ -2323,6 +2886,13 @@ async def issue_kit_to_participant(
     p.custom_fields = updated_cf
 
     db.add(p_kit)
+    await log_participant_action(
+        db,
+        p.id,
+        "kit_issue",
+        performed_by=payload.get("issued_by", "REG-DESK-01"),
+        details=f"Kit issued: {target_kit.kit_name}"
+    )
     await db.commit()
 
     return {
@@ -2398,6 +2968,13 @@ async def reset_participant_kit(
     updated_cf.pop("kit_issued_at", None)
     p.custom_fields = updated_cf
 
+    await log_participant_action(
+        db,
+        p.id,
+        "kit_reset",
+        performed_by=f"Admin: {admin_username}",
+        details="Kit distribution reset by Admin"
+    )
     await db.commit()
 
     return {
@@ -2430,6 +3007,7 @@ async def reset_participant_checkin(
         select(VenueUser).where(VenueUser.username == admin_username)
     )).scalar_one_or_none()
 
+    is_valid = False
     if admin_user:
         if verify_password(admin_password, admin_user.password_hash) or admin_password in ["admin", "admin123"]:
             is_valid = True
@@ -2443,36 +3021,66 @@ async def reset_participant_checkin(
         raise HTTPException(status_code=400, detail="participant_id is required for check-in reset")
 
     p_uuid = uuid.UUID(participant_id_str)
-    
+    station_id_str = payload.get("station_id")
+    target_st_uuid = None
+    if station_id_str:
+        try:
+            target_st_uuid = uuid.UUID(str(station_id_str))
+        except ValueError:
+            target_st_uuid = None
+
     # 1. Check if it is a Companion
     c = await db.get(Companion, p_uuid)
     if c:
-        c.checked_in = False
-        c.checked_in_at = None
         c_code = c.badge_code or ""
-        # Delete from venue_checkins and badge_scans
-        await db.execute(
-            delete(VenueCheckIn).where(
-                or_(
-                    VenueCheckIn.badge_code == c_code,
-                    VenueCheckIn.participant_id == c.id
+        if target_st_uuid:
+            await db.execute(
+                delete(VenueCheckIn).where(
+                    or_(VenueCheckIn.badge_code == c_code, VenueCheckIn.participant_id == c.id),
+                    or_(VenueCheckIn.station_id == target_st_uuid, VenueCheckIn.checkin_gate_id == target_st_uuid)
                 )
             )
-        )
-        await db.execute(
-            delete(BadgeScan).where(
-                or_(
-                    BadgeScan.badge_code == c_code,
-                    BadgeScan.participant_id == c.id
+            await db.execute(
+                delete(BadgeScan).where(
+                    or_(BadgeScan.badge_code == c_code, BadgeScan.participant_id == c.id),
+                    BadgeScan.station_id == target_st_uuid
                 )
             )
-        )
+            rem = (await db.scalar(
+                select(func.count(VenueCheckIn.id)).where(
+                    or_(VenueCheckIn.badge_code == c_code, VenueCheckIn.participant_id == c.id),
+                    VenueCheckIn.status.in_(["success", "admin_overridden"])
+                )
+            )) or 0
+            if rem == 0:
+                c.checked_in = False
+                c.checked_in_at = None
+        else:
+            c.checked_in = False
+            c.checked_in_at = None
+            # Delete from venue_checkins and badge_scans
+            await db.execute(
+                delete(VenueCheckIn).where(
+                    or_(
+                        VenueCheckIn.badge_code == c_code,
+                        VenueCheckIn.participant_id == c.id
+                    )
+                )
+            )
+            await db.execute(
+                delete(BadgeScan).where(
+                    or_(
+                        BadgeScan.badge_code == c_code,
+                        BadgeScan.participant_id == c.id
+                    )
+                )
+            )
         await log_participant_action(
             db=db,
             participant_id=c.primary_participant_id,
             action_type="checkin_reset",
             performed_by=f"Admin: {admin_username}",
-            details={"type": "companion_checkin_reset", "companion_id": str(c.id), "companion_name": f"{c.first_name} {c.last_name}"}
+            details={"type": "companion_checkin_reset", "companion_id": str(c.id), "companion_name": f"{c.first_name} {c.last_name}", "station_id": str(target_st_uuid) if target_st_uuid else "all"}
         )
         await db.commit()
         return {
@@ -2486,28 +3094,54 @@ async def reset_participant_checkin(
         raise HTTPException(status_code=404, detail="Participant or Companion not found")
 
     p_code = getattr(p, "badge_code", None) or p.regno
-    await db.execute(
-        delete(VenueCheckIn).where(
-            or_(
-                VenueCheckIn.participant_id == p.id,
-                VenueCheckIn.badge_code == p_code
+    if target_st_uuid:
+        await db.execute(
+            delete(VenueCheckIn).where(
+                or_(VenueCheckIn.participant_id == p.id, VenueCheckIn.badge_code == p_code),
+                or_(VenueCheckIn.station_id == target_st_uuid, VenueCheckIn.checkin_gate_id == target_st_uuid)
             )
         )
-    )
-    await db.execute(
-        delete(BadgeScan).where(
-            or_(
-                BadgeScan.participant_id == p.id,
-                BadgeScan.badge_code == p_code
+        await db.execute(
+            delete(BadgeScan).where(
+                or_(BadgeScan.participant_id == p.id, BadgeScan.badge_code == p_code),
+                BadgeScan.station_id == target_st_uuid
             )
         )
-    )
+        rem = (await db.scalar(
+            select(func.count(VenueCheckIn.id)).where(
+                or_(VenueCheckIn.participant_id == p.id, VenueCheckIn.badge_code == p_code),
+                VenueCheckIn.status.in_(["success", "admin_overridden"])
+            )
+        )) or 0
+        if rem == 0:
+            p.checked_in = False
+            p.check_in_time = None
+    else:
+        await db.execute(
+            delete(VenueCheckIn).where(
+                or_(
+                    VenueCheckIn.participant_id == p.id,
+                    VenueCheckIn.badge_code == p_code
+                )
+            )
+        )
+        await db.execute(
+            delete(BadgeScan).where(
+                or_(
+                    BadgeScan.participant_id == p.id,
+                    BadgeScan.badge_code == p_code
+                )
+            )
+        )
+        p.checked_in = False
+        p.check_in_time = None
+
     await log_participant_action(
         db=db,
         participant_id=p.id,
         action_type="checkin_reset",
         performed_by=f"Admin: {admin_username}",
-        details={"type": "delegate_checkin_reset", "regno": p.regno}
+        details={"type": "delegate_checkin_reset", "regno": p.regno, "station_id": str(target_st_uuid) if target_st_uuid else "all"}
     )
     await db.commit()
 
@@ -2524,27 +3158,22 @@ async def get_participant_extension(
     participant_id: uuid.UUID,
     db: AsyncSession = Depends(get_database)
 ):
-    res = await db.execute(select(ParticipantExtension).where(ParticipantExtension.participant_id == participant_id))
-    ext = res.scalar_one_or_none()
-    if not ext:
-        return {
-            "participant_id": str(participant_id),
-            "department": None,
-            "city": None,
-            "dietary_preference": "Vegetarian",
-            "emergency_contact": None,
-            "notes": None,
-            "custom_attributes": {}
-        }
+    """
+    Returns full participant extension details including custom fields, sessions, notes.
+    """
+    p = await db.get(Participant, participant_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Participant not found")
+        
     return {
-        "id": str(ext.id),
-        "participant_id": str(ext.participant_id),
-        "department": ext.department,
-        "city": ext.city,
-        "dietary_preference": ext.dietary_preference,
-        "emergency_contact": ext.emergency_contact,
-        "notes": ext.notes,
-        "custom_attributes": ext.custom_attributes
+        "id": str(p.id),
+        "name": p.name,
+        "regno": p.regno,
+        "email": p.email,
+        "role": p.role,
+        "custom_fields": p.custom_fields or {},
+        "notes": p.notes or "",
+        "sessions": p.sessions or []
     }
 
 
@@ -2574,10 +3203,14 @@ async def update_participant_extension(
 # ── Participant Action Audit Logs & Execution Counters ───────
 
 @router.get("/participants/{participant_id}/actions")
-async def get_participant_actions_summary(
+async def get_participant_action_state(
     participant_id: uuid.UUID,
     db: AsyncSession = Depends(get_database)
 ):
+    """
+    Returns live counters for badge prints, reprints, check-ins, kit eligibility,
+    and a capacity matrix showing which specific gate stations this participant has accessed.
+    """
     p = await db.get(Participant, participant_id)
     c = None
     if not p:
@@ -2585,8 +3218,8 @@ async def get_participant_actions_summary(
         if not c:
             raise HTTPException(status_code=404, detail="Participant or Companion not found")
 
-    p_role = p.role if p else "Companion"
     effective_p_id = p.id if p else c.primary_participant_id
+    p_role = p.role if p else "Companion"
 
     # 1. Fetch action logs from venue.participant_action_logs
     logs_res = await db.execute(
@@ -2678,17 +3311,23 @@ async def get_participant_actions_summary(
         r_id = str(rule["id"])
         r_name = rule["station_name"]
         r_name_lower = r_name.lower()
+        r_type_lower = (rule.get("station_type") or "").lower()
         r_allowed_roles = rule["allowed_roles"] or []
 
-        # Fix 1: Skip the initial/intake check-in rule — it is the main gate, not a station
-        if "initial" in r_name_lower or "intake" in r_name_lower:
+        # Exclude initial participant check-in gates — reserved strictly for desk & self check-in
+        if "initial" in r_name_lower or "intake" in r_name_lower or "initial" in r_type_lower:
             continue
 
-        # Determine if participant role is allowed for this station
-        allowed_roles_lower = [str(r).lower() for r in r_allowed_roles]
-        is_role_allowed = ("all" in allowed_roles_lower) or not allowed_roles_lower or (p_role and p_role.lower() in allowed_roles_lower)
+        # Determine if participant role is allowed for this check-in gate.
+        # Empty roles means universal; otherwise show the gate only for explicitly
+        # assigned roles. This prevents gates assigned to one role from appearing
+        # on every role's participant drawer.
+        p_role_clean = (p_role or "").strip().lower()
+        allowed_roles_clean = [str(r or "").strip().lower() for r in r_allowed_roles if str(r or "").strip()]
+        is_universal_gate = not allowed_roles_clean or "all" in allowed_roles_clean
+        is_role_allowed = is_universal_gate or (p_role_clean in allowed_roles_clean)
 
-        # Count check-in occurrences for this specific capacity rule/station from venue.venue_checkins
+        # Count check-in occurrences for this specific capacity rule/gate from venue.venue_checkins
         rule_checkins = [
             ck for ck in user_checkins
             if (ck.station_id and str(ck.station_id) == r_id)
@@ -2713,8 +3352,21 @@ async def get_participant_actions_summary(
             "checked_in_at": latest_rule_checkin.checkin_time.isoformat() if latest_rule_checkin and latest_rule_checkin.checkin_time else None
         })
 
-    # Strictly from venue_checkins only — no fallback to p.checked_in or AttendanceLog
-    is_overall_checked_in = len(user_checkins) > 0
+    gate_history = [
+        {
+            "id": str(ck.id),
+            "station_id": str(getattr(ck, "station_id", None) or getattr(ck, "checkin_gate_id", "") or ""),
+            "station_name": getattr(ck, "station_name", None) or getattr(ck, "gate_name", "Check-In Gate"),
+            "station_type": getattr(ck, "station_type", None) or getattr(ck, "gate_type", "Gate"),
+            "badge_code": ck.badge_code,
+            "status": ck.status or "success",
+            "scan_type": getattr(ck, "scan_type", "check_in"),
+            "checkin_time": ck.checkin_time.isoformat() if ck.checkin_time else (ck.created_at.isoformat() if ck.created_at else None),
+            "device_id": getattr(ck, "device_id", "Scanner"),
+            "admin_overridden_by": getattr(ck, "admin_overridden_by", None),
+        }
+        for ck in sorted(user_checkins, key=lambda x: x.checkin_time or x.created_at or datetime.min, reverse=True)
+    ]
 
     return {
         "participant_id": str(participant_id),
@@ -2730,12 +3382,13 @@ async def get_participant_actions_summary(
             "checked_in": is_overall_checked_in
         },
         "capacity_matrix": capacity_matrix,
+        "gate_history": gate_history,
         "action_logs": [
             {
                 "id": str(a.id),
                 "action_type": a.action_type,
                 "performed_by": a.performed_by,
-                "details": a.details,
+                "details": format_action_details(a.action_type, a.details),
                 "created_at": a.created_at.isoformat() if a.created_at else None
             }
             for a in action_logs

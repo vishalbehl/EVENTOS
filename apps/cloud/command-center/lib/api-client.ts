@@ -94,6 +94,9 @@ function toApiError(error: AxiosError<ProblemDetails>): ApiError {
   const status = error.response?.status;
   const requestHeaders = error.config?.headers;
   const responseHeaders = error.response?.headers;
+  const detailCode = problem?.detail && typeof problem.detail === "object" && !Array.isArray(problem.detail)
+    ? (problem.detail as Record<string, unknown>).code
+    : undefined;
 
   let message = "The request could not be completed.";
   if (typeof problem?.detail === "string") {
@@ -113,7 +116,7 @@ function toApiError(error: AxiosError<ProblemDetails>): ApiError {
   return new ApiError({
     message,
     status,
-    code: problem?.code || headerValue(responseHeaders, "x-error-code") || (status ? `HTTP_${status}` : error.code || "NETWORK_ERROR"),
+    code: problem?.code || (typeof detailCode === "string" ? detailCode : undefined) || headerValue(responseHeaders, "x-error-code") || (status ? `HTTP_${status}` : error.code || "NETWORK_ERROR"),
     problem,
     requestId:
       headerValue(responseHeaders, "x-request-id") ||

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "id": "aceternity-background-gradient",
+  "name": "Background Gradient Card",
+  "kind": "component",
+  "group": "Aceternity",
+  "description": "Premium animated gradient card with independently editable content.",
+  "tags": [
+    "aceternity",
+    "card",
+    "gradient",
+    "animation"
+  ],
+  "preview": {
+    "accent": "#8b5cf6",
+    "background": "#070812",
+    "title": "Background Gradient Card",
+    "subtitle": "Editable component"
+  },
+  "componentType": "aceternity-background-gradient",
+  "componentVersion": 1,
+  "htmlFile": "./component.html",
+  "officialSource": {
+    "documentationUrl": "https://ui.aceternity.com/components/background-gradient",
+    "registryUrl": "https://ui.aceternity.com/registry/background-gradient.json",
+    "localRegistryPath": "./registry/background-gradient.json",
+    "author": "Manu Arora <hi@manuarora.in>",
+    "licenseUrl": "https://ui.aceternity.com/licence",
+    "dependencies": [
+      "motion"
+    ]
+  },
+  "settings": [
+    {
+      "groupId": "CONTENT",
+      "properties": [
+        {
+          "id": "data-eyebrow",
+          "type": "Text",
+          "label": "Eyebrow",
+          "target": {
+            "kind": "content",
+            "selector": "p:first-of-type"
+          }
+        },
+        {
+          "id": "data-heading",
+          "type": "Text",
+          "label": "Heading",
+          "target": {
+            "kind": "content",
+            "selector": "h1,h2,h3"
+          }
+        },
+        {
+          "id": "data-description",
+          "type": "Text",
+          "label": "Description",
+          "target": {
+            "kind": "content",
+            "selector": "p:last-of-type"
+          }
+        },
+        {
+          "id": "surface-color",
+          "type": "Color",
+          "label": "Card background",
+          "defaultValue": "#0b0d16",
+          "target": {
+            "kind": "style",
+            "css": "background-color",
+            "selector": ".wb-ac-gradient-surface"
+          }
+        },
+        {
+          "id": "effect-primary",
+          "type": "Color",
+          "label": "Gradient primary",
+          "defaultValue": "#8b5cf6",
+          "target": {
+            "kind": "style",
+            "css": "--ac-primary",
+            "selector": ":self"
+          }
+        },
+        {
+          "id": "effect-secondary",
+          "type": "Color",
+          "label": "Gradient secondary",
+          "defaultValue": "#22d3ee",
+          "target": {
+            "kind": "style",
+            "css": "--ac-secondary",
+            "selector": ":self"
+          }
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "theme": true,
+    "animation": true,
+    "responsive": true
+  }
+}

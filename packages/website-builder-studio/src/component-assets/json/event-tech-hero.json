@@ -1,0 +1,14 @@
+{
+  "id": "event-tech-hero",
+  "canonical": "json",
+  "htmlFile": "../html/event-tech-hero.html",
+  "components": [
+    {
+      "type": "section",
+      "attributes": {
+        "data-component-asset-id": "event-tech-hero"
+      },
+      "components": "event-tech-hero.html"
+    }
+  ]
+}

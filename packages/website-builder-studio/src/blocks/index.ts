@@ -16,7 +16,7 @@ import { registerTypographyBlocks } from './foundation/typographyBlocks';
 import { registerMediaBlocks } from './foundation/mediaBlocks';
 import { registerButtonBlocks } from './foundation/buttonBlocks';
 import { registerFormBlocks } from './foundation/formBlocks';
-import { registerNavigationBlocks, registerUtilityBlocks } from './foundation/navigationBlocks';
+import { registerHeaderBlocks, registerNavigationBlocks, registerUtilityBlocks } from './foundation/navigationBlocks';
 
 // Event blocks
 import { registerHeroBlocks } from './event/heroBlocks';
@@ -39,6 +39,7 @@ export function registerAllBlocks(editor: Editor, snapshot?: EventDataSnapshot):
   registerMediaBlocks(editor);
   registerButtonBlocks(editor);
   registerFormBlocks(editor);
+  registerHeaderBlocks(editor);
   registerNavigationBlocks(editor);
   registerUtilityBlocks(editor);
 

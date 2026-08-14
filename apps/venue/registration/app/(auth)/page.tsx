@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -23,25 +23,25 @@ const OPERATIONAL_MODES: Array<{
   sublabel: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  {
-    id: "registration",
-    label: "Registration",
-    sublabel: "Onsite desk registration and support",
-    icon: UserCheck,
-  },
-  {
-    id: "scanning",
-    label: "Gate Scanning",
-    sublabel: "Live QR camera & gatekeeper rules",
-    icon: ScanLine,
-  },
-  {
-    id: "self_checkin",
-    label: "Self Check-in + Printing",
-    sublabel: "Participant QR kiosk and badge print",
-    icon: Users,
-  },
-];
+    {
+      id: "registration",
+      label: "Registration",
+      sublabel: "Onsite desk registration and support",
+      icon: UserCheck,
+    },
+    {
+      id: "scanning",
+      label: "Gate Scanning",
+      sublabel: "Live QR camera & gatekeeper rules",
+      icon: ScanLine,
+    },
+    {
+      id: "self_checkin",
+      label: "Self Check-in + Printing",
+      sublabel: "Participant QR kiosk and badge print",
+      icon: Users,
+    },
+  ];
 
 const routeForMode = (mode?: AppMode | null) => {
   if (mode === "admin") return "/admin";
@@ -84,7 +84,7 @@ export default function LoginPage() {
   const [pgUser, setPgUser] = useState("postgres");
   const [pgPassword, setPgPassword] = useState("");
   const [sharedPostgresIntent, setSharedPostgresIntent] = useState<"connect" | "create">("connect");
-  
+
   // Default mode selection
   const [selectedMode, setSelectedMode] = useState<OperatorMode>("registration");
   const [assignedNode, setAssignedNode] = useState<VenueNodeAssignment | null>(null);
@@ -97,21 +97,22 @@ export default function LoginPage() {
     const savedTheme = (localStorage.getItem("theme") as "light" | "dark") || "dark";
     setTheme(savedTheme);
     document.documentElement.setAttribute("data-theme", savedTheme);
-
-    if (isAuthenticated && accessToken) {
-      router.push(routeForMode(mode));
-    }
-  }, [isAuthenticated, accessToken, mode, router]);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
     fetchVenueNodeBootstrap()
       .then((bootstrap) => {
-        if (!mounted || !bootstrap?.assignment) return;
-        const assignmentMode = bootstrap.assignment.mode;
-        if (assignmentMode === "registration" || assignmentMode === "scanning" || assignmentMode === "self_checkin") {
+        if (!mounted) return;
+        if (bootstrap?.assignment) {
           setAssignedNode(bootstrap.assignment);
-          setSelectedMode(assignmentMode);
+          const allowed = allowedModesForAssignment(bootstrap.assignment);
+          // If currently selected mode is not allowed for this workstation, auto-select the first allowed mode
+          if (allowed.length > 0 && !allowed.includes(selectedMode)) {
+            setSelectedMode(allowed[0]);
+          }
+        } else {
+          setAssignedNode(null);
         }
       })
       .catch(() => {
@@ -120,7 +121,7 @@ export default function LoginPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [selectedMode]);
 
   useEffect(() => {
     const desktopApi = window.venueDesktop;
@@ -167,23 +168,24 @@ export default function LoginPage() {
       return;
     }
 
+    const allowedModes = allowedModesForAssignment(assignedNode);
+    if (assignedNode && allowedModes.length > 0 && !allowedModes.includes(selectedMode)) {
+      toast.error(`Mode '${selectedMode.toUpperCase()}' is not permitted on this workstation.`);
+      return;
+    }
+
     setLoading(true);
     try {
-      const allowedModes = allowedModesForAssignment(assignedNode);
-      const effectiveMode = assignedNode && allowedModes.includes(selectedMode)
-        ? selectedMode
-        : assignedNode?.mode === "registration" || assignedNode?.mode === "scanning" || assignedNode?.mode === "self_checkin"
-          ? assignedNode.mode
-        : selectedMode;
+      const effectiveMode = selectedMode;
       await authService.login({ email: username, password, mode: effectiveMode }, rememberMe);
       setMode?.(effectiveMode);
-      
+
       sessionStorage.setItem("session_active", "true");
       toast.success(`Authenticated as ${effectiveMode.toUpperCase()} Mode.`);
-      
+
       setTimeout(() => {
         router.push(routeForMode(effectiveMode));
-      }, 500);
+      }, 300);
     } catch (error: any) {
       toast.error(error.message || "Authentication failed.");
       setLoading(false);
@@ -261,8 +263,6 @@ export default function LoginPage() {
       setPostgresBusy(false);
     }
   };
-
-  if (isAuthenticated && accessToken) return null;
 
   if (desktopRuntime && (setupChecking || !setupComplete)) {
     return (
@@ -457,19 +457,19 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen w-full bg-[var(--base)] text-[var(--text)] font-sans overflow-hidden transition-colors">
-      
+    <div className="flex h-screen max-h-screen w-screen bg-[var(--base)] text-[var(--text)] font-sans overflow-hidden transition-colors">
+
       {/* Left Sidebar (Command Center Branding Area) */}
-      <div className="hidden lg:flex lg:w-5/12 flex-col justify-between bg-[var(--surf)] border-r border-[var(--border)] p-12 relative overflow-hidden">
-        <div className="relative z-10 space-y-8">
+      <div className="hidden lg:flex lg:w-5/12 h-full flex-col justify-between bg-[var(--surf)] border-r border-[var(--border)] p-8 xl:p-10 relative overflow-hidden shrink-0">
+        <div className="relative z-10 space-y-6">
           {/* Metal Emblem Brand Header */}
-          <div className="flex items-center gap-3 mb-6">
-            <span className="grid size-12 shrink-0 place-items-center overflow-visible">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="grid size-11 shrink-0 place-items-center overflow-visible">
               <img
                 src="/brand/eventos-emblem-metal.png"
                 alt="Eventos Emblem"
-                width={48}
-                height={48}
+                width={44}
+                height={44}
                 className="size-full scale-[2.05] object-contain"
                 onError={(e) => {
                   (e.target as HTMLElement).style.display = "none";
@@ -477,70 +477,69 @@ export default function LoginPage() {
               />
             </span>
             <div>
-              <span className="text-2xl font-black uppercase tracking-[0.25em] text-[var(--text)] block leading-none">
+              <span className="text-xl font-black uppercase tracking-[0.25em] text-[var(--text)] block leading-none">
                 EVENT<span className="text-[var(--acc)]">OS</span>
               </span>
-              <span className="block text-xs font-bold tracking-widest text-[var(--pri)] mt-1.5 uppercase">
+              <span className="block text-[11px] font-bold tracking-widest text-[var(--pri)] mt-1 uppercase">
                 Registration Software
               </span>
             </div>
           </div>
-          
+
           <div>
-            <h2 className="text-3xl font-black text-[var(--text)] tracking-tight leading-tight">
-              Onsite Event & Gateway Terminal
+            <h2 className="text-2xl xl:text-3xl font-black text-[var(--text)] tracking-tight leading-tight">
+              Onsite Event Registration Software
             </h2>
-            <p className="text-sm text-[var(--muted)] font-medium mt-2">
-              High-availability local edge server for delegate intake, badge printing, check-in gates, and LAN sync.
+            <p className="text-xs xl:text-sm text-[var(--muted)] font-medium mt-1.5">
+              High-availability local edge server for delegate registration, badge printing, check-in, and data sync.
             </p>
           </div>
-          
-          <div className="space-y-6 pt-4 border-t border-[var(--border)]">
-            <div className="flex gap-4 items-start">
-              <div className="w-10 h-10 rounded-xl bg-[var(--pri)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
-                <WifiOff className="w-5 h-5" />
+
+          <div className="space-y-4 pt-3 border-t border-[var(--border)]">
+            <div className="flex gap-3.5 items-start">
+              <div className="w-9 h-9 rounded-xl bg-[var(--pri)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
+                <WifiOff className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="font-extrabold text-sm text-[var(--text)] uppercase tracking-wider">100% LAN Edge Offline Support</h3>
-                <p className="text-xs text-[var(--muted)] mt-0.5">Operates seamlessly without active cloud connection</p>
+                <h3 className="font-extrabold text-xs xl:text-sm text-[var(--text)] uppercase tracking-wider">100% Local/Offline Support</h3>
+                <p className="text-[11px] text-[var(--muted)] mt-0.5">Operates seamlessly without internet connection</p>
               </div>
             </div>
 
-            <div className="flex gap-4 items-start">
-              <div className="w-10 h-10 rounded-xl bg-[var(--sec)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
-                <ScanLine className="w-5 h-5" />
+            <div className="flex gap-3.5 items-start">
+              <div className="w-9 h-9 rounded-xl bg-[var(--sec)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
+                <ScanLine className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="font-extrabold text-sm text-[var(--text)] uppercase tracking-wider">Live Camera & QR Scan Terminal</h3>
-                <p className="text-xs text-[var(--muted)] mt-0.5">Capacity gatekeeper limits & admin override credentials</p>
+                <h3 className="font-extrabold text-xs xl:text-sm text-[var(--text)] uppercase tracking-wider">Live Camera & QR Scan Mode</h3>
+                <p className="text-[11px] text-[var(--muted)] mt-0.5">Delegate gatekeeper limits</p>
               </div>
             </div>
 
-            <div className="flex gap-4 items-start">
-              <div className="w-10 h-10 rounded-xl bg-[var(--card)] border border-[var(--border)] text-[var(--text)] flex items-center justify-center font-black shrink-0 shadow-md">
-                <Settings className="w-5 h-5" />
+            <div className="flex gap-3.5 items-start">
+              <div className="w-9 h-9 rounded-xl bg-[var(--card)] border border-[var(--border)] text-[var(--text)] flex items-center justify-center font-black shrink-0 shadow-md">
+                <Settings className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="font-extrabold text-sm text-[var(--text)] uppercase tracking-wider">4 Operator Modes + Admin</h3>
-                <p className="text-xs text-[var(--muted)] mt-0.5">Registration Desk • Gate Scanning • Self Check-in + Printing</p>
+                <h3 className="font-extrabold text-xs xl:text-sm text-[var(--text)] uppercase tracking-wider">3 Operator Modes + Admin</h3>
+                <p className="text-[11px] text-[var(--muted)] mt-0.5">Registration Desk • Gate Scanning • Self Check-in</p>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="relative z-10 flex items-center justify-between text-xs text-[var(--muted)] pt-8 border-t border-[var(--border)] font-mono">
-          <span>Â© 2026 EVENTOS OS v1.0</span>
-          <span>PostgreSQL LAN Sync Active</span>
+        <div className="relative z-10 flex items-center justify-between text-[11px] text-[var(--muted)] pt-4 border-t border-[var(--border)] font-mono">
+          <span>© 2026 EVENTOS OS v1.0</span>
         </div>
       </div>
 
       {/* Right Login Area */}
-      <div className="flex-1 flex flex-col justify-between p-8 sm:p-12 lg:p-16 max-w-[850px] w-full mx-auto">
+      <div className="flex-1 h-full flex flex-col justify-between p-6 sm:p-8 xl:p-10 max-w-[750px] w-full mx-auto overflow-hidden">
         {/* Top Header Controls */}
-        <div className="flex justify-end items-center gap-4">
+        <div className="flex justify-end items-center gap-4 shrink-0">
           <button
             onClick={toggleTheme}
-            className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold"
+            className="p-2 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold"
           >
             {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-500" />}
             <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
@@ -548,27 +547,27 @@ export default function LoginPage() {
         </div>
 
         {/* Center Login Form */}
-        <div className="w-full max-w-xl mx-auto space-y-8 my-auto">
+        <div className="w-full max-w-xl mx-auto space-y-5 my-auto">
           <div>
-            <h2 className="text-3xl font-black tracking-tight text-[var(--text)]">Authenticate Terminal Access</h2>
-            <p className="text-xs text-[var(--muted)] font-bold uppercase tracking-wider mt-1.5">
+            <h2 className="text-2xl xl:text-3xl font-black tracking-tight text-[var(--text)]">Authenticate Terminal Access</h2>
+            <p className="text-xs text-[var(--muted)] font-bold uppercase tracking-wider mt-1">
               Select operational terminal mode & sign in
             </p>
           </div>
-          
-          <form onSubmit={handleLogin} className="space-y-6">
-            
+
+          <form onSubmit={handleLogin} className="space-y-4">
+
             {/* Mode Selection Cards */}
-            <div className="space-y-2.5">
-              <label className="text-xs font-black uppercase tracking-wider text-[var(--muted)] block">Operator Modes</label>
+            <div className="space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] block">Operator Modes</label>
               {assignedNode && (
-                <div className="rounded-2xl border border-[var(--pri)]/25 bg-[var(--pri)]/10 px-4 py-3 text-xs font-bold text-[var(--text)]">
+                <div className="rounded-xl border border-[var(--pri)]/25 bg-[var(--pri)]/10 px-3.5 py-2 text-xs font-bold text-[var(--text)]">
                   This workstation is provisioned for{" "}
                   <span className="font-black uppercase text-[var(--pri)]">{assignedNode.station_id || assignedNode.mode}</span>.
                   Only allowed modes are active on this PC.
                 </div>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {OPERATIONAL_MODES.map((item) => {
                   const Icon = item.icon;
                   const isSelected = selectedMode === item.id;
@@ -582,53 +581,60 @@ export default function LoginPage() {
                         if (!isLockedOut) setSelectedMode(item.id);
                       }}
                       className={cn(
-                        "group relative flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all cursor-pointer text-center outline-none select-none",
-                        isLockedOut && "cursor-not-allowed opacity-35 grayscale",
-                        isSelected
-                          ? "border-[var(--pri)] bg-[var(--raised)] shadow-lg shadow-[var(--pri)]/5 ring-1 ring-[var(--pri)]/20"
+                        "group relative flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer text-center outline-none select-none",
+                        isLockedOut
+                          ? "cursor-not-allowed opacity-40 grayscale bg-[var(--surf)] border-dashed border-[var(--border)]"
+                          : isSelected
+                          ? "border-[var(--pri)] bg-[var(--raised)] shadow-md shadow-[var(--pri)]/5 ring-1 ring-[var(--pri)]/20"
                           : "border-[var(--border)] bg-[var(--card)] hover:border-[color-mix(in_srgb,var(--border)_50%,var(--pri))] hover:bg-[var(--raised)]/60"
                       )}
                     >
                       {/* Top-Right Selection Indicator Badge */}
                       <div
                         className={cn(
-                          "absolute top-2.5 right-2.5 size-4 rounded-full flex items-center justify-center transition-all duration-200",
-                          isSelected
+                          "absolute top-2 right-2 size-3.5 rounded-full flex items-center justify-center transition-all duration-200",
+                          isLockedOut
+                            ? "bg-red-500/10 text-red-400 border border-red-500/30"
+                            : isSelected
                             ? "bg-[var(--pri)] text-[var(--primary-contrast)] scale-100 opacity-100"
                             : "border border-[var(--border)] group-hover:border-[var(--muted)] scale-90 opacity-60"
                         )}
                       >
-                        {isSelected && <Check className="size-2.5 stroke-[3.5]" />}
+                        {isLockedOut ? <Lock className="size-2 text-red-400" /> : isSelected && <Check className="size-2 stroke-[3.5]" />}
                       </div>
 
                       {/* Icon Container */}
                       <div
                         className={cn(
-                          "size-10 rounded-xl flex items-center justify-center mb-2.5 transition-all duration-200",
-                          isSelected
-                            ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-md"
+                          "size-8 rounded-lg flex items-center justify-center mb-1.5 transition-all duration-200",
+                          isSelected && !isLockedOut
+                            ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm"
                             : "bg-[var(--surf)] border border-[var(--border)] text-[var(--muted)] group-hover:text-[var(--text)] group-hover:border-[var(--pri)]/30"
                         )}
                       >
-                        <Icon className="size-5" />
+                        <Icon className="size-4" />
                       </div>
 
                       {/* Title & Description */}
                       <span
                         className={cn(
-                          "font-black text-xs uppercase tracking-wider transition-colors",
-                          isSelected ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]"
+                          "font-black text-[11px] uppercase tracking-wider transition-colors",
+                          isLockedOut ? "text-[var(--muted)] line-through" : isSelected ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]"
                         )}
                       >
                         {item.label}
                       </span>
                       <span
                         className={cn(
-                          "text-[10px] mt-1 font-semibold leading-tight transition-colors",
-                          isSelected ? "text-[var(--text)]/80" : "text-[var(--muted)]/70 group-hover:text-[var(--muted)]"
+                          "text-[9px] mt-0.5 font-semibold leading-tight line-clamp-1 transition-colors",
+                          isLockedOut
+                            ? "text-red-400 font-bold"
+                            : isSelected
+                            ? "text-[var(--text)]/80"
+                            : "text-[var(--muted)]/70 group-hover:text-[var(--muted)]"
                         )}
                       >
-                        {item.sublabel}
+                        {isLockedOut ? "Not allowed on PC" : item.sublabel}
                       </span>
                     </button>
                   );
@@ -637,28 +643,27 @@ export default function LoginPage() {
             </div>
 
             {/* Input Credentials */}
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-black uppercase tracking-wider text-[var(--muted)]">Username or Email</label>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)]">Username or Email</label>
                 <Input
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin or admin@eventos.com"
+                  placeholder="Username or Email"
                   required
-                  className="h-12 bg-[var(--surf)] border-[var(--border)] text-sm font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
+                  className="h-11 bg-[var(--surf)] border-[var(--border)] text-xs font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
                 />
               </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-black uppercase tracking-wider text-[var(--muted)]">Password</label>
+              <div className="space-y-1">
+                <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)]">Password</label>
                 <Input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="admin123"
+                  placeholder="Password"
                   required
-                  className="h-12 bg-[var(--surf)] border-[var(--border)] text-sm font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
+                  className="h-11 bg-[var(--surf)] border-[var(--border)] text-xs font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
                 />
               </div>
             </div>
@@ -667,7 +672,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-12 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] font-extrabold text-sm uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-2"
+              className="w-full h-11 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
@@ -675,30 +680,23 @@ export default function LoginPage() {
                 </>
               ) : (
                 <>
-                  <span>Launch {selectedMode.toUpperCase()} Terminal</span>
+                  <span>Login to {selectedMode.toUpperCase()}</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </Button>
 
-            <div className="border-t border-[var(--border)] pt-4 text-center">
+            <div className="border-t border-[var(--border)] pt-3 text-center">
               <button
                 type="button"
                 onClick={() => setAdminLoginOpen(true)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-2.5 text-xs font-black uppercase tracking-wider text-[var(--text)] transition-colors hover:bg-[var(--raised)]"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3.5 py-2 text-[11px] font-black uppercase tracking-wider text-[var(--text)] transition-colors hover:bg-[var(--raised)]"
               >
-                <ShieldCheck className="size-4 text-[var(--pri)]" />
+                <ShieldCheck className="size-3.5 text-[var(--pri)]" />
                 Login as Admin Mode
               </button>
-              <p className="mt-2 text-[10px] font-semibold text-[var(--muted)]">
-                Admin is a separate management console and is not an operator mode.
-              </p>
             </div>
           </form>
-        </div>
-
-        <div className="text-center text-[10px] text-[var(--muted)] font-mono">
-          Connected to PostgreSQL Local Database Engine
         </div>
       </div>
 

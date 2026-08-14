@@ -37,6 +37,7 @@ interface KitCatalogItem {
   distributed_quantity: number;
   remaining_quantity: number;
   description?: string;
+  target_roles?: string[];
 }
 
 interface KitIssuedLog {
@@ -51,6 +52,17 @@ interface KitIssuedLog {
   issued_at?: string;
   issued_by?: string;
   status: string;
+}
+
+interface KitPendingParticipant {
+  id: string;
+  regno: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+  company?: string;
+  checked_in?: boolean;
 }
 
 interface KitParticipant {
@@ -73,17 +85,21 @@ export default function KitDistributionPage() {
     total_distributed: 0,
     total_remaining: 0,
     total_types: 0,
+    participants_not_received: 0,
   });
   const [kits, setKits] = useState<KitCatalogItem[]>([]);
   const [issuedLogs, setIssuedLogs] = useState<KitIssuedLog[]>([]);
+  const [participantsWithoutKits, setParticipantsWithoutKits] = useState<KitPendingParticipant[]>([]);
   const [loading, setLoading] = useState(true);
   const [showKitScanner, setShowKitScanner] = useState(false);
   const [kitScanQuery, setKitScanQuery] = useState("");
   const [kitLookupBusy, setKitLookupBusy] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<KitParticipant | null>(null);
+  const [kitSearchResults, setKitSearchResults] = useState<KitParticipant[]>([]);
   const [selectedKitId, setSelectedKitId] = useState("");
   const [issuingKit, setIssuingKit] = useState(false);
   const [showKitCatalogModal, setShowKitCatalogModal] = useState(false);
+  const [showNotReceivedModal, setShowNotReceivedModal] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPanelOpen, setCameraPanelOpen] = useState(false);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
@@ -122,6 +138,7 @@ export default function KitDistributionPage() {
         if (res.kpis) setKpis(res.kpis);
         if (Array.isArray(res.kits)) setKits(res.kits);
         if (Array.isArray(res.issued_logs)) setIssuedLogs(res.issued_logs);
+        if (Array.isArray(res.participants_without_kits)) setParticipantsWithoutKits(res.participants_without_kits);
       }
     } catch (err) {
       console.error("Failed to fetch kit distribution data:", err);
@@ -203,11 +220,37 @@ export default function KitDistributionPage() {
     }
   };
 
-  const lookupParticipantForKit = async (rawQuery?: string) => {
+  const issueKitToParticipant = async (participant: KitParticipant, kitId?: string) => {
+    setIssuingKit(true);
+    try {
+      await apiClient.post("/venue/registration/kits/issue", {
+        participant_id: participant.id,
+        kit_id: kitId || undefined,
+        issued_by: "REGISTRATION-KIT-DESK",
+      });
+      toast.success(`Kit issued to ${participant.name}.`);
+      setSelectedParticipant(null);
+      setKitSearchResults([]);
+      setKitScanQuery("");
+      setSelectedKitId("");
+      await fetchData();
+    } catch (err: any) {
+      const msg = typeof err === "string" ? err : err?.message || err?.detail || "Kit could not be issued.";
+      toast.error(msg);
+    } finally {
+      setIssuingKit(false);
+    }
+  };
+
+  const lookupParticipantForKit = async (rawQuery?: string, options?: { autoIssue?: boolean }) => {
     const q = (rawQuery || kitScanQuery).trim();
     if (!q) {
       toast.error("Scan QR or enter registration code, name, email, or phone.");
       return;
+    }
+    if (!options?.autoIssue) {
+      setSelectedParticipant(null);
+      setKitSearchResults([]);
     }
     setKitLookupBusy(true);
     try {
@@ -219,25 +262,44 @@ export default function KitDistributionPage() {
           .filter(Boolean)
           .some((value) => String(value).toLowerCase() === lower)
       );
-      const participant = exact || items[0] || null;
+      if (!options?.autoIssue && items.length > 1) {
+        setKitSearchResults(items);
+        toast.success(`Found ${items.length} matching participants. Select the correct one.`);
+        return;
+      }
+
+      const participant = options?.autoIssue ? exact : exact || items[0] || null;
       if (!participant) {
         setSelectedParticipant(null);
+        setKitSearchResults([]);
         toast.error("No participant found for this QR/details.");
         return;
       }
-      setSelectedParticipant(participant);
-      const eligibleKit = kits.find((kit: any) => {
-        const roles = (kit.target_roles || ["All"]).map((role: string) => role.toLowerCase());
-        const participantRole = (participant.role || "").toLowerCase();
-        return roles.includes("all") || roles.includes(participantRole) || String(kit.category || "").toLowerCase() === participantRole;
-      });
-      setSelectedKitId(eligibleKit?.id || kits[0]?.id || "");
-      toast.success(`Loaded ${participant.name}.`);
+      const kitId = selectParticipantForKit(participant);
+      if (options?.autoIssue) {
+        toast.success(`Scanned ${participant.name}. Issuing kit automatically...`);
+        await issueKitToParticipant(participant, kitId);
+      } else {
+        toast.success(`Loaded ${participant.name}. Review details, then issue kit.`);
+      }
     } catch (err: any) {
       toast.error(err?.message || "Participant lookup failed.");
     } finally {
       setKitLookupBusy(false);
     }
+  };
+
+  const selectParticipantForKit = (participant: KitParticipant) => {
+    setSelectedParticipant(participant);
+    setKitSearchResults([]);
+    const eligibleKit = kits.find((kit: any) => {
+      const roles = (kit.target_roles || ["All"]).map((role: string) => role.toLowerCase());
+      const participantRole = (participant.role || "").toLowerCase();
+      return roles.includes("all") || roles.includes(participantRole) || String(kit.category || "").toLowerCase() === participantRole;
+    });
+    const kitId = eligibleKit?.id || kits[0]?.id || "";
+    setSelectedKitId(kitId);
+    return kitId;
   };
 
   const handleIssueKit = async () => {
@@ -254,6 +316,7 @@ export default function KitDistributionPage() {
       });
       toast.success(`Kit issued to ${selectedParticipant.name}.`);
       setSelectedParticipant(null);
+      setKitSearchResults([]);
       setKitScanQuery("");
       setSelectedKitId("");
       await fetchData();
@@ -329,7 +392,7 @@ export default function KitDistributionPage() {
     if (value && value !== lastQrRef.current && !kitLookupBusy) {
       lastQrRef.current = value;
       setKitScanQuery(value);
-      void lookupParticipantForKit(value);
+      void lookupParticipantForKit(value, { autoIssue: true });
       window.setTimeout(() => {
         if (lastQrRef.current === value) lastQrRef.current = "";
       }, 2200);
@@ -364,6 +427,10 @@ export default function KitDistributionPage() {
 
   const claimPercentage =
     kpis.total_available > 0 ? Math.round((kpis.total_distributed / kpis.total_available) * 100) : 0;
+  const checkedInWithoutKit = useMemo(
+    () => participantsWithoutKits.filter((participant) => participant.checked_in).length,
+    [participantsWithoutKits]
+  );
 
   return (
     <div className="flex-1 flex flex-col min-h-0 space-y-4">
@@ -392,8 +459,8 @@ export default function KitDistributionPage() {
         </div>
       </div>
 
-      {/* 4 KPI STAT CARDS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+      {/* 5 KPI STAT CARDS */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 shrink-0">
         <button
           type="button"
           onClick={() => setShowKitCatalogModal(true)}
@@ -438,6 +505,21 @@ export default function KitDistributionPage() {
             <span className="text-2xl font-black text-[var(--text)] tracking-tight">{claimPercentage}%</span>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowNotReceivedModal(true)}
+          className="bg-[var(--card)] p-4 rounded-2xl border border-[var(--border)] shadow-sm flex items-center gap-4 text-left transition hover:border-rose-500/50 hover:bg-[var(--raised)]"
+        >
+          <div className="w-12 h-12 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center font-black shrink-0">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <span className="text-[10px] font-black uppercase text-[var(--muted)] tracking-wider block">Participants Not Received</span>
+            <span className="text-2xl font-black text-[var(--text)] tracking-tight">{kpis.participants_not_received ?? participantsWithoutKits.length}</span>
+            <span className="mt-0.5 block text-[9px] font-black uppercase tracking-wider text-rose-500">{checkedInWithoutKit} checked-in pending</span>
+          </div>
+        </button>
       </div>
 
       {showKitScanner && (
@@ -477,6 +559,44 @@ export default function KitDistributionPage() {
                 Find Participant
               </Button>
             </form>
+
+            {kitSearchResults.length > 0 && (
+              <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surf)]">
+                <div className="border-b border-[var(--border)] px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">
+                    {kitSearchResults.length} matching participant(s) found
+                  </p>
+                </div>
+                <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                  {kitSearchResults.map((participant) => (
+                    <button
+                      key={participant.id}
+                      type="button"
+                      onClick={() => selectParticipantForKit(participant)}
+                      className="flex w-full items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-2.5 text-left transition last:border-b-0 hover:bg-[var(--raised)]"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs font-black text-[var(--acc)]">{participant.regno}</span>
+                          <span className="truncate text-sm font-black text-[var(--text)]">{participant.name}</span>
+                        </div>
+                        <p className="mt-0.5 truncate text-[11px] font-semibold text-[var(--muted)]">
+                          {participant.email || participant.phone || "No contact"} {participant.company ? `· ${participant.company}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className="rounded-full border border-[var(--border)] bg-[var(--card)] px-2 py-0.5 text-[9px] font-black uppercase text-[var(--text)]">
+                          {participant.role || "Delegate"}
+                        </span>
+                        <span className={participant.is_checked_in || participant.checked_in ? "text-[9px] font-black uppercase text-emerald-500" : "text-[9px] font-black uppercase text-amber-500"}>
+                          {participant.is_checked_in || participant.checked_in ? "Checked in" : "Not checked in"}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {cameraPanelOpen && (
               <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-black">
@@ -531,7 +651,7 @@ export default function KitDistributionPage() {
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="hidden">
                   <label className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Kit to issue</label>
                   <select
                     value={selectedKitId}
@@ -541,15 +661,20 @@ export default function KitDistributionPage() {
                     <option value="">Auto-select eligible kit</option>
                     {kits.map((kit) => (
                       <option key={kit.id} value={kit.id}>
-                        {kit.kit_name} · Remaining {kit.remaining_quantity}
+                        {kit.kit_name}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <Button onClick={handleIssueKit} disabled={issuingKit} className="h-11 w-full bg-purple-600 text-xs font-black uppercase tracking-wider text-white hover:bg-purple-700">
+                <Button
+                  type="button"
+                  onClick={handleIssueKit}
+                  disabled={issuingKit || kitLookupBusy}
+                  className="h-11 w-full bg-purple-600 text-xs font-black uppercase tracking-wider text-white hover:bg-purple-700 disabled:opacity-60"
+                >
                   {issuingKit ? <RefreshCw className="mr-2 size-4 animate-spin" /> : <Package className="mr-2 size-4" />}
-                  Issue Kit
+                  {issuingKit ? "Issuing Kit..." : "Issue Kit"}
                 </Button>
               </div>
             ) : (
@@ -738,7 +863,6 @@ export default function KitDistributionPage() {
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   {kits.map((kit) => {
                     const roles = (kit as any).target_roles || ["All"];
-                    const pct = kit.total_quantity > 0 ? Math.round((kit.distributed_quantity / kit.total_quantity) * 100) : 0;
                     return (
                       <div key={kit.id} className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-4 shadow-sm space-y-3">
                         <div className="flex items-start justify-between">
@@ -758,13 +882,100 @@ export default function KitDistributionPage() {
                             ))}
                           </div>
                         </div>
-                        <div className="space-y-1 pt-2 border-t border-[var(--border)] text-[10px] font-bold text-[var(--muted)] flex justify-between">
-                          <span>Issued: {kit.distributed_quantity} / {kit.total_quantity} ({pct}%)</span>
-                          <span className="text-emerald-500">Remaining: {kit.remaining_quantity}</span>
+                        <div className="space-y-1 pt-2 border-t border-[var(--border)] text-[10px] font-bold text-[var(--muted)]">
+                          <span>Participant issue counts are shown in the audit table, not on catalogue cards.</span>
                         </div>
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showNotReceivedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="flex max-h-[86vh] w-full max-w-6xl flex-col rounded-3xl border border-[var(--border)] bg-[var(--card)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--border)] p-5">
+              <div className="flex items-center gap-3">
+                <div className="grid size-11 place-items-center rounded-2xl bg-rose-500/10 text-rose-500">
+                  <AlertTriangle className="size-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[var(--text)]">Participants Not Received Kit</h3>
+                  <p className="text-xs font-semibold text-[var(--muted)]">
+                    Participants with no kit issue record yet. Checked-in participants can receive a kit immediately.
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowNotReceivedModal(false)} className="rounded-xl p-2 text-[var(--muted)] transition hover:bg-[var(--raised)] hover:text-[var(--text)]">
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 border-b border-[var(--border)] p-5 sm:grid-cols-3">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surf)] p-4">
+                <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Total Pending</span>
+                <span className="text-2xl font-black text-[var(--text)]">{participantsWithoutKits.length}</span>
+              </div>
+              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                <span className="block text-[10px] font-black uppercase tracking-wider text-emerald-500">Checked-in Pending</span>
+                <span className="text-2xl font-black text-emerald-500">{checkedInWithoutKit}</span>
+              </div>
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
+                <span className="block text-[10px] font-black uppercase tracking-wider text-amber-500">Need Check-in First</span>
+                <span className="text-2xl font-black text-amber-500">{participantsWithoutKits.length - checkedInWithoutKit}</span>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto p-5 custom-scrollbar">
+              {participantsWithoutKits.length === 0 ? (
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--surf)] p-10 text-center">
+                  <CheckCircle2 className="mx-auto size-10 text-emerald-500" />
+                  <p className="mt-3 text-sm font-black text-[var(--text)]">Everyone has received a kit</p>
+                  <p className="mt-1 text-xs font-semibold text-[var(--muted)]">No pending participant-kit records found.</p>
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[var(--surf)] text-[10px] font-black uppercase tracking-widest text-[var(--muted)]">
+                      <tr>
+                        <th className="p-3.5">Reg Code</th>
+                        <th className="p-3.5">Participant</th>
+                        <th className="p-3.5">Role</th>
+                        <th className="p-3.5">Company</th>
+                        <th className="p-3.5">Check-in State</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)] font-semibold text-[var(--text)]">
+                      {participantsWithoutKits.map((participant) => (
+                        <tr key={participant.id} className="transition hover:bg-[var(--raised)]">
+                          <td className="p-3.5 font-mono text-xs font-bold text-[var(--acc)]">{participant.regno}</td>
+                          <td className="p-3.5">
+                            <div className="text-sm font-bold text-[var(--text)]">{participant.name}</div>
+                            <div className="font-mono text-[11px] text-[var(--muted)]">{participant.email || participant.phone || "No contact"}</div>
+                          </td>
+                          <td className="p-3.5">
+                            <span className="rounded-full border border-[var(--border)] bg-[var(--raised)] px-2.5 py-1 text-[10px] font-black uppercase text-[var(--text)]">
+                              {participant.role || "Delegate"}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-[var(--muted)]">{participant.company || "N/A"}</td>
+                          <td className="p-3.5">
+                            <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-black uppercase ${
+                              participant.checked_in
+                                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
+                                : "border-amber-500/20 bg-amber-500/10 text-amber-600"
+                            }`}>
+                              {participant.checked_in ? "Ready for Kit" : "Needs Check-in"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

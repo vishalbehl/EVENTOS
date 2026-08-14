@@ -252,7 +252,19 @@ from app.modules.procurement.models import (
 
 # V1 pricing template models retain their existing templates schema.
 from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
-from app.modules.templates.models import TemplateInstallation
+from app.modules.templates.models import TemplateCategory, TemplateInstallation, WebsiteTemplate, WebsiteTemplateDraft, WebsiteTemplatePreview, WebsiteTemplateVersion
+from app.modules.website_builder.models import (
+    WebsiteEditorSession,
+    WebsiteFormSubmission,
+    WebsiteMutationRequest,
+    WebsiteSite,
+    WebsiteSiteAssetRef,
+    WebsiteSiteDeployment,
+    WebsiteSiteDomain,
+    WebsiteSiteDraft,
+    WebsiteSiteLinkIndex,
+    WebsiteSiteRevision,
+)
 
 # design_system models
 from app.modules.design_system.models import (

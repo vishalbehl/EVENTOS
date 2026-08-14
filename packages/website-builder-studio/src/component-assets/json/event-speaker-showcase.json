@@ -1,0 +1,14 @@
+{
+  "id": "event-speaker-showcase",
+  "canonical": "json",
+  "htmlFile": "../html/event-speaker-showcase.html",
+  "components": [
+    {
+      "type": "section",
+      "attributes": {
+        "data-component-asset-id": "event-speaker-showcase"
+      },
+      "components": "event-speaker-showcase.html"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import { getErrorMessage } from "./utils"
 export interface ApiError {
   message: string
   status?: number
+  code?: string
   details?: any
 }
 
@@ -60,14 +61,17 @@ class ApiClient {
         }
 
         if (error.response) {
+          const responseBody = error.response.data as any
+          const detail = responseBody?.detail
           apiError.status = error.response.status
           apiError.message = getErrorMessage(
-            (error.response.data as any)?.detail ??
-              (error.response.data as any)?.message ??
+            detail ??
+              responseBody?.message ??
               error.message,
             "Something went wrong"
           )
-          apiError.details = error.response.data
+          apiError.code = responseBody?.code ?? (detail && typeof detail === "object" ? detail.code : undefined)
+          apiError.details = responseBody
 
           if (error.response.status === 401 && typeof window !== "undefined") {
             try {

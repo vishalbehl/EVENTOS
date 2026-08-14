@@ -96,6 +96,19 @@ async def lifespan(app: FastAPI):
         app.state.scheduler.stop()
         
     redis_task.cancel()
+    try:
+        await redis_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+
+    try:
+        from app.websocket.connection import manager
+        await manager.close()
+    except Exception as e:
+        logger.warning(f"Error closing redis connection on shutdown: {e}")
+
     logger.info("Shutting down Venue Server")
 
 app_fastapi = FastAPI(

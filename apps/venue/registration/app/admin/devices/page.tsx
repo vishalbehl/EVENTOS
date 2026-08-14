@@ -34,7 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
-import { cn } from "@/lib/utils";
+import { cn, copyToClipboard as safeCopyToClipboard } from "@/lib/utils";
 import { saveVenueNodeConfiguration } from "@/lib/node-workstation";
 
 interface NetworkAdapter {
@@ -338,11 +338,10 @@ export default function AdminDevicesPage() {
           assignment_id: binding.assignment_id,
           enrollment_token: binding.enrollment_token,
         };
-        // If Admin is binding this same workstation, provision its browser
-        // immediately. Remote workstations still receive the copied config.
-        if (selectedDiscovered.is_local) saveVenueNodeConfiguration(nodeConfiguration);
-        await navigator.clipboard.writeText(JSON.stringify(nodeConfiguration, null, 2));
-        toast.info("Secure node configuration copied. Paste it into the assigned workstation only.");
+        // If Admin is binding this same workstation, provision its browser immediately.
+        if (selectedDiscovered.is_local) {
+          saveVenueNodeConfiguration(nodeConfiguration);
+        }
       }
       setIsBindModalOpen(false);
       setSelectedDiscovered(null);
@@ -412,9 +411,13 @@ export default function AdminDevicesPage() {
     }
   };
 
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`${label} copied to clipboard!`);
+  const copyToClipboard = async (text: string, label: string) => {
+    const ok = await safeCopyToClipboard(text);
+    if (ok) {
+      toast.success(`${label} copied to clipboard!`);
+    } else {
+      toast.error(`Could not copy ${label}`);
+    }
   };
 
   const currentAdapter = adapters.find((a) => a.name === selectedAdapterName);
@@ -905,7 +908,9 @@ export default function AdminDevicesPage() {
                     >
                       <option value="">Select {bindMode === "scanning" ? "check-in gate" : "desk / counter"}</option>
                       {bindMode === "scanning"
-                        ? capacityRules.map((rule) => <option key={rule.id} value={rule.id}>{rule.station_name}</option>)
+                        ? capacityRules
+                            .filter((rule) => !rule.station_name?.toLowerCase().includes("initial") && !rule.station_name?.toLowerCase().includes("intake"))
+                            .map((rule) => <option key={rule.id} value={rule.id}>{rule.station_name}</option>)
                         : stationsList.map((stn) => <option key={stn} value={stn}>{stn}</option>)}
                     </select>
                   )}
@@ -932,7 +937,9 @@ export default function AdminDevicesPage() {
                     className="w-full h-10 px-3 rounded-xl border border-[var(--border)] text-xs font-bold bg-[var(--card)] text-[var(--text)]"
                   >
                     <option value="">Select check-in gate</option>
-                    {capacityRules.map((rule) => <option key={rule.id} value={rule.id}>{rule.station_name}</option>)}
+                    {capacityRules
+                      .filter((rule) => !rule.station_name?.toLowerCase().includes("initial") && !rule.station_name?.toLowerCase().includes("intake"))
+                      .map((rule) => <option key={rule.id} value={rule.id}>{rule.station_name}</option>)}
                   </select>
                   <p className="mt-1 text-[9px] font-semibold text-[var(--muted)]">
                     This gate is used whenever this reused workstation launches Scanning mode.

@@ -1,0 +1,15 @@
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:3000
+- PID:          23856
+- Dir:          D:\DEV\conf-platform\apps\cloud\command-center
+- Log:          .next\dev\logs\next-development.log
+
+Run taskkill /PID 23856 /F to stop it.
+npm error Lifecycle script `dev` failed with error:
+npm error code 1
+npm error path D:\DEV\conf-platform\apps\cloud\command-center
+npm error workspace command-center@1.0.0
+npm error location D:\DEV\conf-platform\apps\cloud\command-center
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c next dev --port 3000 --port 3010 --webpack

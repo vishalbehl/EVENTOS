@@ -52,6 +52,20 @@ class ConnectionManager:
         except Exception as e:
             logger.error(f"Redis listener error: {e}")
 
+    async def close(self):
+        """Cleanly close PubSub subscriptions and Redis connection pool before event loop terminates"""
+        try:
+            if self.pubsub:
+                await self.pubsub.unsubscribe()
+                await self.pubsub.close()
+        except Exception:
+            pass
+        try:
+            if self.redis:
+                await self.redis.aclose()
+        except Exception:
+            pass
+
 manager = ConnectionManager()
 
 # Background task to start the redis listener

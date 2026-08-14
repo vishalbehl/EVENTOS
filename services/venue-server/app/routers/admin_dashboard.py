@@ -196,11 +196,13 @@ async def get_dashboard_metrics(
 
     recent_activity = []
     for row in actions:
+        from app.routers.registration_api import format_action_details
+        formatted = format_action_details(row.action_type, row.details)
         recent_activity.append({
             "id": str(row.id),
             "timestamp": row.created_at.isoformat(),
             "action": row.action_type,
-            "details": row.details or participant_names.get(row.participant_id) or "Participant action",
+            "details": formatted or participant_names.get(row.participant_id) or "Participant action",
             "status": "success",
             "operator": row.performed_by,
         })

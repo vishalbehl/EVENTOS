@@ -10,27 +10,17 @@ export const ContactFormManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          {
-            id: 'data-submit-action',
-            type: 'Select',
-            label: 'Submit Action',
-            options: [
-              { value: 'email', label: 'Send Email' },
-              { value: 'webhook', label: 'Trigger Webhook' },
-              { value: 'database', label: 'Save to Database' },
-            ],
-          },
-          { id: 'data-success-msg', type: 'Text', label: 'Success Message' },
+          { id: 'data-success-msg', type: 'Text', label: 'Success Message', target: { kind: 'attribute', name: 'data-success-msg' } },
         ],
       },
       {
         groupId: 'LAYOUT',
         properties: [
-          { id: 'data-field-name', type: 'Toggle', label: 'Name Field', defaultValue: true },
-          { id: 'data-field-email', type: 'Toggle', label: 'Email Field', defaultValue: true },
-          { id: 'data-field-company', type: 'Toggle', label: 'Company Field' },
-          { id: 'data-field-phone', type: 'Toggle', label: 'Phone Field' },
-          { id: 'data-field-message', type: 'Toggle', label: 'Message Field', defaultValue: true },
+          { id: 'data-field-name', type: 'Toggle', label: 'Name Field', defaultValue: true, target: { kind: 'attribute', name: 'data-field-name' } },
+          { id: 'data-field-email', type: 'Toggle', label: 'Email Field', defaultValue: true, target: { kind: 'attribute', name: 'data-field-email' } },
+          { id: 'data-field-company', type: 'Toggle', label: 'Company Field', target: { kind: 'attribute', name: 'data-field-company' } },
+          { id: 'data-field-phone', type: 'Toggle', label: 'Phone Field', target: { kind: 'attribute', name: 'data-field-phone' } },
+          { id: 'data-field-message', type: 'Toggle', label: 'Message Field', defaultValue: true, target: { kind: 'attribute', name: 'data-field-message' } },
         ],
       },
       {
@@ -40,6 +30,7 @@ export const ContactFormManifest: ComponentManifest = {
             id: 'data-input-style',
             type: 'Select',
             label: 'Input Style',
+            target: { kind: 'attribute', name: 'data-input-style' },
             options: [
               { value: 'outline', label: 'Outlined' },
               { value: 'filled', label: 'Filled' },
@@ -47,7 +38,7 @@ export const ContactFormManifest: ComponentManifest = {
             ],
             defaultValue: 'outline'
           },
-          { id: 'data-btn-label', type: 'Text', label: 'Submit Button Label', defaultValue: 'Submit' },
+          { id: 'data-btn-label', type: 'Text', label: 'Submit Button Label', defaultValue: 'Submit', target: { kind: 'content', selector: 'button[type="submit"],button' } },
         ],
       },
     ]
@@ -64,17 +55,8 @@ export const NewsletterManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          {
-            id: 'data-integration',
-            type: 'Select',
-            label: 'Integration',
-            options: [
-              { value: 'mailchimp', label: 'Mailchimp' },
-              { value: 'custom-api', label: 'Custom API' },
-            ],
-          },
-          { id: 'data-placeholder', type: 'Text', label: 'Placeholder Text', defaultValue: 'Enter your email' },
-          { id: 'data-btn-text', type: 'Text', label: 'Button Text', defaultValue: 'Subscribe' },
+          { id: 'data-placeholder', type: 'Text', label: 'Placeholder Text', defaultValue: 'Enter your email', target: { kind: 'attribute', name: 'placeholder', selector: 'input[type="email"],input' } },
+          { id: 'data-btn-text', type: 'Text', label: 'Button Text', defaultValue: 'Subscribe', target: { kind: 'content', selector: 'button[type="submit"],button' } },
         ],
       },
       {
@@ -84,6 +66,7 @@ export const NewsletterManifest: ComponentManifest = {
             id: 'data-layout',
             type: 'Select',
             label: 'Layout',
+            target: { kind: 'attribute', name: 'data-layout' },
             options: [
               { value: 'inline', label: 'Inline' },
               { value: 'stacked', label: 'Stacked' },

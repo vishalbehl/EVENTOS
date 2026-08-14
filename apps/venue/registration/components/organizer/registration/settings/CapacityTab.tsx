@@ -16,13 +16,21 @@ import {
   Lock,
   Unlock,
   Sliders,
-  Check
+  Check,
+  CreditCard,
+  Printer,
+  Package,
+  UserPlus,
+  KeyRound,
+  AlertTriangle,
+  Monitor
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { VenueOperationalPolicy, DEFAULT_VENUE_POLICY } from "@/lib/policy-evaluator";
 
 export interface StationRule {
   id: string;
@@ -37,8 +45,13 @@ export interface StationRule {
 }
 
 export default function CapacityTab() {
+  const [activeSubTab, setActiveSubTab] = useState<"gates" | "policies">("gates");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Operational Policy State
+  const [policyData, setPolicyData] = useState<VenueOperationalPolicy>(DEFAULT_VENUE_POLICY);
+  const [savingPolicy, setSavingPolicy] = useState(false);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -94,12 +107,116 @@ export default function CapacityTab() {
     }
   };
 
+  const fetchPolicy = async () => {
+    try {
+      const res: any = await apiClient.get("/venue/registration/policies");
+      if (res) {
+        setPolicyData({
+          ...DEFAULT_VENUE_POLICY,
+          ...res,
+          allowed_payment_statuses_for_checkin: res.allowed_payment_statuses_for_checkin?.length ? res.allowed_payment_statuses_for_checkin : ["All"],
+          allowed_payment_statuses_for_print: res.allowed_payment_statuses_for_print?.length ? res.allowed_payment_statuses_for_print : ["All"],
+          allowed_payment_statuses_for_self_checkin: res.allowed_payment_statuses_for_self_checkin?.length ? res.allowed_payment_statuses_for_self_checkin : ["All"],
+          available_payment_statuses: res.available_payment_statuses?.length ? res.available_payment_statuses : DEFAULT_VENUE_POLICY.available_payment_statuses,
+        });
+      }
+    } catch (e) {
+      console.error("fetchPolicy:", e);
+    }
+  };
+
   useEffect(() => {
     fetchCapacity();
+    fetchPolicy();
   }, []);
+
+  const handleSavePolicy = async () => {
+    try {
+      setSavingPolicy(true);
+      const res: any = await apiClient.post("/venue/registration/policies", policyData);
+      if (res) {
+        setPolicyData(res);
+      }
+      toast.success("Operational guardrails & policies saved successfully!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save operational policies.");
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
 
   const availableRoles =
     capacityData.registered_roles || ["Delegate", "Speaker", "VIP", "Exhibitor", "Media", "Sponsor"];
+  const availablePaymentStatuses = Array.from(
+    new Set([...(policyData.available_payment_statuses || []), ...(DEFAULT_VENUE_POLICY.available_payment_statuses || [])])
+  );
+
+  const togglePaymentStatus = (
+    key:
+      | "allowed_payment_statuses_for_checkin"
+      | "allowed_payment_statuses_for_print"
+      | "allowed_payment_statuses_for_self_checkin",
+    status: string
+  ) => {
+    const current = policyData[key]?.length ? policyData[key] : ["All"];
+    if (status === "All") {
+      setPolicyData({ ...policyData, [key]: ["All"] });
+      return;
+    }
+    let next = current.filter((value) => value !== "All");
+    next = next.includes(status) ? next.filter((value) => value !== status) : [...next, status];
+    if (next.length === 0) next = ["All"];
+    setPolicyData({ ...policyData, [key]: next });
+  };
+
+  const paymentStatusSelector = (
+    title: string,
+    description: string,
+    key:
+      | "allowed_payment_statuses_for_checkin"
+      | "allowed_payment_statuses_for_print"
+      | "allowed_payment_statuses_for_self_checkin",
+    icon: React.ElementType
+  ) => {
+    const Icon = icon;
+    const selected = policyData[key]?.length ? policyData[key] : ["All"];
+    return (
+      <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3">
+        <div className="flex items-start gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[var(--pri)]/10 text-[var(--pri)] flex items-center justify-center shrink-0">
+            <Icon className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-xs font-black text-[var(--text)]">{title}</h4>
+            <p className="mt-1 text-[11px] font-semibold text-[var(--muted)]">{description}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {availablePaymentStatuses.map((status) => {
+            const active = selected.includes("All") ? status === "All" : selected.includes(status);
+            return (
+              <button
+                key={`${key}-${status}`}
+                type="button"
+                onClick={() => togglePaymentStatus(key, status)}
+                className={cn(
+                  "rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wider transition-all",
+                  active
+                    ? "border-[var(--pri)] bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm"
+                    : "border-[var(--border)] bg-[var(--card)] text-[var(--muted)] hover:border-[var(--pri)]/40 hover:text-[var(--text)]"
+                )}
+              >
+                {status}
+              </button>
+            );
+          })}
+        </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-[10px] font-bold text-[var(--muted)]">
+          Active rule: {selected.includes("All") ? "All payment statuses are allowed." : selected.join(", ")}
+        </div>
+      </div>
+    );
+  };
 
   // Open Update Rule Modal
   const handleOpenUpdateModal = (stn: StationRule) => {
@@ -208,14 +325,13 @@ export default function CapacityTab() {
   };
 
   // Delete Station Rule
-  const handleDeleteStation = async (id: string, name: string) => {
-    const confirmDelete = window.confirm(`Are you sure you want to delete the station rule "${name}"?`);
-    if (!confirmDelete) return;
+  const handleDeleteStation = async (ruleId: string, ruleName: string) => {
+    if (!confirm(`Are you sure you want to delete check-in gate "${ruleName}"?`)) return;
 
     try {
-      setDeletingRuleId(id);
-      await apiClient.delete(`/venue/registration/capacity/rules/${id}`);
-      toast.success(`Station rule "${name}" deleted.`);
+      setDeletingRuleId(ruleId);
+      await apiClient.delete(`/venue/registration/capacity/rules/${ruleId}`);
+      toast.success(`Station Rule "${ruleName}" deleted.`);
       fetchCapacity();
     } catch (err: any) {
       toast.error(err.message || "Failed to delete station rule.");
@@ -224,19 +340,18 @@ export default function CapacityTab() {
     }
   };
 
-  // Submit Update Overall Event Capacity
+  // Update Event Overall Capacity Limit
   const handleUpdateEventCapacity = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (eventCapacityInput <= 0) {
-      toast.error("Capacity must be greater than 0.");
+    if (eventCapacityInput < 1) {
+      toast.error("Capacity must be at least 1.");
       return;
     }
 
     try {
       setSavingEventCap(true);
-      await apiClient.post("/venue/registration/capacity/override", {
-        target_type: "event",
-        new_capacity: eventCapacityInput,
+      await apiClient.post("/venue/registration/capacity/overall", {
+        capacity: eventCapacityInput,
         reason: "Capacity Updated via Admin Console",
         admin_name: "Admin",
       });
@@ -264,7 +379,7 @@ export default function CapacityTab() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-[var(--text)] tracking-tight flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[var(--acc)]" /> Venue Check-in Gates Builder
+              <ShieldCheck className="w-5 h-5 text-[var(--acc)]" /> Check-in Gates & Operational Guardrails
             </h2>
             {capacityData.event_name && (
               <span className="px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-full bg-[var(--pri)]/10 text-[var(--pri)] border border-[var(--pri)]/20">
@@ -273,257 +388,582 @@ export default function CapacityTab() {
             )}
           </div>
           <p className="text-xs text-[var(--muted)] mt-0.5">
-            Manage overall event capacity ceiling, configure station checkpoint intake rules, and enforce delegate access limits
+            Configure checkpoint access limits, enforce payment & sequencing rules, and manage kiosk & desk operational policies.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={fetchCapacity} disabled={loading} className="h-10 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)]">
-            <RefreshCw className={cn("w-4 h-4 mr-1.5", loading && "animate-spin")} /> Refresh Rules
-          </Button>
-
-          <Button
-            onClick={() => setIsAddModalOpen(true)}
-            className="h-10 bg-[var(--pri)] text-[var(--primary-contrast)] font-bold gap-2 shadow-md hover:opacity-90"
-          >
-            <Plus className="w-4 h-4" /> Add Check-in Gate
-          </Button>
+          {activeSubTab === "gates" ? (
+            <>
+              <Button variant="outline" onClick={fetchCapacity} disabled={loading} className="h-10 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)]">
+                <RefreshCw className={cn("w-4 h-4 mr-1.5", loading && "animate-spin")} /> Refresh Rules
+              </Button>
+              <Button
+                onClick={() => setIsAddModalOpen(true)}
+                className="h-10 bg-[var(--pri)] text-[var(--primary-contrast)] font-bold gap-2 shadow-md hover:opacity-90"
+              >
+                <Plus className="w-4 h-4" /> Add Check-in Gate
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={handleSavePolicy}
+              disabled={savingPolicy}
+              className="h-10 bg-[var(--pri)] text-[var(--primary-contrast)] font-bold gap-2 shadow-md hover:opacity-90"
+            >
+              <Save className={cn("w-4 h-4", savingPolicy && "animate-spin")} />
+              {savingPolicy ? "Saving Policies..." : "Save Operational Policies"}
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Overview Stat Cards 3-Column Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Card 1: Organiser Portal Event Capacity Limit */}
-        <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-3 relative overflow-hidden flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-[var(--pri)]" /> Organiser Overall Capacity
-              </span>
-              <button
-                onClick={() => setIsEventCapModalOpen(true)}
-                className="px-2 py-1 rounded-lg bg-[var(--surf)] text-[var(--text)] hover:border-[var(--pri)] text-[10px] font-bold flex items-center gap-1 border border-[var(--border)] transition-all cursor-pointer"
-                title="Update Event Overall Capacity"
+      {/* Sub-Tabs Switcher */}
+      <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2">
+        <button
+          onClick={() => setActiveSubTab("gates")}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+            activeSubTab === "gates"
+              ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm"
+              : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surf)]"
+          )}
+        >
+          <Building className="w-4 h-4" /> Check-in Gates Builder
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab("policies")}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+            activeSubTab === "policies"
+              ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm"
+              : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surf)]"
+          )}
+        >
+          <Sliders className="w-4 h-4" /> Operational Guardrails & Policies
+        </button>
+      </div>
+
+      {/* TAB 1: GATES BUILDER */}
+      {activeSubTab === "gates" && (
+        <>
+          {/* Overview Stat Cards 3-Column Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Card 1: Organiser Portal Event Capacity Limit */}
+            <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-3 relative overflow-hidden flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[var(--pri)]" /> Organiser Overall Capacity
+                  </span>
+                  <button
+                    onClick={() => setIsEventCapModalOpen(true)}
+                    className="px-2 py-1 rounded-lg bg-[var(--surf)] text-[var(--text)] hover:border-[var(--pri)] text-[10px] font-bold flex items-center gap-1 border border-[var(--border)] transition-all cursor-pointer"
+                    title="Update Event Overall Capacity"
+                  >
+                    <Edit3 className="w-3 h-3 text-[var(--pri)]" /> Update Limit
+                  </button>
+                </div>
+
+                <h3 className="text-2xl font-black text-[var(--text)] mt-2">
+                  {(capacityData.total_registered || 0).toLocaleString()} / {capacityData.total_event_limit ? capacityData.total_event_limit.toLocaleString() : "Unlimited"} Delegates
+                </h3>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-[11px] font-bold text-[var(--muted)]">
+                  <span>Overall Utilization</span>
+                  <span className="text-[var(--acc)] font-black">{overallPct}% Full</span>
+                </div>
+                <div className="w-full h-2.5 bg-[var(--surf)] border border-[var(--border)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-[var(--pri)] to-[var(--acc)] rounded-full transition-all duration-500"
+                    style={{ width: `${overallPct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2: Intake & Station Rules Summary */}
+            <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] flex items-center gap-1.5">
+                    <Building className="w-3.5 h-3.5 text-blue-500" /> Active Check-in Gates
+                  </span>
+                  <span className="text-xs font-bold text-[var(--muted)]">{capacityData.stations.length} Configured</span>
+                </div>
+
+                <h3 className="text-2xl font-black text-[var(--text)] mt-2">
+                  {capacityData.stations.length} Check-in Gates
+                </h3>
+              </div>
+
+              <p className="text-xs text-[var(--muted)]">
+                Configured access checkpoints for Main Entrance, dining halls, sessions, workshops, and restricted rooms.
+              </p>
+
+              <div className="flex items-center gap-2 pt-1 border-t border-[var(--border)]">
+                <span className="text-[10px] font-black uppercase text-[var(--muted)]">Types:</span>
+                <div className="flex flex-wrap gap-1">
+                  <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">Intake</span>
+                  <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">Room</span>
+                  <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">Dining</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: Active Registered Participant Roles */}
+            <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-emerald-500" /> Inherited Roles
+                  </span>
+                  <span className="text-xs font-bold text-[var(--muted)]">{availableRoles.length} Active</span>
+                </div>
+
+                <h3 className="text-2xl font-black text-[var(--text)] mt-2">
+                  {availableRoles.length} Roles Synced
+                </h3>
+              </div>
+
+              <p className="text-xs text-[var(--muted)]">Synchronized live from participant directory with role-based rule gating.</p>
+
+              <div className="flex flex-wrap gap-1 pt-1 border-t border-[var(--border)]">
+                {availableRoles.slice(0, 4).map((r: string) => (
+                  <span
+                    key={r}
+                    className="px-2 py-0.5 bg-[var(--surf)] border border-[var(--border)] text-[var(--text)] text-[9px] font-black uppercase rounded-md"
+                  >
+                    {r}
+                  </span>
+                ))}
+                {availableRoles.length > 4 && (
+                  <span className="px-2 py-0.5 bg-[var(--raised)] border border-[var(--border)] text-[var(--muted)] text-[9px] font-black rounded-md">
+                    +{availableRoles.length - 4} more
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Check-in Gates Catalogue Section */}
+          <div className="space-y-4">
+            <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-black text-[var(--text)] flex items-center gap-2">
+                  <Building className="w-5 h-5 text-[var(--pri)]" /> Check-in Gates Catalogue
+                </h3>
+                <p className="text-xs text-[var(--muted)] mt-0.5">
+                  Read-only rule summary cards. Click "Update Rule" to adjust station limits, frequency rules, and role permissions.
+                </p>
+              </div>
+
+              <Button
+                onClick={() => setIsAddModalOpen(true)}
+                className="bg-[var(--pri)] text-[var(--primary-contrast)] font-extrabold text-xs gap-1.5 h-9 shrink-0"
               >
-                <Edit3 className="w-3 h-3 text-[var(--pri)]" /> Update Limit
-              </button>
+                <Plus className="w-4 h-4" /> Add Check-in Gate
+              </Button>
             </div>
 
-            <h3 className="text-2xl font-black text-[var(--text)] mt-2">
-              {(capacityData.total_registered || 0).toLocaleString()} / {capacityData.total_event_limit ? capacityData.total_event_limit.toLocaleString() : "Unlimited"} Delegates
-            </h3>
-          </div>
+            {capacityData.stations.length === 0 ? (
+              <div className="bg-[var(--card)] p-12 rounded-2xl border border-[var(--border)] shadow-sm text-center space-y-3">
+                <Building className="w-10 h-10 mx-auto text-[var(--muted)]" />
+                <h4 className="text-base font-black text-[var(--text)]">No Venue Check-in Gates Configured</h4>
+                <p className="text-xs text-[var(--muted)] max-w-md mx-auto">
+                  You currently have no custom check-in gates. Click "Add Check-in Gate" to create a gate for room, dining, or session access.
+                </p>
+                <Button
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="bg-[var(--pri)] text-[var(--primary-contrast)] font-extrabold text-xs gap-1.5 h-9"
+                >
+                  <Plus className="w-4 h-4" /> Create First Check-in Gate
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {capacityData.stations.map((stn: StationRule) => {
+                  const roles = stn.allowed_roles || ["All"];
+                  const isAllRoles = roles.length === availableRoles.length || roles.includes("All");
 
-          <div className="space-y-2">
-            <div className="flex justify-between text-[11px] font-bold text-[var(--muted)]">
-              <span>Overall Utilization</span>
-              <span className="text-[var(--acc)] font-black">{overallPct}% Full</span>
-            </div>
-            <div className="w-full h-2.5 bg-[var(--surf)] border border-[var(--border)] rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-[var(--pri)] to-[var(--acc)] rounded-full transition-all duration-500"
-                style={{ width: `${overallPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
+                  return (
+                    <div
+                      key={stn.id}
+                      className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-4 flex flex-col justify-between hover:border-[var(--pri)] transition-all"
+                    >
+                      <div className="space-y-3.5">
+                        <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
+                          <div>
+                            <h4 className="text-base font-black text-[var(--text)]">{stn.station_name}</h4>
+                            <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full bg-[var(--surf)] text-[var(--acc)] border border-[var(--border)] mt-1 inline-block">
+                              {stn.type || "Room"}
+                            </span>
+                          </div>
 
-        {/* Card 2: Intake & Station Rules Summary */}
-        <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-3 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] flex items-center gap-1.5">
-                <Building className="w-3.5 h-3.5 text-blue-500" /> Active Check-in Gates
-              </span>
-              <span className="text-xs font-bold text-[var(--muted)]">{capacityData.stations.length} Configured</span>
-            </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleOpenUpdateModal(stn)}
+                              className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--pri)] transition-all cursor-pointer"
+                              title="Update Station Rule"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
 
-            <h3 className="text-2xl font-black text-[var(--text)] mt-2">
-              {capacityData.stations.length} Check-in Gates
-            </h3>
-          </div>
+                            <button
+                              onClick={() => handleDeleteStation(stn.id, stn.station_name)}
+                              disabled={deletingRuleId === stn.id}
+                              className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-red-500 hover:border-red-500 transition-all cursor-pointer"
+                              title="Delete Station Rule"
+                            >
+                              <Trash2 className={cn("w-3.5 h-3.5", deletingRuleId === stn.id && "animate-spin")} />
+                            </button>
+                          </div>
+                        </div>
 
-          <p className="text-xs text-[var(--muted)]">
-            Configured access checkpoints for Main Entrance, dining halls, sessions, workshops, and restricted rooms.
-          </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] space-y-0.5">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-[var(--muted)] block">Capacity Ceiling</span>
+                            <div className="text-sm font-black text-[var(--text)]">
+                              {stn.station_capacity > 0 ? `${stn.station_capacity.toLocaleString()} delegates` : "Unlimited"}
+                            </div>
+                          </div>
 
-          <div className="flex items-center gap-2 pt-1 border-t border-[var(--border)]">
-            <span className="text-[10px] font-black uppercase text-[var(--muted)]">Types:</span>
-            <div className="flex flex-wrap gap-1">
-              <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">Intake</span>
-              <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">Room</span>
-              <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">Dining</span>
-            </div>
-          </div>
-        </div>
+                          <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] space-y-0.5">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-[var(--muted)] block">Check-In Limit</span>
+                            <div className="text-sm font-black text-emerald-500">
+                              {stn.max_checkins_per_delegate > 0 ? `${stn.max_checkins_per_delegate} / delegate` : "Unlimited"}
+                            </div>
+                          </div>
+                        </div>
 
-        {/* Card 3: Active Registered Participant Roles */}
-        <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-3 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-emerald-500" /> Inherited Roles
-              </span>
-              <span className="text-xs font-bold text-[var(--muted)]">{availableRoles.length} Active</span>
-            </div>
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">
+                            <span>Allowed Roles:</span>
+                            <span className="text-[var(--acc)] font-bold">{isAllRoles ? "All Roles" : `${roles.length} Selected`}</span>
+                          </div>
 
-            <h3 className="text-2xl font-black text-[var(--text)] mt-2">
-              {availableRoles.length} Roles Synced
-            </h3>
-          </div>
+                          <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto custom-scrollbar">
+                            {isAllRoles ? (
+                              <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                                ✓ All Participant Roles Allowed
+                              </span>
+                            ) : (
+                              roles.map((role) => (
+                                <span key={role} className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">
+                                  {role}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
 
-          <p className="text-xs text-[var(--muted)]">Synchronized live from participant directory with role-based rule gating.</p>
-
-          <div className="flex flex-wrap gap-1 pt-1 border-t border-[var(--border)]">
-            {availableRoles.slice(0, 4).map((r: string) => (
-              <span
-                key={r}
-                className="px-2 py-0.5 bg-[var(--surf)] border border-[var(--border)] text-[var(--text)] text-[9px] font-black uppercase rounded-md"
-              >
-                {r}
-              </span>
-            ))}
-            {availableRoles.length > 4 && (
-              <span className="px-2 py-0.5 bg-[var(--raised)] border border-[var(--border)] text-[var(--muted)] text-[9px] font-black rounded-md">
-                +{availableRoles.length - 4} more
-              </span>
+                      <Button
+                        onClick={() => handleOpenUpdateModal(stn)}
+                        variant="outline"
+                        className="w-full h-8 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] hover:bg-[var(--raised)] gap-1.5 mt-2"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-[var(--pri)]" /> Update Rule Parameters
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
-      {/* Check-in Gates Section */}
-      <div className="space-y-4">
-        <div className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h3 className="text-base font-black text-[var(--text)] flex items-center gap-2">
-              <Building className="w-5 h-5 text-[var(--pri)]" /> Check-in Gates Catalogue (3-Column View)
-            </h3>
-            <p className="text-xs text-[var(--muted)] mt-0.5">
-              Read-only rule summary cards. Click "Update Rule" to adjust station limits, frequency rules, and role permissions.
-            </p>
+      {/* TAB 2: OPERATIONAL GUARDRAILS & POLICIES */}
+      {activeSubTab === "policies" && (
+        <div className="space-y-6">
+          {/* Section 1: Financial & Payment Guardrails */}
+          <div className="bg-[var(--card)] p-6 rounded-2xl border border-[var(--border)] shadow-sm space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-[var(--border)] pb-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                <CreditCard className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-[var(--text)]">Payment & Financial Guardrails</h3>
+                <p className="text-xs text-[var(--muted)]">Enforce payment prerequisites before permitting desk actions or kiosk entries.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-1">
+              {paymentStatusSelector(
+                "Desk Check-In Allowed Statuses",
+                "Choose which payment statuses can complete staffed desk check-in. Default All means no payment-status lockout.",
+                "allowed_payment_statuses_for_checkin",
+                CheckCircle2
+              )}
+              {paymentStatusSelector(
+                "Badge Print Allowed Statuses",
+                "Choose which payment statuses can print or reprint badges from registration desks and print views.",
+                "allowed_payment_statuses_for_print",
+                Printer
+              )}
+              {paymentStatusSelector(
+                "Self Check-In Allowed Statuses",
+                "Choose which payment statuses can use the kiosk without being redirected to support.",
+                "allowed_payment_statuses_for_self_checkin",
+                Monitor
+              )}
+            </div>
+
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-[11px] font-semibold text-[var(--muted)]">
+              Default behavior is permissive: <span className="font-black text-emerald-600">All</span> allows every current and future payment status.
+              Select specific chips only when you intentionally want to restrict an action.
+            </div>
+
+            <div className="hidden">
+              {/* Toggle 1: Require Paid for Desk Checkin */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[var(--text)]">Require Payment for Desk Check-In</span>
+                    <input
+                      type="checkbox"
+                      checked={policyData.require_paid_for_checkin}
+                      onChange={(e) => setPolicyData({ ...policyData, require_paid_for_checkin: e.target.checked })}
+                      className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1">
+                    Blocks check-in for delegates with <span className="font-semibold text-amber-500">Unpaid</span> status. Operators can override with Admin credentials.
+                  </p>
+                </div>
+                <div className="text-[10px] font-bold text-[var(--acc)]">Default: Strict ON</div>
+              </div>
+
+              {/* Toggle 2: Require Paid for Badge Print */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[var(--text)]">Require Payment for Badge Print</span>
+                    <input
+                      type="checkbox"
+                      checked={policyData.require_paid_for_print}
+                      onChange={(e) => setPolicyData({ ...policyData, require_paid_for_print: e.target.checked })}
+                      className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1">
+                    Disables the "Print Badge" button for unpaid registrations across search, desk, and drawer views.
+                  </p>
+                </div>
+                <div className="text-[10px] font-bold text-[var(--acc)]">Default: Strict ON</div>
+              </div>
+
+              {/* Toggle 3: Require Paid for Self Checkin */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[var(--text)]">Require Payment for Self Check-In</span>
+                    <input
+                      type="checkbox"
+                      checked={policyData.require_paid_for_self_checkin}
+                      onChange={(e) => setPolicyData({ ...policyData, require_paid_for_self_checkin: e.target.checked })}
+                      className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1">
+                    Unpaid delegates at the kiosk receive an instant <span className="font-semibold text-red-400">"Payment Pending — Visit Desk"</span> screen.
+                  </p>
+                </div>
+                <div className="text-[10px] font-bold text-[var(--acc)]">Default: Strict ON</div>
+              </div>
+            </div>
           </div>
 
-          <Button
-            onClick={() => setIsAddModalOpen(true)}
-            className="bg-[var(--pri)] text-[var(--primary-contrast)] font-extrabold text-xs gap-1.5 h-9 shrink-0"
-          >
-            <Plus className="w-4 h-4" /> Add Check-in Gate
-          </Button>
-        </div>
+          {/* Section 2: Check-In Sequencing & Logistics Guardrails */}
+          <div className="bg-[var(--card)] p-6 rounded-2xl border border-[var(--border)] shadow-sm space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-[var(--border)] pb-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                <Printer className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-[var(--text)]">Check-In Sequencing & Logistics Guardrails</h3>
+                <p className="text-xs text-[var(--muted)]">Enforce mandatory check-in before badges, kits, or companions can be processed.</p>
+              </div>
+            </div>
 
-        {/* 3-Column Clean Rule Cards Grid (Read-Only Metrics on Card, Inputs inside Update Window) */}
-        {capacityData.stations.length === 0 ? (
-          <div className="bg-[var(--card)] p-12 rounded-2xl border border-[var(--border)] shadow-sm text-center space-y-3">
-            <Building className="w-10 h-10 mx-auto text-[var(--muted)]" />
-            <h4 className="text-base font-black text-[var(--text)]">No Venue Check-in Gates Configured</h4>
-            <p className="text-xs text-[var(--muted)] max-w-md mx-auto">
-              You currently have no custom check-in gates. Click "Add Check-in Gate" to create a gate for room, dining, or session access.
-            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+              {/* Toggle 1: Check-in before print */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[var(--text)]">Require Check-In for Badge Print</span>
+                    <input
+                      type="checkbox"
+                      checked={policyData.require_checkin_for_print}
+                      onChange={(e) => setPolicyData({ ...policyData, require_checkin_for_print: e.target.checked })}
+                      className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1">
+                    Ensures delegate is checked in to the venue before the badge can be printed.
+                  </p>
+                </div>
+                <div className="text-[10px] font-bold text-[var(--acc)]">Default: Strict ON</div>
+              </div>
+
+              {/* Toggle 2: Check-in before kit */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[var(--text)]">Require Check-In for Kit Distribution</span>
+                    <input
+                      type="checkbox"
+                      checked={policyData.require_checkin_for_kit}
+                      onChange={(e) => setPolicyData({ ...policyData, require_checkin_for_kit: e.target.checked })}
+                      className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1">
+                    "Issue Kit" button remains disabled until delegate check-in is recorded in the database.
+                  </p>
+                </div>
+                <div className="text-[10px] font-bold text-[var(--acc)]">Default: Strict ON</div>
+              </div>
+
+              {/* Toggle 3: Primary check-in for companions */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[var(--text)]">Require Primary Check-In for Companions</span>
+                    <input
+                      type="checkbox"
+                      checked={policyData.require_primary_checkin_for_companions}
+                      onChange={(e) => setPolicyData({ ...policyData, require_primary_checkin_for_companions: e.target.checked })}
+                      className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1">
+                    Prevents adding or checking in companion badges before the main delegate has checked in.
+                  </p>
+                </div>
+                <div className="text-[10px] font-bold text-[var(--acc)]">Default: Strict ON</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Quotas, Reprints & Kiosk Settings */}
+          <div className="bg-[var(--card)] p-6 rounded-2xl border border-[var(--border)] shadow-sm space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-[var(--border)] pb-3">
+              <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                <Monitor className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-[var(--text)]">Badge Reprints & Self Check-In Kiosk Limits</h3>
+                <p className="text-xs text-[var(--muted)]">Configure reprint ceilings, kiosk self-service permissions, and companion quotas.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+              {/* Input 1: Max badge reprints */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3">
+                <label className="text-xs font-black text-[var(--text)] block">Max Badge Reprints at Desk</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={policyData.max_badge_reprints}
+                  onChange={(e) => setPolicyData({ ...policyData, max_badge_reprints: parseInt(e.target.value) || 0 })}
+                  className="h-10 text-xs font-bold bg-[var(--card)] border-[var(--border)] text-[var(--text)]"
+                />
+                <p className="text-[10px] text-[var(--muted)]">Subsequent reprints require Admin credentials override.</p>
+              </div>
+
+              {/* Input 2: Max self checkin reprints */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-[var(--text)]">Max Kiosk Reprints</label>
+                  <input
+                    type="checkbox"
+                    checked={policyData.allow_self_checkin_reprints}
+                    onChange={(e) => setPolicyData({ ...policyData, allow_self_checkin_reprints: e.target.checked })}
+                    className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                  />
+                </div>
+                <Input
+                  type="number"
+                  min={0}
+                  max={5}
+                  disabled={!policyData.allow_self_checkin_reprints}
+                  value={policyData.max_self_checkin_reprints}
+                  onChange={(e) => setPolicyData({ ...policyData, max_self_checkin_reprints: parseInt(e.target.value) || 0 })}
+                  className="h-10 text-xs font-bold bg-[var(--card)] border-[var(--border)] text-[var(--text)]"
+                />
+                <p className="text-[10px] text-[var(--muted)]">Excess kiosk reprints redirect delegates to Helpdesk.</p>
+              </div>
+
+              {/* Input 3: Max companions per delegate */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] space-y-3">
+                <label className="text-xs font-black text-[var(--text)] block">Max Companions per Delegate</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={policyData.max_companions_per_delegate}
+                  onChange={(e) => setPolicyData({ ...policyData, max_companions_per_delegate: parseInt(e.target.value) || 0 })}
+                  className="h-10 text-xs font-bold bg-[var(--card)] border-[var(--border)] text-[var(--text)]"
+                />
+                <p className="text-[10px] text-[var(--muted)]">Cap on family/guest companion registrations per delegate.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-[var(--border)]">
+              {/* Toggle: Kiosk profile edit */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-black text-[var(--text)] block">Allow Kiosk Profile Corrections</span>
+                  <span className="text-[11px] text-[var(--muted)]">Allow delegates to edit name/company directly on the self-service kiosk screen.</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={policyData.allow_self_checkin_profile_edit}
+                  onChange={(e) => setPolicyData({ ...policyData, allow_self_checkin_profile_edit: e.target.checked })}
+                  className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Toggle: Admin override */}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surf)] flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-black text-[var(--text)] block">Enable Admin Dual-Credential Override</span>
+                  <span className="text-[11px] text-[var(--muted)]">Allow desk operators to bypass policy lockouts with Admin username & password.</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={policyData.allow_admin_override}
+                  onChange={(e) => setPolicyData({ ...policyData, allow_admin_override: e.target.checked })}
+                  className="w-4 h-4 accent-[var(--pri)] rounded cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Save Bar */}
+          <div className="flex items-center justify-between bg-[var(--card)] p-4 rounded-2xl border border-[var(--border)]">
+            <div className="flex items-center gap-2 text-xs font-bold text-[var(--muted)]">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <span>Policies take effect immediately across all connected desks, kiosks, and scanning stations.</span>
+            </div>
+
             <Button
-              onClick={() => setIsAddModalOpen(true)}
-              className="bg-[var(--pri)] text-[var(--primary-contrast)] font-extrabold text-xs gap-1.5 h-9"
+              onClick={handleSavePolicy}
+              disabled={savingPolicy}
+              className="bg-[var(--pri)] text-[var(--primary-contrast)] font-bold gap-2 px-6 shadow-md hover:opacity-90"
             >
-              <Plus className="w-4 h-4" /> Create First Check-in Gate
+              <Save className={cn("w-4 h-4", savingPolicy && "animate-spin")} />
+              {savingPolicy ? "Saving Policies..." : "Save Operational Policies"}
             </Button>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {capacityData.stations.map((stn: StationRule) => {
-              const roles = stn.allowed_roles || ["All"];
-              const isAllRoles = roles.length === availableRoles.length || roles.includes("All");
-
-              return (
-                <div
-                  key={stn.id}
-                  className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm space-y-4 flex flex-col justify-between hover:border-[var(--pri)] transition-all"
-                >
-                  <div className="space-y-3.5">
-                    {/* Card Header & Actions */}
-                    <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
-                      <div>
-                        <h4 className="text-base font-black text-[var(--text)]">{stn.station_name}</h4>
-                        <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full bg-[var(--surf)] text-[var(--acc)] border border-[var(--border)] mt-1 inline-block">
-                          {stn.type || "Room"}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        {/* Update Rule Button */}
-                        <button
-                          onClick={() => handleOpenUpdateModal(stn)}
-                          className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--pri)] transition-all cursor-pointer"
-                          title="Update Station Rule"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Delete Rule Button */}
-                        <button
-                          onClick={() => handleDeleteStation(stn.id, stn.station_name)}
-                          disabled={deletingRuleId === stn.id}
-                          className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-red-500 hover:border-red-500 transition-all cursor-pointer"
-                          title="Delete Station Rule"
-                        >
-                          <Trash2 className={cn("w-3.5 h-3.5", deletingRuleId === stn.id && "animate-spin")} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Rule Metric Indicators (Read-Only Badges) */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] space-y-0.5">
-                        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--muted)] block">Capacity Ceiling</span>
-                        <div className="text-sm font-black text-[var(--text)]">
-                          {stn.station_capacity > 0 ? `${stn.station_capacity.toLocaleString()} delegates` : "Unlimited"}
-                        </div>
-                      </div>
-
-                      <div className="p-2.5 rounded-xl bg-[var(--surf)] border border-[var(--border)] space-y-0.5">
-                        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--muted)] block">Check-In Limit</span>
-                        <div className="text-sm font-black text-emerald-500">
-                          {stn.max_checkins_per_delegate > 0 ? `${stn.max_checkins_per_delegate} / delegate` : "Unlimited"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Allowed Roles Badges (Read-Only) */}
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">
-                        <span>Allowed Roles:</span>
-                        <span className="text-[var(--acc)] font-bold">{isAllRoles ? "All Roles" : `${roles.length} Selected`}</span>
-                      </div>
-
-                      <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto custom-scrollbar">
-                        {isAllRoles ? (
-                          <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                            ✓ All Participant Roles Allowed
-                          </span>
-                        ) : (
-                          roles.map((role) => (
-                            <span key={role} className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-[var(--surf)] border border-[var(--border)] text-[var(--text)]">
-                              {role}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Bottom Action Trigger */}
-                  <Button
-                    onClick={() => handleOpenUpdateModal(stn)}
-                    variant="outline"
-                    className="w-full h-8 text-xs font-bold border-[var(--border)] bg-[var(--surf)] text-[var(--text)] hover:bg-[var(--raised)] gap-1.5 mt-2"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-[var(--pri)]" /> Update Rule Parameters
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* ───────────────────────────────────────────────────────────── */}
       {/* MODAL 1: ADD NEW STATION RULE                                 */}
@@ -537,7 +977,7 @@ export default function CapacityTab() {
               </h3>
               <button
                 onClick={() => setIsAddModalOpen(false)}
-                className="text-[var(--muted)] hover:text-[var(--text)]"
+                className="text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -595,7 +1035,6 @@ export default function CapacityTab() {
                 <span className="text-[10px] text-[var(--muted)] font-medium mt-0.5 block">0 = unlimited check-ins allowed for this station</span>
               </div>
 
-              {/* Allowed Roles Selection */}
               <div>
                 <label className="text-xs font-bold text-[var(--text)] block mb-1.5">Authorized Participant Roles</label>
                 <div className="p-3 bg-[var(--surf)] border border-[var(--border)] rounded-xl space-y-2 max-h-36 overflow-y-auto custom-scrollbar">
@@ -637,7 +1076,7 @@ export default function CapacityTab() {
       )}
 
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* MODAL 2: UPDATE STATION RULE (ALL INPUT FIELDS ARE HERE)       */}
+      {/* MODAL 2: UPDATE STATION RULE                                   */}
       {/* ───────────────────────────────────────────────────────────── */}
       {isUpdateModalOpen && editingRule && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -648,7 +1087,7 @@ export default function CapacityTab() {
               </h3>
               <button
                 onClick={() => { setIsUpdateModalOpen(false); setEditingRule(null); }}
-                className="text-[var(--muted)] hover:text-[var(--text)]"
+                className="text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -705,7 +1144,6 @@ export default function CapacityTab() {
                 <span className="text-[10px] text-[var(--muted)] font-medium mt-0.5 block">0 = unlimited check-ins allowed for this station</span>
               </div>
 
-              {/* Authorized Roles Selection for Edit */}
               <div>
                 <label className="text-xs font-bold text-[var(--text)] block mb-1.5">Authorized Participant Roles</label>
                 <div className="p-3 bg-[var(--surf)] border border-[var(--border)] rounded-xl space-y-2 max-h-36 overflow-y-auto custom-scrollbar">
@@ -763,7 +1201,7 @@ export default function CapacityTab() {
               </h3>
               <button
                 onClick={() => setIsEventCapModalOpen(false)}
-                className="text-[var(--muted)] hover:text-[var(--text)]"
+                className="text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -802,7 +1240,6 @@ export default function CapacityTab() {
           </div>
         </div>
       )}
-
     </div>
   );
 }

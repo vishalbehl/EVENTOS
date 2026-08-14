@@ -47,6 +47,7 @@ REGISTRATION_SHARED_TABLES = {
     "venue.sync_outbox",
     "venue.venue_checkin_gates",
     "venue.venue_checkins",
+    "venue.venue_operational_policies",
     "venue.venue_scan_events",
 }
 
@@ -101,5 +102,11 @@ async def ensure_registration_shared_schema() -> None:
         await connection.execute(text("ALTER TABLE registration.companions ADD COLUMN IF NOT EXISTS event_id UUID"))
         await connection.execute(text("ALTER TABLE registration.companions ADD COLUMN IF NOT EXISTS badge_code VARCHAR(100)"))
         await connection.execute(text("ALTER TABLE venue.registration_source_api_keys ADD COLUMN IF NOT EXISTS api_key_encrypted TEXT"))
+        await connection.execute(text("ALTER TABLE venue.venue_operational_policies ADD COLUMN IF NOT EXISTS allowed_payment_statuses_for_checkin JSONB"))
+        await connection.execute(text("ALTER TABLE venue.venue_operational_policies ADD COLUMN IF NOT EXISTS allowed_payment_statuses_for_print JSONB"))
+        await connection.execute(text("ALTER TABLE venue.venue_operational_policies ADD COLUMN IF NOT EXISTS allowed_payment_statuses_for_self_checkin JSONB"))
+        await connection.execute(text("UPDATE venue.venue_operational_policies SET allowed_payment_statuses_for_checkin = '[\"All\"]' WHERE allowed_payment_statuses_for_checkin IS NULL"))
+        await connection.execute(text("UPDATE venue.venue_operational_policies SET allowed_payment_statuses_for_print = '[\"All\"]' WHERE allowed_payment_statuses_for_print IS NULL"))
+        await connection.execute(text("UPDATE venue.venue_operational_policies SET allowed_payment_statuses_for_self_checkin = '[\"All\"]' WHERE allowed_payment_statuses_for_self_checkin IS NULL"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_registration_companions_event_id ON registration.companions(event_id)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_registration_companions_badge_code ON registration.companions(badge_code)"))

@@ -1,0 +1,1 @@
+{ "id": "event-agenda-timeline", "canonical": "json", "htmlFile": "../html/event-agenda-timeline.html", "components": [{ "type": "section", "attributes": { "data-component-asset-id": "event-agenda-timeline" }, "components": "event-agenda-timeline.html" }] }

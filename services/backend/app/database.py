@@ -142,7 +142,7 @@ TABLE_SCHEMAS = {
     "ticket_types": "registration",
     "registration_forms": "registration",
     "form_fields": "registration",
-    "form_submissions": "registration",
+
     "payment_transactions": "registration",
     "promo_codes": "registration",
     "badges": "registration",
@@ -473,6 +473,7 @@ TABLE_SCHEMAS = {
     "templates": "templates",
     "template_versions": "templates",
     "template_dependencies": "templates",
+    "template_drafts": "templates",
     "template_installations": "templates",
     "template_usage": "templates",
     "template_reviews": "templates",
@@ -490,7 +491,14 @@ TABLE_SCHEMAS = {
     "navigation_menus": "website_builder",
     "menu_items": "website_builder",
     "blogs": "website_builder",
+    "site_drafts": "website_builder",
+    "site_revisions": "website_builder",
+    "site_deployments": "website_builder",
+    "site_editor_sessions": "website_builder",
+    "site_asset_refs": "website_builder",
+    "site_link_index": "website_builder",
     "site_domains": "website_builder",
+
 
     # design_system schema mappings
     "design_tokens": "design_system",

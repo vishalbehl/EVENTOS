@@ -6,6 +6,28 @@ from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.sync_outbox import SyncOutbox
 
+
+def _get_candidate_push_urls(base_url: str, event_id: str) -> list[str]:
+    raw = (base_url or "http://127.0.0.1:8000").rstrip("/")
+    for suffix in (
+        "/api/v1/registration-source",
+        "/api/v1/sync",
+        "/api/v1/events",
+        "/api/v1",
+        "/registration-source",
+        "/sync",
+    ):
+        if raw.endswith(suffix):
+            raw = raw[:-len(suffix)].rstrip("/")
+            break
+    
+    return [
+        f"{raw}/api/v1/registration-source/events/{event_id}/push",
+        f"{raw}/api/v1/sync/events/{event_id}/push",
+        f"{raw}/api/v1/events/{event_id}/venue-sync/push",
+    ]
+
+
 async def process_outbox(event_id: str):
     """
     Polls the local sync_outbox for pending/failed sync tasks and pushes them to the Cloud.
@@ -52,22 +74,37 @@ async def process_outbox(event_id: str):
         await db.commit()
 
         # Send to Cloud
-        url = f"{settings.CLOUD_API_URL}/api/v1/registration-source/events/{event_id}/push"
+        candidate_urls = _get_candidate_push_urls(settings.CLOUD_API_URL, event_id)
+        api_key = settings.CLOUD_DEVICE_KEY or getattr(settings, "CLOUD_API_KEY", "")
+        headers = {
+            "X-Fetch-Api-Key": api_key,
+            "X-Device-Key": api_key,
+        }
+
+        response = None
+        last_error = None
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers={"X-Fetch-Api-Key": settings.CLOUD_DEVICE_KEY},
-                    json=payload,
-                    timeout=15.0
-                )
-                if response.status_code == 404:
-                    response = await client.post(
-                        f"{settings.CLOUD_API_URL}/api/v1/sync/events/{event_id}/push",
-                        headers={"X-Fetch-Api-Key": settings.CLOUD_DEVICE_KEY},
-                        json=payload,
-                        timeout=15.0,
-                    )
+                for candidate_url in candidate_urls:
+                    try:
+                        res = await client.post(
+                            candidate_url,
+                            headers=headers,
+                            json=payload,
+                            timeout=15.0
+                        )
+                        if res.status_code != 404:
+                            response = res
+                            break
+                    except Exception as ex:
+                        last_error = ex
+                        continue
+                
+                if response is None:
+                    if last_error:
+                        raise last_error
+                    raise RuntimeError(f"All candidate push endpoints returned 404 for event {event_id}: {candidate_urls}")
+
                 response.raise_for_status()
                 result_data = response.json()
                 

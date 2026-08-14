@@ -14,6 +14,7 @@ import {
     Zap
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { copyToClipboard as safeCopyToClipboard } from '@/lib/utils'
 
 // ===== Props =====
 interface Props {
@@ -77,9 +78,13 @@ export default function VariablePanel({ onInsert }: Props) {
         ),
     })).filter((group) => group.variables.length > 0)
 
-    const copyToClipboard = (variable: string) => {
-        navigator.clipboard.writeText(`{{${variable}}}`)
-        toast.success(`Copied: {{${variable}}}`)
+    const copyToClipboard = async (variable: string) => {
+        const ok = await safeCopyToClipboard(`{{${variable}}}`)
+        if (ok) {
+            toast.success(`Copied: {{${variable}}}`)
+        } else {
+            toast.error(`Could not copy {{${variable}}}`)
+        }
     }
 
     return (

@@ -1,0 +1,14 @@
+{
+  "id": "template-global-tech-summit",
+  "canonical": "json",
+  "notes": "Runtime registry contains the complete JSON payload; this file records the durable component asset identifier and source artifact path for external tooling.",
+  "sections": [
+    "event-tech-hero",
+    "event-speaker-showcase",
+    "event-agenda-timeline",
+    "event-sponsor-marquee",
+    "event-venue-feature",
+    "event-registration-band",
+    "event-footer-system"
+  ]
+}

@@ -344,3 +344,37 @@ export function downloadCSV(content: string, filename: string): void {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback below
+    }
+  }
+
+  try {
+    if (typeof document !== "undefined") {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-999999px";
+      textarea.style.top = "-999999px";
+      textarea.setAttribute("readonly", "");
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, text.length);
+      const successful = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return successful;
+    }
+  } catch {
+    // Silently handle fallback failure
+  }
+  return false;
+}

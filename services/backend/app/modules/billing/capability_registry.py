@@ -59,7 +59,7 @@ def _feature(
 
 FEATURE_DEFINITIONS: dict[str, dict[str, Any]] = {
     "FEAT_EVENT_PLANNING": _feature("EVENT", ["/events/:eventId/planning"], operations=["events.planning.manage"]),
-    "FEAT_EVENT_WEBSITE": _feature("EVENT", ["/events/:eventId/design-studio/portals"], value_type="TIER", values=["BASIC", "CUSTOMIZABLE", "FULLY_BRANDED"], backend_mode="COMPOSITE", availability_note="The website workspace is composed of independently enforced registration and branding operations."),
+    "FEAT_EVENT_WEBSITE": _feature("EVENT", ["/events/:eventId/design-studio/portals"], value_type="TIER", values=["BASIC", "CUSTOMIZABLE", "FULLY_BRANDED"], operations=["website.manage"], availability_note="The website workspace is composed of independently enforced registration, branding, and website document operations."),
     "FEAT_CUSTOM_DOMAIN": _feature("ORGANIZATION", ["/settings"], operations=["branding.custom_domain.manage"], page_gate=False),
     "FEAT_WHITE_LABEL": _feature("BOTH", ["/events/:eventId/design-studio/portals"], operations=["branding.white_label.publish"], page_gate=False),
     "FEAT_REGISTRATION_PORTAL": _feature("EVENT", ["/events/:eventId/registration"], value_type="TIER", values=["BASIC", "ADVANCED", "ENTERPRISE"], operations=["registration.read", "registration.manage", "registration.submit", "registration.approve"]),
@@ -222,6 +222,7 @@ OPERATION_ENFORCEMENT_SITES: dict[str, list[dict[str, str]]] = {
     "branding.colors.manage": [{"site": "modules/rbac/routers/events.py:update_event", "mode": "ENFORCE"}],
     "branding.fonts.manage": [{"site": "modules/rbac/routers/events.py:update_event", "mode": "ENFORCE"}],
     "branding.logo.manage": [{"site": "modules/rbac/routers/events.py:branding_uploads", "mode": "ENFORCE"}],
+    "website.manage": [{"site": "modules/website_builder/router.py:event_website_router", "mode": "ENFORCE"}],
     "developer.api.use": [
         {"site": "modules/developer/routers/developer.py:developer_router", "mode": "ENFORCE"},
         {"site": "modules/developer/services/developer_service.py:api_authentication", "mode": "ENFORCE"},
@@ -302,6 +303,7 @@ OPERATION_PERMISSIONS: dict[str, str | None] = {
     "branding.colors.manage": "EVENTS:EDIT",
     "branding.fonts.manage": "EVENTS:EDIT",
     "branding.logo.manage": "EVENTS:EDIT",
+    "website.manage": "EVENTS:EDIT",
     "developer.api.use": "DEVELOPER:API_USE",
     "developer.webhooks.manage": "DEVELOPER:WEBHOOKS_MANAGE",
     "integrations.manage": "DEVELOPER:INTEGRATIONS_MANAGE",

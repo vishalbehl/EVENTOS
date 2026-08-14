@@ -92,7 +92,7 @@ export default function DelegateRegistry() {
         apiGet<PrinterDevice[]>(`/events/${eventId}/printers`).catch(() => []),
       ]);
 
-      setParticipants(participantList);
+      setParticipants(participantList || []);
       setSessions(sessionList || []);
       setPrinters(printerList || []);
 
@@ -155,7 +155,7 @@ export default function DelegateRegistry() {
       
       const regIdMatch = regIdFilter ? p.regno?.toLowerCase().includes(regIdFilter.toLowerCase()) : true;
       const roleMatch = roleFilter === "all" ? true : p.role === roleFilter;
-      const paymentMatch = paymentFilter === "all" ? true : p.paid_status === paymentFilter;
+      const paymentMatch = paymentFilter === "all" ? true : p.paid_status?.toLowerCase() === paymentFilter.toLowerCase();
       const countryMatch = countryFilter === "all" ? true : p.country === countryFilter;
       
       let dateMatch = true;
@@ -183,6 +183,17 @@ export default function DelegateRegistry() {
 
   const uniqueRoles = useMemo(() => {
     return Array.from(new Set(participants.map(p => p.role).filter(Boolean))) as string[];
+  }, [participants]);
+
+  // Dynamically inherit all distinct payment statuses present in dataset (e.g. Paid, Unpaid, Free, Complimentary)
+  const uniquePaymentStatuses = useMemo(() => {
+    const set = new Set<string>(["Paid", "Unpaid"]);
+    participants.forEach(p => {
+      if (p.paid_status && typeof p.paid_status === "string" && p.paid_status.trim() !== "") {
+        set.add(p.paid_status.trim());
+      }
+    });
+    return Array.from(set).sort();
   }, [participants]);
 
   // Bulk operations handlers
@@ -417,10 +428,9 @@ export default function DelegateRegistry() {
           </select>
           <select value={paymentFilter} onChange={e => { setPaymentFilter(e.target.value); setCurrentPage(1); }} className="h-12 px-6 rounded-2xl border border-default bg-black text-[11px] font-black uppercase tracking-widest text-[var(--text)] focus:outline-none focus:border-[var(--pri)] cursor-pointer">
             <option value="all">All Payments</option>
-            <option value="Paid">Paid</option>
-            <option value="Unpaid">Unpaid</option>
-            <option value="Refund Requested">Refund Requested</option>
-            <option value="Refunded">Refunded</option>
+            {uniquePaymentStatuses.map(status => (
+              <option key={status} value={status}>{status}</option>
+            ))}
           </select>
         </div>
 
@@ -454,8 +464,9 @@ export default function DelegateRegistry() {
               
               <select onChange={e => handleBulkStatusUpdate(e.target.value)} className="h-9 px-4 rounded-full border border-default bg-black text-[10px] font-black uppercase tracking-widest text-[var(--text)]">
                 <option value="">Update Payment</option>
-                <option value="Paid">Mark Paid</option>
-                <option value="Unpaid">Mark Unpaid</option>
+                {uniquePaymentStatuses.map(status => (
+                  <option key={status} value={status}>Mark {status}</option>
+                ))}
               </select>
 
               <select onChange={e => handleBulkSessionAssignment(e.target.value)} className="h-9 px-4 rounded-full border border-default bg-black text-[10px] font-black uppercase tracking-widest text-[var(--text)]">

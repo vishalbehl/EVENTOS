@@ -55,6 +55,7 @@ from app.modules.audit.routers.audit import router as audit_router
 # Phase 2: Files, Workflow & AI RAG Platform
 from app.modules.files.routers.files import router as files_router
 from app.modules.workflow.routers.workflows import router as workflows_router
+from app.modules.website_builder.router import event_website_router, platform_website_template_router, public_website_runtime_router, public_website_slug_router, public_website_template_preview_router
 
 
 api_router = APIRouter()
@@ -72,6 +73,11 @@ api_router.include_router(commercial_public_proposals_router)
 api_router.include_router(inventory_router)
 api_router.include_router(pricing_router)
 api_router.include_router(procurement_router)
+api_router.include_router(platform_website_template_router)
+api_router.include_router(event_website_router)
+api_router.include_router(public_website_runtime_router)
+api_router.include_router(public_website_slug_router)
+api_router.include_router(public_website_template_preview_router)
 
 # ── Phase 6: Enterprise Template System, Website Builder & Blueprint Engine ────
 

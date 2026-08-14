@@ -1,12 +1,158 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import type { Editor, Component } from 'grapesjs';
-import { ChevronRight, ChevronDown, Settings2, Search, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Settings2, Search, X, CornerDownRight, PanelRightClose } from 'lucide-react';
 import { Registry, PROPERTY_GROUPS } from '../../core/properties/PropertyRegistry';
 import type { ComponentManifest, PropertyGroupDef, PropertyDefinition } from '../../core/properties/PropertyRegistry';
 import { PropertyEditorFactory } from './editors/PropertyEditorFactory';
+import {
+  AdvancedGroup,
+  AnimationGroup,
+  BackgroundGroup,
+  BorderGroup,
+  EffectsGroup,
+  LayoutGroup,
+  ResponsiveGroup,
+  SpacingGroup,
+  TypographyGroup,
+} from '../../core/properties/groups';
+import type { ImportStatus } from '../../hooks/useEventImport';
+import type { PageConfig, ResponsiveDevice } from '../../types';
+import { commitGrapesComponentToDocument, findTargetComponent, readPropertyTarget } from '../../core/properties/usePropertySync';
+import { applyComponentSettings } from '../../core/components/componentRenderers';
 
 interface PropertyStudioProps {
   editor: Editor | null;
+  pages?: PageConfig[];
+  eventStatus?: ImportStatus | 'mock';
+  onFetchEventData?: () => void | Promise<void>;
+  onCollapseInspector?: () => void;
+  readOnly?: boolean;
+  device?: ResponsiveDevice;
+}
+
+function safeGetSelected(editor: Editor): Component | null {
+  try {
+    return editor.getSelected() || null;
+  } catch {
+    return null;
+  }
+}
+
+const SHARED_GROUPS: { groupId: string; properties: PropertyDefinition[] }[] = [
+  { groupId: 'LAYOUT', properties: LayoutGroup },
+  { groupId: 'TYPOGRAPHY', properties: TypographyGroup },
+  { groupId: 'SPACING', properties: SpacingGroup },
+  { groupId: 'BACKGROUND', properties: BackgroundGroup },
+  { groupId: 'BORDER', properties: BorderGroup },
+  { groupId: 'EFFECTS', properties: EffectsGroup },
+  { groupId: 'ANIMATION', properties: AnimationGroup },
+  { groupId: 'RESPONSIVE', properties: ResponsiveGroup },
+  { groupId: 'ADVANCED', properties: AdvancedGroup },
+];
+
+type InspectorPane = 'content' | 'style';
+
+const GROUP_PANE: Record<string, InspectorPane> = {
+  CONTENT: 'content',
+  MEDIA: 'style',
+  OVERLAY: 'style',
+  STYLE: 'style',
+  APPEARANCE: 'style',
+  LAYOUT: 'style',
+  TYPOGRAPHY: 'style',
+  SPACING: 'style',
+  BACKGROUND: 'style',
+  BORDER: 'style',
+  EFFECTS: 'style',
+  HOVER: 'style',
+  ANIMATION: 'style',
+  RESPONSIVE: 'style',
+  VISIBILITY: 'style',
+  ADVANCED: 'style',
+};
+
+const INSPECTOR_TABS: { id: InspectorPane; label: string }[] = [
+  { id: 'content', label: 'Content' },
+  { id: 'style', label: 'Styling' },
+];
+
+function allowedSharedGroups(manifest: ComponentManifest): Set<string> {
+  const id = manifest.id;
+  const category = manifest.category || '';
+
+  if (category === 'Typography' || ['heading', 'subheading', 'paragraph', 'lead-text', 'blockquote', 'highlight', 'counter', 'marquee'].includes(id)) {
+    return new Set(['TYPOGRAPHY', 'SPACING', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+  }
+
+  if (category === 'Media' || ['image', 'gallery', 'video', 'image-text', 'logo-marquee', 'icon-block'].includes(id)) {
+    return new Set(['LAYOUT', 'SPACING', 'BORDER', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+  }
+
+  if (category === 'Forms' || category === 'Buttons' || ['button', 'button-group', 'contact-form', 'newsletter', 'sponsor-inquiry'].includes(id)) {
+    return new Set(['LAYOUT', 'SPACING', 'BACKGROUND', 'BORDER', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+  }
+
+  if (category === 'Navigation' || category === 'Headers' || ['header', 'navigation', 'footer', 'breadcrumb', 'progress-bar'].includes(id)) {
+    return new Set(['LAYOUT', 'TYPOGRAPHY', 'SPACING', 'BACKGROUND', 'BORDER', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+  }
+
+  if (category === 'Event' || manifest.supportsData) {
+    return new Set(['LAYOUT', 'TYPOGRAPHY', 'SPACING', 'BACKGROUND', 'BORDER', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+  }
+
+  if (['map', 'qr-code', 'social-icons', 'badge', 'alert', 'countdown'].includes(id)) {
+    return new Set(['LAYOUT', 'TYPOGRAPHY', 'SPACING', 'BACKGROUND', 'BORDER', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+  }
+
+  return new Set(['LAYOUT', 'SPACING', 'BACKGROUND', 'BORDER', 'EFFECTS', 'ANIMATION', 'RESPONSIVE', 'ADVANCED']);
+}
+
+function readValues(component: Component, properties: PropertyDefinition[]) {
+  return properties.reduce<Record<string, any>>((acc, property) => {
+    const mapping = readPropertyTarget(property);
+    const targetComponent = findTargetComponent(component, mapping.selector);
+    if (mapping.target === 'style') {
+      const styles = targetComponent.getStyle() as Record<string, string>;
+      acc[property.id] = styles[mapping.key] ?? property.defaultValue ?? '';
+      return acc;
+    }
+    if (mapping.target === 'attribute') {
+      const attrs = targetComponent.getAttributes() as Record<string, string>;
+      acc[property.id] = attrs[mapping.key] ?? property.defaultValue ?? '';
+      return acc;
+    }
+    if (mapping.target === 'content') {
+      const el = targetComponent.getView()?.el;
+      acc[property.id] = el?.textContent || targetComponent.get('content') || property.defaultValue || '';
+      return acc;
+    }
+    acc[property.id] = property.defaultValue ?? '';
+    return acc;
+  }, {});
+}
+
+function mergeManifestGroups(manifest: ComponentManifest) {
+  const groups = manifest.schema.groups.map(group => ({
+    ...group,
+    properties: [...group.properties],
+  }));
+  const allowedGroups = allowedSharedGroups(manifest);
+
+  SHARED_GROUPS.forEach(shared => {
+    if (!allowedGroups.has(shared.groupId)) return;
+    const existing = groups.find(group => group.groupId === shared.groupId);
+    if (!existing) {
+      groups.push({ groupId: shared.groupId, properties: [...shared.properties] });
+      return;
+    }
+
+    const existingIds = new Set(existing.properties.map(prop => prop.id));
+    shared.properties.forEach(prop => {
+      if (!existingIds.has(prop.id)) existing.properties.push(prop);
+    });
+  });
+
+  return groups;
 }
 
 // ---------------------------------------------------------------------------
@@ -18,17 +164,21 @@ const AccordionGroup: React.FC<{
   editor: Editor;
   component: Component;
   searchQuery: string;
-}> = ({ groupDef, properties, editor, component, searchQuery }) => {
+  pages?: PageConfig[];
+  device?: ResponsiveDevice;
+}> = ({ groupDef, properties, editor, component, searchQuery, pages, device }) => {
   const [isExpanded, setIsExpanded] = useState(groupDef.defaultExpanded ?? false);
 
   // Filter properties by search query
   const visibleProperties = useMemo(() => {
-    if (!searchQuery) return properties;
+    const values = readValues(component, properties);
+    const unhidden = properties.filter(p => !p.hiddenWhen?.(values));
+    if (!searchQuery) return unhidden;
     const q = searchQuery.toLowerCase();
-    return properties.filter(p =>
+    return unhidden.filter(p =>
       p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)
     );
-  }, [properties, searchQuery]);
+  }, [component, properties, searchQuery]);
 
   // Auto-expand group when there's a search match
   useEffect(() => {
@@ -62,7 +212,7 @@ const AccordionGroup: React.FC<{
       {isExpanded && (
         <div className="px-4 pb-3 pt-1 space-y-0">
           {visibleProperties.map(prop => (
-            <PropertyEditorFactory key={prop.id} property={prop} component={component} />
+            <PropertyEditorFactory key={prop.id} property={prop} component={component} pages={pages} device={device} />
           ))}
         </div>
       )}
@@ -73,11 +223,12 @@ const AccordionGroup: React.FC<{
 // ---------------------------------------------------------------------------
 // Main Property Studio
 // ---------------------------------------------------------------------------
-export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor }) => {
+export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor, pages = [], eventStatus = 'idle', onFetchEventData, onCollapseInspector, readOnly = false, device = 'desktop' }) => {
   const [selectedComponent, setSelectedComponent] = useState<Component | null>(null);
   const [, setUpdateTrigger] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [activePane, setActivePane] = useState<InspectorPane>('content');
 
   useEffect(() => {
     if (!editor) return;
@@ -97,7 +248,7 @@ export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor }) => {
     editor.on('component:deselected', handleDeselected);
     editor.on('component:update', handleUpdate);
 
-    const selected = editor.getSelected();
+    const selected = safeGetSelected(editor);
     if (selected) setSelectedComponent(selected);
 
     return () => {
@@ -123,50 +274,132 @@ export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor }) => {
   // ----- Empty state -----
   if (!selectedComponent || !manifest || !editor) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground space-y-3 opacity-50">
-        <Settings2 className="w-7 h-7" />
-        <p className="text-xs leading-relaxed">Select an element on the canvas<br />to edit its properties.</p>
+      <div className="wb-settings-hidden-state">
+        <Settings2 className="w-4 h-4" />
+        <span>Settings hidden</span>
       </div>
     );
   }
 
   const componentName = manifest.title || selectedComponent.getName() || selectedComponent.get('type') || '';
-  const totalProperties = manifest.schema.groups.reduce((acc, g) => acc + g.properties.length, 0);
+  const unifiedGroups = mergeManifestGroups(manifest);
+  const paneGroups = unifiedGroups.filter(group => (GROUP_PANE[group.groupId] || 'advanced') === activePane);
+  const paneProperties = paneGroups.reduce((acc, g) => acc + g.properties.length, 0);
+  const selectedAttributes = selectedComponent.getAttributes() as Record<string, string>;
+  const updateSelectedAttribute = (name: string, value: string) => {
+    if (!value) {
+      const attrs = { ...(selectedComponent.getAttributes() as Record<string, string>) };
+      delete attrs[name];
+      selectedComponent.setAttributes(attrs);
+    } else {
+      selectedComponent.addAttributes({ [name]: value });
+    }
+    applyComponentSettings(selectedComponent);
+    commitGrapesComponentToDocument(selectedComponent, device);
+    selectedComponent.trigger('component:update', selectedComponent);
+    setUpdateTrigger(prev => prev + 1);
+  };
+  const componentTrail = (() => {
+    const trail: Component[] = [];
+    let cursor: Component | undefined = selectedComponent;
+    while (cursor && cursor.get('type') !== 'wrapper') {
+      trail.unshift(cursor);
+      cursor = cursor.parent();
+      if (trail.length > 8) break;
+    }
+    return trail;
+  })();
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className={`wb-inspector-studio ${readOnly ? 'wb-inspector-studio--readonly' : ''}`} aria-readonly={readOnly}>
 
       {/* ── Component Header ── */}
-      <div className="flex-shrink-0 px-4 py-2.5 border-b border-border bg-muted/20 flex items-center gap-2.5">
+      <div className="wb-inspector-titlebar">
         {manifest.icon && (
-          <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+          <div className="wb-inspector-icon">
             <i className={`${manifest.icon} text-primary`} style={{ fontSize: '13px' }} />
           </div>
         )}
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] font-semibold text-foreground truncate flex items-center gap-1.5">
+        <div className="wb-inspector-selected">
+          <div className="wb-inspector-component-name">
             {componentName}
             {manifest.category && (
-              <span className="px-1.5 py-0.5 rounded-sm bg-primary/10 text-primary text-[9px] uppercase tracking-wider font-bold shrink-0">
+              <span className="wb-inspector-chip">
                 {manifest.category}
               </span>
             )}
           </div>
-          <div className="text-[9px] text-muted-foreground/50 mt-0.5 font-mono truncate">
+          <div className="wb-inspector-component-id">
             #{selectedComponent.getId()}
           </div>
         </div>
+        {onCollapseInspector && (
+          <button
+            type="button"
+            className="wb-inspector-collapse-btn"
+            onClick={onCollapseInspector}
+            aria-label="Collapse inspector"
+            title="Collapse inspector"
+          >
+            <PanelRightClose className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* ── Scrollable Body ── */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="wb-inspector-tabs" role="tablist" aria-label="Inspector settings">
+        {INSPECTOR_TABS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={activePane === id}
+            className={`wb-inspector-tab ${activePane === id ? 'active' : ''}`}
+            onClick={() => setActivePane(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {componentTrail.length > 1 && (
+        <div className="wb-inspector-breadcrumbs">
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {componentTrail.map((item, index) => {
+              const itemType = String(item.get('type') || item.get('tagName') || 'element');
+              const itemManifest = Registry.get(itemType) || Registry.getFallback(itemType, item.get('tagName') || '');
+              const isSelected = item === selectedComponent;
+              return (
+                <React.Fragment key={item.getId() || `${itemType}-${index}`}>
+                  {index > 0 && <ChevronRight className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
+                  <button
+                    type="button"
+                    onClick={() => editor.select(item)}
+                    className={`shrink-0 inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold transition-colors ${
+                      isSelected
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-border bg-muted/20 text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                    }`}
+                    title={`Select ${itemManifest.title}`}
+                  >
+                    {index > 0 && <CornerDownRight className="w-3 h-3" />}
+                    {itemManifest.title}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="wb-inspector-scroll">
 
         {/* PROPERTIES SECTION HEADER */}
-        <div className="px-4 py-2 border-b border-border/40 bg-muted/10 sticky top-0 z-10 backdrop-blur-sm">
+        <div className="wb-properties-toolbar">
           <div className="flex items-center justify-between">
-            <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">
-              Properties
-              <span className="ml-1.5 text-muted-foreground/40 font-normal">{totalProperties}</span>
+            <span className="wb-properties-label">
+              {activePane} settings
+              <span className="wb-properties-count">{paneProperties}</span>
             </span>
             <button
               onClick={handleSearchToggle}
@@ -200,7 +433,7 @@ export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor }) => {
         </div>
 
         {/* PROPERTY GROUPS */}
-        {manifest.schema.groups.map(group => {
+        {paneGroups.map(group => {
           const groupDef = PROPERTY_GROUPS[group.groupId as keyof typeof PROPERTY_GROUPS];
           if (!groupDef) return null;
           return (
@@ -211,12 +444,14 @@ export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor }) => {
               editor={editor}
               component={selectedComponent}
               searchQuery={searchQuery}
+              pages={pages}
+              device={device}
             />
           );
         })}
 
         {/* Empty search state */}
-        {searchQuery && manifest.schema.groups.every(g => {
+        {searchQuery && paneGroups.every(g => {
           const q = searchQuery.toLowerCase();
           return g.properties.filter(p => p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)).length === 0;
         }) && (
@@ -226,71 +461,84 @@ export const PropertyStudio: React.FC<PropertyStudioProps> = ({ editor }) => {
         )}
 
         {/* DATA SECTION */}
-        {manifest.supportsData && (
+        {activePane === 'content' && manifest.supportsData && (
           <>
             <div className="px-4 py-2 border-b border-t border-border/40 bg-muted/10 mt-1">
-              <div className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Data Binding</div>
+              <div className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Data</div>
             </div>
             <div className="p-3 space-y-1">
-              <button className="w-full text-left px-3 py-2 hover:bg-muted rounded text-foreground transition-colors text-[11px] font-medium border border-border/50 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
-                Manual Data
-              </button>
-              <button className="w-full text-left px-3 py-2 hover:bg-muted rounded transition-colors text-[11px] text-muted-foreground flex items-center gap-2">
+              <label className="block text-[11px] font-medium text-muted-foreground">
+                Source
+                <select
+                  value={selectedAttributes['data-source'] || 'static'}
+                  onChange={(event) => updateSelectedAttribute('data-source', event.target.value)}
+                  className="mt-1 w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                >
+                  <option value="static">Static</option>
+                  <option value="event-snapshot">Event Snapshot</option>
+                </select>
+              </label>
+              <label className="block text-[11px] font-medium text-muted-foreground">
+                Collection
+                <select
+                  value={selectedAttributes['data-collection'] || 'event'}
+                  onChange={(event) => updateSelectedAttribute('data-collection', event.target.value)}
+                  className="mt-1 w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                >
+                  {['event', 'speakers', 'sessions', 'rooms', 'tracks', 'sponsors', 'tickets', 'important-dates', 'committee', 'venue', 'gallery', 'resources', 'testimonials', 'organizers', 'statistics'].map(collection => (
+                    <option key={collection} value={collection}>{collection}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-[11px] font-medium text-muted-foreground">
+                Filter
+                <input
+                  value={selectedAttributes['data-filter'] || ''}
+                  onChange={(event) => updateSelectedAttribute('data-filter', event.target.value)}
+                  placeholder="e.g. speakerType=KEYNOTE"
+                  className="mt-1 w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                />
+              </label>
+              <label className="block text-[11px] font-medium text-muted-foreground">
+                Sort
+                <input
+                  value={selectedAttributes['data-sort'] || ''}
+                  onChange={(event) => updateSelectedAttribute('data-sort', event.target.value)}
+                  placeholder="e.g. displayOrder"
+                  className="mt-1 w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                />
+              </label>
+              <label className="block text-[11px] font-medium text-muted-foreground">
+                Limit
+                <input
+                  type="number"
+                  min={0}
+                  value={selectedAttributes['data-limit'] || ''}
+                  onChange={(event) => updateSelectedAttribute('data-limit', event.target.value)}
+                  placeholder="6"
+                  className="mt-1 w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                />
+              </label>
+              <label className="block text-[11px] font-medium text-muted-foreground">
+                Fields
+                <input
+                  value={selectedAttributes['data-fields'] || ''}
+                  onChange={(event) => updateSelectedAttribute('data-fields', event.target.value)}
+                  placeholder="name,photo,designation"
+                  className="mt-1 w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                />
+              </label>
+              <button onClick={() => void onFetchEventData?.()} className="w-full text-left px-3 py-2 hover:bg-muted rounded transition-colors text-[11px] text-muted-foreground flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary/60" />
-                Import Event Snapshot
+                {eventStatus === 'mock' ? 'Fetch real event data' : 'Refresh Event Snapshot'}
               </button>
-              <button className="w-full text-left px-3 py-2 hover:bg-muted rounded transition-colors text-[11px] text-muted-foreground flex items-center gap-2">
+              <div className="w-full text-left px-3 py-2 rounded text-[11px] text-muted-foreground flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent/60" />
-                Global Variables
-              </button>
+                {eventStatus === 'mock' ? 'Using mock fallback' : 'Collection / filter / sort / limit'}
+              </div>
             </div>
           </>
         )}
-
-        {/* PRESETS SECTION */}
-        <div className="px-4 py-2 border-b border-t border-border/40 bg-muted/10 mt-1">
-          <div className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Presets</div>
-        </div>
-        <div className="p-3 grid grid-cols-2 gap-1.5">
-          <button className="flex items-center gap-1.5 justify-center px-3 py-1.5 bg-muted/30 hover:bg-muted rounded transition-colors text-[10px] text-muted-foreground border border-border/40">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
-            Save
-          </button>
-          <button className="flex items-center gap-1.5 justify-center px-3 py-1.5 bg-muted/30 hover:bg-muted rounded transition-colors text-[10px] text-muted-foreground border border-border/40">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-            Load
-          </button>
-          <button className="col-span-2 flex items-center gap-1.5 justify-center px-3 py-1.5 bg-muted/30 hover:bg-destructive/10 hover:text-destructive rounded transition-colors text-[10px] text-muted-foreground border border-border/40">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-            Reset to Default
-          </button>
-        </div>
-
-        {/* PREVIEW CONTEXT */}
-        <div className="px-4 py-2 border-b border-t border-border/40 bg-muted/10 mt-1">
-          <div className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Preview Context</div>
-        </div>
-        <div className="p-3 flex gap-1">
-          <button
-            onClick={() => editor.setDevice('Desktop')}
-            className="flex-1 py-1.5 rounded text-[10px] font-medium transition-colors bg-primary/10 text-primary border border-primary/20"
-          >
-            Desktop
-          </button>
-          <button
-            onClick={() => editor.setDevice('Tablet')}
-            className="flex-1 py-1.5 bg-muted/40 hover:bg-muted rounded text-[10px] text-muted-foreground transition-colors"
-          >
-            Tablet
-          </button>
-          <button
-            onClick={() => editor.setDevice('Mobile portrait')}
-            className="flex-1 py-1.5 bg-muted/40 hover:bg-muted rounded text-[10px] text-muted-foreground transition-colors"
-          >
-            Mobile
-          </button>
-        </div>
 
         <div className="h-8" /> {/* bottom spacer */}
       </div>

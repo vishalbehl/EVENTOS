@@ -1,0 +1,1 @@
+{ "id": "event-sponsor-marquee", "canonical": "json", "htmlFile": "../html/event-sponsor-marquee.html", "components": [{ "type": "section", "attributes": { "data-component-asset-id": "event-sponsor-marquee" }, "components": "event-sponsor-marquee.html" }] }

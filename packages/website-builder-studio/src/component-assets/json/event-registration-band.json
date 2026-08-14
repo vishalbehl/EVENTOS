@@ -1,0 +1,1 @@
+{ "id": "event-registration-band", "canonical": "json", "htmlFile": "../html/event-registration-band.html", "components": [{ "type": "section", "attributes": { "data-component-asset-id": "event-registration-band" }, "components": "event-registration-band.html" }] }

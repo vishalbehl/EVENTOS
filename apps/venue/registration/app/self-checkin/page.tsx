@@ -53,6 +53,10 @@ type Participant = {
   is_checked_in?: boolean;
   checked_in_at?: string | null;
   support_message?: string;
+  payment_locked?: boolean;
+  payment_lock_reason?: string;
+  reprint_locked?: boolean;
+  profile_edit_allowed?: boolean;
 };
 
 type Station = {
@@ -589,6 +593,40 @@ function SearchView({ query, setQuery, lookupBusy, onSubmit, onBack }: { query: 
 }
 
 function ProfileView({ participant, alreadyCheckedIn, printing, onPrint, onEdit }: { participant: Participant; alreadyCheckedIn: boolean; printing: boolean; onPrint: () => void; onEdit: () => void }) {
+  if (participant.payment_locked) {
+    return (
+      <div className="w-full max-w-2xl">
+        <div className="rounded-[2.5rem] border-2 border-red-500/40 bg-[var(--card)] p-8 text-center shadow-2xl backdrop-blur space-y-6">
+          <div className="mx-auto size-20 rounded-3xl bg-red-500/10 border border-red-500/30 text-red-500 flex items-center justify-center">
+            <ShieldAlert className="size-10" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-[var(--text)]">Payment Required</h1>
+            <p className="mt-2 text-sm font-medium text-[var(--muted)] max-w-md mx-auto">
+              {participant.payment_lock_reason || "Your registration has a pending payment balance. Self-service check-in is restricted until payment is finalized."}
+            </p>
+          </div>
+          <div className="p-5 rounded-2xl bg-[var(--surf)] border border-[var(--border)] text-left flex items-center justify-between">
+            <div>
+              <p className="text-lg font-black text-[var(--text)]">{participant.name}</p>
+              <p className="font-mono text-xs font-bold text-[var(--pri)]">{participant.regno}</p>
+              <p className="text-xs text-[var(--muted)] mt-0.5">{participant.role || "Delegate"}</p>
+            </div>
+            <span className="px-3.5 py-1.5 text-xs font-black uppercase tracking-wider rounded-full bg-red-500/10 text-red-500 border border-red-500/20">
+              {participant.paid_status || "Unpaid"}
+            </span>
+          </div>
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs font-bold text-amber-600 dark:text-amber-400">
+            Please proceed to the nearest <strong>Registration & Onsite Help Desk</strong> to complete your payment and collect your badge.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const reprintDisabled = alreadyCheckedIn && participant.reprint_locked;
+  const editDisabled = participant.profile_edit_allowed === false;
+
   return (
     <div className="w-full max-w-3xl">
       <div className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-5 text-left shadow-2xl backdrop-blur">
@@ -597,7 +635,7 @@ function ProfileView({ participant, alreadyCheckedIn, printing, onPrint, onEdit 
           <div className="min-w-0 flex-1">
             <div className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-black uppercase tracking-wider", alreadyCheckedIn ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500" : "border-[var(--pri)]/40 bg-[var(--pri)]/10 text-[var(--pri)]")}>
               <CheckCircle2 className="size-4" />
-              {alreadyCheckedIn ? "Already checked in" : "Checked in at initial gate"}
+              {alreadyCheckedIn ? "Already checked in" : "Ready for check in"}
             </div>
             <h1 className="mt-3 truncate text-4xl font-black tracking-tight">{participant.name}</h1>
             <p className="mt-1 font-mono text-sm font-bold text-[var(--pri)]">{participant.regno}</p>
@@ -617,14 +655,36 @@ function ProfileView({ participant, alreadyCheckedIn, printing, onPrint, onEdit 
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <Button onClick={onPrint} disabled={printing} className="h-12 rounded-2xl bg-[var(--pri)] text-xs font-black uppercase tracking-wider text-[var(--primary-contrast)] hover:bg-[var(--pri)]/80">
+          <Button
+            onClick={onPrint}
+            disabled={printing || reprintDisabled}
+            title={reprintDisabled ? "Reprint quota exceeded. Please visit the Registration Desk." : undefined}
+            className={cn(
+              "h-12 rounded-2xl text-xs font-black uppercase tracking-wider",
+              reprintDisabled
+                ? "bg-[var(--surf)] border border-[var(--border)] text-[var(--muted)] opacity-60 cursor-not-allowed"
+                : "bg-[var(--pri)] text-[var(--primary-contrast)] hover:bg-[var(--pri)]/80"
+            )}
+          >
             {printing ? <RefreshCw className="mr-2 size-5 animate-spin" /> : <Printer className="mr-2 size-5" />}
-            {alreadyCheckedIn ? "Reprint badge" : "Check in & print badge"}
+            {reprintDisabled
+              ? "Reprint Limit Reached (Visit Desk)"
+              : alreadyCheckedIn
+              ? "Reprint badge"
+              : "Check in & print badge"}
           </Button>
-          <Button onClick={onEdit} variant="outline" className="h-12 rounded-2xl border-[var(--border)] bg-[var(--surf)] text-xs font-black uppercase tracking-wider text-[var(--text)] hover:bg-[var(--raised)]">
-            <Edit3 className="mr-2 size-5" />
-            Update details
-          </Button>
+
+          {!editDisabled ? (
+            <Button onClick={onEdit} variant="outline" className="h-12 rounded-2xl border-[var(--border)] bg-[var(--surf)] text-xs font-black uppercase tracking-wider text-[var(--text)] hover:bg-[var(--raised)]">
+              <Edit3 className="mr-2 size-5" />
+              Update details
+            </Button>
+          ) : (
+            <Button disabled variant="outline" className="h-12 rounded-2xl border-[var(--border)] bg-[var(--surf)] text-xs font-black uppercase tracking-wider text-[var(--muted)] opacity-50 cursor-not-allowed">
+              <Edit3 className="mr-2 size-5" />
+              Editing Locked (Visit Desk)
+            </Button>
+          )}
         </div>
       </div>
     </div>

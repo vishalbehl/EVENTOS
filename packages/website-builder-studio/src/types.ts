@@ -21,6 +21,9 @@ export interface PageConfig {
   name: string;
   slug: string;
   isHomePage: boolean;
+  // Present when a canonical document is adapted through GrapesJS. Keeping it
+  // prevents a canvas snapshot from regenerating a different page root id.
+  rootInstanceId?: string;
   html: string;
   css: string;
   components?: unknown;
@@ -32,9 +35,111 @@ export interface PageConfig {
   updatedAt: string;
 }
 
+export type ResponsiveDevice = 'desktop' | 'tablet' | 'mobile';
+
+export type ResponsiveStyleMap = Partial<Record<ResponsiveDevice, Record<string, string>>>;
+
+export type DataBindingSource = 'current-event' | 'snapshot' | 'manual' | 'mock';
+
+export interface DataBinding {
+  id: string;
+  source: DataBindingSource;
+  fieldPath: string;
+  snapshotId?: string;
+  lastSyncedAt?: string;
+  isOverridden?: boolean;
+  fallbackStatus?: 'resolved' | 'missing' | 'mock' | 'error';
+}
+
+export interface ComponentState {
+  hidden?: Partial<Record<ResponsiveDevice, boolean>>;
+  locked?: boolean;
+  name?: string;
+  requiredSlot?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ComponentInstance {
+  id: string;
+  componentType: string;
+  componentVersion: number;
+  parentId?: string;
+  children: string[];
+  props: Record<string, unknown>;
+  styles: ResponsiveStyleMap;
+  bindings: DataBinding[];
+  states: ComponentState;
+}
+
+export interface WebsitePage {
+  id: string;
+  name: string;
+  slug: string;
+  isHomePage: boolean;
+  rootInstanceId: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  ogImageUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SiteSettings {
+  siteName?: string;
+  favicon?: string;
+  globalCSS?: string;
+  googleFontsUrl?: string;
+  publishMode?: 'static-resolved' | 'snapshot-reference';
+}
+
+export interface DesignTokens {
+  theme?: ThemePalette;
+  typography?: Record<string, unknown>;
+  spacing?: Record<string, unknown>;
+  colors?: Record<string, string>;
+}
+
+export interface NavigationMenu {
+  id: string;
+  name: string;
+  items: BuilderLink[];
+}
+
+export interface AssetReference extends WebsiteAsset {
+  kind?: 'image' | 'svg' | 'icon' | 'download';
+  storagePath?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DataSourceDefinition {
+  id: string;
+  type: 'event-snapshot' | 'manual' | 'mock' | 'external';
+  label: string;
+  snapshotId?: string;
+  lastSyncedAt?: string;
+  status?: 'connected' | 'snapshot' | 'missing' | 'mock' | 'manual' | 'error';
+}
+
+export interface WebsiteDocument {
+  schemaVersion: number;
+  site: SiteSettings;
+  pages: WebsitePage[];
+  instances: Record<string, ComponentInstance>;
+  tokens: DesignTokens;
+  menus: NavigationMenu[];
+  assets: AssetReference[];
+  dataSources: DataSourceDefinition[];
+  checksum?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface WebsiteProjectData {
   id?: string;
   name?: string;
+  publishSlug?: string;
+  /** Canonical Website Builder document. HTML/CSS/GrapesJS fields are import-only delivery artifacts. */
+  document?: WebsiteDocument;
   // Legacy single-page (kept for backward compat)
   html?: string;
   css?: string;
@@ -43,15 +148,52 @@ export interface WebsiteProjectData {
   // Multi-page (Option A: single JSON blob with pages[])
   pages?: PageConfig[];
   activePageId?: string;
+  /** Internal canvas adapter hint. Never persisted as canonical document state. */
+  editorDevice?: ResponsiveDevice;
   siteSettings?: {
     siteName?: string;
     favicon?: string;
     globalCSS?: string;
     googleFontsUrl?: string;
   };
-  assets?: string[];
+  assets?: WebsiteAsset[];
   theme?: ThemePalette;
   updatedAt?: string;
+}
+
+export type BuilderLinkType =
+  | 'page'
+  | 'anchor'
+  | 'external'
+  | 'email'
+  | 'phone'
+  | 'file'
+  | 'registration'
+  | 'speaker-portal'
+  | 'custom-route';
+
+export interface BuilderLink {
+  type: BuilderLinkType;
+  label?: string;
+  pageId?: string;
+  anchorId?: string;
+  href?: string;
+  target?: '_self' | '_blank';
+}
+
+export interface WebsiteAsset {
+  id: string;
+  type: 'upload' | 'image' | 'svg' | 'icon';
+  title: string;
+  url?: string;
+  thumbnailUrl?: string;
+  svg?: string;
+  source?: 'upload' | 'openverse' | 'undraw' | 'manual';
+  creator?: string;
+  license?: string;
+  attribution?: string;
+  sourceUrl?: string;
+  savedAt: string;
 }
 
 // ── Event Data Snapshot ────────────────────────────────────────────────────
@@ -333,8 +475,20 @@ export interface WebsiteBuilderStudioProps {
   // Option C: event data passed as prop from parent page
   eventData?: EventDataBindings;       // legacy
   eventSnapshot?: EventDataSnapshot;   // new full snapshot
+  eventId?: string;
+  onFetchEventData?: (eventId?: string) => Promise<EventDataSnapshot>;
+  onSearchImages?: (query: string) => Promise<WebsiteAsset[]>;
+  onPersistAsset?: (asset: WebsiteAsset) => Promise<WebsiteAsset> | WebsiteAsset;
+  onUploadAsset?: (file: File) => Promise<WebsiteAsset>;
   onSave?: (projectData: WebsiteProjectData) => Promise<void> | void;
-  onPublish?: (projectData: WebsiteProjectData) => Promise<void> | void;
+  onPublish?: (projectData: WebsiteProjectData, options: WebsitePublishOptions) => Promise<void> | void;
+  onCreatePreview?: (projectData: WebsiteProjectData, previewId?: string) => Promise<{ previewId: string; url: string; expiresAt?: string }>;
+  readOnly?: boolean;
   onBack?: () => void;
   logoUrl?: string;
+}
+
+export interface WebsitePublishOptions {
+  slug: string;
+  customDomain?: string;
 }

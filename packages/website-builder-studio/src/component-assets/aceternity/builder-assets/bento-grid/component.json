@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "aceternity-bento-grid",
+  "name": "Bento Grid",
+  "kind": "component",
+  "group": "Aceternity",
+  "description": "Responsive event feature grid with independently selectable cards and text.",
+  "tags": [
+    "aceternity",
+    "layout",
+    "cards",
+    "features"
+  ],
+  "preview": {
+    "accent": "#8b5cf6",
+    "background": "#070812",
+    "title": "Bento Grid",
+    "subtitle": "Editable component"
+  },
+  "componentType": "aceternity-bento-grid",
+  "componentVersion": 1,
+  "htmlFile": "./component.html",
+  "officialSource": {
+    "documentationUrl": "https://ui.aceternity.com/components/bento-grid",
+    "registryUrl": "https://ui.aceternity.com/registry/bento-grid.json",
+    "localRegistryPath": "./registry/bento-grid.json",
+    "author": "Manu Arora <hi@manuarora.in>",
+    "licenseUrl": "https://ui.aceternity.com/licence",
+    "dependencies": [
+      "@tabler/icons-react"
+    ]
+  },
+  "settings": [
+    {
+      "groupId": "CONTENT",
+      "properties": [
+        {
+          "id": "data-heading",
+          "type": "Text",
+          "label": "Section heading",
+          "target": {
+            "kind": "content",
+            "selector": "h2"
+          }
+        },
+        {
+          "id": "section-background",
+          "type": "Color",
+          "label": "Section background",
+          "defaultValue": "#070812",
+          "target": {
+            "kind": "style",
+            "css": "background-color",
+            "selector": ":self"
+          }
+        },
+        {
+          "id": "card-background",
+          "type": "Color",
+          "label": "Card background",
+          "defaultValue": "#10131f",
+          "target": {
+            "kind": "style",
+            "css": "background",
+            "selector": ".wb-ac-bento-item"
+          }
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "theme": true,
+    "animation": true,
+    "responsive": true
+  }
+}

@@ -28,6 +28,7 @@ from app.models.event_report import EventReportSnapshot, EventReportAudit
 from app.models.action_log import ParticipantActionLog
 from app.models.network_config import NetworkConfig
 from app.models.registration_source_key import RegistrationSourceApiKey
+from app.models.venue_operational_policy import VenueOperationalPolicy
 
 __all__ = [
     "Organization",
@@ -59,4 +60,5 @@ __all__ = [
     "ParticipantActionLog",
     "NetworkConfig",
     "RegistrationSourceApiKey",
+    "VenueOperationalPolicy",
 ]

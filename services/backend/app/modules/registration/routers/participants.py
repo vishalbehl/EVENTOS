@@ -534,6 +534,19 @@ async def get_registration_stats(
         .group_by(ParticipantRole.name)
     )
 
+    # Payment status breakdown
+    payment_status_q = (
+        select(
+            func.coalesce(func.nullif(Participant.paid_status, ''), 'Unspecified'),
+            func.count(Participant.id)
+        )
+        .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
+        .group_by(func.coalesce(func.nullif(Participant.paid_status, ''), 'Unspecified'))
+        .order_by(func.count(Participant.id).desc())
+    )
+    payment_status_res = (await db.execute(payment_status_q)).all()
+    payment_breakdown = {r[0]: r[1] for r in payment_status_res}
+
     total_count = (await db.execute(total_q)).scalar_one() or 0
     paid_count = (await db.execute(paid_q)).scalar_one() or 0
     unpaid_count = (await db.execute(unpaid_q)).scalar_one() or 0
@@ -546,6 +559,7 @@ async def get_registration_stats(
         "total": total_count,
         "paid": paid_count,
         "unpaid": unpaid_count,
+        "payment_breakdown": payment_breakdown,
         "checkins": checkin_count,
         "role_breakdown": role_breakdown
     }

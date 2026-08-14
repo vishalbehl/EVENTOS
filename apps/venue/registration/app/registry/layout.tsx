@@ -13,11 +13,8 @@ import {
   Printer,
   Users,
   Package,
-  FileText,
   LogOut,
-  LayoutGrid,
   Award,
-  ShieldCheck,
   ClipboardCheck,
   Sun,
   Moon,
@@ -34,8 +31,6 @@ import {
   User,
 } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
-import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
 import { assignmentAllowsMode, fetchVenueNodeBootstrap } from "@/lib/node-workstation";
 
@@ -46,7 +41,6 @@ export default function RegistryLayout({ children }: { children: React.ReactNode
   const [hydrated, setHydrated] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [blockedReason, setBlockedReason] = useState("");
@@ -64,18 +58,11 @@ export default function RegistryLayout({ children }: { children: React.ReactNode
     }
     void fetchVenueNodeBootstrap().then((bootstrap) => {
       if (cancelled) return;
-      const assignedMode = bootstrap?.assignment?.mode;
       if (assignmentAllowsMode(bootstrap?.assignment, "registration")) {
         setMode("registration");
         setBlockedReason("");
-      } else if (assignedMode === "scanning") {
-        if (mode !== "scanning") setMode("scanning");
-        if (!pathname.startsWith("/scanning")) router.replace("/scanning");
-      } else if (assignedMode === "self_checkin") {
-        if (mode !== "self_checkin") setMode("self_checkin");
-        if (!pathname.startsWith("/self-checkin")) router.replace("/self-checkin");
-      } else if (!assignedMode) {
-        setBlockedReason("This workstation is not assigned to Registration mode. Ask an admin to bind this PC before using operator modes.");
+      } else {
+        setBlockedReason("This workstation is not authorized for Registration Desk mode. Please select an allowed mode from the login screen.");
       }
     }).catch((error) => {
       console.warn("Workstation bootstrap unavailable; blocking registration mode.", error);
@@ -114,13 +101,6 @@ export default function RegistryLayout({ children }: { children: React.ReactNode
   const handleLogout = () => {
     logout();
     router.push("/");
-  };
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      router.push(`/registry/search?q=${encodeURIComponent(searchQuery.trim())}`);
-    }
   };
 
   if (!hydrated || !isAuthenticated) return null;
@@ -383,17 +363,13 @@ export default function RegistryLayout({ children }: { children: React.ReactNode
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Sticky Header Bar */}
         <header className="h-16 bg-[var(--surf)] border-b border-[var(--border)] flex items-center justify-between px-6 shrink-0 gap-4 z-20">
-          {/* Global Search Bar */}
-          <form onSubmit={handleSearchSubmit} className="flex-1 max-w-md relative">
-            <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input
-              type="text"
-              placeholder="Search by Reg Code, Name, Email, or Phone... (Press Enter)"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-10 bg-[var(--card)] border-[var(--border)] text-xs font-bold text-[var(--text)] rounded-xl focus:ring-1 focus:ring-[var(--pri)]"
-            />
-          </form>
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-black uppercase tracking-wider text-[var(--text)]">Registration Desk</h2>
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-black uppercase tracking-wide text-emerald-500">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Desk Online</span>
+            </div>
+          </div>
 
           {/* Right Header Actions */}
           <div className="flex items-center gap-4 shrink-0">
@@ -420,12 +396,7 @@ export default function RegistryLayout({ children }: { children: React.ReactNode
 
             {/* Direct 1-Click Light/Dark Mode Toggle */}
             <button
-              onClick={() => {
-                const next = theme === "dark" ? "light" : "dark";
-                setTheme(next);
-                localStorage.setItem("theme", next);
-                document.documentElement.setAttribute("data-theme", next);
-              }}
+              onClick={toggleTheme}
               className="h-10 w-10 rounded-xl border border-[var(--border)] bg-[var(--card)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--pri)] transition-all cursor-pointer"
               title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
             >

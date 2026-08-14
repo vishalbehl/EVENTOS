@@ -7,7 +7,17 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./studio": "./src/studio.ts",
     "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "sync:aceternity": "node ./scripts/sync-aceternity-library.mjs",
+    "export:aceternity-assets": "tsx ./scripts/export-aceternity-builder-assets.mts",
+    "export:eventos-assets": "tsx ./scripts/export-eventos-assets.mts",
+    "sync:publish-runtime": "node ./scripts/sync-publish-runtime.mjs",
+    "verify:aceternity": "node ./scripts/verify-aceternity-adapters.mjs",
+    "verify:eventos-assets": "node ./scripts/verify-eventos-assets.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -16,9 +26,11 @@
     "@dnd-kit/utilities": "^3.2.2",
     "grapesjs": "^0.22.5",
     "grapesjs-blocks-basic": "^1.0.2",
+    "iblis-react-undraw": "^0.3.0",
     "immer": "^11.1.15",
     "lucide-react": "^0.462.0",
     "nanoid": "^6.0.1",
+    "qrcode-generator": "^1.4.4",
     "zustand": "^5.0.14"
   },
   "peerDependencies": {

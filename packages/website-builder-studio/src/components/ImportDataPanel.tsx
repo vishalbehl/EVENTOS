@@ -7,6 +7,7 @@ interface ImportDataPanelProps {
   snapshot: EventDataSnapshot | null;
   importedAt: string | null;
   disconnectedAt: string | null;
+  notice?: string | null;
   /** Called when user clicks "Import Event Data" */
   onImport: () => void;
   /** Called when user clicks "Disconnect (make static)" */
@@ -55,6 +56,7 @@ export const ImportDataPanel: React.FC<ImportDataPanelProps> = ({
   snapshot,
   importedAt,
   disconnectedAt,
+  notice,
   onImport,
   onDisconnect,
   onReconnect,
@@ -92,6 +94,12 @@ export const ImportDataPanel: React.FC<ImportDataPanelProps> = ({
           )}
         </div>
       </div>
+
+      {notice && (
+        <div style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 10, padding: '9px 12px', color: 'var(--primary)', fontSize: 11, lineHeight: 1.5, fontWeight: 600 }}>
+          {notice}
+        </div>
+      )}
 
       {/* Idle state: prompt to import */}
       {status === 'idle' && (

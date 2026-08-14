@@ -10,17 +10,19 @@ export const HeroManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-event-name', type: 'Text', label: 'Event Name', defaultValue: '{{event.name}}' },
-          { id: 'data-tagline', type: 'Text', label: 'Tagline' },
-          { id: 'data-date', type: 'Text', label: 'Date', defaultValue: '{{event.date}}' },
-          { id: 'data-location', type: 'Text', label: 'Location', defaultValue: '{{event.location}}' },
-          { id: 'data-banner', type: 'Asset', label: 'Banner Asset' },
-          { id: 'data-primary-cta', type: 'Text', label: 'Primary CTA Text', defaultValue: 'Register Now' },
-          { id: 'data-secondary-cta', type: 'Text', label: 'Secondary CTA Text' },
+          { id: 'data-event-name', type: 'Text', label: 'Event Name', defaultValue: '{{event.name}}', target: { kind: 'content', selector: '[data-role="event-name"],h1' } },
+          { id: 'data-tagline', type: 'Text', label: 'Tagline', target: { kind: 'content', selector: '[data-role="tagline"],p' } },
+          { id: 'data-date', type: 'Text', label: 'Date', defaultValue: '{{event.date}}', target: { kind: 'attribute', name: 'data-date' } },
+          { id: 'data-location', type: 'Text', label: 'Location', defaultValue: '{{event.location}}', target: { kind: 'attribute', name: 'data-location' } },
+          { id: 'data-banner', type: 'Asset', label: 'Banner Asset', target: { kind: 'attribute', name: 'data-banner' } },
+          { id: 'data-video-src', type: 'Text', label: 'Video URL', placeholder: 'https://...mp4 or YouTube embed URL', target: { kind: 'attribute', name: 'data-video-src' } },
+          { id: 'data-primary-cta', type: 'Text', label: 'Primary CTA Text', defaultValue: 'Register Now', target: { kind: 'content', selector: '[data-role="primary-cta"],a' } },
+          { id: 'data-secondary-cta', type: 'Text', label: 'Secondary CTA Text', target: { kind: 'attribute', name: 'data-secondary-cta' } },
           {
             id: 'data-variant',
             type: 'Select',
             label: 'Variant Preset',
+            target: { kind: 'attribute', name: 'data-variant' },
             options: [
               { value: 'classic', label: 'Classic' },
               { value: 'split', label: 'Split (Left/Right)' },
@@ -38,6 +40,7 @@ export const HeroManifest: ComponentManifest = {
             id: 'data-align',
             type: 'Select',
             label: 'Content Alignment',
+            target: { kind: 'attribute', name: 'data-align' },
             options: [
               { value: 'left', label: 'Left' },
               { value: 'center', label: 'Center' },
@@ -49,6 +52,7 @@ export const HeroManifest: ComponentManifest = {
             id: 'data-valign',
             type: 'Select',
             label: 'Vertical Alignment',
+            target: { kind: 'attribute', name: 'data-valign' },
             options: [
               { value: 'top', label: 'Top' },
               { value: 'middle', label: 'Middle' },
@@ -56,7 +60,7 @@ export const HeroManifest: ComponentManifest = {
             ],
             defaultValue: 'middle'
           },
-          { id: 'data-full-height', type: 'Toggle', label: 'Full Height (100vh)', defaultValue: true },
+          { id: 'data-full-height', type: 'Toggle', label: 'Full Height (100vh)', defaultValue: true, target: { kind: 'attribute', name: 'data-full-height' } },
         ],
       },
     ]
@@ -73,10 +77,10 @@ export const SpeakerGridManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'event-snapshot' },
-          { id: 'data-title', type: 'Text', label: 'Section Title', defaultValue: 'Featured Speakers' },
-          { id: 'data-subtitle', type: 'Text', label: 'Subtitle' },
-          { id: 'data-limit', type: 'Number', label: 'Display Limit', min: 1, max: 100 },
+          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'current-event', target: { kind: 'attribute', name: 'data-source' } },
+          { id: 'data-title', type: 'Text', label: 'Section Title', defaultValue: 'Featured Speakers', target: { kind: 'content', selector: '[data-role="section-title"]' } },
+          { id: 'data-subtitle', type: 'Text', label: 'Subtitle', target: { kind: 'content', selector: '[data-role="section-subtitle"]' } },
+          { id: 'data-limit', type: 'Number', label: 'Display Limit', min: 1, max: 100, target: { kind: 'attribute', name: 'data-limit' } },
         ],
       },
       {
@@ -86,6 +90,7 @@ export const SpeakerGridManifest: ComponentManifest = {
             id: 'data-cols',
             type: 'Select',
             label: 'Columns',
+            target: { kind: 'attribute', name: 'data-cols' },
             options: [
               { value: '2', label: '2 Columns' },
               { value: '3', label: '3 Columns' },
@@ -98,6 +103,7 @@ export const SpeakerGridManifest: ComponentManifest = {
             id: 'data-card-style',
             type: 'Select',
             label: 'Card Style',
+            target: { kind: 'attribute', name: 'data-card-style' },
             options: [
               { value: 'minimal', label: 'Minimal' },
               { value: 'glass', label: 'Glass' },
@@ -110,13 +116,14 @@ export const SpeakerGridManifest: ComponentManifest = {
       {
         groupId: 'STYLE',
         properties: [
-          { id: 'data-show-bio', type: 'Toggle', label: 'Show Bio' },
-          { id: 'data-show-company', type: 'Toggle', label: 'Show Company', defaultValue: true },
-          { id: 'data-show-socials', type: 'Toggle', label: 'Show Social Links', defaultValue: true },
+          { id: 'data-show-bio', type: 'Toggle', label: 'Show Bio', target: { kind: 'attribute', name: 'data-show-bio' } },
+          { id: 'data-show-company', type: 'Toggle', label: 'Show Company', defaultValue: true, target: { kind: 'attribute', name: 'data-show-company' } },
+          { id: 'data-show-socials', type: 'Toggle', label: 'Show Social Links', defaultValue: true, target: { kind: 'attribute', name: 'data-show-socials' } },
           {
             id: 'data-image-crop',
             type: 'Select',
             label: 'Image Crop',
+            target: { kind: 'attribute', name: 'data-image-crop' },
             options: [
               { value: 'square', label: 'Square' },
               { value: 'circle', label: 'Circle' },
@@ -140,9 +147,9 @@ export const SponsorGridManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'event-snapshot' },
-          { id: 'data-title', type: 'Text', label: 'Section Title', defaultValue: 'Our Sponsors' },
-          { id: 'data-tiers', type: 'Text', label: 'Included Tiers (comma separated)', placeholder: 'e.g. Platinum, Gold' },
+          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'current-event', target: { kind: 'attribute', name: 'data-source' } },
+          { id: 'data-title', type: 'Text', label: 'Section Title', defaultValue: 'Our Sponsors', target: { kind: 'content', selector: '[data-role="section-title"]' } },
+          { id: 'data-tiers', type: 'Text', label: 'Included Tiers (comma separated)', placeholder: 'e.g. Platinum, Gold', target: { kind: 'attribute', name: 'data-tiers' } },
         ],
       },
       {
@@ -152,6 +159,7 @@ export const SponsorGridManifest: ComponentManifest = {
             id: 'data-layout-type',
             type: 'Select',
             label: 'Layout Type',
+            target: { kind: 'attribute', name: 'data-layout-type' },
             options: [
               { value: 'grid', label: 'Grid' },
               { value: 'marquee', label: 'Infinite Marquee Slider' },
@@ -163,11 +171,11 @@ export const SponsorGridManifest: ComponentManifest = {
       {
         groupId: 'STYLE',
         properties: [
-          { id: 'data-group-tiers', type: 'Toggle', label: 'Group by Tier', defaultValue: true },
           {
             id: 'data-logo-size',
             type: 'Select',
             label: 'Logo Sizing',
+            target: { kind: 'attribute', name: 'data-logo-size' },
             options: [
               { value: 'small', label: 'Small' },
               { value: 'medium', label: 'Medium' },
@@ -175,7 +183,19 @@ export const SponsorGridManifest: ComponentManifest = {
             ],
             defaultValue: 'medium'
           },
-          { id: 'data-greyscale', type: 'Toggle', label: 'Greyscale Logos' },
+          { id: 'data-greyscale', type: 'Toggle', label: 'Greyscale Logos', target: { kind: 'attribute', name: 'data-greyscale' } },
+          { id: 'data-speed', type: 'Number', label: 'Scroll Duration (seconds)', defaultValue: 30, min: 5, max: 120, step: 1, target: { kind: 'attribute', name: 'data-speed' } },
+          {
+            id: 'data-direction',
+            type: 'Select',
+            label: 'Scroll Direction',
+            target: { kind: 'attribute', name: 'data-direction' },
+            options: [
+              { value: 'left', label: 'Left' },
+              { value: 'right', label: 'Right' },
+            ],
+            defaultValue: 'left',
+          },
         ],
       },
     ]
@@ -192,9 +212,8 @@ export const AgendaManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'event-snapshot' },
-          { id: 'data-title', type: 'Text', label: 'Section Title', defaultValue: 'Event Schedule' },
-          { id: 'data-active-day', type: 'Number', label: 'Default Active Day (index)', defaultValue: 0 },
+          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'current-event', target: { kind: 'attribute', name: 'data-source' } },
+          { id: 'data-title', type: 'Text', label: 'Section Title', defaultValue: 'Event Schedule', target: { kind: 'content', selector: '[data-role="section-title"]' } },
         ],
       },
       {
@@ -204,6 +223,7 @@ export const AgendaManifest: ComponentManifest = {
             id: 'data-view-type',
             type: 'Select',
             label: 'View Type',
+            target: { kind: 'attribute', name: 'data-view-type' },
             options: [
               { value: 'list', label: 'List' },
               { value: 'timeline', label: 'Timeline' },
@@ -211,24 +231,14 @@ export const AgendaManifest: ComponentManifest = {
             ],
             defaultValue: 'list'
           },
-          { id: 'data-show-tracks', type: 'Toggle', label: 'Show Tracks / Stages', defaultValue: true },
+          { id: 'data-show-tracks', type: 'Toggle', label: 'Show Tracks / Stages', defaultValue: true, target: { kind: 'attribute', name: 'data-show-tracks' } },
         ],
       },
       {
         groupId: 'STYLE',
         properties: [
-          { id: 'data-show-heads', type: 'Toggle', label: 'Show Speaker Headshots', defaultValue: true },
-          { id: 'data-show-tags', type: 'Toggle', label: 'Show Session Tags', defaultValue: true },
-          {
-            id: 'data-time-format',
-            type: 'Select',
-            label: 'Time Format',
-            options: [
-              { value: '12h', label: '12-hour (AM/PM)' },
-              { value: '24h', label: '24-hour' },
-            ],
-            defaultValue: '12h'
-          },
+          { id: 'data-show-heads', type: 'Toggle', label: 'Show Speaker Headshots', defaultValue: true, target: { kind: 'attribute', name: 'data-show-heads' } },
+          { id: 'data-show-tags', type: 'Toggle', label: 'Show Session Tags', defaultValue: true, target: { kind: 'attribute', name: 'data-show-tags' } },
         ],
       },
     ]
@@ -245,9 +255,9 @@ export const PricingManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'event-snapshot' },
-          { id: 'data-currency', type: 'Text', label: 'Currency', defaultValue: 'USD' },
-          { id: 'data-show-sold-out', type: 'Toggle', label: 'Show Sold Out Tickets', defaultValue: true },
+          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'current-event', target: { kind: 'attribute', name: 'data-source' } },
+          { id: 'data-currency', type: 'Text', label: 'Currency', defaultValue: 'USD', target: { kind: 'attribute', name: 'data-currency' } },
+          { id: 'data-show-sold-out', type: 'Toggle', label: 'Show Sold Out Tickets', defaultValue: true, target: { kind: 'attribute', name: 'data-show-sold-out' } },
         ],
       },
       {
@@ -257,6 +267,7 @@ export const PricingManifest: ComponentManifest = {
             id: 'data-layout-type',
             type: 'Select',
             label: 'Layout',
+            target: { kind: 'attribute', name: 'data-layout-type' },
             options: [
               { value: 'cards', label: 'Horizontal Cards' },
               { value: 'list', label: 'Vertical List' },
@@ -269,8 +280,8 @@ export const PricingManifest: ComponentManifest = {
       {
         groupId: 'STYLE',
         properties: [
-          { id: 'data-highlight', type: 'Toggle', label: 'Highlight Popular Tier', defaultValue: true },
-          { id: 'data-features', type: 'Toggle', label: 'Show Features List', defaultValue: true },
+          { id: 'data-highlight', type: 'Toggle', label: 'Highlight Popular Tier', defaultValue: true, target: { kind: 'attribute', name: 'data-highlight' } },
+          { id: 'data-features', type: 'Toggle', label: 'Show Features List', defaultValue: true, target: { kind: 'attribute', name: 'data-features' } },
         ],
       },
     ]
@@ -287,9 +298,9 @@ export const CountdownManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-target', type: 'Text', label: 'Target Date', placeholder: 'YYYY-MM-DDTHH:MM:SSZ' },
-          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'Event starts in' },
-          { id: 'data-expired-msg', type: 'Text', label: 'Expired Message', defaultValue: 'The event has started!' },
+          { id: 'data-target', type: 'DateTime', label: 'Target Date & Time', target: { kind: 'attribute', name: 'data-target' } },
+          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'Event starts in', target: { kind: 'content', selector: '[data-role="countdown-title"]' } },
+          { id: 'data-expired-msg', type: 'Text', label: 'Expired Message', defaultValue: 'The event has started!', target: { kind: 'attribute', name: 'data-expired-msg' } },
         ],
       },
       {
@@ -299,6 +310,7 @@ export const CountdownManifest: ComponentManifest = {
             id: 'data-orientation',
             type: 'Select',
             label: 'Orientation',
+            target: { kind: 'attribute', name: 'data-orientation' },
             options: [
               { value: 'horizontal', label: 'Horizontal' },
               { value: 'vertical', label: 'Vertical' },
@@ -314,6 +326,7 @@ export const CountdownManifest: ComponentManifest = {
             id: 'data-number-style',
             type: 'Select',
             label: 'Number Style',
+            target: { kind: 'attribute', name: 'data-number-style' },
             options: [
               { value: 'outlined', label: 'Outlined' },
               { value: 'solid', label: 'Solid Box' },
@@ -321,7 +334,7 @@ export const CountdownManifest: ComponentManifest = {
             ],
             defaultValue: 'solid'
           },
-          { id: 'data-show-labels', type: 'Toggle', label: 'Show Labels (Days, Hours...)', defaultValue: true },
+          { id: 'data-show-labels', type: 'Toggle', label: 'Show Labels (Days, Hours...)', defaultValue: true, target: { kind: 'attribute', name: 'data-show-labels' } },
         ],
       },
     ]
@@ -338,13 +351,14 @@ export const VenueManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'Location' },
-          { id: 'data-address', type: 'Textarea', label: 'Address' },
-          { id: 'data-map-url', type: 'Text', label: 'Embed Map URL' },
+          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'Location', target: { kind: 'content', selector: 'h1,h2,h3,[data-role="section-title"]' } },
+          { id: 'data-address', type: 'Textarea', label: 'Address', target: { kind: 'content', selector: '[data-role="address"]' } },
+          { id: 'data-map-url', type: 'Text', label: 'Embed Map URL', target: { kind: 'attribute', name: 'src', selector: 'iframe' } },
           {
             id: 'data-map-type',
             type: 'Select',
             label: 'Map Type',
+            target: { kind: 'attribute', name: 'data-map-type' },
             options: [
               { value: 'google', label: 'Google Maps' },
               { value: 'mapbox', label: 'Mapbox' },
@@ -360,6 +374,7 @@ export const VenueManifest: ComponentManifest = {
             id: 'data-layout',
             type: 'Select',
             label: 'Layout',
+            target: { kind: 'attribute', name: 'data-layout' },
             options: [
               { value: 'left', label: 'Map on Left' },
               { value: 'right', label: 'Map on Right' },
@@ -376,6 +391,7 @@ export const VenueManifest: ComponentManifest = {
             id: 'data-theme',
             type: 'Select',
             label: 'Map Theme',
+            target: { kind: 'attribute', name: 'data-theme' },
             options: [
               { value: 'light', label: 'Light' },
               { value: 'dark', label: 'Dark' },
@@ -400,8 +416,8 @@ export const StatisticsManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'By The Numbers' },
-          { id: 'data-stats', type: 'Textarea', label: 'Stats (JSON)', placeholder: '[{"value": "10k+", "label": "Attendees"}]' },
+          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'By The Numbers', target: { kind: 'content', selector: '[data-role="stats-title"]' } },
+          { id: 'data-stats', type: 'Textarea', label: 'Stats (JSON)', placeholder: '[{"value": "10k+", "label": "Attendees"}]', target: { kind: 'attribute', name: 'data-stats' } },
         ],
       },
       {
@@ -411,6 +427,7 @@ export const StatisticsManifest: ComponentManifest = {
             id: 'data-layout',
             type: 'Select',
             label: 'Layout',
+            target: { kind: 'attribute', name: 'data-layout' },
             options: [
               { value: 'grid', label: 'Grid' },
               { value: 'flex', label: 'Horizontal Flex' },
@@ -422,11 +439,12 @@ export const StatisticsManifest: ComponentManifest = {
       {
         groupId: 'STYLE',
         properties: [
-          { id: 'data-animate', type: 'Toggle', label: 'Animate on Scroll (Count up)', defaultValue: true },
+          { id: 'data-animate', type: 'Toggle', label: 'Animate on Scroll (Count up)', defaultValue: true, target: { kind: 'attribute', name: 'data-animate' } },
           {
             id: 'data-icon-placement',
             type: 'Select',
             label: 'Icon Placement',
+            target: { kind: 'attribute', name: 'data-icon-placement' },
             options: [
               { value: 'top', label: 'Top' },
               { value: 'left', label: 'Left' },
@@ -449,9 +467,9 @@ export const CommitteeManifest: ComponentManifest = {
       {
         groupId: 'CONTENT',
         properties: [
-          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'event-snapshot' },
-          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'Organizing Committee' },
-          { id: 'data-roles', type: 'Text', label: 'Roles to Include (comma separated)' },
+          { id: 'data-source', type: 'EventDataSource', label: 'Data Source', defaultValue: 'current-event', target: { kind: 'attribute', name: 'data-source' } },
+          { id: 'data-title', type: 'Text', label: 'Title', defaultValue: 'Organizing Committee', target: { kind: 'content', selector: '[data-role="section-title"]' } },
+          { id: 'data-roles', type: 'Text', label: 'Roles to Include (comma separated)', target: { kind: 'attribute', name: 'data-roles' } },
         ],
       },
       {
@@ -461,6 +479,7 @@ export const CommitteeManifest: ComponentManifest = {
             id: 'data-cols',
             type: 'Select',
             label: 'Columns',
+            target: { kind: 'attribute', name: 'data-cols' },
             options: [
               { value: '3', label: '3 Columns' },
               { value: '4', label: '4 Columns' },
@@ -478,6 +497,7 @@ export const CommitteeManifest: ComponentManifest = {
             id: 'data-image-shape',
             type: 'Select',
             label: 'Image Shape',
+            target: { kind: 'attribute', name: 'data-image-shape' },
             options: [
               { value: 'circle', label: 'Circle' },
               { value: 'square', label: 'Square' },
@@ -488,6 +508,7 @@ export const CommitteeManifest: ComponentManifest = {
             id: 'data-hover-effect',
             type: 'Select',
             label: 'Hover Effect',
+            target: { kind: 'attribute', name: 'data-hover-effect' },
             options: [
               { value: 'zoom', label: 'Zoom' },
               { value: 'grayscale', label: 'Grayscale to Color' },

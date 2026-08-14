@@ -164,8 +164,14 @@ def build_agent(configuration: AgentConfiguration) -> FastAPI:
         return [{**json.loads(row[0]), "current_count": current_count} for row in rows]
 
     @app.get("/api/v1/venue/scanning/recent")
-    async def recent_scans(limit: int = 30) -> list[dict[str, Any]]:
-        rows = replica.connection.execute("SELECT data FROM venue_scan_events ORDER BY json_extract(data, '$.created_at') DESC LIMIT ?", (limit,)).fetchall()
+    async def recent_scans(limit: int = 30, station_id: Optional[str] = None) -> list[dict[str, Any]]:
+        if station_id:
+            rows = replica.connection.execute(
+                "SELECT data FROM venue_scan_events WHERE json_extract(data, '$.gate_id')=? OR json_extract(data, '$.checkin_gate_id')=? ORDER BY json_extract(data, '$.created_at') DESC LIMIT ?",
+                (station_id, station_id, limit)
+            ).fetchall()
+        else:
+            rows = []
         scans = []
         for row in rows:
             scan = json.loads(row[0])
