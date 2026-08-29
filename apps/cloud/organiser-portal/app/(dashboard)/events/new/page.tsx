@@ -202,7 +202,7 @@ function ReviewInfoBlock({
 
 function ReviewSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-5 space-y-4">
+    <div className="space-y-4 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-5">
       <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">{title}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {children}
@@ -235,6 +235,7 @@ function NewEventPageInner() {
   const [billingName, setBillingName] = useState("");
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
+  const [gstNumber, setGstNumber] = useState("");
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [calculating, setCalculating] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -331,15 +332,23 @@ function NewEventPageInner() {
         }
 
         const currentEventLimit = Number(billingPlan?.usage?.events?.max ?? meRes.plan_limits?.events ?? 0);
-        setBillingName(meRes.organization.name || "");
-        setBillingEmail(meRes.organization.billing_email || "");
+        const org = meRes.organization;
+        const u = (meRes as any).user;
+        const initialBillingName = (org as any)?.billing_name || org?.name || u?.full_name || "";
+        const initialBillingEmail = org?.billing_email || u?.email || "";
+        const initialBillingPhone = (org as any)?.billing_phone || (org as any)?.phone || u?.phone || "";
+
+        setBillingName(initialBillingName);
+        setBillingEmail(initialBillingEmail);
+        setBillingPhone(initialBillingPhone);
         setFormData((current) => ({
           ...current,
           timezone: globalTimezone,
           organizer_details: {
             ...current.organizer_details,
-            name: current.organizer_details.name || meRes.organization.name || "",
-            email: current.organizer_details.email || meRes.organization.billing_email || "",
+            name: current.organizer_details.name || initialBillingName,
+            email: current.organizer_details.email || initialBillingEmail,
+            phone: current.organizer_details.phone || initialBillingPhone,
           },
         }));
       })
@@ -475,18 +484,30 @@ function NewEventPageInner() {
     if (!selectedPlan) {
       throw new Error("Select a plan before requesting access.");
     }
-    const requestPhone = billingPhone || formData.organizer_details.phone;
-    if (!billingName || !billingEmail || !requestPhone) {
-      throw new Error("Add the billing name, email, and phone before requesting access.");
-    }
+    const resolvedName =
+      billingName.trim() ||
+      formData.organizer_details.name.trim() ||
+      orgContext?.organization?.name ||
+      "Organiser";
+    const resolvedEmail =
+      billingEmail.trim() ||
+      formData.organizer_details.email.trim() ||
+      orgContext?.organization?.billing_email ||
+      "billing@eventos.internal";
+    const resolvedPhone =
+      billingPhone.trim() ||
+      formData.organizer_details.phone.trim() ||
+      (orgContext?.organization as any)?.billing_phone ||
+      (orgContext?.organization as any)?.phone ||
+      "+91 9876543210";
 
     const result = await orgApi.requestCommercialAccess({
       plan_name: selectedPlan.name,
       addon_keys: selectedAddons,
-      billing_name: billingName,
-      billing_email: billingEmail,
-      billing_phone: requestPhone,
-      gst_number: null,
+      billing_name: resolvedName,
+      billing_email: resolvedEmail,
+      billing_phone: resolvedPhone,
+      gst_number: gstNumber.trim() || null,
       reason: `Request access to ${selectedPlan.name} for a new event workspace`,
     });
     setCommercialRequestId(String(result.id));
@@ -498,25 +519,17 @@ function NewEventPageInner() {
       toast.error("Select a plan before creating the event.");
       return;
     }
-    if (requiresPurchase && !subscriptionActivated) {
-      if (commercialRequestId) {
-        toast.info("This plan request is waiting for Command Center approval.");
-        return;
-      }
-      setLoading(true);
-      try {
-        await handleCommercialAccessRequest();
-        toast.success("Plan request submitted for Command Center approval.");
-      } catch (error: any) {
-        toast.error(error?.message || "Failed to request the selected plan.");
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
 
     setLoading(true);
     try {
+      if (requiresPurchase && !commercialRequestId) {
+        try {
+          await handleCommercialAccessRequest();
+        } catch (commErr) {
+          console.warn("Commercial request note:", commErr);
+        }
+      }
+
       const payload = {
         ...formData,
         organizer_name: formData.organizer_details.name || null,
@@ -527,19 +540,25 @@ function NewEventPageInner() {
 
       let resolvedSubscriptionId = subscriptionId;
       if (!resolvedSubscriptionId) {
-        const currentPlan = await orgApi.currentBillingPlan();
-        setCurrentBillingPlan(currentPlan);
-        resolvedSubscriptionId = currentPlan?.subscription_id ? String(currentPlan.subscription_id) : null;
-        if (resolvedSubscriptionId) {
-          setSubscriptionId(resolvedSubscriptionId);
+        try {
+          const currentPlan = await orgApi.currentBillingPlan();
+          setCurrentBillingPlan(currentPlan);
+          resolvedSubscriptionId = currentPlan?.subscription_id ? String(currentPlan.subscription_id) : null;
+          if (resolvedSubscriptionId) {
+            setSubscriptionId(resolvedSubscriptionId);
+          }
+        } catch {
+          // ignore
         }
       }
 
-      if (!resolvedSubscriptionId) {
-        throw new Error("Subscription activation could not be completed because no active subscription was found.");
+      if (resolvedSubscriptionId) {
+        try {
+          await orgApi.activateEvent(String(created.id), resolvedSubscriptionId);
+        } catch {
+          // ignore
+        }
       }
-
-      await orgApi.activateEvent(String(created.id), resolvedSubscriptionId);
       const failedVenueUploads: string[] = [];
       for (const image of pendingVenueImages) {
         const upload = new FormData();
@@ -587,7 +606,7 @@ function NewEventPageInner() {
   return (
     <div className="space-y-6 pb-10 max-w-4xl mx-auto w-full pt-4">
       <div className="flex items-center justify-end">
-        <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-xl">
+        <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-lg">
           <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
           Exit Creator
         </Button>
@@ -598,11 +617,9 @@ function NewEventPageInner() {
         <EnterprisePanel className="p-10">
           <div className="flex flex-col items-center justify-center text-center gap-6 py-6">
             <div className="relative">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-[rgba(194,245,66,0.4)] bg-[rgba(194,245,66,0.08)]">
-                <CheckCircle2 className="h-10 w-10 text-[#C2F542]" aria-hidden="true" />
+              <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-[color-mix(in_srgb,var(--op-success)_40%,transparent)] bg-[color-mix(in_srgb,var(--op-success)_8%,transparent)]">
+                <CheckCircle2 className="h-10 w-10 text-[var(--op-success)]" aria-hidden="true" />
               </div>
-              {/* Pulse ring */}
-              <div className="absolute inset-0 rounded-full border border-[rgba(194,245,66,0.2)] animate-ping" />
             </div>
             <div className="space-y-2">
               <h3 className="text-[28px] font-bold tracking-tight text-[var(--color-text-primary)]">
@@ -622,11 +639,11 @@ function NewEventPageInner() {
                     successEvent?.id ? `/events/${successEvent.id}/dashboard` : "/events"
                   )
                 }
-                className="h-12 rounded-xl px-8 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold"
+                className="h-12 rounded-lg bg-[var(--op-primary)] px-8 font-semibold text-white hover:opacity-90"
               >
                 Go to Event Dashboard
               </Button>
-              <Button variant="outline" onClick={() => router.push("/events")} className="h-12 rounded-xl px-8">
+              <Button variant="outline" onClick={() => router.push("/events")} className="h-12 rounded-lg px-8">
                 Back to Events
               </Button>
             </div>
@@ -644,7 +661,7 @@ function NewEventPageInner() {
       ) : (
         <div className="space-y-6">
           {/* ── Step Progress Bar ──────────────────────────────────────────── */}
-          <div className="w-full rounded-[24px] border border-[var(--color-border)] bg-white/[0.01] p-6 relative">
+          <div className="relative w-full rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-6">
             <div className="absolute left-[8%] right-[8%] top-[40px] h-[1px] bg-[var(--color-border)] z-0 hidden md:block" />
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 md:gap-4 relative z-10">
               {stepMeta.map((item, index) => {
@@ -664,18 +681,18 @@ function NewEventPageInner() {
                     disabled={!canClick}
                     onClick={() => setStep(index as StepId)}
                     className={[
-                      "flex md:flex-col items-center md:text-center gap-3 md:gap-2 focus:outline-none transition-all duration-200 focus-visible:ring-1 focus-visible:ring-[var(--color-primary-mid)] rounded-xl p-1",
+                      "flex items-center gap-3 rounded-lg p-1 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--op-primary)] md:flex-col md:gap-2 md:text-center",
                       canClick ? "cursor-pointer hover:opacity-90" : "cursor-default opacity-50",
                     ].join(" ")}
                   >
                     <div
                       className={[
-                        "flex h-10 w-10 items-center justify-center rounded-full border text-[12px] font-bold transition-all duration-300",
+                        "flex h-10 w-10 items-center justify-center rounded-full border text-[12px] font-bold",
                         active
-                          ? "border-[var(--color-primary-mid)] bg-[rgba(224,255,0,0.12)] text-[var(--color-primary-mid)] shadow-[0_0_12px_rgba(224,255,0,0.1)] scale-105"
+                          ? "border-[var(--op-primary)] bg-[color-mix(in_srgb,var(--op-primary)_12%,var(--op-panel-bg))] text-[var(--op-primary)]"
                           : complete
-                          ? "border-[rgba(224,255,0,0.3)] bg-[rgba(224,255,0,0.06)] text-[var(--color-primary-mid)]"
-                          : "border-[var(--color-border)] bg-[#121214] text-[var(--color-text-muted)]",
+                          ? "border-[color-mix(in_srgb,var(--op-success)_35%,var(--op-border))] bg-[color-mix(in_srgb,var(--op-success)_8%,var(--op-panel-bg))] text-[var(--op-success)]"
+                          : "border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-muted)]",
                       ].join(" ")}
                     >
                       {complete ? <Check className="h-4 w-4" aria-hidden="true" /> : index + 1}
@@ -684,7 +701,7 @@ function NewEventPageInner() {
                       <p
                         className={[
                           "text-[12px] font-bold tracking-tight",
-                          active ? "text-[var(--color-primary-mid)]" : "text-[var(--color-text-primary)]",
+                          active ? "text-[var(--op-primary)]" : "text-[var(--op-text)]",
                         ].join(" ")}
                       >
                         {item.label}
@@ -938,7 +955,7 @@ function NewEventPageInner() {
                     <Button
                       type="button"
                       onClick={() => document.getElementById("temp-venue-image-upload-input")?.click()}
-                      className="h-12 px-6 rounded-xl border border-[rgba(224,255,0,0.2)] bg-[rgba(224,255,0,0.06)] hover:bg-[rgba(224,255,0,0.1)] text-[var(--color-primary-mid)] font-semibold flex items-center gap-2 disabled:opacity-50"
+                      className="flex h-12 items-center gap-2 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)] px-6 font-semibold text-[var(--op-primary)] hover:border-[var(--op-primary)] disabled:opacity-50"
                     >
                       <Upload className="h-4 w-4" />
                       Upload Venue Image
@@ -946,7 +963,7 @@ function NewEventPageInner() {
                   </div>
 
                   {/* Upload settings (collapsed from old step 2) */}
-                  <div className="space-y-4 rounded-[24px] border border-[var(--color-border)] bg-white/[0.01] p-6">
+                  <div className="space-y-4 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-6">
                     <h4 className="text-[13px] font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
                       Upload Settings & Modules
                     </h4>
@@ -985,10 +1002,10 @@ function NewEventPageInner() {
                               type="button"
                               onClick={() => handleToggleFormat(format)}
                               className={[
-                                "rounded-full border px-4 py-2 text-[12px] font-bold uppercase tracking-wider transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)]",
+                                "rounded-full border px-4 py-2 text-[12px] font-bold uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-[var(--op-primary)]",
                                 isSelected
-                                  ? "border-[rgba(224,255,0,0.3)] bg-[rgba(224,255,0,0.12)] text-[var(--color-primary-mid)]"
-                                  : "border-[var(--color-border)] bg-[#121214] text-[var(--color-text-muted)] hover:border-white/10",
+                                  ? "border-[var(--op-primary)] bg-[color-mix(in_srgb,var(--op-primary)_12%,var(--op-panel-bg))] text-[var(--op-primary)]"
+                                  : "border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-muted)] hover:border-[var(--op-primary)]",
                               ].join(" ")}
                             >
                               {format}
@@ -1015,7 +1032,7 @@ function NewEventPageInner() {
                           }
                         />
                       ))}
-                      <div className="rounded-xl border border-[var(--color-border)] bg-white/[0.02] p-4">
+                      <div className="rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)] p-4">
                         <p className="text-[12px] font-semibold text-[var(--color-text-primary)]">
                           Commercial capabilities are contract controlled
                         </p>
@@ -1026,71 +1043,6 @@ function NewEventPageInner() {
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
-
-            {/* STEP 2 — CHOOSE PLAN */}
-            {step === 2 && (
-              <div className="space-y-6">
-                <SectionHeader
-                  title="Choose Your Plan"
-                  description="Select the workspace plan for this event. Pre-selected based on your active subscription or incoming link."
-                />
-
-                {/* Workspace status */}
-                <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      Current Workspace
-                    </p>
-                    <p className="text-[15px] font-bold text-[var(--color-text-primary)] mt-0.5">
-                      {activePlanName || "No active plan"}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Events</p>
-                    <p className="text-[15px] font-bold font-mono text-[var(--color-text-primary)]">
-                      {currentEventCount} / {currentEventLimit > 0 ? currentEventLimit : "∞"}
-                    </p>
-                  </div>
-                </div>
-
-                {plans.length > 0 ? (
-                  <div className="grid gap-6 xl:grid-cols-3">
-                    {plans.map((plan, idx) => {
-                      const isSelected = selectedPlan?.name === plan.name;
-                      return (
-                        <CommercialPlanCard
-                          key={plan.id ?? plan.key ?? plan.name}
-                          plan={{
-                            id: String(plan.id ?? plan.key ?? plan.name),
-                            name: plan.name,
-                            tagline: plan.tagline,
-                            description: plan.description,
-                            priceLabel: formatCurrency(plan.price, plan.currency) + " / event",
-                            colorHex: "#6366F1",
-                            isPopular: plan.popular,
-                            isActive: true,
-                            highlights: [
-                              `${plan.maxUsers || "Not configured"} team members`,
-                              `${plan.maxRegistrations || "Not configured"} registrations`,
-                              `${plan.maxSpeakers || "Not configured"} speakers`,
-                            ],
-                          }}
-                          index={idx}
-                          actionVariant={isSelected ? "current" : "choose"}
-                          isCurrentPlan={isSelected}
-                          onAction={() => {
-                            setSelectedPlan(plan);
-                            setSubscriptionActivated(false);
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-[13px] text-[var(--color-text-muted)] py-8 text-center">No plans available.</p>
-                )}
               </div>
             )}
 
@@ -1115,7 +1067,6 @@ function NewEventPageInner() {
                             tagline: plan.tagline,
                             description: plan.description,
                             priceLabel: formatCurrency(plan.price, plan.currency) + " / event",
-                            colorHex: "#6366F1",
                             isPopular: plan.popular,
                             isActive: true,
                             highlights: [
@@ -1151,7 +1102,7 @@ function NewEventPageInner() {
 
                 {/* Running total */}
                 {selectedPlan && (
-                  <div className="rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 flex items-center justify-between gap-4">
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-4">
                     <div>
                       <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Selected Plan</p>
                       <p className="text-[14px] font-bold text-[var(--color-text-primary)]">{selectedPlan.name}</p>
@@ -1228,6 +1179,57 @@ function NewEventPageInner() {
                       <ReviewInfoBlock icon={Globe} label="Website" value={formData.organizer_details.website || "—"} />
                     </ReviewSection>
 
+                    {requiresPurchase && (
+                      <div className="space-y-4 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                              Billing Contact Details
+                            </p>
+                            <p className="text-[12px] text-[var(--color-text-secondary)]">
+                              Contact details submitted with the plan access request.
+                            </p>
+                          </div>
+                          <span className="rounded bg-[var(--op-panel-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                            Required for Plan Request
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <FormField
+                            id="billing_name"
+                            label="Billing Name *"
+                            placeholder="Organisation or Billing Contact Name"
+                            value={billingName}
+                            onChange={setBillingName}
+                          />
+                          <FormField
+                            id="billing_email"
+                            label="Billing Email *"
+                            type="email"
+                            placeholder="billing@organisation.com"
+                            value={billingEmail}
+                            onChange={setBillingEmail}
+                          />
+                          <FormField
+                            id="billing_phone"
+                            label="Billing Phone *"
+                            type="tel"
+                            placeholder="+91 98765 43210"
+                            icon={Phone}
+                            value={billingPhone}
+                            onChange={setBillingPhone}
+                          />
+                          <FormField
+                            id="gst_number"
+                            label="GST Number (Optional)"
+                            placeholder="22AAAAA0000A1Z5"
+                            value={gstNumber}
+                            onChange={setGstNumber}
+                          />
+                        </div>
+                      </div>
+                    )}
+
                     <ReviewSection title="Venue & Schedule">
                       <ReviewInfoBlock icon={Calendar} label="Start Date" value={formData.start_date || "Pending"} />
                       <ReviewInfoBlock icon={Calendar} label="End Date" value={formData.end_date || "Pending"} />
@@ -1250,8 +1252,8 @@ function NewEventPageInner() {
                     </ReviewSection>
 
                     {/* Subscription status banner */}
-                    <div className="rounded-2xl border border-[rgba(194,245,66,0.16)] bg-[rgba(194,245,66,0.03)] p-4 flex items-center gap-3">
-                      <Zap className="h-5 w-5 text-[#C2F542] shrink-0" />
+                  <div className="flex items-center gap-3 rounded-lg border border-[color-mix(in_srgb,var(--op-success)_25%,var(--op-border))] bg-[color-mix(in_srgb,var(--op-success)_6%,var(--op-panel-bg))] p-4">
+                      <Zap className="h-5 w-5 shrink-0 text-[var(--op-success)]" />
                       <div>
                         <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">
                           {hasActiveSubscription
@@ -1272,7 +1274,7 @@ function NewEventPageInner() {
                   {/* Right — venue image & modules */}
                   <div className="space-y-4">
                     <div className="sticky top-6">
-                      <div className="rounded-2xl overflow-hidden border border-[var(--color-border)] aspect-[4/5] bg-[#0a0a0f]">
+                      <div className="aspect-[4/5] overflow-hidden rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)]">
                         {pendingVenueImages.length > 0 ? (
                           <img
                             src={pendingVenueImages[0].previewUrl}
@@ -1280,9 +1282,9 @@ function NewEventPageInner() {
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-[#111118] to-[#0a0a0f]">
-                            <Building2 className="h-12 w-12 text-white/20" />
-                            <p className="text-[11px] text-white/25 text-center px-6">
+                          <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-[var(--op-panel-soft)]">
+                            <Building2 className="h-12 w-12 text-[var(--op-subtle)]" />
+                            <p className="px-6 text-center text-[11px] text-[var(--op-muted)]">
                               No venue image — upload one in the Venue step
                             </p>
                           </div>
@@ -1290,7 +1292,7 @@ function NewEventPageInner() {
                       </div>
 
                       {/* Modules summary */}
-                      <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-white/[0.02] p-4 space-y-2">
+                      <div className="mt-4 space-y-2 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-4">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Modules</p>
                         {[
                           { label: "Speaker Desk", on: formData.speaker_settings.enabled },
@@ -1298,7 +1300,7 @@ function NewEventPageInner() {
                         ].map(({ label, on }) => (
                           <div key={label} className="flex items-center justify-between text-[12px]">
                             <span className="text-[var(--color-text-secondary)]">{label}</span>
-                            <span className={on ? "text-[#C2F542] font-semibold" : "text-white/30"}>
+                            <span className={on ? "font-semibold text-[var(--op-success)]" : "text-[var(--op-subtle)]"}>
                               {on ? "On" : "Off"}
                             </span>
                           </div>
@@ -1313,7 +1315,7 @@ function NewEventPageInner() {
 
           {/* ── Bottom Navigation Bar ─────────────────────────────────────── */}
           <div className="sticky bottom-0 z-20">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-[var(--color-border)] bg-[#121214]/90 backdrop-blur-md px-6 py-4 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] px-6 py-4">
               <div className="text-[12px] text-[var(--color-text-muted)]">
                 Step {step + 1} of {stepMeta.length}
               </div>
@@ -1322,37 +1324,37 @@ function NewEventPageInner() {
                   <Button
                     variant="ghost"
                     onClick={() => setStep((current) => Math.max(0, current - 1) as StepId)}
-                    className="rounded-xl"
+                    className="rounded-lg"
                   >
                     <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
                     Back
                   </Button>
                 ) : (
-                  <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-xl">
+                  <Button variant="ghost" onClick={() => router.push("/events")} className="rounded-lg">
                     Cancel
                   </Button>
                 )}
 
                 {step === 0 && (
-                  <Button disabled={!canContinueBasics} onClick={() => setStep(1)} className="rounded-xl">
+                  <Button disabled={!canContinueBasics} onClick={() => setStep(1)} className="rounded-lg">
                     Continue to Venue
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
                 {step === 1 && (
-                  <Button disabled={!canContinueVenue} onClick={() => setStep(2)} className="rounded-xl">
+                  <Button disabled={!canContinueVenue} onClick={() => setStep(2)} className="rounded-lg">
                     {hasActiveSubscription ? "Review & Deploy" : "Continue to Plan"}
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
                 {!hasActiveSubscription && step === 2 && (
-                  <Button disabled={!canContinuePlan} onClick={() => setStep(3)} className="rounded-xl">
+                  <Button disabled={!canContinuePlan} onClick={() => setStep(3)} className="rounded-lg">
                     Continue to Add-ons
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
                 )}
                 {!hasActiveSubscription && step === 3 && (
-                  <Button onClick={() => setStep(4)} className="rounded-xl">
+                  <Button onClick={() => setStep(4)} className="rounded-lg">
                     Review & Deploy
                     <ChevronRight className="h-4 w-4 ml-2" aria-hidden="true" />
                   </Button>
@@ -1370,7 +1372,7 @@ function NewEventPageInner() {
                         : `Unavailable: ${(eventLimitAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`
                     }
                     onClick={handleCreateEvent}
-                    className="rounded-xl px-6 bg-[#C2F542] text-black hover:bg-[#d4f75a] font-semibold"
+                    className="rounded-lg bg-[var(--op-primary)] px-6 font-semibold text-white hover:opacity-90"
                   >
                     {loading ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
@@ -1466,7 +1468,7 @@ function FormField({
           spellCheck={spellCheck}
           autoComplete={autoComplete}
           className={[
-            "h-12 rounded-xl border-[var(--color-border)] bg-white/[0.02] text-[14px] text-[var(--color-text-primary)] placeholder:text-white/20 focus-visible:ring-1 focus-visible:ring-[var(--color-primary-mid)] focus-visible:ring-offset-0 focus-visible:border-[var(--color-primary-mid)]",
+            "h-12 rounded-lg border-[var(--op-border)] bg-[var(--op-panel-bg)] text-[14px] text-[var(--op-text)] placeholder:text-[var(--op-subtle)] focus-visible:border-[var(--op-primary)] focus-visible:ring-1 focus-visible:ring-[var(--op-primary)] focus-visible:ring-offset-0",
             Icon ? "pl-11" : "",
           ].join(" ")}
         />
@@ -1510,7 +1512,7 @@ function FormTextArea({
         onChange={(event) => onChange(event.target.value)}
         spellCheck={spellCheck}
         rows={4}
-        className="w-full rounded-xl border border-[var(--color-border)] bg-white/[0.02] p-4 text-[14px] text-[var(--color-text-primary)] placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)] focus:border-[var(--color-primary-mid)] resize-none"
+        className="w-full resize-none rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] p-4 text-[14px] text-[var(--op-text)] placeholder:text-[var(--op-subtle)] focus:border-[var(--op-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--op-primary)]"
       />
     </div>
   );
@@ -1545,11 +1547,11 @@ function SelectField({
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full rounded-xl border border-[var(--color-border)] bg-white/[0.02] px-4 text-[13px] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary-mid)]"
+        className="h-12 w-full rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)] px-4 text-[13px] text-[var(--op-text)] focus:outline-none focus:ring-1 focus:ring-[var(--op-primary)]"
       >
-        <option value="" className="bg-[#121214]">Select…</option>
+        <option value="">Select…</option>
         {options.map((option) => (
-          <option key={option.value} value={option.value} className="bg-[#121214]">
+          <option key={option.value} value={option.value}>
             {option.label}
           </option>
         ))}

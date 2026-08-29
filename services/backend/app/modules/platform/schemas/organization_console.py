@@ -178,28 +178,6 @@ class CustomLoginPageConfiguration(StrictWriteModel):
         return self
 
 
-class ComplianceControlCreate(StrictWriteModel):
-    framework: Literal["GDPR", "SOC2", "ISO27001", "HIPAA", "CUSTOM"]
-    control_key: str = Field(min_length=1, max_length=100)
-    title: str = Field(min_length=2, max_length=255)
-    owner_user_id: Optional[uuid.UUID] = None
-    applicability: Literal["APPLICABLE", "NOT_APPLICABLE"] = "APPLICABLE"
-    state: Literal["NOT_ASSESSED", "IN_PROGRESS", "READY", "GAP"] = "NOT_ASSESSED"
-    readiness_score: Optional[int] = Field(default=None, ge=0, le=100)
-    review_due_at: Optional[datetime] = None
-    reason: str = Field(min_length=12, max_length=2000)
-
-
-class ComplianceEvidenceCreate(StrictWriteModel):
-    evidence_type: str = Field(min_length=2, max_length=50)
-    storage_reference: str = Field(min_length=3, max_length=500)
-    checksum_sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
-    classification: Literal["INTERNAL", "CONFIDENTIAL", "RESTRICTED"] = "CONFIDENTIAL"
-    collected_at: datetime
-    expires_at: Optional[datetime] = None
-    reviewer_user_id: Optional[uuid.UUID] = None
-    reason: str = Field(min_length=12, max_length=2000)
-
 
 class ImpersonationHandoffCreate(StrictWriteModel):
     target_user_id: uuid.UUID
@@ -266,43 +244,6 @@ class ConsoleExportOut(BaseModel):
     expires_at: Optional[datetime]
     failure_reason: Optional[str]
 
-
-class PrivacyRequestCreate(StrictWriteModel):
-    request_type: Literal["ACCESS", "ERASURE", "RECTIFICATION", "PORTABILITY", "RESTRICTION", "OBJECTION"]
-    subject_reference: str = Field(min_length=3, max_length=500)
-    due_at: datetime
-    assigned_to: Optional[uuid.UUID] = None
-    reason: str = Field(min_length=12, max_length=2000)
-    case_reference: str = Field(min_length=2, max_length=160)
-
-
-class PrivacyRequestUpdate(StrictWriteModel):
-    status: Literal["RECEIVED", "IDENTITY_VERIFIED", "IN_PROGRESS", "BLOCKED_BY_HOLD", "COMPLETED", "REJECTED"]
-    version: int = Field(ge=1)
-    result_reference: Optional[str] = Field(default=None, max_length=500)
-    reason: str = Field(min_length=12, max_length=2000)
-    case_reference: str = Field(min_length=2, max_length=160)
-
-
-class RetentionPolicyWrite(StrictWriteModel):
-    data_category: str = Field(min_length=2, max_length=80)
-    retention_days: int = Field(ge=1, le=36500)
-    disposition_action: Literal["DELETE", "ANONYMIZE", "ARCHIVE"] = "DELETE"
-    is_enabled: bool = True
-    version: Optional[int] = Field(default=None, ge=1)
-    reason: str = Field(min_length=12, max_length=2000)
-
-
-class LegalHoldCreate(StrictWriteModel):
-    name: str = Field(min_length=3, max_length=200)
-    scope: dict[str, Any]
-    reason: str = Field(min_length=12, max_length=2000)
-    starts_at: Optional[datetime] = None
-    ends_at: Optional[datetime] = None
-
-
-class LegalHoldRelease(StrictWriteModel):
-    reason: str = Field(min_length=12, max_length=2000)
 
 
 class OrganizationApiKeyCreate(StrictWriteModel):
@@ -401,11 +342,6 @@ class OverrideRequestCreate(StrictWriteModel):
 class ApprovalDecision(StrictWriteModel):
     decision: Literal["APPROVED", "REJECTED"]
     reason: str = Field(min_length=12, max_length=2000)
-
-
-class ControlRevocationRequest(StrictWriteModel):
-    reason: str = Field(min_length=12, max_length=2000)
-    case_reference: str = Field(min_length=2, max_length=160)
 
 
 class CommercialAccessDecision(StrictWriteModel):

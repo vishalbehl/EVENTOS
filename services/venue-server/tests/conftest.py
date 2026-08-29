@@ -9,6 +9,8 @@ import uuid
 import os
 os.environ["ENV"] = "testing"
 os.environ["DATABASE_URL"] = "postgresql+asyncpg://mock:mock@localhost:5432/mock_db"
+os.environ["VENUE_AUTH_KEY"] = "test-venue-device-key-32-characters"
+os.environ["VENUE_AUTH_SECRET"] = "test-venue-auth-secret-at-least-32-characters"
 
 # Mock out startup tasks before importing app
 import sys

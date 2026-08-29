@@ -6,8 +6,10 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal, Optional
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -16,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_database
 from app.models.venue_user import VenueUser
+from app.models.operational_control import VenueLoginLockout
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -23,6 +26,7 @@ X_VENUE_KEY = APIKeyHeader(name="X-Venue-Key", auto_error=False)
 BEARER = HTTPBearer(auto_error=False)
 TOKEN_ALGORITHM = "HS256"
 PASSWORD_ITERATIONS = 310_000
+PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16)
 VALID_MODES = {"admin", "registration", "scanning", "self_checkin"}
 
 
@@ -49,13 +53,14 @@ class AuthStatus(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(min_length=1, max_length=320)
+    email: Optional[str] = Field(default=None, max_length=320)
+    username: Optional[str] = Field(default=None, max_length=320)
     password: str = Field(min_length=1, max_length=512)
-    mode: Literal["admin", "registration", "scanning", "self_checkin"] = "registration"
+    mode: Literal["admin", "registration", "scanning", "self_checkin"] = "admin"
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = ""
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -75,6 +80,10 @@ class PreferenceUpdateRequest(BaseModel):
     preferences: dict[str, Any]
 
 
+class StepUpRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=512)
+
+
 def _b64encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
@@ -84,12 +93,15 @@ def _b64decode(value: str) -> bytes:
 
 
 def hash_password(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS)
-    return f"pbkdf2_sha256${PASSWORD_ITERATIONS}${_b64encode(salt)}${_b64encode(digest)}"
+    return PASSWORD_HASHER.hash(password)
 
 
 def verify_password(password: str, encoded: str) -> bool:
+    if encoded.startswith("$argon2id$"):
+        try:
+            return PASSWORD_HASHER.verify(encoded, password)
+        except (InvalidHashError, VerificationError, VerifyMismatchError):
+            return False
     try:
         scheme, iterations, salt, expected = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":
@@ -127,6 +139,10 @@ def create_token(user: VenueUser, token_type: str, mode: str, lifetime: timedelt
     body = _b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _b64encode(hmac.new(_auth_secret(), f"{head}.{body}".encode("ascii"), hashlib.sha256).digest())
     return f"{head}.{body}.{signature}"
+
+
+def create_step_up_token(user: VenueUser) -> str:
+    return create_token(user, "step_up", "admin", timedelta(minutes=10))
 
 
 def decode_token(token: str, expected_type: str) -> dict[str, Any]:
@@ -187,11 +203,13 @@ async def ensure_bootstrap_admin(db: AsyncSession) -> None:
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER),
+    venue_access_token: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_database),
 ) -> VenueUser:
-    if not credentials or credentials.scheme.lower() != "bearer":
+    token = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else venue_access_token
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    payload = decode_token(credentials.credentials, "access")
+    payload = decode_token(token, "access")
     try:
         user_id = uuid.UUID(str(payload["sub"]))
     except (ValueError, KeyError):
@@ -210,47 +228,107 @@ async def require_admin(user: VenueUser = Depends(get_current_user)) -> VenueUse
     return user
 
 
-@router.get("/verify", response_model=AuthStatus)
-async def verify_connection(is_auth: DeviceAuth):
+async def require_step_up(
+    user: VenueUser = Depends(require_admin),
+    step_up_token: str | None = Header(default=None, alias="X-Step-Up-Token"),
+) -> VenueUser:
+    if not step_up_token:
+        raise HTTPException(status_code=status.HTTP_428_PRECONDITION_REQUIRED, detail="Administrator step-up authentication required")
+    payload = decode_token(step_up_token, "step_up")
+    if str(payload.get("sub")) != str(user.id):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Step-up authentication belongs to another account")
+    return user
+
+
+async def require_operator(user: VenueUser = Depends(get_current_user)) -> VenueUser:
+    if user.role not in {"operator", "admin", "super_admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operator access required")
+    return user
+
+
+async def require_viewer(user: VenueUser = Depends(get_current_user)) -> VenueUser:
+    if user.role not in {"viewer", "operator", "admin", "super_admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Venue access required")
+    return user
+
+
+@router.get("/status", response_model=AuthStatus)
+async def verify_connection():
     return AuthStatus(authenticated=True, message="Connected to Venue Server successfully")
 
 
+@router.get("/verify", response_model=AuthStatus)
+async def verify_device_connection(_: DeviceAuth):
+    return AuthStatus(authenticated=True, message="Venue device credential accepted")
+
+
 @router.post("/login")
-async def login(credentials: LoginRequest, db: AsyncSession = Depends(get_database)):
-    identifier = credentials.email.strip().lower()
+async def login(credentials: LoginRequest, response: Response, db: AsyncSession = Depends(get_database)):
+    raw_identifier = credentials.email or credentials.username or ""
+    identifier = raw_identifier.strip().lower()
+    if not identifier:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Username or email is required")
+    now = datetime.now(timezone.utc)
+    lockout = await db.get(VenueLoginLockout, identifier)
+    if lockout and lockout.locked_until and lockout.locked_until > now:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many failed attempts. Try again later.")
     user = (
         await db.execute(
             select(VenueUser).where(or_(VenueUser.email == identifier, VenueUser.username == identifier)).limit(1)
         )
     ).scalar_one_or_none()
     if not user or not user.is_active or not verify_password(credentials.password, user.password_hash):
+        if not lockout:
+            lockout = VenueLoginLockout(identifier=identifier, failed_count=0, last_attempt_at=now)
+            db.add(lockout)
+        lockout.failed_count += 1
+        lockout.last_attempt_at = now
+        if lockout.failed_count >= 5:
+            lockout.locked_until = now + timedelta(minutes=15)
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username/email or password")
+    if lockout:
+        lockout.failed_count = 0
+        lockout.locked_until = None
+        lockout.last_attempt_at = now
+    if not user.password_hash.startswith("$argon2id$"):
+        user.password_hash = hash_password(credentials.password)
+        await db.commit()
     if not mode_allowed(user, credentials.mode):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account cannot use the selected mode")
     access = create_token(
         user, "access", credentials.mode, timedelta(minutes=settings.VENUE_ACCESS_TOKEN_MINUTES)
     )
     refresh = create_token(user, "refresh", credentials.mode, timedelta(days=7))
-    return {"access_token": access, "refresh_token": refresh, "token_type": "bearer", "user": serialize_user(user)}
+    secure = settings.DEPLOYMENT_PROFILE == "production"
+    response.set_cookie("venue_access_token", access, httponly=True, secure=secure, samesite="strict", max_age=settings.VENUE_ACCESS_TOKEN_MINUTES * 60, path="/")
+    response.set_cookie("venue_refresh_token", refresh, httponly=True, secure=secure, samesite="strict", max_age=7 * 24 * 60 * 60, path="/api/v1/auth")
+    return {"authenticated": True, "user": serialize_user(user)}
+
+
+@router.post("/step-up")
+async def step_up(payload: StepUpRequest, user: VenueUser = Depends(require_admin)):
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Step-up authentication failed")
+    return {"step_up_token": create_step_up_token(user), "expires_in": 600}
 
 
 @router.post("/refresh")
-async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_database)):
-    token_data = decode_token(payload.refresh_token, "refresh")
+async def refresh_token(payload: RefreshRequest, response: Response, venue_refresh_token: str | None = Cookie(default=None), db: AsyncSession = Depends(get_database)):
+    token_data = decode_token(venue_refresh_token or payload.refresh_token, "refresh")
     user = await db.get(VenueUser, uuid.UUID(str(token_data["sub"])))
     mode = str(token_data.get("mode"))
     if not user or not user.is_active or not mode_allowed(user, mode):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is no longer valid")
-    return {
-        "access_token": create_token(
-            user, "access", mode, timedelta(minutes=settings.VENUE_ACCESS_TOKEN_MINUTES)
-        ),
-        "token_type": "bearer",
-    }
+    access = create_token(user, "access", mode, timedelta(minutes=settings.VENUE_ACCESS_TOKEN_MINUTES))
+    response.set_cookie("venue_access_token", access, httponly=True, secure=settings.DEPLOYMENT_PROFILE == "production", samesite="strict", max_age=settings.VENUE_ACCESS_TOKEN_MINUTES * 60, path="/")
+    return {"authenticated": True}
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(_: VenueUser = Depends(get_current_user)):
+async def logout(response: Response, _: VenueUser = Depends(get_current_user)):
+    response.delete_cookie("venue_access_token", path="/")
+    response.delete_cookie("venue_refresh_token", path="/api/v1/auth")
     return None
 
 

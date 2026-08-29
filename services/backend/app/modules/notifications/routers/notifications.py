@@ -864,7 +864,7 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
 
     from app.modules.events.models.speaker import Speaker
     from app.modules.presentations.models.poster import Poster
-    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.agenda.models import SessionPerson as SessionSpeaker
     
     query = select(func.count(Speaker.id)).where(
         Speaker.event_id == campaign.event_id,
@@ -898,7 +898,7 @@ async def get_campaign_recipient_count(db: AsyncSession, campaign: EmailCampaign
             )
         )
     elif campaign.recipient_filter == "specific_room" and campaign.room_id_filter:
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         room_sessions = select(Session.id).where(Session.room_id == campaign.room_id_filter)
         query = query.where(
             or_(

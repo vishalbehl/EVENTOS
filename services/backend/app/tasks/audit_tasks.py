@@ -13,6 +13,7 @@ from app.worker import celery_app
 from app.config import settings
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.api_request_log import WorkerJobLog, APIRequestLog
+from app.modules.audit.services.audit_service import make_json_serializable
 
 
 def _run_async(coro):
@@ -118,12 +119,12 @@ async def _write_audit_log_async(audit_data: dict) -> None:
             resource_id=uuid.UUID(audit_data["resource_id"]) if audit_data.get("resource_id") else None,
             action_type=audit_data.get("action_type"),
             actor_role=audit_data.get("actor_role"),
-            old_state=audit_data.get("old_state"),
-            new_state=audit_data.get("new_state"),
-            change_diff=audit_data.get("change_diff"),
+            old_state=make_json_serializable(audit_data.get("old_state")),
+            new_state=make_json_serializable(audit_data.get("new_state")),
+            change_diff=make_json_serializable(audit_data.get("change_diff")),
             actor_ip=audit_data.get("actor_ip"),
             actor_user_agent=audit_data.get("actor_user_agent"),
-            geo_location=audit_data.get("geo_location"),
+            geo_location=make_json_serializable(audit_data.get("geo_location")),
             is_sensitive=audit_data.get("is_sensitive", False),
             occurred_at=occurred_at,
             retention_until=retention_until,
@@ -174,7 +175,7 @@ async def _log_worker_failure(self_task, audit_data: dict, exc: Exception) -> No
             retry_count=self_task.request.retries if self_task.request else 0,
             exception=str(exc),
             stack_trace=traceback.format_exc(),
-            args=json.dumps(audit_data),
+            args=json.dumps(make_json_serializable(audit_data), default=str),
             kwargs="{}",
             queued_at=now,
             started_at=now,

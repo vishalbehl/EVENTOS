@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +21,6 @@ from app.dependencies import DB, SuperAdminOnly, get_current_user
 from app.modules.identity.models.user import User
 from app.modules.audit.models.audit_extensions import WorkerJobLog
 from app.modules.audit.models.audit_domain_tables import (
-    SecurityLog,
     SystemChange,
     DataExport,
 )
@@ -127,29 +126,14 @@ async def list_security_logs(
     Returns platform security events (login anomalies, failed auth attempts,
     permission violations) for the Super Admin security dashboard.
     """
-    filters = []
-    if severity:
-        filters.append(SecurityLog.severity == severity)
-
-    total = await db.scalar(
-        select(func.count()).select_from(SecurityLog).where(*filters)
-    ) or 0
-
-    result = await db.execute(
-        select(SecurityLog)
-        .where(*filters)
-        .order_by(SecurityLog.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    del db, severity, page, page_size
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "SECURITY_LOG_TABLE_RETIRED",
+            "message": "Legacy security_logs were removed from the revised audit schema.",
+        },
     )
-    logs = result.scalars().all()
-
-    return {
-        "items": [SecurityLogOut.model_validate(l).model_dump() for l in logs],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
 
 
 # ── System Change Logs ────────────────────────────────────────

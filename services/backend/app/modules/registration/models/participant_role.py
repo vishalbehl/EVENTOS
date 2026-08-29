@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Integer
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 from typing import TYPE_CHECKING, Optional
 
 from app.database import Base
@@ -13,12 +13,18 @@ if TYPE_CHECKING:
     from app.modules.events.models.event import Event
 
 
+def _participant_role_event_join():
+    from app.modules.events.models.event import Event
+
+    return foreign(ParticipantRole.__table__.c.event_id) == Event.__table__.c.id
+
+
 class ParticipantRole(Base):
     """
     Configurable participant role / delegate type for each event.
     Seeded with platform-wide defaults when an event is created.
     """
-    __tablename__ = "roles"
+    __tablename__ = "participant_roles"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -42,7 +48,13 @@ class ParticipantRole(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
-    event: Mapped["Event"] = relationship("Event")
+    event: Mapped["Event"] = relationship(
+        "Event",
+        primaryjoin=_participant_role_event_join,
+        foreign_keys=lambda: [ParticipantRole.__table__.c.event_id],
+    )
 
     def __repr__(self) -> str:
         return f"<ParticipantRole id={self.id} name={self.name} event_id={self.event_id}>"
+
+

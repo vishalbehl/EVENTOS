@@ -10,7 +10,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
-    from app.modules.events.models.room import Room
+    from app.modules.agenda.models.room import AgendaRoom
     from app.modules.venue.models.presentation_queue import PresentationQueue
     from app.modules.venue.models.playback_event import PlaybackEvent
 
@@ -39,6 +39,7 @@ class RoomDevice(Base):
         maintenance  → Manually taken offline
     """
     __tablename__ = "devices"
+    __table_args__ = {"schema": "venue"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -57,78 +58,73 @@ class RoomDevice(Base):
     )
     room_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.rooms.id", ondelete="CASCADE"),
+        ForeignKey("agenda.rooms.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
     # presentation_pc | technician_tablet | moderator_tablet | kiosk | signage
-    device_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    device_type: Mapped[str] = mapped_column(String(30), nullable=False)
     device_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    device_key_hash: Mapped[Optional[str]] = mapped_column(
-        String(64), unique=True, nullable=True, index=True
-    )
-    device_key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    device_key_expires_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
-    device_key_rotated_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    device_key_revoked_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
-    device_key_revocation_reason: Mapped[Optional[str]] = mapped_column(
-        String(255), nullable=True
-    )
-    hostname: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
-    # ── Hardware Telemetry & Health ──────────────────────
-    health_score: Mapped[float] = mapped_column(Float, default=100.0)
-    last_heartbeat: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    device_fingerprint: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
-    
-    # ── OS & Hardware Specs ──────────────────────────────
-    os_version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    cpu_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    gpu_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    total_ram_gb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    
-    # ── Monitoring & Trust ───────────────────────────────
-    trust_status: Mapped[str] = mapped_column(String(20), default="TRUSTED") # TRUSTED, UNTRUSTED, REVOKED
-    compromise_detected: Mapped[bool] = mapped_column(Boolean, default=False)
-    sync_latency_ms: Mapped[int] = mapped_column(Integer, default=0)
-    
-    # ── Infrastructure ───────────────────────────────────
-    local_ip: Mapped[Optional[str]] = mapped_column(INET, nullable=True)
-    mac_address: Mapped[Optional[str]] = mapped_column(String(17), nullable=True)
-    device_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-
-    app_version: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-
-    # online | offline | error | maintenance
+    # Online status tracking
     status: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="offline", index=True
+        String(20), nullable=False, default="offline"
     )
-    last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(
+    last_heartbeat: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+
+    # App version and hardware info reported on heartbeat
+    app_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column("local_ip", INET, nullable=True)
+    mac_address: Mapped[Optional[str]] = mapped_column(String(17), nullable=True)
+    os_info: Mapped[Optional[str]] = mapped_column("os_version", String(100), nullable=True)
+
+    # Hardware stats from latest heartbeat
+    cpu_usage_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    memory_usage_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    disk_free_gb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # API authentication key — generated on device registration
+    # Stored as SHA-256 hash in production
+    device_key_hash: Mapped[str] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+
+    # Device configuration pushed from cloud
+    config: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # Error logging
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    last_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
-    registered_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
+        nullable=True,
+        server_default="now()",
+        name="created_at",
+    )
+    registered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
+        nullable=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event")
-    room: Mapped["Room"] = relationship("Room", back_populates="devices")
+    room: Mapped["AgendaRoom"] = relationship("AgendaRoom")
     queue_entries: Mapped[list["PresentationQueue"]] = relationship(
         "PresentationQueue", back_populates="device"
     )

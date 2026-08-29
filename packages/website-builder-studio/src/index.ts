@@ -9,3 +9,4 @@ export { WEBSITE_RUNTIME_SCRIPT, PREVIEW_RUNTIME_CSS } from './core/runtime';
 export * from './component-assets';
 export { registerAllBlocks, registerEventBlocks } from './blocks';
 export { applyThemePlugin } from './plugins/themePlugin';
+export * from './templates/eventTemplates';

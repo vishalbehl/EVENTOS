@@ -14,13 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import ActiveUser, CurrentEvent, DeviceAuth, get_db
 from app.core.dependencies.feature_gate import enforce_event_operation
 from app.core.encryption import decrypt, encrypt
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.badge_models import Badge, BadgeScan, BadgePrintJob
 from app.modules.registration.models.print_template import PrintTemplate
-from app.modules.events.models.room import Room
+from app.modules.agenda.models import Room
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.analytics.models.attendance_log import AttendanceLog
@@ -521,7 +521,11 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
     # presentation-file, poster, SRR, or playback payloads.
     sessions_result = await db.execute(
         select(Session)
-        .where(Session.event_id == event_id)
+        .where(
+            Session.event_id == event_id,
+            Session.is_published.is_(True),
+            Session.deleted_at.is_(None),
+        )
     )
     sessions = sessions_result.scalars().all()
     
@@ -681,7 +685,8 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "capacity": rm.capacity,
         "screen_count": rm.screen_count,
         "room_type": rm.room_type,
-        "av_technician": rm.av_technician,
+        "room_coordinator": rm.room_coordinator,
+        "av_technician": rm.room_coordinator,
         "location_notes": rm.location_notes,
         "is_active": rm.is_active
     } for rm in rooms]

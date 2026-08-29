@@ -28,9 +28,9 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.registration.models.import_job import ImportJob
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.services.timezone_service import get_cached_timezone
 

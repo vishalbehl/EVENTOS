@@ -8,6 +8,7 @@ from app.modules.registration.routers.ticket_types import router as ticket_types
 
 from app.modules.identity.routers import auth, users, me, impersonation
 from app.modules.platform import router as platform
+from app.modules.organiser.router import router as organiser_router
 from app.modules.platform import support_router
 from app.modules.platform.organization_console_router import router as organization_console_router
 from app.modules.platform.communications_router import router as platform_communications_router
@@ -49,7 +50,6 @@ from app.modules.notifications.routers.email_template_studio import (
     platform_branding_policy_router,
 )
 
-from app.modules.search.routers.search import router as search_router
 from app.modules.audit.routers.audit import router as audit_router
 
 # Phase 2: Files, Workflow & AI RAG Platform
@@ -58,21 +58,18 @@ from app.modules.workflow.routers.workflows import router as workflows_router
 from app.modules.website_builder.router import event_website_router, platform_website_template_router, public_website_runtime_router, public_website_slug_router, public_website_template_preview_router
 
 
+
 api_router = APIRouter()
 
 # ── Phase 5: Commercial Catalog, Inventory & Pricing Engine ────
 from app.modules.commercial.router import router as commercial_router
 from app.modules.commercial.quotes_router import public_router as commercial_public_proposals_router, router as commercial_quotes_router
-from app.modules.inventory.router import router as inventory_router
 from app.modules.pricing.router import router as pricing_router
-from app.modules.procurement.router import router as procurement_router
 
 api_router.include_router(commercial_router)
 api_router.include_router(commercial_quotes_router)
 api_router.include_router(commercial_public_proposals_router)
-api_router.include_router(inventory_router)
 api_router.include_router(pricing_router)
-api_router.include_router(procurement_router)
 api_router.include_router(platform_website_template_router)
 api_router.include_router(event_website_router)
 api_router.include_router(public_website_runtime_router)
@@ -81,10 +78,10 @@ api_router.include_router(public_website_template_preview_router)
 
 # ── Phase 6: Enterprise Template System, Website Builder & Blueprint Engine ────
 
-
 api_router.include_router(auth.router)
 api_router.include_router(impersonation.router)
 api_router.include_router(platform.router)
+api_router.include_router(organiser_router)
 api_router.include_router(organization_console_router)
 api_router.include_router(platform_communications_router)
 api_router.include_router(platform_email_template_router)
@@ -145,9 +142,9 @@ api_router.include_router(participants.router)
 api_router.include_router(participants.public_confirmation_router)
 api_router.include_router(print_templates.router)
 api_router.include_router(ticket_types_router)
-api_router.include_router(registration_portal.router)
 api_router.include_router(participant_roles.router)
 api_router.include_router(registrations.router)
+api_router.include_router(registration_portal.router)
 api_router.include_router(capacity.router)
 api_router.include_router(badges.router)
 api_router.include_router(printers.router)
@@ -159,11 +156,19 @@ api_router.include_router(payments.router)
 api_router.include_router(portal_auth.router)
 api_router.include_router(portal_dashboard.router)
 
+# ── Agenda Domain Architecture ──────────────────────────────
+from app.modules.agenda.routers import agenda_router, catalogs_router
+api_router.include_router(agenda_router)
+api_router.include_router(catalogs_router)
+
 # ── Phase 1: Search & Audit Core ──────────────────────────────
+from app.modules.search.router import router as search_router
 api_router.include_router(search_router)
 api_router.include_router(audit_router)
 
 # ── Phase 2: Files, Workflow & AI RAG Platform ────────────────
+from app.modules.files.routers.files import router as files_router
+from app.modules.workflow.routers.workflows import router as workflows_router
 api_router.include_router(files_router)
 api_router.include_router(workflows_router)
 
@@ -183,15 +188,7 @@ api_router.include_router(capabilities_router)
 api_router.include_router(capability_admin_router)
 
 # ── Phase 7: Tech Services & Operations Planning Engine ───────
-from app.modules.operations_planning.router import router as operations_planning_router
-from app.modules.technology_services.router import router as technology_services_router
-from app.modules.resource_management.router import router as resource_management_router
-from app.modules.deployment_management.router import router as deployment_management_router
 
-api_router.include_router(operations_planning_router)
-api_router.include_router(technology_services_router)
-api_router.include_router(resource_management_router)
-api_router.include_router(deployment_management_router)
 
 # ── Super Admin Namespace ──────────────────────────────────────
 # Aggregates existing module routers under /api/v1/superadmin/.
@@ -199,6 +196,3 @@ api_router.include_router(deployment_management_router)
 from app.modules.superadmin.router import commercial_staff_router, superadmin_router
 api_router.include_router(superadmin_router)
 api_router.include_router(commercial_staff_router)
-
-
-

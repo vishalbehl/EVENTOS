@@ -92,20 +92,24 @@ function styleDeclarations(styles: Record<string, string> | undefined): string {
 }
 
 export function buildResponsiveDocumentCss(document: WebsiteDocument): string {
+  const desktop: string[] = [];
   const tablet: string[] = [];
   const mobile: string[] = [];
 
   Object.values(document.instances).forEach(instance => {
     const selector = `[data-wb-instance-id="${cssAttributeValue(instance.id)}"]`;
+    const desktopRules = styleDeclarations(instance.styles.desktop);
     const tabletRules = styleDeclarations(instance.styles.tablet);
     const mobileRules = styleDeclarations(instance.styles.mobile);
+    if (desktopRules) desktop.push(`${selector}{${desktopRules}}`);
     if (tabletRules) tablet.push(`${selector}{${tabletRules}}`);
     if (mobileRules) mobile.push(`${selector}{${mobileRules}}`);
   });
 
   return [
-    tablet.length ? `@media (max-width:1024px){${tablet.join('')}}` : '',
-    mobile.length ? `@media (max-width:767px){${mobile.join('')}}` : '',
+    desktop.join('\n'),
+    tablet.length ? `@media (max-width:1024px){\n${tablet.join('\n')}\n}` : '',
+    mobile.length ? `@media (max-width:767px){\n${mobile.join('\n')}\n}` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -144,9 +148,13 @@ export function renderWebsiteDocument(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@400;600;700;800;900&family=Poppins:wght@400;600;700;800&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root { color-scheme: dark; }
-    body { margin: 0; background: var(--background, #080912); }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--background, #080912); color: var(--foreground, #f8fafc); font-family: var(--font-body, 'Inter', sans-serif); overflow-x: hidden; }
     ${css}
   </style>
 </head>
@@ -155,3 +163,54 @@ export function renderWebsiteDocument(
 
   return { html, css, runtimeScripts, diagnostics };
 }
+
+export interface WebsiteExportPage {
+  pageId: string;
+  name: string;
+  slug: string;
+  route: string;
+  artifactPath: string;
+  html: string;
+  title: string;
+}
+
+export interface WebsiteExportBundle {
+  siteName: string;
+  checksum: string;
+  pages: WebsiteExportPage[];
+  diagnostics: string[];
+}
+
+export function exportWebsiteBundle(
+  document: WebsiteDocument,
+  options: { theme?: Partial<ThemePalette> } = {},
+): WebsiteExportBundle {
+  const diagnostics: string[] = [];
+  const pages: WebsiteExportPage[] = document.pages.map(page => {
+    const route = page.isHomePage ? '/' : `/${page.slug}`;
+    const artifactPath = page.isHomePage ? 'index.html' : `${page.slug}/index.html`;
+    const title = page.seoTitle || `${page.name} | ${document.site.siteName || 'Event'}`;
+    const result = renderWebsiteDocument(document, page.id, 'export', {
+      theme: options.theme,
+      title,
+    });
+    if (result.diagnostics.length) diagnostics.push(...result.diagnostics);
+    return {
+      pageId: page.id,
+      name: page.name,
+      slug: page.slug,
+      route,
+      artifactPath,
+      html: result.html,
+      title,
+    };
+  });
+
+  return {
+    siteName: document.site.siteName || '',
+    checksum: document.checksum || '',
+    pages,
+    diagnostics,
+  };
+}
+

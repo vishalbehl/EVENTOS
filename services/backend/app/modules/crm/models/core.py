@@ -10,7 +10,7 @@ class Account(Base):
     __tablename__ = "accounts"
     __table_args__ = (
         Index("ix_crm_accounts_org_archived", "organization_id", "archived_at"),
-        {"schema": "crm"},
+        {"schema": "business"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -30,11 +30,11 @@ class Contact(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "email", name="uq_crm_contacts_org_email"),
         Index("ix_crm_contacts_org_archived", "organization_id", "archived_at"),
-        {"schema": "crm"},
+        {"schema": "business"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("crm.accounts.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("business.accounts.id", ondelete="CASCADE"), nullable=False)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -50,11 +50,11 @@ class Lead(Base):
     __tablename__ = "leads"
     __table_args__ = (
         Index("ix_crm_leads_org_archived", "organization_id", "archived_at"),
-        {"schema": "crm"},
+        {"schema": "business"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    contact_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("crm.contacts.id", ondelete="CASCADE"))
+    contact_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("business.contacts.id", ondelete="CASCADE"))
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="NEW")
     source: Mapped[Optional[str]] = mapped_column(String(100))

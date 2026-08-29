@@ -13,6 +13,7 @@ export type EmailAssetRecord = { id: string; name: string; url: string; file_typ
 const headers = (version: number) => ({ "Idempotency-Key": crypto.randomUUID(), "If-Match": String(version) });
 export const eventEmailTemplates = {
   list: (eventId: string, targetType = "speaker") => apiClient.get<EmailStudioRecord[]>(`/events/${eventId}/notifications/template-studio`, { params: { target_type: targetType } }),
+  create: (eventId: string, payload: object) => apiClient.post<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio`, payload, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
   saveDraft: (eventId: string, id: string, version: number, payload: object) => apiClient.put<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio/${id}/draft`, payload, { headers: headers(version) }),
   publish: (eventId: string, id: string, version: number, reason: string) => apiClient.post<EmailStudioRecord>(`/events/${eventId}/notifications/template-studio/${id}/publish`, { reason }, { headers: headers(version) }),
   preview: (eventId: string, id: string, payload: object) => apiClient.post<{ subject: string; html: string; plain_text: string; diagnostics: Array<{ path: string; message: string; severity: "error" | "warning" }> }>(`/events/${eventId}/notifications/template-studio/${id}/preview`, { ...payload, preview_data_profile: "representative" }),
@@ -22,6 +23,7 @@ export const eventEmailTemplates = {
 };
 export const organizationEmailTemplates = {
   list: (organizationId: string, targetType = "speaker") => apiClient.get<EmailStudioRecord[]>(`/organizations/${organizationId}/email-templates`, { params: { target_type: targetType } }),
+  create: (organizationId: string, payload: object) => apiClient.post<EmailStudioRecord>(`/organizations/${organizationId}/email-templates`, payload, { headers: { "Idempotency-Key": crypto.randomUUID() } }),
   saveDraft: (organizationId: string, id: string, version: number, payload: object) => apiClient.put<EmailStudioRecord>(`/organizations/${organizationId}/email-templates/${id}/draft`, payload, { headers: headers(version) }),
   publish: (organizationId: string, id: string, version: number, reason: string) => apiClient.post<EmailStudioRecord>(`/organizations/${organizationId}/email-templates/${id}/publish`, { reason }, { headers: headers(version) }),
   preview: (organizationId: string, id: string, payload: object) => apiClient.post<{ subject: string; html: string; plain_text: string; diagnostics: Array<{ path: string; message: string; severity: "error" | "warning" }> }>(`/organizations/${organizationId}/email-templates/${id}/preview`, { ...payload, preview_data_profile: "representative" }),

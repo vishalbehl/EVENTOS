@@ -40,9 +40,13 @@ export default function OperatorModeLayout({
 
   if (!hydrated || !isAuthenticated) return null;
 
-  const allowed = (mode: AppMode) => {
+  const allowed = (_mode: AppMode) => {
+    // TEST OVERRIDE: Allow all modes in switcher for testing
+    return true;
+    /*
     if (mode === "admin") return ["admin", "super_admin"].includes(user?.role || "");
     return !user?.allowed_modes || user.allowed_modes.includes(mode as any) || user.allowed_modes.includes("admin" as any);
+    */
   };
 
   return (

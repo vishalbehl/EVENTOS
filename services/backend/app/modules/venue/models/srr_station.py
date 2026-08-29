@@ -54,7 +54,7 @@ class SRRStation(Base):
     )
     assigned_speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.speakers.id", ondelete="SET NULL"),
+        ForeignKey("speakers.speakers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

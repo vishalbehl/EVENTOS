@@ -26,7 +26,7 @@ class OrgCredit(Base):
         'COMPENSATION'  – compensation for outage / service degradation
     """
     __tablename__ = "org_credits"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -57,7 +57,7 @@ class OrgCredit(Base):
     is_used: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     used_on_invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("billing.invoices.id", ondelete="SET NULL"),
+        ForeignKey("commerce.invoices.id", ondelete="SET NULL"),
         nullable=True
     )
     used_at: Mapped[Optional[datetime]] = mapped_column(

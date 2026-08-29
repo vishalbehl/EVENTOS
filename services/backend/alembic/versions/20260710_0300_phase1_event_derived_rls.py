@@ -22,7 +22,7 @@ EVENT_TENANT_TABLES = (
     ("registration", "participants", "tenant_isolation_participants", None),
     ("registration", "registrations", "tenant_isolation_registrations", None),
     ("registration", "ticket_types", "tenant_isolation_ticket_types", None),
-    ("registration", "roles", "tenant_isolation_roles", None),
+    ("registration", "participant_roles", "tenant_isolation_participant_roles", None),
     ("registration", "payment_transactions", "tenant_isolation_payment_transactions", None),
     ("registration", "import_jobs", "tenant_isolation_import_jobs", None),
     ("presentations", "files", "tenant_isolation_files", None),

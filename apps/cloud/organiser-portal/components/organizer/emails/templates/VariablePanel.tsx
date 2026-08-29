@@ -149,7 +149,7 @@ export default function VariablePanel({ onInsert }: Props) {
                                             </button>
                                             <button
                                                 onClick={() => onInsert(v)}
-                                                className="p-1 rounded-md bg-[var(--pri)] text-white shadow-lg shadow-[var(--pri)]/20 transition-transform active:scale-90"
+                                                className="p-1 rounded-md bg-[var(--pri)] text-[var(--primary-contrast)] shadow-lg shadow-[var(--pri)]/20 transition-transform active:scale-90"
                                                 title="Insert Variable"
                                             >
                                                 <ChevronRight className="w-3 h-3" />

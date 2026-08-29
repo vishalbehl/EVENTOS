@@ -9,6 +9,7 @@ from app.database import Base
 
 class Asset(Base):
     __tablename__ = "assets"
+    __table_args__ = {"schema": "content"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
@@ -31,7 +32,7 @@ class AssetVersion(Base):
     __tablename__ = "asset_versions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("files.assets.id", ondelete="CASCADE"), index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("content.assets.id", ondelete="CASCADE"), index=True)
     version_number: Mapped[int] = mapped_column(nullable=False)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -43,7 +44,7 @@ class AssetTag(Base):
     __tablename__ = "asset_tags"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("files.assets.id", ondelete="CASCADE"), index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("content.assets.id", ondelete="CASCADE"), index=True)
     tag: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
 
     # Relationships
@@ -53,7 +54,7 @@ class AssetPermission(Base):
     __tablename__ = "asset_permissions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("files.assets.id", ondelete="CASCADE"), index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("content.assets.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"))
     permission_type: Mapped[str] = mapped_column(String(50), default="read") # read, write, admin
 
@@ -81,7 +82,7 @@ class VirusScan(Base):
     __tablename__ = "virus_scans"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("files.assets.id", ondelete="CASCADE"), index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("content.assets.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(50), default="pending") # pending, clean, infected, error
     scan_result: Mapped[Optional[str]] = mapped_column(Text)
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

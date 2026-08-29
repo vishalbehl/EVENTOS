@@ -196,7 +196,7 @@ function ViewToggle({ active, onClick, icon, label }: { active: boolean; onClick
             onClick={onClick}
             className={`
                 flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
-                ${active ? 'bg-[var(--pri)] text-white shadow-lg' : 'text-[var(--muted)] hover:text-[var(--text)]'}
+                ${active ? 'bg-[var(--pri)] text-[var(--primary-contrast)] shadow-lg' : 'text-[var(--muted)] hover:text-[var(--text)]'}
             `}
         >
             {icon}

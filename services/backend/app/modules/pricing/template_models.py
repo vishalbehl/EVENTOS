@@ -11,7 +11,7 @@ from app.database import Base, SoftDeleteMixin
 
 class RoomTemplate(Base, SoftDeleteMixin):
     __tablename__ = "room_templates"
-    __table_args__ = {"schema": "templates"}
+    __table_args__ = {"schema": "operation_templates"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -49,7 +49,7 @@ class RoomTemplate(Base, SoftDeleteMixin):
 
 class RegistrationTemplate(Base, SoftDeleteMixin):
     __tablename__ = "registration_templates"
-    __table_args__ = {"schema": "templates"}
+    __table_args__ = {"schema": "operation_templates"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -96,7 +96,7 @@ class RegistrationTemplate(Base, SoftDeleteMixin):
 
 class SrrTemplate(Base, SoftDeleteMixin):
     __tablename__ = "srr_templates"
-    __table_args__ = {"schema": "templates"}
+    __table_args__ = {"schema": "operation_templates"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(

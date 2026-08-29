@@ -20,6 +20,7 @@ const billingKeys = {
   plans: ["billing", "plans"] as const,
   featureMatrix: ["billing", "feature-matrix"] as const,
   addons: ["billing", "addons"] as const,
+  addonStatuses: ["billing", "addon-statuses"] as const,
   history: ["billing", "history"] as const,
   cart: ["billing", "cart"] as const,
 };
@@ -47,7 +48,7 @@ export function usePlans() {
 export function useFeatureMatrix() {
   return useQuery({
     queryKey: billingKeys.featureMatrix,
-    queryFn: () => apiGet<BillingApiRecord[] | BillingApiRecord>("/organisations/features/matrix"),
+    queryFn: () => apiGet<BillingApiRecord[] | BillingApiRecord>("/organiser/entitlements/features"),
     staleTime: 5 * 60_000,
   });
 }
@@ -57,6 +58,14 @@ export function useAddons() {
     queryKey: billingKeys.addons,
     queryFn: () => apiGet<BillingApiRecord[]>("/organisations/addons"),
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useAddonStatuses() {
+  return useQuery({
+    queryKey: billingKeys.addonStatuses,
+    queryFn: () => apiGet<BillingApiRecord>("/organiser/addons/status"),
+    staleTime: 60_000,
   });
 }
 

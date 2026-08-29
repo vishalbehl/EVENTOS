@@ -90,6 +90,10 @@ class SessionBuilderDetail(BaseModel):
         if hasattr(data, "event") and data.event:
             setattr(data, "event_timezone", data.event.timezone)
 
+        if hasattr(data, "track") and data.track:
+            setattr(data, "track_name", data.track.name)
+            setattr(data, "display_color", data.track.display_color)
+
         if hasattr(data, "session_speakers") and data.session_speakers:
             speakers_list = []
             total = len(data.session_speakers)
@@ -104,6 +108,7 @@ class SessionBuilderDetail(BaseModel):
                         "session_speaker_id": str(ss.id),
                         "full_name": f"{ss.speaker.first_name} {ss.speaker.last_name}",
                         "email": ss.speaker.email,
+                        "role": getattr(ss, "role", "Speaker"),
                         "avatar_url": getattr(ss.speaker, "avatar_url", None),
                         "upload_status": ss.speaker.upload_status,
                         "talk_order": ss.talk_order,
@@ -133,9 +138,16 @@ class SessionBuilderDetail(BaseModel):
     speaker_count: int = 0
     readiness_pct: float = 100.0
     speakers: List[Dict[str, Any]] = []
+    is_published: bool = False
     # Extra builder metadata
     track_id: Optional[uuid.UUID] = None
+    track_name: Optional[str] = None
     display_color: Optional[str] = None
+    cme_credits: Optional[float] = None
+    cme_eligible: bool = False
+    operations_notes: Optional[str] = None
+    seating_layout: Optional[str] = None
+    live_stream_url: Optional[str] = None
     sort_order: int = 0
 
 
@@ -149,6 +161,7 @@ class RoomBuilderResponse(BaseModel):
     capacity: Optional[int] = None
     screen_count: int = 1
     room_type: str
+    room_coordinator: Optional[str] = None
     av_technician: Optional[str] = None
     location_notes: Optional[str] = None
     is_active: bool = True
@@ -199,3 +212,16 @@ class DuplicateSessionResponse(BaseModel):
     end_time: datetime
     room_id: Optional[uuid.UUID] = None
     message: str = "Session duplicated successfully"
+
+
+class PublishScheduleRequest(BaseModel):
+    """Optional subset of session IDs to publish, or None to publish all event sessions."""
+    session_ids: Optional[List[uuid.UUID]] = None
+
+
+class PublishScheduleResponse(BaseModel):
+    """Response after publishing sessions."""
+    success: bool = True
+    published_count: int
+    message: str = "Schedule published successfully"
+

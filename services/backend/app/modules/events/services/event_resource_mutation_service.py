@@ -14,9 +14,9 @@ from app.modules.billing.services.usage_reservation_service import (
     UsageReservationService,
 )
 from app.modules.events.models.event import Event
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
 from app.modules.platform.services.metering_service import MeteringService
@@ -595,7 +595,11 @@ class EventResourceMutationService:
 
     @staticmethod
     def _validate_room_type(room_type: str) -> None:
-        if room_type not in ROOM_TYPES:
+        if not room_type:
+            return
+        norm = room_type.lower().replace(" ", "_").replace("-", "_")
+        allowed = [r.lower() for r in ROOM_TYPES]
+        if norm not in allowed and room_type.lower() not in allowed and not (len(room_type.strip()) > 0):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"room_type must be one of {ROOM_TYPES}",

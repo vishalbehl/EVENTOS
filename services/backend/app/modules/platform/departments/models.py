@@ -53,7 +53,7 @@ class Department(Base, SoftDeleteMixin):
     )
 
     # Relationships
-    organization: Mapped["Organization"] = relationship("Organization")
+    organization: Mapped["Organization"] = relationship("Organization", foreign_keys=[organization_id])
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     updater: Mapped[Optional["User"]] = relationship("User", foreign_keys=[updated_by])
     deleter: Mapped[Optional["User"]] = relationship("User", primaryjoin="Department.deleted_by == User.id")
@@ -94,7 +94,7 @@ class DepartmentMember(Base, SoftDeleteMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     department_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.departments.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.departments.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )

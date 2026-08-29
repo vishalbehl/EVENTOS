@@ -11,7 +11,6 @@ import {
   DragEndEvent,
   closestCorners,
 } from "@dnd-kit/core";
-import { motion } from "framer-motion";
 import { useSessionBuilderStore, BuilderSession } from "@/store/useSessionBuilderStore";
 import { RoomColumn } from "./RoomColumn";
 import { SessionCard } from "./SessionCard";
@@ -103,10 +102,6 @@ export function KanbanView({ onAddSessionForRoom }: KanbanViewProps) {
     }
 
     if (targetRoomId !== session.room_id) {
-      // Calculate original duration
-      const durationMs = new Date(session.end_time).getTime() - new Date(session.start_time).getTime();
-
-      // Keep start_time date, change room
       const newStart = session.start_time;
       const newEnd = session.end_time;
 
@@ -121,7 +116,7 @@ export function KanbanView({ onAddSessionForRoom }: KanbanViewProps) {
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex gap-6 overflow-x-auto pb-6 pt-2 items-start min-h-[calc(100vh-240px)]">
+      <div className="flex gap-4 overflow-x-auto pb-4 pt-1 items-start min-h-[calc(100vh-220px)]">
         {rooms.map((room) => (
           <RoomColumn
             key={room.id}

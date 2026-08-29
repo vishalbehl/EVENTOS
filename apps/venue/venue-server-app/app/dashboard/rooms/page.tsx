@@ -1,0 +1,21 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BellRing, CalendarSync, PackageCheck, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
+import { apiClient } from "@/lib/api-client";
+import { EmptyState, ErrorState, EvidenceTime, LoadingState, PageFrame, Section, StatusBadge, formatTime } from "@/components/operations/control-room";
+
+type Room = { id: string; name: string; type: string; capacity?: number; technician?: string; location_notes?: string; current_session?: Session; next_session?: Session; devices: Array<{ id: string; name: string; type: string; status: string; last_heartbeat_at?: string }> };
+type Session = { id: string; name: string; code: string; start: string; end: string; status: string };
+
+export default function RoomsPage() {
+  const client = useQueryClient(); const query = useQuery({ queryKey: ["venue-rooms"], queryFn: () => apiClient.get<{ items: Room[] }>("/venue/admin/control/rooms"), refetchInterval: 10000 });
+  const command = useMutation({ mutationFn: ({ id, action }: { id: string; action: string }) => apiClient.post(`/venue/admin/control/commands/room/${id}`, { command: action, reason: `Room control: ${action}` }), onSuccess: () => { toast.success("Room command queued"); client.invalidateQueries({ queryKey: ["venue-rooms"] }); }, onError: (error: Error) => toast.error(error.message) });
+  return <PageFrame eyebrow="Room execution monitor" title="Rooms" description="Schedule, playback-device and technician readiness without taking ownership from the Room service." actions={<button className="venue-button venue-button--secondary" onClick={() => query.refetch()}><RefreshCw className="size-4" />Refresh</button>}>
+    <Section title="Live room board" description="Current and next sessions are calculated against Venue Server time">
+      {query.isLoading && <LoadingState />}{query.isError && <ErrorState message={(query.error as Error).message} retry={() => query.refetch()} />}{query.data?.items.length === 0 && <EmptyState title="No active rooms" detail="Rooms appear after the event schedule has been synchronized." />}
+      {!!query.data?.items.length && <div className="venue-table-wrap"><table className="venue-table"><thead><tr><th>Room</th><th>Current session</th><th>Next session</th><th>Devices</th><th>Technician</th><th>Commands</th></tr></thead><tbody>{query.data.items.map((room) => { const exceptions = room.devices.filter((device) => device.status !== "healthy"); return <tr key={room.id}><td><strong>{room.name}</strong><div className="venue-code">{room.type} · {room.capacity || "Capacity unknown"}</div></td><td>{room.current_session ? <><strong>{room.current_session.name}</strong><div className="venue-code">Until {formatTime(room.current_session.end)}</div></> : <StatusBadge state="not_configured" evidence="No session is currently scheduled." />}</td><td>{room.next_session ? <><span>{room.next_session.name}</span><div className="venue-code">{formatTime(room.next_session.start)}</div></> : <span className="text-[var(--muted)]">No next session</span>}</td><td><StatusBadge state={room.devices.length === 0 ? "not_configured" : exceptions.length ? "degraded" : "healthy"} evidence={room.devices.length ? `${exceptions.length} of ${room.devices.length} devices require attention.` : "No devices assigned."} /><div className="venue-code">{room.devices.length} assigned</div>{room.devices[0] && <EvidenceTime value={room.devices[0].last_heartbeat_at} />}</td><td>{room.technician || "Unassigned"}</td><td><div className="flex gap-1"><button title="Push schedule" className="venue-button venue-button--secondary !h-8 !px-2" onClick={() => command.mutate({ id: room.id, action: "push_schedule" })}><CalendarSync className="size-3.5" /></button><button title="Push content" className="venue-button venue-button--secondary !h-8 !px-2" onClick={() => command.mutate({ id: room.id, action: "push_content" })}><PackageCheck className="size-3.5" /></button><button title="Broadcast message" className="venue-button venue-button--secondary !h-8 !px-2" onClick={() => command.mutate({ id: room.id, action: "broadcast" })}><BellRing className="size-3.5" /></button></div></td></tr>; })}</tbody></table></div>}
+    </Section>
+  </PageFrame>;
+}

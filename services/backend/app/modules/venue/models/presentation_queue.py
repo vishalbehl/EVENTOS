@@ -9,8 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.modules.events.models.session import Session
-    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.agenda.models.session import AgendaSession
+    from app.modules.agenda.models.session_person import AgendaSessionPerson
     from app.modules.presentations.models.presentation_file import PresentationFile
     from app.modules.venue.models.room_device import RoomDevice
     from app.modules.venue.models.playback_event import PlaybackEvent
@@ -33,19 +33,20 @@ class PresentationQueue(Base):
         skipped    → Skipped by technician override
     """
     __tablename__ = "presentation_queue"
+    __table_args__ = {"schema": "venue"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.sessions.id", ondelete="CASCADE"),
+        ForeignKey("agenda.sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     session_speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.session_speakers.id", ondelete="CASCADE"),
+        ForeignKey("agenda.session_people.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -96,12 +97,8 @@ class PresentationQueue(Base):
     )
 
     # ── Relationships ─────────────────────────────────────
-    session: Mapped["Session"] = relationship(
-        "Session", back_populates="presentation_queue"
-    )
-    session_speaker: Mapped["SessionSpeaker"] = relationship(
-        "SessionSpeaker", back_populates="presentation_queue_entries"
-    )
+    session: Mapped["AgendaSession"] = relationship("AgendaSession")
+    session_speaker: Mapped["AgendaSessionPerson"] = relationship("AgendaSessionPerson")
     file: Mapped["PresentationFile"] = relationship(
         "PresentationFile", back_populates="queue_entries"
     )

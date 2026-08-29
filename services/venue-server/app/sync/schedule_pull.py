@@ -25,14 +25,26 @@ from app.websocket.connection import broadcast_queue_update
 from datetime import datetime, date
 
 
-def _source_root_url(base_url: str, source_type: str) -> str:
+def _strip_source_suffix(base_url: str) -> str:
     url = base_url.rstrip("/")
     for suffix in ("/api/v1/registration-source", "/api/v1/sync"):
         if url.endswith(suffix):
-            return url
+            return url[: -len(suffix)].rstrip("/")
+    return url
+
+
+def _source_root_url(base_url: str, source_type: str = "cloud") -> str:
+    url = _strip_source_suffix(base_url)
     if source_type == "registration_server":
-        return f"{url}/api/v1/sync"
-    return f"{url}/api/v1/registration-source"
+        return f"{url}/api/v1/registration-source"
+    return f"{url}/api/v1/sync"
+
+
+def _source_headers(api_key: str) -> dict[str, str]:
+    return {
+        "X-Fetch-Api-Key": api_key,
+        "X-Device-Key": api_key,
+    }
 
 def parse_dt(v):
     if not v:
@@ -59,14 +71,13 @@ async def pull_event_queue(
     logger.info(f"[Sync] Pulling latest queue for event {event_id} from cloud...")
     
     base_url = (source_url or settings.CLOUD_API_URL).rstrip("/")
-    effective_source_type = source_type or getattr(settings, "REGISTRATION_FETCH_SOURCE_TYPE", "cloud")
     headers = {}
     if authorization and not api_key:
         headers["Authorization"] = authorization
         url = f"{base_url}/api/v1/events/{event_id}/venue-sync/queue"
     else:
-        headers["X-Fetch-Api-Key"] = api_key or settings.CLOUD_DEVICE_KEY
-        source_root = _source_root_url(base_url, effective_source_type)
+        headers.update(_source_headers(api_key or settings.CLOUD_DEVICE_KEY))
+        source_root = _source_root_url(base_url, source_type or getattr(settings, "REGISTRATION_FETCH_SOURCE_TYPE", "cloud"))
         url = f"{source_root}/events/{event_id}/queue"
     
     try:
@@ -76,12 +87,6 @@ async def pull_event_queue(
                 headers=headers,
                 timeout=60.0
             )
-            if response.status_code == 404 and "registration-source" in url:
-                response = await client.get(
-                    f"{_source_root_url(base_url, 'registration_server')}/events/{event_id}/queue",
-                    headers=headers,
-                    timeout=60.0,
-                )
             response.raise_for_status()
             data = response.json()
             
@@ -89,6 +94,7 @@ async def pull_event_queue(
                 await _upsert_schedule_data(db, data)
                 await db.commit()
             
+            await broadcast_queue_update(event_id)
             logger.info(f"[Sync] Queue sync complete for {event_id}.")
             
     except httpx.HTTPStatusError as e:

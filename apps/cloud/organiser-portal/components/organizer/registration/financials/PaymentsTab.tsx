@@ -150,13 +150,13 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
               onClick={() => setPaymentEnabled(!paymentEnabled)}
               disabled={paymentAccess.loading || !paymentAccess.enabled}
               title={!paymentAccess.enabled ? `Unavailable: ${(paymentAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
-              className={`h-6 w-11 rounded-full p-1 transition-colors duration-300 focus:outline-none ${
-                paymentEnabled ? 'bg-[var(--pri)]' : 'bg-white/10'
+              className={`h-6 w-11 rounded-full p-0.5 transition-colors duration-300 focus:outline-none border ${
+                paymentEnabled ? 'bg-[var(--pri)] border-[var(--pri)]' : 'bg-[var(--bg-surface-3)] border-[var(--border-default)]'
               }`}
             >
               <div
-                className={`h-4 w-4 rounded-full bg-white transition-transform duration-300 ${
-                  paymentEnabled ? 'translate-x-5' : 'translate-x-0'
+                className={`h-4 w-4 rounded-full transition-transform duration-300 shadow-sm ${
+                  paymentEnabled ? 'translate-x-5 bg-[var(--primary-contrast)]' : 'translate-x-0.5 bg-[var(--text-secondary)]'
                 }`}
               />
             </button>
@@ -173,8 +173,88 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                   className="w-full h-11 px-4 bg-[#080912] border border-white/10 rounded-xl text-xs font-bold text-[var(--text)] focus:border-[var(--pri)]/50 focus:ring-0 focus:outline-none cursor-pointer"
                 >
                   <option value="simulated" className="bg-[var(--base)] text-[var(--text)]">Simulation Sandbox (Mock)</option>
+                  <option value="stripe" className="bg-[var(--base)] text-[var(--text)]">Stripe Global Gateway</option>
+                  <option value="razorpay" className="bg-[var(--base)] text-[var(--text)]">Razorpay Payment Suite</option>
+                  <option value="phonepe" className="bg-[var(--base)] text-[var(--text)]">PhonePe Direct UPI & QR</option>
+                  <option value="offline" className="bg-[var(--base)] text-[var(--text)]">Offline / Bank Wire Transfer</option>
                 </select>
               </div>
+
+              {/* Stripe Credentials */}
+              {activeGateway === 'stripe' && (
+                <div className="space-y-3.5 p-4 bg-white/5 border border-white/5 rounded-xl">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[var(--pri)] block">
+                    Stripe API Credentials
+                  </span>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-bold text-muted block">Publishable Key</label>
+                    <input
+                      type="text"
+                      placeholder="pk_live_..."
+                      value={stripePubKey}
+                      onChange={e => setStripePubKey(e.target.value)}
+                      className="w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-bold text-muted block">Secret Key</label>
+                    <div className="relative">
+                      <input
+                        type={showStripeSecret ? 'text' : 'password'}
+                        placeholder="sk_live_..."
+                        value={stripeSecKey}
+                        onChange={e => setStripeSecKey(e.target.value)}
+                        className="w-full h-9 pl-3 pr-9 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowStripeSecret(!showStripeSecret)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-[var(--text)]"
+                      >
+                        {showStripeSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Razorpay Credentials */}
+              {activeGateway === 'razorpay' && (
+                <div className="space-y-3.5 p-4 bg-white/5 border border-white/5 rounded-xl">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[var(--pri)] block">
+                    Razorpay API Credentials
+                  </span>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-bold text-muted block">Key ID</label>
+                    <input
+                      type="text"
+                      placeholder="rzp_live_..."
+                      value={razorpayKeyId}
+                      onChange={e => setRazorpayKeyId(e.target.value)}
+                      className="w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-bold text-muted block">Key Secret</label>
+                    <div className="relative">
+                      <input
+                        type={showRazorpaySecret ? 'text' : 'password'}
+                        placeholder="••••••••••••"
+                        value={razorpayKeySecret}
+                        onChange={e => setRazorpayKeySecret(e.target.value)}
+                        className="w-full h-9 pl-3 pr-9 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-[var(--text)] focus:border-[var(--pri)] focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRazorpaySecret(!showRazorpaySecret)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-[var(--text)]"
+                      >
+                        {showRazorpaySecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Auto Approve Toggle */}
               <div className="flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-xl">
@@ -187,13 +267,13 @@ export default function PaymentsTab({ eventId }: { eventId: string }) {
                   onClick={() => setAutoApprovePaid(!autoApprovePaid)}
                   disabled={paymentAccess.loading || !paymentAccess.enabled}
                   title={!paymentAccess.enabled ? `Unavailable: ${(paymentAccess.reason || 'capability unavailable').replaceAll('_', ' ').toLowerCase()}` : undefined}
-                  className={`h-6 w-11 rounded-full p-1 transition-colors duration-300 focus:outline-none ${
-                    autoApprovePaid ? 'bg-[var(--pri)]' : 'bg-white/10'
+                  className={`h-6 w-11 rounded-full p-0.5 transition-colors duration-300 focus:outline-none border ${
+                    autoApprovePaid ? 'bg-[var(--pri)] border-[var(--pri)]' : 'bg-[var(--bg-surface-3)] border-[var(--border-default)]'
                   }`}
                 >
                   <div
-                    className={`h-4 w-4 rounded-full bg-white transition-transform duration-300 ${
-                      autoApprovePaid ? 'translate-x-5' : 'translate-x-0'
+                    className={`h-4 w-4 rounded-full transition-transform duration-300 shadow-sm ${
+                      autoApprovePaid ? 'translate-x-5 bg-[var(--primary-contrast)]' : 'translate-x-0.5 bg-[var(--text-secondary)]'
                     }`}
                   />
                 </button>

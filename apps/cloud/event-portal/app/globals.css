@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap');
+@import "../src/styles/themes.css";
+@import "../src/styles/global.css";
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+:root {
+  --font-display: 'Inter', sans-serif;
+  --font-dm-sans: 'Inter', sans-serif;
+  --font-dm-mono: 'IBM Plex Mono', monospace;
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  /* Derive variables from active theme */
+  --bg-base: var(--base);
+  --bg-surface: var(--surf);
+  --bg-surface-2: var(--raised);
+  --bg-surface-3: var(--inset);
+  --bg-surface-deep: var(--surf);
+  --bg-surface-hover: color-mix(in srgb, var(--raised) 88%, var(--text));
+  --surface-1: var(--bg-surface);
+  --surface-inset: var(--bg-surface-3);
+  --surface-inverse: var(--text-primary);
+  --border-default: var(--border);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
+  --border-strong: var(--border-default);
+
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --text-tertiary: color-mix(in srgb, var(--text) 68%, transparent);
+  --text-disabled: color-mix(in srgb, var(--text) 30%, transparent);
+  --text-inverse: var(--bg-base);
+  --focus-ring: var(--ring);
+
+  --brand-primary: var(--pri);
+  --brand-primary-hover: var(--sec);
+  --brand-primary-muted: color-mix(in srgb, var(--acc) 11%, transparent);
+  --brand-secondary: var(--sec);
+  
+  /* Semantic */
+  --status-success: var(--success);
+  --status-success-muted: color-mix(in srgb, var(--success) 14%, transparent);
+  --status-warning: var(--warn);
+  --status-warning-muted: color-mix(in srgb, var(--warn) 14%, transparent);
+  --status-danger: var(--dan);
+  --status-danger-muted: color-mix(in srgb, var(--dan) 16%, transparent);
+  --status-info: var(--acc);
+  --status-info-muted: color-mix(in srgb, var(--acc) 14%, transparent);
+  --success-muted: var(--status-success-muted);
+  --warning: var(--status-warning);
+  --warning-muted: var(--status-warning-muted);
+  --danger: var(--status-danger);
+  --danger-muted: var(--status-danger-muted);
+  --info: var(--status-info);
+  --info-muted: var(--status-info-muted);
+
+  /* Shared geometry */
+  --space-page-x: clamp(1rem, 2.4vw, 2.5rem);
+  --space-page-y: clamp(1.25rem, 2.4vw, 2.5rem);
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
+  --radius-card: 1rem;
+  --radius-overlay: 1rem;
+  --control-height: 2.75rem;
+  --table-row-height: 3.25rem;
+  --shadow-panel: 0 1px 2px rgb(var(--shadow-color) / 0.04), 0 8px 24px rgb(var(--shadow-color) / 0.035);
+  --shadow-card-hover: 0 18px 42px rgb(var(--shadow-color) / 0.09);
+  --shadow-overlay: 0 28px 80px rgb(var(--shadow-color) / 0.22);
+  --motion-fast: 140ms;
+  --motion-standard: 240ms;
+  --motion-slow: 420ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Map shadcn CSS variables */
+  --background: var(--bg-base);
+  --card: var(--bg-surface);
+  --popover: var(--bg-surface-2);
+  --border: var(--border-default);
+  --foreground: var(--text-primary);
+  --muted-foreground: var(--text-secondary);
+  --primary: var(--brand-primary);
+  --primary-foreground: var(--primary-contrast);
+  --radius: 0.75rem;
+  --accent: color-mix(in srgb, var(--pri) 12%, transparent);
+  --accent-foreground: var(--text-primary);
+}

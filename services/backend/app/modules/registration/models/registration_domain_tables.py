@@ -16,6 +16,11 @@ class FormField(Base):
     field_type: Mapped[str] = mapped_column(String(50), default="text") # text, number, select, etc.
     is_required: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    placeholder: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    options: Mapped[list] = mapped_column(JSONB, default=list)
 
 class FormSubmission(Base):
     __tablename__ = "form_submissions"

@@ -36,7 +36,7 @@ class EventActivation(Base):
                 "activation_status IN ('PENDING','ACTIVE','SUSPENDED','EXPIRED','TRANSFER_PENDING')"
             ),
         ),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -47,17 +47,17 @@ class EventActivation(Base):
         UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False
     )
     subscription_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.organization_subscriptions.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="RESTRICT"), nullable=False
     )
     grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.entitlement_grants.id", ondelete="RESTRICT"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.entitlement_grants.id", ondelete="RESTRICT"), nullable=True
     )
     grant_consumption_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.grant_consumptions.id", ondelete="RESTRICT"), unique=True, nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.grant_consumptions.id", ondelete="RESTRICT"), unique=True, nullable=True
     )
     current_snapshot_set_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("billing.event_entitlement_snapshot_sets.id", ondelete="SET NULL"),
+        ForeignKey("commerce.event_entitlement_snapshot_sets.id", ondelete="SET NULL"),
         nullable=True,
     )
     status: Mapped[str] = mapped_column("activation_status", String(50), default="PENDING", nullable=False)
@@ -72,7 +72,7 @@ class EventActivation(Base):
     suspension_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     transferred_from_activation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.event_activations.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.event_activations.id", ondelete="SET NULL"), nullable=True
     )
     transferred_to_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True

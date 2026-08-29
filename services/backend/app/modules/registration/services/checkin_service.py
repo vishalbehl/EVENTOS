@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
 from app.modules.events.models.capacity_rule import CapacityRule
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
 from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
 from app.modules.registration.models.participant import Participant
 

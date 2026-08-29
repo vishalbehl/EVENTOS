@@ -236,7 +236,7 @@ export default function TemplateEditor({ eventId }: Props) {
                                     onClick={handleSave}
                                     disabled={manageAccess.loading || !manageAccess.enabled}
                                     title={manageAccess.enabled ? 'Save template' : `Unavailable: ${(manageAccess.reason || 'RESOLUTION_UNAVAILABLE').replaceAll('_', ' ').toLowerCase()}`}
-                                    className="flex items-center gap-2.5 px-5 py-2.5 bg-[var(--pri)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-[var(--pri)]/20 hover:bg-[var(--sec)] transition-all active:scale-95"
+                                    className="flex items-center gap-2.5 px-5 py-2.5 bg-[var(--pri)] text-[var(--primary-contrast)] rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-[var(--pri)]/20 hover:bg-[var(--sec)] transition-all active:scale-95"
                                 >
                                     <Save className="w-3.5 h-3.5" />
                                     Save

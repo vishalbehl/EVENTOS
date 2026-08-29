@@ -62,7 +62,7 @@ class EmailTemplate(Base, SoftDeleteMixin):
     stable_key: Mapped[str] = mapped_column(String(100), nullable=False, default="custom", index=True)
     parent_template_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("communications.email_templates.id", ondelete="SET NULL"),
+        ForeignKey("design.email_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
     current_published_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(

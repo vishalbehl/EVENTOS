@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.modules.events.models.event import Event
     from app.modules.events.models.speaker import Speaker
     from app.modules.identity.models.user import User
+    from app.modules.agenda.models.session import AgendaSession
 
 
 class Poster(Base):
@@ -36,6 +37,7 @@ class Poster(Base):
     poster will be shown (e.g. 'screen-1', 'lobby-left').
     """
     __tablename__ = "posters"
+    __table_args__ = {"schema": "presentations"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -49,14 +51,14 @@ class Poster(Base):
     # The speaker/author who submitted the poster
     speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.speakers.id", ondelete="SET NULL"),
+        ForeignKey("speakers.speakers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     # The session this poster belongs to (optional, but used for scheduling)
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.sessions.id", ondelete="SET NULL"),
+        ForeignKey("agenda.sessions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -127,7 +129,7 @@ class Poster(Base):
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="posters")
     speaker: Mapped[Optional["Speaker"]] = relationship("Speaker")
-    session: Mapped[Optional["Session"]] = relationship("Session")
+    session: Mapped[Optional["AgendaSession"]] = relationship("AgendaSession")
     reviewer: Mapped[Optional["User"]] = relationship("User")
 
     def __repr__(self) -> str:

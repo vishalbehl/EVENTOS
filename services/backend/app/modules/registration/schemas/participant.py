@@ -14,6 +14,8 @@ class ParticipantCreate(BaseModel):
     phone: Optional[str] = Field(None, max_length=30)
     role: str = Field(default="Delegate", max_length=50)
     role_id: Optional[uuid.UUID] = Field(None)
+    roles: List[str] = Field(default_factory=list)
+    track_id: Optional[uuid.UUID] = Field(None)
     company: Optional[str] = Field(None, max_length=255)
     designation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
@@ -53,6 +55,8 @@ class ParticipantUpdate(BaseModel):
     phone: Optional[str] = Field(None, max_length=30)
     role: Optional[str] = Field(None, max_length=50)
     role_id: Optional[uuid.UUID] = Field(None)
+    roles: Optional[List[str]] = Field(None)
+    track_id: Optional[uuid.UUID] = Field(None)
     company: Optional[str] = Field(None, max_length=255)
     designation: Optional[str] = Field(None, max_length=255)
     country: Optional[str] = Field(None, max_length=100)
@@ -94,6 +98,8 @@ class ParticipantResponse(BaseModel):
     phone: Optional[str] = None
     role_id: Optional[uuid.UUID] = None
     role: str
+    roles: List[str] = []
+    track_id: Optional[uuid.UUID] = None
     company: Optional[str] = None
     designation: Optional[str] = None
     country: Optional[str] = None

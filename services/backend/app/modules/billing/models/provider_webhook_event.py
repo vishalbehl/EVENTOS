@@ -16,21 +16,21 @@ class ProviderWebhookEvent(Base):
     __table_args__ = (
         UniqueConstraint("provider", "provider_event_id", name="uq_provider_webhook_event"),
         Index("ix_provider_webhook_events_org_status", "organization_id", "status"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     gateway_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.payment_gateways.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.payment_gateways.id", ondelete="RESTRICT"), nullable=False
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
     )
     invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.invoices.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.invoices.id", ondelete="SET NULL"), nullable=True
     )
     transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.subscription_transactions.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.subscription_transactions.id", ondelete="SET NULL"), nullable=True
     )
     provider: Mapped[str] = mapped_column(String(30), nullable=False)
     provider_event_id: Mapped[str] = mapped_column(String(255), nullable=False)

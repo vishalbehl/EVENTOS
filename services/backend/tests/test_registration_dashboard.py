@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.check_in import CheckIn
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.routers.participants import get_registration_analytics
 from app.modules.identity.models.user import User

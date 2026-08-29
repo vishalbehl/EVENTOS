@@ -13,9 +13,9 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import get_db, get_current_user
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.models.file_validation import FileValidation
@@ -23,7 +23,7 @@ from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.venue.models.room_device import RoomDevice
-from app.modules.events.models.room import Room
+from app.modules.agenda.models import Room
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard_analytics"])
 
@@ -499,7 +499,7 @@ async def get_superadmin_overview(
 
     Queries:
       - platform.organizations
-      - billing.organization_subscriptions + billing.subscription_transactions
+      - commerce.organization_subscriptions + commerce.subscription_transactions
       - identity.users
       - events.events
       - support.support_tickets (if populated)
@@ -558,7 +558,7 @@ async def get_superadmin_overview(
 
     # ── MRR — sum active subscription transaction amounts ──────
     # Use SubscriptionTransaction as the source of truth since
-    # billing.revenue_metrics may be empty (it's an optional cache).
+    # commerce.revenue_metrics may be empty (it's an optional cache).
     # MRR = sum of latest successful transactions per org.
     # We approximate with the sum of all SUCCESS transactions in the
     # current calendar month / 12 for ARR representation.
@@ -678,8 +678,8 @@ async def get_superadmin_mrr_history(
     Returns monthly MRR and ARR history for the platform-level area chart.
 
     Strategy:
-      1. Try billing.revenue_metrics table first (pre-aggregated, accurate).
-      2. If empty, compute from billing.subscription_transactions grouped by month.
+      1. Try commerce.revenue_metrics table first (pre-aggregated, accurate).
+      2. If empty, compute from commerce.subscription_transactions grouped by month.
     """
     from app.modules.billing.models.subscription import RevenueMetric, SubscriptionTransaction
     from sqlalchemy import text as sql_text

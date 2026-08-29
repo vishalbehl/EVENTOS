@@ -3,6 +3,7 @@ import { produce } from 'immer';
 import type {
   BuilderLink,
   ComponentInstance,
+  EventDataSnapshot,
   ResponsiveDevice,
   WebsiteAsset,
   WebsiteDocument,
@@ -14,6 +15,18 @@ import {
   ensureWebsiteDocument,
   projectDataFromWebsiteDocument,
 } from './documentModel';
+import {
+  disconnectInstanceFromEvent,
+  reconnectInstanceToEvent,
+} from './eventDataBinding';
+import { mockEventSnapshot } from './eventMockData';
+
+export interface CheckpointRecord {
+  id: string;
+  label: string;
+  timestamp: string;
+  document: WebsiteDocument;
+}
 
 type InstancePatch = Partial<Pick<ComponentInstance, 'props' | 'styles' | 'bindings' | 'states'>>;
 
@@ -21,6 +34,14 @@ interface WebsiteDocumentState {
   document: WebsiteDocument | null;
   activePageId: string;
   selectedInstanceId?: string;
+  isDirty: boolean;
+  checkpoints: CheckpointRecord[];
+  markClean: () => void;
+  createCheckpoint: (label?: string) => string;
+  restoreCheckpoint: (checkpointId: string) => boolean;
+  saveLocalRecovery: (key?: string) => void;
+  loadLocalRecovery: (key?: string) => boolean;
+  clearLocalRecovery: (key?: string) => void;
   initialize: (project?: WebsiteProjectData) => void;
   replaceDocument: (document: WebsiteDocument, activePageId?: string) => void;
   replaceActivePageFromProject: (project: WebsiteProjectData) => void;
@@ -38,6 +59,8 @@ interface WebsiteDocumentState {
   deletePage: (pageId: string) => void;
   upsertAsset: (asset: WebsiteAsset) => void;
   updateLink: (instanceId: string, link: BuilderLink) => void;
+  disconnectInstanceEvent: (instanceId: string) => void;
+  reconnectInstanceEvent: (instanceId: string, snapshot?: EventDataSnapshot) => void;
   toProjectData: () => WebsiteProjectData;
 }
 
@@ -122,10 +145,11 @@ function mergeCanvasInstance(
   };
 }
 
-function finalizeDocument(document: WebsiteDocument): void {
+function finalizeDocument(document: WebsiteDocument, draft?: { isDirty?: boolean }): void {
   document.updatedAt = now();
   const { checksum: _checksum, ...withoutChecksum } = document;
   document.checksum = checksumWebsiteDocument(withoutChecksum);
+  if (draft) draft.isDirty = true;
 }
 
 function createStarterPageSection(document: WebsiteDocument, pageId: string, rootInstanceId: string, pageName: string): string {
@@ -233,15 +257,109 @@ function createStarterPageSection(document: WebsiteDocument, pageId: string, roo
   return sectionId;
 }
 
+const memoryRecoveryStorage = new Map<string, string>();
+
+function getStorageItem(key: string): string | null {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+  } catch {
+    // Fallback to memory
+  }
+  return memoryRecoveryStorage.get(key) || null;
+}
+
+function setStorageItem(key: string, value: string): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
+      return;
+    }
+  } catch {
+    // Fallback to memory
+  }
+  memoryRecoveryStorage.set(key, value);
+}
+
+function removeStorageItem(key: string): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Fallback to memory
+  }
+  memoryRecoveryStorage.delete(key);
+}
+
 export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) => ({
   document: null,
   activePageId: '',
   selectedInstanceId: undefined,
+  isDirty: false,
+  checkpoints: [],
+
+  markClean: () => set({ isDirty: false }),
+
+  createCheckpoint: (label = 'Manual Checkpoint') => {
+    const doc = get().document;
+    if (!doc) return '';
+    const id = generateId('chk');
+    const checkpoint: CheckpointRecord = {
+      id,
+      label,
+      timestamp: new Date().toISOString(),
+      document: JSON.parse(JSON.stringify(doc)),
+    };
+    set(state => ({
+      checkpoints: [checkpoint, ...state.checkpoints].slice(0, 30),
+    }));
+    return id;
+  },
+
+  restoreCheckpoint: (checkpointId: string) => {
+    const target = get().checkpoints.find(c => c.id === checkpointId);
+    if (!target) return false;
+    get().replaceDocument(JSON.parse(JSON.stringify(target.document)));
+    set({ isDirty: true });
+    return true;
+  },
+
+  saveLocalRecovery: (key = 'wb_local_recovery_draft') => {
+    const doc = get().document;
+    if (!doc) return;
+    setStorageItem(key, JSON.stringify({
+      document: doc,
+      activePageId: get().activePageId,
+      savedAt: new Date().toISOString(),
+    }));
+  },
+
+  loadLocalRecovery: (key = 'wb_local_recovery_draft') => {
+    try {
+      const raw = getStorageItem(key);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.document) {
+        get().replaceDocument(parsed.document, parsed.activePageId);
+        set({ isDirty: true });
+        return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  },
+
+  clearLocalRecovery: (key = 'wb_local_recovery_draft') => {
+    removeStorageItem(key);
+  },
 
   initialize: (project) => {
     const document = ensureWebsiteDocument(project || { name: 'Untitled website' });
     const activePageId = project?.activePageId || document.pages.find(page => page.isHomePage)?.id || document.pages[0]?.id || '';
-    set({ document, activePageId, selectedInstanceId: undefined });
+    set({ document, activePageId, selectedInstanceId: undefined, isDirty: false });
   },
 
   replaceDocument: (document, activePageId) => {
@@ -249,6 +367,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
       document,
       activePageId: activePageId || document.pages.find(page => page.isHomePage)?.id || document.pages[0]?.id || '',
       selectedInstanceId: undefined,
+      isDirty: false,
     });
   },
 
@@ -296,7 +415,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
       };
       currentPage.updatedAt = now();
       draft.activePageId = activePageId;
-      finalizeDocument(draft.document);
+      finalizeDocument(draft.document, draft);
     }));
   },
 
@@ -306,7 +425,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     const children = draft.document.instances[parentId].children;
     const index = typeof at === 'number' ? Math.max(0, Math.min(at, children.length)) : children.length;
     children.splice(index, 0, instance.id);
-    finalizeDocument(draft.document);
+    finalizeDocument(draft.document, draft);
   })),
 
   updateInstanceProps: (instanceId, props) => get().updateInstance(instanceId, { props }),
@@ -315,7 +434,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     const instance = draft.document?.instances[instanceId];
     if (!draft.document || !instance) return;
     instance.styles[device] = { ...(instance.styles[device] || {}), ...styles };
-    finalizeDocument(draft.document);
+    finalizeDocument(draft.document, draft);
   })),
 
   updateInstance: (instanceId, patch) => set(state => produce(state, draft => {
@@ -325,7 +444,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     if (patch.styles) instance.styles = { ...instance.styles, ...patch.styles };
     if (patch.bindings) instance.bindings = patch.bindings;
     if (patch.states) instance.states = { ...instance.states, ...patch.states };
-    finalizeDocument(draft.document);
+    finalizeDocument(draft.document, draft);
   })),
 
   moveInstance: (instanceId, nextParentId, at) => set(state => produce(state, draft => {
@@ -339,7 +458,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     const index = typeof at === 'number' ? Math.max(0, Math.min(at, siblings.length)) : siblings.length;
     siblings.splice(index, 0, instanceId);
     document.instances[instanceId].parentId = nextParentId;
-    finalizeDocument(document);
+    finalizeDocument(document, draft);
   })),
 
   duplicateInstance: (instanceId) => set(state => produce(state, draft => {
@@ -350,7 +469,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     if (!cloneId) return;
     const siblings = document.instances[source.parentId].children;
     siblings.splice(siblings.indexOf(instanceId) + 1, 0, cloneId);
-    finalizeDocument(document);
+    finalizeDocument(document, draft);
   })),
 
   deleteInstance: (instanceId) => set(state => produce(state, draft => {
@@ -362,7 +481,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     }
     removeInstanceTree(document, instanceId);
     if (draft.selectedInstanceId === instanceId) draft.selectedInstanceId = undefined;
-    finalizeDocument(document);
+    finalizeDocument(document, draft);
   })),
 
   selectInstance: (instanceId) => set({ selectedInstanceId: instanceId }),
@@ -392,7 +511,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
       createdAt: now(),
       updatedAt: now(),
     });
-    finalizeDocument(draft.document);
+    finalizeDocument(draft.document, draft);
   })),
 
   switchPage: (pageId) => set({ activePageId: pageId, selectedInstanceId: undefined }),
@@ -424,7 +543,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
       });
     });
     page.updatedAt = now();
-    finalizeDocument(draft.document);
+    finalizeDocument(draft.document, draft);
   })),
 
   deletePage: (pageId) => set(state => produce(state, draft => {
@@ -452,7 +571,7 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     removeInstanceTree(document, page.rootInstanceId);
     document.pages = document.pages.filter(candidate => candidate.id !== pageId);
     if (draft.activePageId === pageId) draft.activePageId = document.pages[0]?.id || '';
-    finalizeDocument(document);
+    finalizeDocument(document, draft);
   })),
 
   upsertAsset: (asset) => set(state => produce(state, draft => {
@@ -460,10 +579,67 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     const index = draft.document.assets.findIndex(candidate => candidate.id === asset.id);
     if (index >= 0) draft.document.assets[index] = asset;
     else draft.document.assets.push(asset);
-    finalizeDocument(draft.document);
+    finalizeDocument(draft.document, draft);
   })),
 
-  updateLink: (instanceId, link) => get().updateInstance(instanceId, { props: { link } }),
+  updateLink: (instanceId, link) => set(state => produce(state, draft => {
+    const document = draft.document;
+    const instance = document?.instances[instanceId];
+    if (!document || !instance) return;
+    const attributes = {
+      ...(instance.props.attributes && typeof instance.props.attributes === 'object' && !Array.isArray(instance.props.attributes)
+        ? instance.props.attributes as Record<string, unknown>
+        : {}),
+    };
+    instance.props.link = link;
+    attributes['data-link-type'] = link.type;
+    delete attributes['data-page-id'];
+    delete attributes['data-anchor-id'];
+
+    if (link.type === 'page') {
+      const page = document.pages.find(p => p.id === link.pageId);
+      const pageRoute = page ? (page.isHomePage ? '/' : `/${page.slug}`) : '/';
+      const hash = link.anchorId ? `#${link.anchorId}` : '';
+      attributes.href = `${pageRoute}${hash}`;
+      attributes['data-page-id'] = link.pageId;
+      if (link.anchorId) attributes['data-anchor-id'] = link.anchorId;
+    } else if (link.type === 'anchor') {
+      const anchor = link.anchorId || '';
+      attributes.href = anchor.startsWith('#') ? anchor : `#${anchor}`;
+      attributes['data-anchor-id'] = anchor.replace(/^#/, '');
+    } else if (link.type === 'external') {
+      attributes.href = link.url || link.href || '';
+    } else if (link.type === 'email') {
+      const email = link.email || link.href || '';
+      attributes.href = email.startsWith('mailto:') ? email : `mailto:${email}`;
+    } else if (link.type === 'phone') {
+      const phone = link.phone || link.href || '';
+      attributes.href = phone.startsWith('tel:') ? phone : `tel:${phone}`;
+    } else if (link.type === 'file') {
+      attributes.href = link.url || link.href || '';
+    } else if (link.type === 'registration') {
+      attributes.href = '/registration';
+    } else if (link.type === 'speaker-portal') {
+      attributes.href = '/speaker-portal';
+    } else if (link.type === 'custom-route') {
+      attributes.href = link.route || link.href || '';
+    }
+    instance.props.attributes = attributes;
+    finalizeDocument(document, draft);
+  })),
+
+  disconnectInstanceEvent: (instanceId) => set(state => {
+    if (!state.document) return state;
+    const updated = disconnectInstanceFromEvent(state.document, instanceId);
+    return { document: updated, isDirty: true };
+  }),
+
+  reconnectInstanceEvent: (instanceId, snapshot) => set(state => {
+    if (!state.document) return state;
+    const snap = snapshot || mockEventSnapshot;
+    const updated = reconnectInstanceToEvent(state.document, instanceId, snap);
+    return { document: updated, isDirty: true };
+  }),
 
   toProjectData: () => {
     const document = get().document;
@@ -471,3 +647,5 @@ export const useWebsiteDocumentStore = create<WebsiteDocumentState>((set, get) =
     return projectDataFromWebsiteDocument(document);
   },
 }));
+
+

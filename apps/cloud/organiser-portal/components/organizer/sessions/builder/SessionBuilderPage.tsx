@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { useSessionBuilderSnapshot, useAutoSaveSessionBuilder } from "@/hooks/useSessionBuilder";
 import { LeftPalette } from "./LeftPalette";
@@ -39,9 +39,9 @@ export function SessionBuilderPage() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[500px] gap-3 text-muted">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--pri)]" />
-        <span className="font-bold text-[13px]">Loading Session Builder workspace...</span>
+      <div className="flex flex-col items-center justify-center min-h-[460px] gap-3 text-[var(--text-secondary)]">
+        <Loader2 className="h-7 w-7 animate-spin text-[var(--pri)]" />
+        <span className="font-semibold text-xs tracking-wide">Loading Session Builder workspace...</span>
       </div>
     );
   }
@@ -49,14 +49,17 @@ export function SessionBuilderPage() {
   if (isError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-center p-6">
-        <h3 className="font-black text-[18px] text-[var(--text)] mb-2">Failed to load session builder</h3>
-        <p className="text-[13px] text-muted mb-4">An error occurred while loading the event schedule data.</p>
+        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-rose-500/10 text-rose-400 mb-3 border border-rose-500/20">
+          <AlertCircle className="h-6 w-6" />
+        </div>
+        <h3 className="font-semibold text-base text-[var(--text-primary)] mb-1">Failed to load session builder</h3>
+        <p className="text-xs text-[var(--text-secondary)] mb-4 max-w-md">An error occurred while loading the event schedule data. Please check your connection and retry.</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-100px)] overflow-hidden bg-background">
+    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden bg-[var(--background)]">
       {/* Top Toolbar */}
       <BuilderToolbar onNewSession={() => setCreateOpen(true)} />
 
@@ -66,7 +69,7 @@ export function SessionBuilderPage() {
         <LeftPalette />
 
         {/* Canvas Area */}
-        <main className="flex-1 overflow-auto p-6 bg-[color-mix(in_srgb,var(--text)_1%,transparent)]">
+        <main className="flex-1 overflow-auto p-4 sm:p-5 bg-[var(--surface-subtle)]/50">
           {viewMode === "kanban" && (
             <KanbanView onAddSessionForRoom={handleOpenCreateForRoom} />
           )}
@@ -74,7 +77,7 @@ export function SessionBuilderPage() {
           {viewMode === "timeline" && <TimelineBuilderView />}
 
           {viewMode === "list" && (
-            <div className="bg-background rounded-3xl p-6 border border-default shadow-sm">
+            <div className="bg-[var(--card)] rounded-lg p-5 border border-[var(--border-default)] shadow-xs">
               <SessionTable
                 sessions={sessions as any}
                 onSelectSession={(id: string) => setSelectedSessionId(id)}
@@ -83,7 +86,7 @@ export function SessionBuilderPage() {
           )}
 
           {viewMode === "calendar" && (
-            <div className="bg-background rounded-3xl p-6 border border-default shadow-sm">
+            <div className="bg-[var(--card)] rounded-lg p-5 border border-[var(--border-default)] shadow-xs">
               <CalendarView
                 sessions={sessions as any}
                 timezone={eventTimezone}

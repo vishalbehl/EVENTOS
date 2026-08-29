@@ -10,7 +10,6 @@ from sqlalchemy.pool import NullPool
 from app.worker import celery_app
 from app.config import settings
 from app.modules.pricing.models import CurrencyRate, RevenueForecast
-from app.modules.inventory.models import HardwareItem, HardwareStock
 from app.tasks.tenant_job_scope import (
     TenantJobScopeRequired,
     parse_required_organization_id,
@@ -151,52 +150,3 @@ def calculate_forecasts(organization_id_str: str | None = None) -> str:
     return _run_async(_forecast())
 
 
-@celery_app.task(name="app.tasks.platform_commercial.low_stock_alerts")
-def low_stock_alerts() -> str:
-    """Check stock and trigger system/app notifications if items fall below threshold."""
-    raise TenantJobScopeRequired(
-        "Inventory stock alerts require an explicit control-plane inventory ownership contract."
-    )
-
-    async def _check():
-        async with await get_task_db_session() as db:
-            stmt = (
-                select(HardwareItem.name, HardwareItem.asset_code, HardwareStock.available_quantity)
-                .join(HardwareStock, HardwareItem.id == HardwareStock.hardware_id)
-                .where(HardwareStock.available_quantity <= 0)
-            )
-            res = await db.execute(stmt)
-            alerts = []
-            for name, code, qty in res.all():
-                alerts.append(f"{name} ({code}) is OUT OF STOCK.")
-            
-            if alerts:
-                alert_msg = " | ".join(alerts)
-                logger.warning(f"[Celery Alert] Low stock detected: {alert_msg}")
-                return f"Alerts triggered: {len(alerts)} items low."
-            return "All inventory items are well-stocked."
-
-    return _run_async(_check())
-
-
-@celery_app.task(name="app.tasks.platform_commercial.maintenance_reminders")
-def maintenance_reminders() -> str:
-    """Raise reminders for items in POOR or FAIR condition, or with upcoming service logs."""
-    raise TenantJobScopeRequired(
-        "Inventory maintenance reminders require an explicit control-plane inventory ownership contract."
-    )
-
-    async def _remind():
-        async with await get_task_db_session() as db:
-            stmt = select(HardwareItem).where(HardwareItem.condition.in_(["POOR", "FAIR"]))
-            res = await db.execute(stmt)
-            reminders = []
-            for item in res.scalars().all():
-                reminders.append(f"Asset {item.asset_code} ({item.name}) condition: {item.condition} - Requires maintenance.")
-            
-            if reminders:
-                logger.info(f"[Celery Reminders] Maintenance needed: {len(reminders)} items.")
-                return f"Maintenance reminders generated for {len(reminders)} items."
-            return "No equipment requires urgent maintenance."
-
-    return _run_async(_remind())

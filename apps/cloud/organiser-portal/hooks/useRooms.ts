@@ -8,6 +8,7 @@ export interface RoomSummary {
   capacity?: number;
   screen_count: number;
   room_type: string;
+  room_coordinator?: string;
   av_technician?: string;
   location_notes?: string;
   is_active: boolean;

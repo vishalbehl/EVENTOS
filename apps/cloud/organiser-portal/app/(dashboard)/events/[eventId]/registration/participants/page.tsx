@@ -2,21 +2,42 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import * as LucideIcons from "lucide-react";
 import {
-  CheckCircle, CheckSquare, Printer, RefreshCw, Search, Square, Trash2, XCircle,
-  Eye, X, Mail, Phone, Building, Briefcase, DollarSign, Calendar, Globe, Copy, User, QrCode
+  Briefcase,
+  Building,
+  Calendar,
+  CheckCircle,
+  CheckSquare,
+  Copy,
+  DollarSign,
+  Eye,
+  Globe,
+  Lock,
+  Mail,
+  Pencil,
+  Phone,
+  Plus,
+  Printer,
+  QrCode,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Sparkles,
+  Square,
+  Tag,
+  Trash2,
+  User,
+  Users,
+  X,
+  XCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import AddParticipantModal from "@/components/organizer/registration/AddParticipantModal";
 import { useOperationAccess } from "@/lib/capabilities";
+import { cn } from "@/lib/utils";
 
 interface Participant {
   id: string;
@@ -53,14 +74,15 @@ interface Role {
 }
 
 export default function ParticipantsDirectory() {
-  const { eventId } = useParams();
+  const params = useParams();
+  const eventId = params?.eventId as string;
+
   const readAccess = useOperationAccess("registration.read");
   const registrationAccess = useOperationAccess("registration.manage");
   const paymentAccess = useOperationAccess("registration.payments.manage");
   const speakerAccess = useOperationAccess("speakers.manage");
   const roleReadAccess = useOperationAccess("registration.ticket_types.read");
   const badgeTemplateAccess = useOperationAccess("badges.templates.read");
-  const badgeExportAccess = useOperationAccess("badges.export");
   const confirmationQrAccess = useOperationAccess("registration.confirmation_qr.manage");
 
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -75,71 +97,6 @@ export default function ParticipantsDirectory() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedParticipantForDrawer, setSelectedParticipantForDrawer] = useState<Participant | null>(null);
   const [issuingQrFor, setIssuingQrFor] = useState<string | null>(null);
-
-  const issueConfirmationQr = async (participant: Participant) => {
-    if (!confirmationQrAccess.enabled) return;
-    setIssuingQrFor(participant.id);
-    try {
-      let version = 0;
-      try {
-        const existing = await apiGet<{ version: number }>(
-          `/events/${eventId}/participants/${participant.id}/confirmation-qr`,
-        );
-        version = existing.version;
-      } catch (error: any) {
-        if (error?.status !== 404) throw error;
-      }
-      const issued = await apiPost<{ image_url: string; version: number }>(
-        `/events/${eventId}/participants/${participant.id}/confirmation-qr`,
-        {
-          reason:
-            version > 0
-              ? "Rotated from the participant registry"
-              : "Issued from the participant registry",
-          case_reference: null,
-        },
-        {
-          headers: {
-            "If-Match": version,
-            "Idempotency-Key": crypto.randomUUID(),
-          },
-        },
-      );
-      setParticipants((current) =>
-        current.map((item) =>
-          item.id === participant.id
-            ? { ...item, qr_code_url: issued.image_url }
-            : item,
-        ),
-      );
-      setSelectedParticipantForDrawer((current) =>
-        current?.id === participant.id
-          ? { ...current, qr_code_url: issued.image_url }
-          : current,
-      );
-      toast.success(version > 0 ? "Confirmation QR rotated" : "Confirmation QR issued");
-    } catch (error: any) {
-      toast.error(error?.message || "Confirmation QR could not be issued");
-    } finally {
-      setIssuingQrFor(null);
-    }
-  };
-  
-  const handleSyncFromSpeakers = async () => {
-    if (!registrationAccess.enabled || !speakerAccess.enabled) return;
-    try {
-      setSyncing(true);
-      const res = await apiPost<{ message: string }>(`/events/${eventId}/participants/fetch-from-speakers`, undefined, {
-        headers: { "Idempotency-Key": `speaker-participant-sync-${crypto.randomUUID()}` },
-      });
-      toast.success(res.message || "Sync completed successfully.");
-      fetchData(); // Refresh the table list
-    } catch (err: any) {
-      toast.error(err.message || "Failed to sync participants from speakers.");
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -156,8 +113,11 @@ export default function ParticipantsDirectory() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [paidFilter, setPaidFilter] = useState("all");
 
-  const roleByName = useMemo(() => new Map(roles.map(role => [role.name, role])), [roles]);
-  const roleByNameLower = useMemo(() => new Map(roles.map(role => [role.name.toLowerCase(), role])), [roles]);
+  const roleByName = useMemo(() => new Map(roles.map((role) => [role.name, role])), [roles]);
+  const roleByNameLower = useMemo(
+    () => new Map(roles.map((role) => [role.name.toLowerCase(), role])),
+    [roles]
+  );
 
   const fetchData = async () => {
     if (!readAccess.enabled) {
@@ -166,7 +126,7 @@ export default function ParticipantsDirectory() {
     }
     try {
       setLoading(true);
-      const queryParams = [];
+      const queryParams: string[] = [];
       if (search) queryParams.push(`search=${encodeURIComponent(search)}`);
       if (roleFilter !== "all") queryParams.push(`role=${encodeURIComponent(roleFilter)}`);
       if (paidFilter !== "all") queryParams.push(`paid_status=${encodeURIComponent(paidFilter)}`);
@@ -178,23 +138,27 @@ export default function ParticipantsDirectory() {
       ]);
       const [templatesRes, rolesRes] = await Promise.all([
         badgeTemplateAccess.enabled
-          ? apiGet<any[]>(`/events/${eventId}/print-templates`).then(res => (res || []).filter(t => t.template_type !== 'certificate'))
+          ? apiGet<any[]>(`/events/${eventId}/print-templates`).then((res) =>
+              (res || []).filter((t) => t.template_type !== "certificate")
+            )
           : Promise.resolve([]),
         roleReadAccess.enabled
           ? apiGet<Role[]>(`/events/${eventId}/registration/roles`)
           : Promise.resolve([]),
       ]);
 
-      setParticipants(list);
+      setParticipants(list || []);
       setRoles(rolesRes || []);
       setEventDetails(eventRes);
       setBadgeDesign(eventRes?.registration_settings?.badge_design || {});
-      setTemplates(templatesRes.map(t => ({
-        id: t.id,
-        templateName: t.template_name || t.templateName || "Unnamed Template",
-        templateData: t.template_data || t.templateData || {}
-      })));
-      setSelectedIds(prev => new Set(Array.from(prev).filter(id => list.some(p => p.id === id))));
+      setTemplates(
+        (templatesRes || []).map((t) => ({
+          id: t.id,
+          templateName: t.template_name || t.templateName || "Unnamed Template",
+          templateData: t.template_data || t.templateData || {},
+        }))
+      );
+      setSelectedIds((prev) => new Set(Array.from(prev).filter((id) => list.some((p) => p.id === id))));
     } catch (err) {
       console.error(err);
       toast.error("Failed to load delegates registry.");
@@ -214,29 +178,78 @@ export default function ParticipantsDirectory() {
         apiGet<Participant[]>(url),
         apiGet<any>(`/events/${eventId}`),
       ]);
-      const [templatesRes, rolesRes] = await Promise.all([
-        badgeTemplateAccess.enabled
-          ? apiGet<any[]>(`/events/${eventId}/print-templates?template_type=badge`)
-          : Promise.resolve([]),
-        roleReadAccess.enabled
-          ? apiGet<Role[]>(`/events/${eventId}/registration/roles`)
-          : Promise.resolve([]),
-      ]);
-      setParticipants(list);
-      setRoles(rolesRes || []);
+      setParticipants(list || []);
       setEventDetails(eventRes);
-      setBadgeDesign(eventRes?.registration_settings?.badge_design || {});
-      setTemplates(templatesRes.map(t => ({
-        id: t.id,
-        templateName: t.template_name || t.templateName || "Unnamed Template",
-        templateData: t.template_data || t.templateData || {}
-      })));
-      setSelectedIds(prev => new Set(Array.from(prev).filter(id => list.some(p => p.id === id))));
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load delegates registry.");
+      setSelectedIds(new Set());
+    } catch {
+      toast.error("Failed to reset filters.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const issueConfirmationQr = async (participant: Participant) => {
+    if (!confirmationQrAccess.enabled) return;
+    setIssuingQrFor(participant.id);
+    try {
+      let version = 0;
+      try {
+        const existing = await apiGet<{ version: number }>(
+          `/events/${eventId}/participants/${participant.id}/confirmation-qr`
+        );
+        version = existing.version;
+      } catch (error: any) {
+        if (error?.status !== 404) throw error;
+      }
+      const issued = await apiPost<{ image_url: string; version: number }>(
+        `/events/${eventId}/participants/${participant.id}/confirmation-qr`,
+        {
+          reason:
+            version > 0
+              ? "Rotated from the participant registry"
+              : "Issued from the participant registry",
+          case_reference: null,
+        },
+        {
+          headers: {
+            "If-Match": version,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+        }
+      );
+      setParticipants((current) =>
+        current.map((item) =>
+          item.id === participant.id ? { ...item, qr_code_url: issued.image_url } : item
+        )
+      );
+      setSelectedParticipantForDrawer((current) =>
+        current?.id === participant.id ? { ...current, qr_code_url: issued.image_url } : current
+      );
+      toast.success(version > 0 ? "Confirmation QR rotated." : "Confirmation QR issued.");
+    } catch (error: any) {
+      toast.error(error?.message || "Confirmation QR could not be issued.");
+    } finally {
+      setIssuingQrFor(null);
+    }
+  };
+
+  const handleSyncFromSpeakers = async () => {
+    if (!registrationAccess.enabled || !speakerAccess.enabled) return;
+    try {
+      setSyncing(true);
+      const res = await apiPost<{ message: string }>(
+        `/events/${eventId}/participants/fetch-from-speakers`,
+        undefined,
+        {
+          headers: { "Idempotency-Key": `speaker-participant-sync-${crypto.randomUUID()}` },
+        }
+      );
+      toast.success(res.message || "Sync completed successfully.");
+      fetchData();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to sync participants from speakers.");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -245,7 +258,8 @@ export default function ParticipantsDirectory() {
     setIsEditing(false);
     setEditForm({
       first_name: p.first_name || p.name?.split(" ")[0] || "",
-      last_name: p.last_name || (p.name?.includes(" ") ? p.name.split(" ").slice(1).join(" ") : "") || "",
+      last_name:
+        p.last_name || (p.name?.includes(" ") ? p.name.split(" ").slice(1).join(" ") : "") || "",
       email: p.email || "",
       phone: p.phone || "",
       company: p.company || "",
@@ -261,11 +275,14 @@ export default function ParticipantsDirectory() {
         ...editForm,
         name: `${editForm.first_name} ${editForm.last_name}`.trim(),
       };
-      const updated = await apiPatch<Participant>(`/events/${eventId}/participants/${selectedParticipantForDrawer.id}`, payload);
+      const updated = await apiPatch<Participant>(
+        `/events/${eventId}/participants/${selectedParticipantForDrawer.id}`,
+        payload
+      );
       toast.success("Delegate information updated.");
       setIsEditing(false);
       setSelectedParticipantForDrawer(updated);
-      fetchData(); // Refresh the table list
+      fetchData();
     } catch (err: any) {
       toast.error(err.message || "Failed to update delegate details.");
     }
@@ -278,11 +295,10 @@ export default function ParticipantsDirectory() {
   const resolveTemplateForParticipant = (participant: Participant, designOverride?: any) => {
     const design = designOverride || badgeDesign;
     const pRoleClean = (participant.role || "").trim().toLowerCase();
-    
-    // Fallback: search through roles array directly if map lookup fails
+
     let role = roleByName.get(participant.role) || roleByNameLower.get(pRoleClean);
     if (!role) {
-      role = roles.find(r => (r.name || "").trim().toLowerCase() === pRoleClean);
+      role = roles.find((r) => (r.name || "").trim().toLowerCase() === pRoleClean);
     }
 
     const assignments = design.role_template_assignments || {};
@@ -290,8 +306,7 @@ export default function ParticipantsDirectory() {
     if (role) {
       roleTemplateId = assignments[role.id] || assignments[role.name] || roleTemplateId;
     }
-    
-    // Robust check for false boolean or "false" string
+
     const isSameDesign = design.use_same_design_for_all_users;
     const useRoleSpecific = isSameDesign === false || String(isSameDesign).toLowerCase() === "false";
 
@@ -299,7 +314,10 @@ export default function ParticipantsDirectory() {
       ? roleTemplateId || design.default_template_id
       : design.default_template_id;
 
-    return templates.find(template => String(template.id).toLowerCase() === String(templateId || "").toLowerCase()) || null;
+    return (
+      templates.find((template) => String(template.id).toLowerCase() === String(templateId || "").toLowerCase()) ||
+      null
+    );
   };
 
   const handleTogglePayment = async (participant: Participant) => {
@@ -316,7 +334,7 @@ export default function ParticipantsDirectory() {
 
   const handleDelete = async (id: string, name: string) => {
     if (!registrationAccess.enabled) return;
-    if (!window.confirm(`Archive participant "${name}"? The record remains recoverable through Command Center.`)) return;
+    if (!window.confirm(`Archive participant "${name}"? The record remains recoverable.`)) return;
     try {
       await apiDelete(`/events/${eventId}/participants/${id}`);
       toast.success("Delegate registration archived.");
@@ -328,12 +346,10 @@ export default function ParticipantsDirectory() {
 
   const handleDeleteSelected = async () => {
     if (selectedIds.size === 0 || !registrationAccess.enabled) return;
-    if (!window.confirm(`Archive ${selectedIds.size} selected participant registrations? They remain recoverable through Command Center.`)) return;
+    if (!window.confirm(`Archive ${selectedIds.size} selected participant registrations?`)) return;
     try {
       await apiPost(`/events/${eventId}/participants/bulk-delete`, Array.from(selectedIds));
       toast.success("Selected participants archived.");
-      setSelectedIds(new Set());
-      fetchData();
       setSelectedIds(new Set());
       fetchData();
     } catch (err: any) {
@@ -342,11 +358,13 @@ export default function ParticipantsDirectory() {
   };
 
   const toggleSelectAll = () => {
-    setSelectedIds(prev => prev.size === participants.length ? new Set() : new Set(participants.map(p => p.id)));
+    setSelectedIds((prev) =>
+      prev.size === participants.length ? new Set() : new Set(participants.map((p) => p.id))
+    );
   };
 
   const toggleSelected = (id: string) => {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -363,7 +381,7 @@ export default function ParticipantsDirectory() {
       await apiPost(
         `/events/${eventId}/badges/export-authorizations?participant_count=${list.length}`,
         undefined,
-        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } }
       );
     } catch (err: any) {
       toast.error(err.message || "Badge export could not be authorized.");
@@ -375,25 +393,26 @@ export default function ParticipantsDirectory() {
     try {
       const [freshEvent, freshTemplates] = await Promise.all([
         apiGet<any>(`/events/${eventId}`),
-        apiGet<any[]>(`/events/${eventId}/print-templates`).then(res => (res || []).filter(t => t.template_type !== 'certificate'))
+        apiGet<any[]>(`/events/${eventId}/print-templates`).then((res) =>
+          (res || []).filter((t) => t.template_type !== "certificate")
+        ),
       ]);
       printBadgeDesign = freshEvent?.registration_settings?.badge_design || {};
       setBadgeDesign(printBadgeDesign);
       freshEventDetails = freshEvent;
       setEventDetails(freshEvent);
-      
-      const newTemplates = freshTemplates.map(t => ({
+
+      const newTemplates = freshTemplates.map((t) => ({
         id: t.id,
         templateName: t.template_name || t.templateName || "Unnamed Template",
-        templateData: t.template_data || t.templateData || {}
+        templateData: t.template_data || t.templateData || {},
       }));
       setTemplates(newTemplates);
     } catch {
-      // Continue with the latest loaded settings if the refresh fails.
+      // Continue with current state
     }
 
-    // Resolve template for each participant
-    const resolvedList = list.map(p => {
+    const resolvedList = list.map((p) => {
       let tpl = resolveTemplateForParticipant(p, printBadgeDesign);
       if (!tpl && templates.length > 0) {
         tpl = templates[0];
@@ -401,19 +420,18 @@ export default function ParticipantsDirectory() {
       return { participant: p, template: tpl };
     });
 
-    const missingTemplates = resolvedList.filter(item => !item.template);
+    const missingTemplates = resolvedList.filter((item) => !item.template);
     if (missingTemplates.length === resolvedList.length) {
-      toast.error("No badge templates are designed or assigned for this event yet.");
+      toast.error("No badge templates are configured or assigned for this event yet.");
       return;
     }
 
     setPrinting(true);
-    toast.info(`Generating ${resolvedList.filter(i => i.template).length} badge(s)...`);
+    toast.info(`Generating ${resolvedList.filter((i) => i.template).length} badge(s)...`);
 
     try {
-      // Group participants by their template ID to compile spools by layout size
       const groups: Record<string, { template: PrintTemplate; participants: Participant[] }> = {};
-      resolvedList.forEach(item => {
+      resolvedList.forEach((item) => {
         if (!item.template) return;
         if (!groups[item.template.id]) {
           groups[item.template.id] = { template: item.template, participants: [] };
@@ -421,7 +439,6 @@ export default function ParticipantsDirectory() {
         groups[item.template.id].participants.push(item.participant);
       });
 
-      // Run each template group compiling
       for (const group of Object.values(groups)) {
         const pdf = await compileTemplateToPdf(
           group.participants,
@@ -430,7 +447,7 @@ export default function ParticipantsDirectory() {
         );
         window.open(URL.createObjectURL(pdf.output("blob")), "_blank");
       }
-      toast.success("Badge PDF(s) opened in print spools.");
+      toast.success("Badge PDF(s) generated.");
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || "Failed to generate badge PDF.");
@@ -439,324 +456,546 @@ export default function ParticipantsDirectory() {
     }
   };
 
-  const selectedParticipants = participants.filter(p => selectedIds.has(p.id));
+  const selectedParticipants = participants.filter((p) => selectedIds.has(p.id));
+
+  // Live KPI statistics
+  const totalCount = participants.length;
+  const paidCount = participants.filter((p) => p.paid_status === "Paid" || p.is_free).length;
+  const unpaidCount = participants.filter((p) => p.paid_status === "Unpaid" && !p.is_free).length;
+  const qrIssuedCount = participants.filter((p) => Boolean(p.qr_code_url)).length;
 
   if (!readAccess.loading && !readAccess.enabled) {
     return (
-      <Card className="m-6 border-amber-500/25 bg-amber-500/5 p-8 text-center">
-        <LucideIcons.Lock className="mx-auto h-8 w-8 text-amber-400" />
-        <h1 className="mt-4 text-lg font-semibold text-[var(--text)]">Participant access locked</h1>
-        <p className="mt-2 text-sm text-muted">
-          Your role or this event contract does not allow participant records to be viewed.
+      <div className="m-6 rounded-lg border border-amber-500/20 bg-amber-500/5 p-8 text-center">
+        <Lock className="mx-auto size-8 text-amber-500" />
+        <h1 className="mt-4 text-base font-bold text-[var(--text-primary)]">Participant Access Locked</h1>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+          Your role or this event contract does not permit viewing participant records.
         </p>
-      </Card>
+      </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col space-y-6 min-h-0">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="w-full space-y-6 p-6">
+      {/* ── Top Header & Action Controls ── */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--pri)]/85">Management Suite</span>
-          <h1 className="text-3xl font-black tracking-tighter text-[var(--text)] mt-1 text-glow-indigo">Delegates registry</h1>
-          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-muted mt-1">
-            Select participants, control payment, and print badges by role template.
+          <div className="flex items-center gap-2 mb-1">
+            <Users className="size-4 text-[var(--pri)]" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--pri)]">
+              Registration Management
+            </span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+            Participants & Delegates Registry
+          </h1>
+          <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+            Monitor attendee registrations, manage payment statuses, issue QR credentials, and print badges.
           </p>
         </div>
-        <div className="flex items-center gap-3 self-start md:self-auto">
-          <Button onClick={fetchData} disabled={loading || syncing} className="h-12 px-8 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d">
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-            Sync registry
-          </Button>
-          <Button
-            onClick={handleSyncFromSpeakers}
-            disabled={syncing || loading || registrationAccess.loading || speakerAccess.loading || !registrationAccess.enabled || !speakerAccess.enabled}
-            className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={fetchData}
+            disabled={loading || syncing}
+            className="flex size-9 items-center justify-center rounded-lg border border-[var(--border-default)] bg-[var(--card)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors shadow-sm cursor-pointer"
+            title="Refresh participants"
           >
-            {syncing ? <LucideIcons.Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSyncFromSpeakers}
+            disabled={
+              syncing ||
+              loading ||
+              registrationAccess.loading ||
+              speakerAccess.loading ||
+              !registrationAccess.enabled ||
+              !speakerAccess.enabled
+            }
+            className="flex h-9 items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors shadow-sm disabled:opacity-40 cursor-pointer"
+          >
+            <Sparkles className={cn("size-3.5 text-amber-500", syncing && "animate-spin")} />
             Sync Speakers
-          </Button>
-          <Button 
+          </button>
+
+          <button
+            type="button"
             onClick={() => setIsAddModalOpen(true)}
             disabled={registrationAccess.loading || !registrationAccess.enabled}
-            className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full hover-lift-3d flex items-center gap-1.5 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_20%,transparent)]"
+            className="flex h-9 items-center gap-2 rounded-lg bg-[var(--pri)] px-4 text-xs font-bold text-[var(--primary-contrast)] shadow-sm transition-all hover:opacity-90 disabled:opacity-40 cursor-pointer"
           >
-            <LucideIcons.UserPlus className="h-4 w-4" />
+            <Plus className="size-4" />
             Add Participant
-          </Button>
+          </button>
         </div>
       </div>
 
-      <Card className="p-5 glass-3d border-default bg-[color-mix(in_srgb,var(--text)_5%,transparent)] rounded-[2rem] grid grid-cols-1 md:grid-cols-5 gap-4 items-center shadow-lg">
-        <div className="md:col-span-2 relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-          <Input
+      {/* ── Live KPI Stat Cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Total Registered
+          </span>
+          <div className="text-2xl font-bold text-[var(--text-primary)] mt-1">{totalCount}</div>
+          <span className="text-[11px] text-[var(--text-secondary)]">All attendee passes</span>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Paid & Completed
+          </span>
+          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+            {paidCount}
+          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">Settled registrations</span>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Unpaid / Pending
+          </span>
+          <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">
+            {unpaidCount}
+          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">Awaiting settlement</span>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            QR Credentials Active
+          </span>
+          <div className="text-2xl font-bold text-sky-600 dark:text-sky-400 mt-1">
+            {qrIssuedCount}
+          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">Issued confirmation passes</span>
+        </div>
+      </div>
+
+      {/* ── Search & Filter Controls ── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+          <input
             type="text"
-            placeholder="Search by name, email, company, regno..."
+            placeholder="Search by name, email, company, or reg no..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && fetchData()}
-            className="h-12 bg-white/5 border-default rounded-full pl-10 pr-6 font-bold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all placeholder:text-muted/65"
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && fetchData()}
+            className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--card)] pl-9 pr-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none shadow-sm"
           />
         </div>
 
-        <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="h-12 px-6 rounded-full border border-default bg-white/5 text-[11px] font-black uppercase tracking-widest text-[var(--text)] focus:outline-none focus:border-[var(--pri)] transition-all cursor-pointer">
-          <option value="all" className="bg-[var(--base)]">All Roles</option>
-          {roles.map(role => <option key={role.id} value={role.name} className="bg-[var(--base)]">{role.name}</option>)}
-        </select>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
+          >
+            <option value="all">All Roles</option>
+            {roles.map((role) => (
+              <option key={role.id} value={role.name}>
+                {role.name}
+              </option>
+            ))}
+          </select>
 
-        <select value={paidFilter} onChange={e => setPaidFilter(e.target.value)} className="h-12 px-6 rounded-full border border-default bg-white/5 text-[11px] font-black uppercase tracking-widest text-[var(--text)] focus:outline-none focus:border-[var(--pri)] transition-all cursor-pointer">
-          <option value="all" className="bg-[var(--base)]">All Payments</option>
-          <option value="Paid" className="bg-[var(--base)]">Paid</option>
-          <option value="Unpaid" className="bg-[var(--base)]">Unpaid</option>
-          <option value="Free" className="bg-[var(--base)]">Free</option>
-        </select>
+          <select
+            value={paidFilter}
+            onChange={(e) => setPaidFilter(e.target.value)}
+            className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
+          >
+            <option value="all">All Payment Statuses</option>
+            <option value="Paid">Paid</option>
+            <option value="Unpaid">Unpaid</option>
+            <option value="Free">Free</option>
+          </select>
 
-        <Button onClick={handleResetFilters} className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d flex items-center justify-center gap-1.5">
-          <LucideIcons.RotateCcw className="h-4 w-4" />
-          Reset Filters
-        </Button>
-      </Card>
+          <button
+            type="button"
+            onClick={handleResetFilters}
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors shadow-sm cursor-pointer"
+          >
+            <RotateCcw className="size-3.5" />
+            Reset
+          </button>
+        </div>
+      </div>
 
+      {/* ── Multi-Select Batch Actions Bar ── */}
       {selectedIds.size > 0 && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-[var(--pri)]/20 bg-[var(--pri)]/8 px-5 py-4">
-          <span className="text-xs font-black uppercase tracking-[0.18em] text-[var(--text)]">{selectedIds.size} selected</span>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => printParticipants(selectedParticipants)} disabled={printing} className="h-10 px-5 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border border-[var(--pri)]/30 flex items-center justify-center gap-1.5 hover-lift-3d">
-              <Printer className="h-4 w-4 mr-2" />
-              Print Badge ({selectedIds.size})
-            </Button>
-            <Button onClick={handleDeleteSelected} disabled={registrationAccess.loading || !registrationAccess.enabled} className="h-10 px-5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[10px] rounded-full border border-red-500/20">
-              <Trash2 className="h-4 w-4 mr-2" />
-              Archive
-            </Button>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-[var(--pri)]/30 bg-[var(--pri)]/5 p-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="flex size-5 items-center justify-center rounded-full bg-[var(--pri)] text-[10px] font-bold text-[var(--primary-contrast)]">
+              {selectedIds.size}
+            </span>
+            <span className="text-xs font-bold text-[var(--text-primary)]">
+              {selectedIds.size} participant{selectedIds.size === 1 ? "" : "s"} selected
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => printParticipants(selectedParticipants)}
+              disabled={printing}
+              className="flex h-8 items-center gap-1.5 rounded-lg bg-[var(--pri)] px-3 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90 disabled:opacity-40 cursor-pointer"
+            >
+              <Printer className="size-3.5" />
+              Print Badges ({selectedIds.size})
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteSelected}
+              disabled={registrationAccess.loading || !registrationAccess.enabled}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              <Trash2 className="size-3.5" />
+              Archive Selected
+            </button>
           </div>
         </div>
       )}
 
-      <Card className="flex-1 glass-3d border-default rounded-[2.5rem] overflow-hidden bg-[color-mix(in_srgb,var(--text)_5%,transparent)] shadow-xl flex flex-col min-h-0">
-        <div className="flex-1 overflow-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[980px]">
-            <thead className="sticky top-0 z-10 bg-[color-mix(in_srgb,var(--base)_95%,#000)] shadow-[0_1px_0_0_rgba(255,255,255,0.05)]">
-              <tr className="border-b border-default text-[9px] font-black uppercase tracking-[0.2em] text-muted select-none">
-                <th className="py-5 px-6">
-                  <button onClick={toggleSelectAll} className="text-muted hover:text-[var(--pri)] transition-colors" title="Select all participants">
-                    {participants.length > 0 && selectedIds.size === participants.length ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+      {/* ── Participants Table ── */}
+      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] table-fixed text-left text-xs">
+            <colgroup>
+              <col className="w-[4%]" />
+              <col className="w-[12%]" />
+              <col className="w-[28%]" />
+              <col className="w-[16%]" />
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+              <col className="w-[18%]" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] select-none">
+                <th className="px-4 py-3 text-center">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
+                    title="Select all"
+                  >
+                    {participants.length > 0 && selectedIds.size === participants.length ? (
+                      <CheckSquare className="size-4 text-[var(--pri)]" />
+                    ) : (
+                      <Square className="size-4" />
+                    )}
                   </button>
                 </th>
-                <th className="py-5 px-6">Reg No</th>
-                <th className="py-5 px-6">Attendee Profile</th>
-                <th className="py-5 px-6">Role Type</th>
-                <th className="py-5 px-6">Payment</th>
-                <th className="py-5 px-6">Source</th>
-                <th className="py-5 px-6 text-right min-w-72">Actions</th>
+                <th className="px-4 py-3 truncate">Reg No</th>
+                <th className="px-4 py-3 truncate">Attendee Profile</th>
+                <th className="px-4 py-3 truncate">Role Type</th>
+                <th className="px-4 py-3 truncate">Payment</th>
+                <th className="px-4 py-3 truncate">Source</th>
+                <th className="px-4 py-3 text-right truncate">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {participants.length === 0 ? (
+            <tbody className="divide-y divide-[var(--border-subtle)]">
+              {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-xs font-black uppercase tracking-widest text-muted">
-                    No delegates found matching current search parameters.
+                  <td colSpan={7} className="py-16 text-center text-xs text-[var(--text-secondary)]">
+                    <RefreshCw className="size-5 text-[var(--pri)] animate-spin mx-auto mb-2" />
+                    Loading attendees registry...
                   </td>
                 </tr>
-              ) : participants.map(p => (
-                <tr key={p.id} onClick={() => handleOpenDrawer(p)} className="border-b border-default/50 hover:bg-[color-mix(in_srgb,var(--text)_3%,transparent)] transition-all text-[var(--text)] last:border-b-0 group cursor-pointer">
-                  <td className="py-5 px-6" onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => toggleSelected(p.id)} className="text-muted hover:text-[var(--pri)] transition-colors">
-                      {selectedIds.has(p.id) ? <CheckSquare className="h-4 w-4 text-[var(--pri)]" /> : <Square className="h-4 w-4" />}
-                    </button>
+              ) : participants.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center text-xs text-[var(--text-secondary)]">
+                    <Users className="size-6 text-[var(--text-tertiary)] mx-auto mb-2" />
+                    No attendees found matching search parameters.
                   </td>
-                  <td className="py-5 px-6 font-black text-[var(--pri)] tracking-wider">{p.regno}</td>
-                  <td className="py-5 px-6 font-bold">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-black tracking-tight text-[var(--text)] group-hover:text-[var(--pri)] transition-colors underline-offset-2 group-hover:underline">{p.name}</span>
-                      <span className="text-[9px] font-black uppercase tracking-wider text-muted mt-0.5">{p.email}</span>
-                      {p.company && <span className="text-[9px] font-black uppercase tracking-wider text-[var(--pri)] mt-0.5">{p.company}</span>}
-                    </div>
-                  </td>
-                  <td className="py-5 px-6">
-                    <span className="text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border bg-[var(--pri)]/10 text-[var(--pri)] border-[var(--pri)]/20">{p.role}</span>
-                  </td>
-                  <td className="py-5 px-6" onClick={(e) => e.stopPropagation()}>
-                    {p.is_free ? (
-                      <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border bg-sky-500/10 text-sky-400 border-sky-500/20 select-none cursor-default">
-                        <CheckCircle className="h-3 w-3" />
-                        Free
-                      </span>
-                    ) : (
-                      <button disabled={paymentAccess.loading || registrationAccess.loading || !paymentAccess.enabled || !registrationAccess.enabled} onClick={() => handleTogglePayment(p)} className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border transition-all disabled:opacity-50 ${p.paid_status === "Paid" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"}`}>
-                        {p.paid_status === "Paid" ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                        {p.paid_status}
-                      </button>
-                    )}
-                  </td>
-                  <td className="py-5 px-6 text-[9px] font-black uppercase tracking-[0.15em] text-muted">{p.source}</td>
-                  <td className="py-5 px-6" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-2">
-                      <Button onClick={() => handleOpenDrawer(p)} className="h-9 w-9 p-0 bg-white/5 hover:bg-white/10 text-muted hover:text-[var(--text)] rounded-full border border-default flex items-center justify-center hover-lift-3d shrink-0" title="View details">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        onClick={() => issueConfirmationQr(p)}
-                        disabled={
-                          confirmationQrAccess.loading ||
-                          !confirmationQrAccess.enabled ||
-                          issuingQrFor === p.id
-                        }
-                        className="h-9 px-3 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 font-black uppercase tracking-widest text-[9px] rounded-full border border-sky-500/20 flex items-center justify-center shrink-0 disabled:opacity-40"
-                        title={
-                          p.qr_code_url
-                            ? "Rotate registration confirmation QR"
-                            : "Issue registration confirmation QR"
-                        }
+                </tr>
+              ) : (
+                participants.map((p) => (
+                  <tr
+                    key={p.id}
+                    onClick={() => handleOpenDrawer(p)}
+                    className="hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+                  >
+                    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSelected(p.id)}
+                        className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                       >
-                        <QrCode className="mr-1.5 h-3.5 w-3.5" />
-                        {p.qr_code_url ? "Rotate QR" : "Issue QR"}
-                      </Button>
-                      <Button onClick={() => printParticipants([p])} disabled={printing} className="h-9 min-w-[128px] px-4 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[9px] rounded-full border border-[var(--pri)]/30 flex items-center justify-center gap-1.5 hover-lift-3d shrink-0 whitespace-nowrap" title="Print badge">
-                        <Printer className={`h-3.5 w-3.5 mr-1.5 ${printing ? "animate-bounce" : ""}`} />
-                        Print Badge
-                      </Button>
-                      <Button disabled={registrationAccess.loading || !registrationAccess.enabled} onClick={() => handleDelete(p.id, p.name)} className="h-9 px-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[9px] rounded-full border border-red-500/20 flex items-center justify-center hover-lift-3d shrink-0" title="Archive participant">
-                        <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                        Archive
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {selectedIds.has(p.id) ? (
+                          <CheckSquare className="size-4 text-[var(--pri)]" />
+                        ) : (
+                          <Square className="size-4" />
+                        )}
+                      </button>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs font-bold text-[var(--pri)]">
+                        {p.regno}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3 truncate">
+                      <div className="flex items-center gap-2.5 truncate">
+                        <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--pri)]/10 text-[var(--pri)] font-bold text-[10px] border border-[var(--pri)]/20 overflow-hidden">
+                          {p.photo || p.avatar || p.profile_picture ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={p.photo || p.avatar || p.profile_picture}
+                              alt={p.name}
+                              className="size-full object-cover"
+                            />
+                          ) : (
+                            p.name
+                              ?.split(" ")
+                              .map((n) => n[0])
+                              .join("")
+                              .slice(0, 2)
+                              .toUpperCase() || "AT"
+                          )}
+                        </div>
+                        <div className="flex flex-col truncate">
+                          <span className="font-semibold text-[var(--text-primary)] truncate">
+                            {p.name}
+                          </span>
+                          <span className="text-[11px] text-[var(--text-secondary)] truncate">
+                            {p.email}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">
+                        {p.role}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {p.is_free ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-0.5 text-[10px] font-bold text-sky-600 dark:text-sky-400">
+                          <CheckCircle className="size-3" /> Free
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={
+                            paymentAccess.loading ||
+                            registrationAccess.loading ||
+                            !paymentAccess.enabled ||
+                            !registrationAccess.enabled
+                          }
+                          onClick={() => handleTogglePayment(p)}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold transition-colors cursor-pointer disabled:opacity-40",
+                            p.paid_status === "Paid"
+                              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                              : "border-rose-500/20 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20"
+                          )}
+                        >
+                          {p.paid_status === "Paid" ? (
+                            <CheckCircle className="size-3" />
+                          ) : (
+                            <XCircle className="size-3" />
+                          )}
+                          {p.paid_status}
+                        </button>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="text-[11px] font-medium text-[var(--text-secondary)] uppercase">
+                        {p.source || "manual"}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDrawer(p)}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                          title="View attendee details"
+                        >
+                          <Eye className="size-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => issueConfirmationQr(p)}
+                          disabled={
+                            confirmationQrAccess.loading ||
+                            !confirmationQrAccess.enabled ||
+                            issuingQrFor === p.id
+                          }
+                          className="inline-flex size-7 items-center justify-center rounded-md text-sky-600 dark:text-sky-400 hover:bg-sky-500/10 transition-colors cursor-pointer disabled:opacity-40"
+                          title={p.qr_code_url ? "Rotate QR Pass" : "Issue QR Pass"}
+                        >
+                          <QrCode className="size-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => printParticipants([p])}
+                          disabled={printing}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-[var(--pri)] hover:bg-[var(--pri)]/10 transition-colors cursor-pointer"
+                          title="Print badge"
+                        >
+                          <Printer className="size-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={registrationAccess.loading || !registrationAccess.enabled}
+                          onClick={() => handleDelete(p.id, p.name)}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-rose-500/10 hover:text-rose-500 transition-colors cursor-pointer disabled:opacity-40"
+                          title="Archive participant"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
-      </Card>
+      </div>
 
-      {/* Participant Details Drawer */}
+      {/* ── Slide-Over Attendee Details & Edit Drawer ── */}
       <AnimatePresence>
         {selectedParticipantForDrawer && (
-          <>
-            {/* Backdrop Overlay */}
+          <div className="fixed inset-0 z-50 flex justify-end bg-black/60">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setSelectedParticipantForDrawer(null)}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
+              className="absolute inset-0"
             />
 
-            {/* Drawer Panel */}
             <motion.div
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed inset-y-0 right-0 w-full sm:max-w-md bg-[color-mix(in_srgb,var(--base)_92%,black)] border-l border-default p-6 shadow-2xl z-[101] flex flex-col text-[var(--text)] animate-fade-in"
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="relative w-full max-w-md bg-[var(--card)] border-l border-[var(--border-default)] p-6 shadow-md z-10 flex flex-col h-full overflow-hidden"
             >
-              {/* Close & Header (Sticky top of drawer) */}
-              <div className="flex items-center justify-between pb-4 border-b border-default/50 mb-6 shrink-0">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--pri)]">Delegate Details</span>
+              {/* Drawer Header */}
+              <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
+                    Delegate Details
+                  </span>
                   {!isEditing && (
                     <button
+                      type="button"
                       onClick={() => setIsEditing(true)}
-                      className="px-3 py-1 text-[9px] font-black uppercase tracking-wider text-[var(--pri)] hover:text-white bg-[var(--pri)]/10 hover:bg-[var(--pri)]/30 rounded-full transition-colors flex items-center gap-1 hover-lift-3d"
-                      title="Edit Delegate details"
+                      className="flex items-center gap-1 rounded-md bg-[var(--pri)]/10 px-2 py-0.5 text-[10px] font-bold text-[var(--pri)] hover:bg-[var(--pri)]/20 transition-colors cursor-pointer"
                     >
-                      <LucideIcons.Pencil className="h-2.5 w-2.5" />
+                      <Pencil className="size-2.5" />
                       Edit
                     </button>
                   )}
                 </div>
+
                 <button
+                  type="button"
                   onClick={() => setSelectedParticipantForDrawer(null)}
-                  className="h-8 w-8 rounded-full border border-default bg-white/5 hover:bg-white/10 flex items-center justify-center text-muted hover:text-[var(--text)] transition-colors"
+                  className="rounded-md p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="size-4" />
                 </button>
               </div>
 
-              {/* Scrollable Content Area */}
-              <div className="flex-1 overflow-y-auto pr-1 space-y-6 custom-scrollbar">
+              {/* Drawer Scrollable Body */}
+              <div className="flex-1 overflow-y-auto py-4 space-y-5">
                 {isEditing ? (
-                  /* Edit Mode Fields */
-                  <div className="space-y-4 py-2">
-                    {/* First Name */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">First Name</label>
-                      <Input
-                        type="text"
+                  <div className="space-y-3.5">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        First Name
+                      </label>
+                      <input
                         value={editForm.first_name}
-                        onChange={e => setEditForm(prev => ({ ...prev, first_name: e.target.value }))}
-                        className="h-11 bg-white/5 border-default rounded-xl font-bold text-xs text-[var(--text)] focus:border-[var(--pri)]"
-                        placeholder="First name"
+                        onChange={(e) => setEditForm((p) => ({ ...p, first_name: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       />
                     </div>
 
-                    {/* Last Name */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">Last Name</label>
-                      <Input
-                        type="text"
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        Last Name
+                      </label>
+                      <input
                         value={editForm.last_name}
-                        onChange={e => setEditForm(prev => ({ ...prev, last_name: e.target.value }))}
-                        className="h-11 bg-white/5 border-default rounded-xl font-bold text-xs text-[var(--text)] focus:border-[var(--pri)]"
-                        placeholder="Last name"
+                        onChange={(e) => setEditForm((p) => ({ ...p, last_name: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       />
                     </div>
 
-                    {/* Email */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">Email Address</label>
-                      <Input
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        Email Address
+                      </label>
+                      <input
                         type="email"
                         value={editForm.email}
-                        onChange={e => setEditForm(prev => ({ ...prev, email: e.target.value }))}
-                        className="h-11 bg-white/5 border-default rounded-xl font-bold text-xs text-[var(--text)] focus:border-[var(--pri)]"
+                        onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       />
                     </div>
 
-                    {/* Phone */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">Phone Number</label>
-                      <Input
-                        type="text"
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        Phone Number
+                      </label>
+                      <input
                         value={editForm.phone}
-                        onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
-                        className="h-11 bg-white/5 border-default rounded-xl font-bold text-xs text-[var(--text)] focus:border-[var(--pri)]"
+                        onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       />
                     </div>
 
-                    {/* Company */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">Company / Organization</label>
-                      <Input
-                        type="text"
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        Company / Organization
+                      </label>
+                      <input
                         value={editForm.company}
-                        onChange={e => setEditForm(prev => ({ ...prev, company: e.target.value }))}
-                        className="h-11 bg-white/5 border-default rounded-xl font-bold text-xs text-[var(--text)] focus:border-[var(--pri)]"
+                        onChange={(e) => setEditForm((p) => ({ ...p, company: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       />
                     </div>
 
-                    {/* Designation */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">Designation</label>
-                      <Input
-                        type="text"
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        Designation
+                      </label>
+                      <input
                         value={editForm.designation}
-                        onChange={e => setEditForm(prev => ({ ...prev, designation: e.target.value }))}
-                        className="h-11 bg-white/5 border-default rounded-xl font-bold text-xs text-[var(--text)] focus:border-[var(--pri)]"
+                        onChange={(e) => setEditForm((p) => ({ ...p, designation: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       />
                     </div>
 
-                    {/* Role */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-wider text-muted px-1">Role Type</label>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        Role Type
+                      </label>
                       <select
                         value={editForm.role}
-                        onChange={e => setEditForm(prev => ({ ...prev, role: e.target.value }))}
-                        className="w-full h-11 px-4 rounded-xl border border-default bg-white/5 text-xs font-bold text-[var(--text)] focus:outline-none focus:border-[var(--pri)] cursor-pointer"
+                        onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       >
-                        {roles.map(r => (
-                          <option key={r.id} value={r.name} className="bg-[var(--base)]">
+                        {roles.map((r) => (
+                          <option key={r.id} value={r.name}>
                             {r.name}
                           </option>
                         ))}
@@ -764,277 +1003,309 @@ export default function ParticipantsDirectory() {
                     </div>
                   </div>
                 ) : (
-                  /* Read Mode Fields */
                   <>
-                    {/* Avatar Display */}
-                    <div className="flex flex-col items-center text-center pb-6 border-b border-default/50">
-                      <div className="h-24 w-24 rounded-full border-2 border-[var(--pri)]/50 bg-[var(--pri)]/10 flex items-center justify-center shadow-lg relative overflow-hidden mb-4">
-                        {(() => {
-                          const avatarUrl = selectedParticipantForDrawer.photo || selectedParticipantForDrawer.avatar || selectedParticipantForDrawer.profile_picture;
-                          if (avatarUrl) {
-                            return (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={avatarUrl}
-                                alt={selectedParticipantForDrawer.name}
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = "none";
-                                }}
-                              />
-                            );
-                          }
-                          const initials = selectedParticipantForDrawer.name
-                            .split(" ")
-                            .map(n => n[0])
+                    {/* Attendee Profile Hero */}
+                    <div className="flex flex-col items-center text-center pb-5 border-b border-[var(--border-subtle)]">
+                      <div className="flex size-16 items-center justify-center rounded-full bg-[var(--pri)]/10 text-[var(--pri)] font-bold text-lg border border-[var(--pri)]/20 overflow-hidden mb-2.5">
+                        {selectedParticipantForDrawer.photo ||
+                        selectedParticipantForDrawer.avatar ||
+                        selectedParticipantForDrawer.profile_picture ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={
+                              selectedParticipantForDrawer.photo ||
+                              selectedParticipantForDrawer.avatar ||
+                              selectedParticipantForDrawer.profile_picture
+                            }
+                            alt={selectedParticipantForDrawer.name}
+                            className="size-full object-cover"
+                          />
+                        ) : (
+                          selectedParticipantForDrawer.name
+                            ?.split(" ")
+                            .map((n) => n[0])
                             .join("")
-                            .substring(0, 2)
-                            .toUpperCase();
-                          return <span className="text-2xl font-black text-[var(--pri)]">{initials}</span>;
-                        })()}
+                            .slice(0, 2)
+                            .toUpperCase() || "AT"
+                        )}
                       </div>
-                      <h2 className="text-xl font-black tracking-tight text-[var(--text)]">{selectedParticipantForDrawer.name}</h2>
-                      <span className="text-[9px] font-black uppercase tracking-[0.18em] px-3 py-1.5 rounded-full border bg-[var(--pri)]/10 text-[var(--pri)] border-[var(--pri)]/20 mt-2">
+                      <h2 className="text-base font-bold text-[var(--text-primary)]">
+                        {selectedParticipantForDrawer.name}
+                      </h2>
+                      <span className="mt-1 rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">
                         {selectedParticipantForDrawer.role}
                       </span>
                     </div>
 
-                    {/* Information Fields */}
-                    <div className="space-y-4">
-                      {/* Reg No */}
-                      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                            <Briefcase className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Reg No</span>
-                            <span className="text-xs font-bold text-[var(--text)]">{selectedParticipantForDrawer.regno}</span>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(selectedParticipantForDrawer.regno);
-                            toast.success("Registration number copied!");
-                          }}
-                          className="p-1.5 text-muted hover:text-[var(--text)] hover:bg-white/5 rounded-lg transition-colors"
-                          title="Copy Reg No"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-sky-500/10 flex items-center justify-center text-sky-400">
-                            <QrCode className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Confirmation QR</span>
-                            <span className="text-xs font-bold text-[var(--text)]">
-                              {selectedParticipantForDrawer.qr_code_url ? "Active" : "Not issued"}
+                    {/* Information Tiles */}
+                    <div className="space-y-2.5">
+                      {/* Reg No with Copy */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
+                        <div className="flex items-center gap-2.5">
+                          <Briefcase className="size-4 text-[var(--text-tertiary)]" />
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                              Registration Number
+                            </span>
+                            <span className="font-mono text-xs font-bold text-[var(--text-primary)]">
+                              {selectedParticipantForDrawer.regno}
                             </span>
                           </div>
                         </div>
                         <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedParticipantForDrawer.regno);
+                            toast.success("Registration number copied.");
+                          }}
+                          className="rounded-md p-1.5 text-[var(--text-tertiary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                          title="Copy Reg No"
+                        >
+                          <Copy className="size-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Confirmation QR */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
+                        <div className="flex items-center gap-2.5">
+                          <QrCode className="size-4 text-sky-500" />
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                              Confirmation QR Pass
+                            </span>
+                            <span className="text-xs font-semibold text-[var(--text-primary)]">
+                              {selectedParticipantForDrawer.qr_code_url ? "Active Pass" : "Not Issued"}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
                           onClick={() => issueConfirmationQr(selectedParticipantForDrawer)}
                           disabled={
                             confirmationQrAccess.loading ||
                             !confirmationQrAccess.enabled ||
                             issuingQrFor === selectedParticipantForDrawer.id
                           }
-                          className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider text-sky-400 disabled:opacity-40"
+                          className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] font-bold text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-colors disabled:opacity-40 cursor-pointer"
                         >
                           {selectedParticipantForDrawer.qr_code_url ? "Rotate" : "Issue"}
                         </button>
                       </div>
 
                       {/* Email */}
-                      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                            <Mail className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Email</span>
-                            <span className="text-xs font-bold text-[var(--text)] truncate max-w-[200px]">{selectedParticipantForDrawer.email}</span>
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
+                        <div className="flex items-center gap-2.5 truncate mr-2">
+                          <Mail className="size-4 text-[var(--text-tertiary)] shrink-0" />
+                          <div className="truncate">
+                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                              Email
+                            </span>
+                            <span className="text-xs text-[var(--text-primary)] truncate block">
+                              {selectedParticipantForDrawer.email}
+                            </span>
                           </div>
                         </div>
                         <a
                           href={`mailto:${selectedParticipantForDrawer.email}`}
-                          className="p-1.5 text-muted hover:text-[var(--text)] hover:bg-white/5 rounded-lg transition-colors"
-                          title="Send Email"
+                          className="rounded-md p-1.5 text-[var(--text-tertiary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)] transition-colors shrink-0"
+                          title="Send email"
                         >
-                          <Mail className="h-3.5 w-3.5" />
+                          <Mail className="size-3.5" />
                         </a>
                       </div>
 
                       {/* Phone */}
                       {selectedParticipantForDrawer.phone && (
-                        <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
-                          <div className="flex items-center gap-3">
-                            <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                              <Phone className="h-4 w-4" />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-[9px] font-black uppercase tracking-wider text-muted">Phone</span>
-                              <span className="text-xs font-bold text-[var(--text)]">{selectedParticipantForDrawer.phone}</span>
+                        <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
+                          <div className="flex items-center gap-2.5">
+                            <Phone className="size-4 text-[var(--text-tertiary)]" />
+                            <div>
+                              <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                                Phone
+                              </span>
+                              <span className="text-xs text-[var(--text-primary)]">
+                                {selectedParticipantForDrawer.phone}
+                              </span>
                             </div>
                           </div>
                           <a
                             href={`tel:${selectedParticipantForDrawer.phone}`}
-                            className="p-1.5 text-muted hover:text-[var(--text)] hover:bg-white/5 rounded-lg transition-colors"
-                            title="Call Phone"
+                            className="rounded-md p-1.5 text-[var(--text-tertiary)] hover:bg-[var(--card)] hover:text-[var(--text-primary)] transition-colors"
+                            title="Call phone"
                           >
-                            <Phone className="h-3.5 w-3.5" />
+                            <Phone className="size-3.5" />
                           </a>
                         </div>
                       )}
 
-                      {/* Company */}
-                      {selectedParticipantForDrawer.company && (
-                        <div className="flex items-center p-3.5 rounded-2xl bg-white/3 border border-default gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                            <Building className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Company</span>
-                            <span className="text-xs font-bold text-[var(--text)]">{selectedParticipantForDrawer.company}</span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Designation */}
-                      {selectedParticipantForDrawer.designation && (
-                        <div className="flex items-center p-3.5 rounded-2xl bg-white/3 border border-default gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                            <User className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Designation</span>
-                            <span className="text-xs font-bold text-[var(--text)]">{selectedParticipantForDrawer.designation}</span>
-                          </div>
+                      {/* Company & Designation */}
+                      {(selectedParticipantForDrawer.company || selectedParticipantForDrawer.designation) && (
+                        <div className="p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] space-y-2">
+                          {selectedParticipantForDrawer.company && (
+                            <div className="flex items-center gap-2.5">
+                              <Building className="size-4 text-[var(--text-tertiary)]" />
+                              <div>
+                                <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                                  Company
+                                </span>
+                                <span className="text-xs text-[var(--text-primary)] font-medium">
+                                  {selectedParticipantForDrawer.company}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          {selectedParticipantForDrawer.designation && (
+                            <div className="flex items-center gap-2.5">
+                              <User className="size-4 text-[var(--text-tertiary)]" />
+                              <div>
+                                <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                                  Designation
+                                </span>
+                                <span className="text-xs text-[var(--text-primary)]">
+                                  {selectedParticipantForDrawer.designation}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {/* Payment Status */}
-                      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/3 border border-default">
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                            <DollarSign className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Payment Status</span>
-                            <span className={`text-xs font-bold ${selectedParticipantForDrawer.is_free ? "text-sky-400 font-extrabold" : selectedParticipantForDrawer.paid_status === "Paid" ? "text-emerald-400" : "text-red-400"}`}>
-                              {selectedParticipantForDrawer.is_free ? "Free" : selectedParticipantForDrawer.paid_status}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
+                        <div className="flex items-center gap-2.5">
+                          <DollarSign className="size-4 text-[var(--text-tertiary)]" />
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                              Payment Status
+                            </span>
+                            <span
+                              className={cn(
+                                "text-xs font-bold",
+                                selectedParticipantForDrawer.is_free
+                                  ? "text-sky-600 dark:text-sky-400"
+                                  : selectedParticipantForDrawer.paid_status === "Paid"
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-rose-600 dark:text-rose-400"
+                              )}
+                            >
+                              {selectedParticipantForDrawer.is_free
+                                ? "Free Pass"
+                                : selectedParticipantForDrawer.paid_status}
                             </span>
                           </div>
                         </div>
                         {!selectedParticipantForDrawer.is_free && (
                           <button
-                            disabled={paymentAccess.loading || registrationAccess.loading || !paymentAccess.enabled || !registrationAccess.enabled}
+                            type="button"
+                            disabled={
+                              paymentAccess.loading ||
+                              registrationAccess.loading ||
+                              !paymentAccess.enabled ||
+                              !registrationAccess.enabled
+                            }
                             onClick={async () => {
-                              const updated = { ...selectedParticipantForDrawer, paid_status: selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid" };
+                              const updated = {
+                                ...selectedParticipantForDrawer,
+                                paid_status:
+                                  selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid",
+                              };
                               await handleTogglePayment(selectedParticipantForDrawer);
                               setSelectedParticipantForDrawer(updated);
                             }}
-                            className={`text-[9px] font-black uppercase tracking-[0.12em] px-3 py-1.5 rounded-full border transition-all ${
-                              selectedParticipantForDrawer.paid_status === "Paid"
-                                ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"
-                                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-                            }`}
+                            className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-2.5 py-1 text-[10px] font-bold text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
                           >
                             Mark {selectedParticipantForDrawer.paid_status === "Paid" ? "Unpaid" : "Paid"}
                           </button>
                         )}
                       </div>
 
-                      {/* Source */}
-                      <div className="flex items-center p-3.5 rounded-2xl bg-white/3 border border-default gap-3">
-                        <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                          <Globe className="h-4 w-4" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-[9px] font-black uppercase tracking-wider text-muted">Registration Source</span>
-                          <span className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">{selectedParticipantForDrawer.source}</span>
-                        </div>
-                      </div>
-
-                      {/* Registered At */}
-                      {selectedParticipantForDrawer.registered_at && (
-                        <div className="flex items-center p-3.5 rounded-2xl bg-white/3 border border-default gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center text-[var(--pri)]">
-                            <Calendar className="h-4 w-4" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-muted">Registered At</span>
-                            <span className="text-xs font-bold text-[var(--text)]">
-                              {new Date(selectedParticipantForDrawer.registered_at).toLocaleString("en-IN", {
-                                dateStyle: "medium",
-                                timeStyle: "short"
-                              })}
+                      {/* Source & Date */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)]">
+                        <div className="flex items-center gap-2.5">
+                          <Globe className="size-4 text-[var(--text-tertiary)]" />
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                              Source
+                            </span>
+                            <span className="text-xs uppercase text-[var(--text-primary)]">
+                              {selectedParticipantForDrawer.source}
                             </span>
                           </div>
                         </div>
-                      )}
+
+                        {selectedParticipantForDrawer.registered_at && (
+                          <div className="text-right">
+                            <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
+                              Registered Date
+                            </span>
+                            <span className="text-xs text-[var(--text-secondary)]">
+                              {new Date(selectedParticipantForDrawer.registered_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </>
                 )}
               </div>
 
-              {/* Sticky Drawer Footer Actions */}
-              <div className="mt-6 pt-4 border-t border-default/50 shrink-0 space-y-3">
+              {/* Drawer Footer Actions */}
+              <div className="border-t border-[var(--border-subtle)] pt-4 shrink-0 space-y-2">
                 {isEditing ? (
-                  <>
-                    <Button
-                      onClick={handleSaveChanges}
-                      disabled={registrationAccess.loading || !registrationAccess.enabled}
-                      className="w-full h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 flex items-center justify-center gap-1.5 hover-lift-3d"
-                    >
-                      Save Changes
-                    </Button>
-                    <Button
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
                       onClick={() => setIsEditing(false)}
-                      className="w-full h-12 bg-white/5 hover:bg-white/10 text-muted hover:text-[var(--text)] font-black uppercase tracking-widest text-[10px] rounded-full border border-default flex items-center justify-center gap-1.5 hover-lift-3d"
+                      className="flex-1 rounded-lg border border-[var(--border-default)] bg-[var(--card)] py-2 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
                     >
                       Cancel
-                    </Button>
-                  </>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveChanges}
+                      disabled={registrationAccess.loading || !registrationAccess.enabled}
+                      className="flex-1 rounded-lg bg-[var(--pri)] py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90 transition-all cursor-pointer"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
                 ) : (
-                  <>
-                    <Button
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
                       onClick={() => printParticipants([selectedParticipantForDrawer])}
                       disabled={printing}
-                      className="w-full h-12 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border border-[var(--pri)]/30 flex items-center justify-center gap-1.5 hover-lift-3d"
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-[var(--pri)] py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90 transition-all cursor-pointer"
                     >
-                      <Printer className={`h-4 w-4 mr-2 ${printing ? "animate-bounce" : ""}`} />
+                      <Printer className="size-3.5" />
                       Print Badge
-                    </Button>
-                    <Button
+                    </button>
+                    <button
+                      type="button"
                       onClick={async () => {
-                        const participant = selectedParticipantForDrawer;
+                        const p = selectedParticipantForDrawer;
                         setSelectedParticipantForDrawer(null);
-                        await handleDelete(participant.id, participant.name);
+                        await handleDelete(p.id, p.name);
                       }}
                       disabled={registrationAccess.loading || !registrationAccess.enabled}
-                      className="w-full h-12 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black uppercase tracking-widest text-[10px] rounded-full border border-red-500/20 flex items-center justify-center gap-1.5 hover-lift-3d"
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-40 cursor-pointer"
                     >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Archive Delegate
-                    </Button>
-                  </>
+                      <Trash2 className="size-3.5" />
+                      Archive
+                    </button>
+                  </div>
                 )}
               </div>
             </motion.div>
-          </>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* Add Participant Modal Trigger */}
+      {/* ── Add Participant Modal ── */}
       <AddParticipantModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
-        eventId={eventId as string}
+        eventId={eventId}
         onSuccess={fetchData}
       />
     </div>

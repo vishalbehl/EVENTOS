@@ -6,6 +6,11 @@ export interface EventSummary {
   id: string;
   name: string;
   short_code: string;
+  description?: string;
+  logo_url?: string;
+  theme_color?: string;
+  support_email?: string;
+  support_phone?: string;
   location?: string;
   venue_name?: string;
   country?: string;
@@ -19,6 +24,7 @@ export interface EventSummary {
   registration_settings: RegistrationSettings;
   branding_settings: BrandingSettings;
 }
+
 
 export interface EventResponse extends EventSummary {
   organization_id: string;

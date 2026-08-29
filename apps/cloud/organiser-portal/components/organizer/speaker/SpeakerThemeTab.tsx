@@ -1079,7 +1079,7 @@ export default function SpeakerThemeTab({ eventId }: { eventId: string }) {
                     onClick={() => setTcViewMode(mode)}
                     className={`h-7 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${
                       tcViewMode === mode
-                        ? "bg-[var(--pri)] text-white shadow"
+                        ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow"
                         : "text-[#E8EAFF] opacity-60 hover:opacity-100"
                     }`}
                   >

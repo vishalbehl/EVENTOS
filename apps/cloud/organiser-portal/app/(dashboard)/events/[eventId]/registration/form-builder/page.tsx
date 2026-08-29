@@ -3,26 +3,36 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { 
-  ClipboardList, Plus, Trash2, Save, Sparkles, RefreshCw, 
-  Settings2, HelpCircle, Eye, AlertCircle, Edit3, GripVertical,
-  X, UploadCloud, FileText, Code2, SplitSquareHorizontal
+  ClipboardList, Plus, Trash2, Save, RefreshCw, 
+  Eye, AlertCircle, X, UploadCloud, CheckCircle2,
+  FileText, Check, ShieldCheck, HelpCircle, Layers, Globe
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { 
+  OrganiserPage, 
+  Panel, 
+  MetricCard, 
+  StatusBadge 
+} from "@/components/organizer/workspace/OrganiserPrimitives";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { useEvent } from "@/hooks/useEvents";
 import { Portal } from "@/components/ui/portal";
 import { CountryStateEntry, fetchCountryStates, getAllowedCountries, getStatesForCountry } from "@/lib/country-states";
+import { COUNTRY_DIAL_CODES, getDialCodeForCountry } from "@/lib/country-dial-codes";
 import { CapabilityAction } from "@/lib/capabilities";
+import { cn } from "@/lib/utils";
 
 interface FormField {
   id: string;
   name: string;
   label: string;
-  type: string; // text, date, select, checkbox, file, image
+  type: string; // text, date, select, checkbox, file, image, email, phone, country, state
   is_default: boolean;
   is_required: boolean;
   is_active: boolean;
@@ -30,14 +40,107 @@ interface FormField {
   placeholder?: string;
 }
 
-const DEFAULT_FAQS = [
-  { q: "What should I bring to the event?", a: "Please bring a copy of your entry pass QR code (on your phone or printed) along with a valid photo ID for quick check-in.", is_default: true },
-  { q: "Is there parking available?", a: "Yes, there is complimentary attendee parking available on-site at the main venue deck. Follow event signage.", is_default: true },
-  { q: "Can I transfer my ticket?", a: "Tickets are non-transferable after registration approval. Please contact support if you have an exceptional request.", is_default: true }
+const DEFAULT_FORM_FIELDS: FormField[] = [
+  {
+    id: "title",
+    name: "title",
+    label: "Title / Prefix",
+    type: "select",
+    is_default: true,
+    is_required: false,
+    is_active: true,
+    placeholder: "Select title",
+    options: ["Dr.", "Prof.", "Mr.", "Ms.", "Mrs."],
+  },
+  {
+    id: "first_name",
+    name: "first_name",
+    label: "First Name",
+    type: "text",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Enter your first name",
+  },
+  {
+    id: "last_name",
+    name: "last_name",
+    label: "Last Name",
+    type: "text",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Enter your last name",
+  },
+  {
+    id: "email",
+    name: "email",
+    label: "Email Address",
+    type: "email",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Enter your email address",
+  },
+  {
+    id: "phone",
+    name: "phone",
+    label: "Phone Number",
+    type: "phone",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Enter phone number",
+  },
+  {
+    id: "company",
+    name: "company",
+    label: "Institution / Organization",
+    type: "text",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Enter institution, hospital, or organization",
+  },
+  {
+    id: "designation",
+    name: "designation",
+    label: "Job Title / Designation",
+    type: "text",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Enter your job title or designation",
+  },
+  {
+    id: "country",
+    name: "country",
+    label: "Country",
+    type: "country",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Select your country",
+  },
+  {
+    id: "role",
+    name: "role",
+    label: "Registration Role / Category",
+    type: "select",
+    is_default: true,
+    is_required: true,
+    is_active: true,
+    placeholder: "Select your role category",
+    options: [],
+  },
 ];
 
+const REMOVED_DEFAULT_IDS = new Set(["council_number", "postal_code", "dietary_preference", "emergency_contact", "state", "city"]);
+
 export default function RegistrationFormBuilder() {
-  const { eventId } = useParams();
+  const params = useParams();
+  const eventId = (params?.eventId as string) || "";
+  const { data: event } = useEvent(eventId);
   
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,16 +150,14 @@ export default function RegistrationFormBuilder() {
   const [countryPicker, setCountryPicker] = useState<Record<string, string>>({});
   
   const [fields, setFields] = useState<FormField[]>([]);
-  const [isLive, setIsLive] = useState(false);
+  const [isLive, setIsLive] = useState(true);
   const [termsAndConditions, setTermsAndConditions] = useState("");
-
-
 
   const getEffectiveFieldType = (field: FormField) => {
     if (field.id === "email") return "email";
     if (field.id === "phone") return "phone";
     if (field.id === "country") return "country";
-    if (field.id === "role") return "select";
+    if (field.id === "role" || field.id === "title") return "select";
     return field.type;
   };
 
@@ -70,7 +171,12 @@ export default function RegistrationFormBuilder() {
     try {
       const res = await apiGet<any>(`/events/${eventId}/registration/form-config?t=${Date.now()}`);
       
-      let fetchedFields = res.fields || [];
+      let fetchedFields: FormField[] = res.fields && res.fields.length > 0 ? res.fields : DEFAULT_FORM_FIELDS;
+      
+      // Filter out legacy default fields that have been removed from system defaults
+      fetchedFields = fetchedFields.filter(f => !(f.is_default && REMOVED_DEFAULT_IDS.has(f.id || f.name)));
+
+      // Migrate old single 'name' field if present
       const hasNameField = fetchedFields.some((f: any) => f.id === "name");
       if (hasNameField) {
         const migrated: any[] = [];
@@ -105,8 +211,15 @@ export default function RegistrationFormBuilder() {
         fetchedFields = migrated;
       }
 
+      // Ensure all 11 clean default fields exist in the list
+      const existingIds = new Set(fetchedFields.map(f => f.id || f.name));
+      const missingDefaults = DEFAULT_FORM_FIELDS.filter(df => !existingIds.has(df.id) && !existingIds.has(df.name));
+      if (missingDefaults.length > 0) {
+        fetchedFields = [...fetchedFields, ...missingDefaults];
+      }
+
       setFields(fetchedFields.map(normalizeSystemField));
-      setIsLive(res.is_live || false);
+      setIsLive(res.is_live !== undefined ? res.is_live : true);
       setTermsAndConditions(res.terms_and_conditions || "");
     } catch (err: any) {
       toast.error(err.message || "Failed to load form configuration.");
@@ -134,20 +247,20 @@ export default function RegistrationFormBuilder() {
     const newField: FormField = {
       id: customId,
       name: customId,
-      label: "New Custom Field",
+      label: "New Custom Question",
       type: "text",
       is_default: false,
       is_required: false,
       is_active: true,
-      placeholder: "Enter value"
+      placeholder: "Enter attendee answer..."
     };
     setFields(prev => [...prev, newField]);
-    toast.success("Added new custom field card. Customize it below!");
+    toast.success("Added new custom question. Configure its type and options below!");
   };
 
   const handleDeleteField = (id: string) => {
     setFields(prev => prev.filter(f => f.id !== id));
-    toast.info("Field removed.");
+    toast.info("Custom question removed.");
   };
 
   const handleAddOption = (fieldId: string) => {
@@ -208,10 +321,9 @@ export default function RegistrationFormBuilder() {
   const getCountryChoices = (field: FormField) => getAllowedCountries(field.options, countryStates);
 
   const handleSaveConfig = async () => {
-    // Basic validation
     const emptyLabels = fields.some(f => !f.label.trim());
     if (emptyLabels) {
-      toast.error("All form fields must have a label.");
+      toast.error("All form fields must have a display label.");
       return;
     }
 
@@ -219,9 +331,10 @@ export default function RegistrationFormBuilder() {
     try {
       await apiPost(`/events/${eventId}/registration/form-config`, {
         fields,
+        is_live: isLive,
         terms_and_conditions: termsAndConditions
       });
-      toast.success("Registration form configuration saved successfully!");
+      toast.success("Registration form configuration saved and synchronized successfully!");
       fetchConfig();
     } catch (err: any) {
       toast.error(err.message || "Failed to save configuration.");
@@ -232,478 +345,630 @@ export default function RegistrationFormBuilder() {
 
   const defaultFieldsList = fields.filter(f => f.is_default);
   const customFieldsList = fields.filter(f => !f.is_default);
+  const activeFieldsCount = fields.filter(f => f.is_active).length;
 
   return (
-    <div className="space-y-8 p-6 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <ClipboardList className="h-5 w-5 text-[var(--pri)] animate-pulse" />
-            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--pri)]/80">FORM CONFIGURATION</span>
-          </div>
-          <h1 className="text-3xl font-black tracking-tighter text-[var(--text)] mt-1 text-glow-indigo">Form Builder</h1>
-          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-muted mt-1">
-            Toggle default fields, configure custom questionnaire inputs, and build your form.
-          </p>
-        </div>
+    <OrganiserPage
+      title="Registration Form Builder"
+      description={
+        event 
+          ? `Customize attendee questions, default identity fields, and submission requirements for ${event.name}.`
+          : "Configure registration form questionnaire, attendee profile fields, and mandatory inputs."
+      }
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Live / Draft Status Badge Button */}
+          <button
+            type="button"
+            onClick={() => setIsLive(!isLive)}
+            className={cn(
+              "h-8 px-3 rounded-full text-xs font-semibold transition-all flex items-center gap-2 border cursor-pointer",
+              isLive
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/20"
+                : "bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20"
+            )}
+          >
+            <span className={cn("size-2 rounded-full", isLive ? "bg-emerald-500 animate-ping" : "bg-amber-500")} />
+            {isLive ? "Registration Live" : "Draft Mode"}
+          </button>
 
-        <div className="flex gap-3">
-          <Button 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => setPreviewOpen(true)}
             disabled={loading || saving || fields.length === 0}
-            className="h-12 px-6 bg-[var(--pri)]/20 hover:bg-[var(--pri)]/35 text-white font-black uppercase tracking-widest text-[11px] rounded-full border border-[var(--pri)]/30 hover-lift-3d"
+            className="h-8 text-xs font-semibold gap-1.5 border-[var(--border-default)] cursor-pointer"
           >
-            <Eye className="h-4 w-4 mr-2" />
-            Preview
+            <Eye className="size-3.5 text-[var(--pri)]" />
+            Preview Form
           </Button>
-          <Button 
-            onClick={fetchConfig} 
-            disabled={loading || saving} 
-            className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={fetchConfig}
+            disabled={loading || saving}
+            className="h-8 text-xs font-semibold gap-1.5 border-[var(--border-default)] cursor-pointer"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-            Refresh
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            Sync
           </Button>
+
           <CapabilityAction operation="registration.forms.manage">
-            <Button 
-              onClick={handleSaveConfig} 
-              disabled={loading || saving} 
-              className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[11px] rounded-full border-0 hover-lift-3d shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_35%,transparent)]"
+            <Button
+              size="sm"
+              onClick={handleSaveConfig}
+              disabled={loading || saving}
+              className="h-8 text-xs font-bold gap-1.5 bg-[var(--pri)] text-[var(--primary-contrast)] hover:opacity-90 shadow-sm cursor-pointer"
             >
-              <Save className="h-4 w-4 mr-2" />
+              <Save className="size-3.5" />
               {saving ? "Saving..." : "Save Layout"}
             </Button>
           </CapabilityAction>
         </div>
+      }
+    >
+      {/* Metric Summary Cards */}
+      <div className="op-metric-grid">
+        <MetricCard
+          label="Form Status"
+          value={isLive ? "Live" : "Draft"}
+          hint={isLive ? "Accepting public submissions" : "Form offline (hidden from public)"}
+          tone={isLive ? "emerald" : "amber"}
+          icon={<CheckCircle2 className="size-5 text-[var(--pri)]" />}
+        />
+        <MetricCard
+          label="Total Fields"
+          value={fields.length.toString()}
+          hint="Total inputs in questionnaire"
+          tone="purple"
+          icon={<ClipboardList className="size-5 text-[var(--pri)]" />}
+        />
+        <MetricCard
+          label="Active Fields"
+          value={activeFieldsCount.toString()}
+          hint="Visible to attendees on portal"
+          tone="blue"
+          icon={<Check className="size-5 text-[var(--pri)]" />}
+        />
+        <MetricCard
+          label="Custom Questions"
+          value={customFieldsList.length.toString()}
+          hint="Event-specific custom fields"
+          tone="cyan"
+          icon={<Plus className="size-5 text-[var(--pri)]" />}
+        />
       </div>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 space-y-4">
-          <RefreshCw className="h-8 w-8 text-[var(--pri)] animate-spin" />
-          <p className="text-xs text-muted font-bold uppercase tracking-wider">Loading Configuration...</p>
-        </div>
+        <Panel className="p-12 flex flex-col items-center justify-center space-y-3 text-center">
+          <RefreshCw className="size-7 text-[var(--pri)] animate-spin" />
+          <p className="text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+            Loading Form Configuration...
+          </p>
+        </Panel>
       ) : (
-        <div className="space-y-10">
-          
-          {/* Default/System Fields Section (Top, 2-column grid) */}
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-black uppercase tracking-[0.2em] text-muted">Core Default Fields</h2>
-              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/5 text-muted border border-default">System</span>
-            </div>
+        <div className="space-y-6">
+          {/* Section 1: Core Attendee Identity Fields */}
+          <Panel
+            title="Core Attendee Identity Fields"
+            action={
+              <Badge variant="outline" className="text-[10px] font-mono border-[var(--border-subtle)] text-[var(--text-tertiary)]">
+                {defaultFieldsList.length} Core System Fields
+              </Badge>
+            }
+          >
+            <div className="space-y-4">
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Essential identity and contact fields. First Name, Last Name, and Email are mandatory core identity fields.
+              </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {defaultFieldsList.map(field => {
-                const isCore = field.id === "name" || field.id === "first_name" || field.id === "last_name" || field.id === "email";
-                const fieldType = getEffectiveFieldType(field);
-                return (
-                  <Card 
-                    key={field.id} 
-                    className="p-5 glass-3d border-default rounded-2xl bg-[color-mix(in_srgb,var(--text)_3%,transparent)] hover:border-[var(--pri)]/40 transition-all duration-300 relative overflow-hidden"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[var(--pri)] bg-[var(--pri)]/10 px-2 py-0.5 rounded-md">
-                          {fieldType === "select" ? "Category (Select)" : fieldType === "email" ? "Email Input" : fieldType === "phone" ? "Phone Input" : fieldType === "country" ? "Country Select" : "Text Input"}
-                        </span>
-                        <h4 className="text-sm font-black uppercase tracking-wider text-[var(--text)] mt-1.5">{field.label}</h4>
-                        <p className="text-[9px] text-muted font-semibold">Database Column: {field.name}</p>
-                      </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {defaultFieldsList.map((field) => {
+                  const isCore = field.id === "first_name" || field.id === "last_name" || field.id === "email";
+                  const fieldType = getEffectiveFieldType(field);
+                  const isCountry = fieldType === "country";
 
-                      <div className="flex flex-col items-end gap-2">
-                        {/* Active Toggle */}
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-bold text-muted uppercase tracking-wider">Active</span>
-                          <button
-                            type="button"
-                            disabled={isCore}
-                            onClick={() => handleUpdateField(field.id, { is_active: !field.is_active })}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                              field.is_active ? "bg-emerald-500" : "bg-neutral-800"
-                            } ${isCore ? "opacity-50 cursor-not-allowed" : ""}`}
-                          >
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                field.is_active ? "translate-x-4" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
-                        </div>
-
-                        {/* Required Toggle */}
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-bold text-muted uppercase tracking-wider">Required</span>
-                          <button
-                            type="button"
-                            disabled={isCore}
-                            onClick={() => handleUpdateField(field.id, { is_required: !field.is_required })}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                              field.is_required ? "bg-[var(--pri)]" : "bg-neutral-800"
-                            } ${isCore ? "opacity-50 cursor-not-allowed" : ""}`}
-                          >
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                field.is_required ? "translate-x-4" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 space-y-2">
-                      <label className="text-[9px] font-black text-muted uppercase tracking-widest">Field Display Label</label>
-                      <Input
-                        type="text"
-                        value={field.label}
-                        onChange={(e) => handleUpdateField(field.id, { label: e.target.value })}
-                        className="h-10 bg-white/5 border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)]"
-                      />
-                    </div>
-
-                    {fieldType === "country" && (
-                      <div className="mt-4 space-y-3 bg-white/5 border border-default/50 p-4 rounded-2xl">
-                        <div>
-                          <p className="text-[9px] font-black text-muted uppercase tracking-widest">Allowed Countries</p>
-                          <p className="text-[9px] text-muted/70 font-semibold mt-1">
-                            Leave empty to allow every country. Add one country to lock the public form to it.
+                  return (
+                    <div
+                      key={field.id}
+                      className={cn(
+                        "p-4 rounded-xl border transition-all space-y-3 bg-[var(--bg-surface-2)]/60",
+                        isCountry && "md:col-span-2 lg:col-span-2",
+                        field.is_active 
+                          ? "border-[var(--border-subtle)] hover:border-[var(--pri)]/40" 
+                          : "border-[var(--border-subtle)]/60 opacity-60"
+                      )}
+                    >
+                      {/* Top metadata & Toggles */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1 min-w-0">
+                          <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[var(--pri)]/10 text-[var(--pri)]">
+                            {fieldType === "select" ? "Category (Dropdown)" : fieldType === "email" ? "Email Address" : fieldType === "phone" ? "Phone Number" : fieldType === "country" ? "Country & State Select" : "Text Input"}
+                          </span>
+                          <p className="text-[10px] text-[var(--text-tertiary)] font-mono truncate mt-1">
+                            Column: {field.name}
                           </p>
                         </div>
-                        <div className="flex gap-2">
-                          <select
-                            value={countryPicker[field.id] || ""}
-                            onChange={(e) => setCountryPicker(prev => ({ ...prev, [field.id]: e.target.value }))}
-                            className="h-10 min-w-0 flex-1 bg-white/5 border border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all cursor-pointer"
-                          >
-                            <option value="" className="bg-[var(--surf)]">Select country...</option>
-                            {countryStates
-                              .filter(entry => !(field.options || []).includes(entry.country))
-                              .map(entry => (
-                                <option key={entry.country} value={entry.country} className="bg-[var(--surf)]">{entry.country}</option>
-                              ))}
-                          </select>
-                          <Button
-                            type="button"
-                            onClick={() => handleAddAllowedCountry(field.id)}
-                            className="h-10 px-4 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[8px] rounded-xl"
-                          >
-                            Add
-                          </Button>
-                        </div>
-                        {(field.options || []).length > 0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {(field.options || []).map(country => (
-                              <button
-                                key={country}
-                                type="button"
-                                onClick={() => handleRemoveAllowedCountry(field.id, country)}
-                                className="inline-flex items-center gap-1 rounded-full border border-[var(--pri)]/20 bg-[var(--pri)]/10 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-[var(--pri)] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20"
-                              >
-                                {country}
-                                <X className="h-3 w-3" />
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </Card>
-                );
-              })}
-            </div>
-          </div>
 
-          {/* Custom Form Fields Section (Bottom) */}
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-black uppercase tracking-[0.2em] text-muted">Custom Form Questions</h2>
-              <Button 
+                        <div className="flex items-center gap-3 shrink-0">
+                          {/* Active Switch */}
+                          <div className="flex flex-col items-center">
+                            <span className="text-[9px] font-bold text-[var(--text-tertiary)] uppercase">Active</span>
+                            <button
+                              type="button"
+                              disabled={isCore}
+                              onClick={() => handleUpdateField(field.id, { is_active: !field.is_active })}
+                              className={cn(
+                                "relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors mt-0.5 border",
+                                field.is_active ? "bg-emerald-600 border-emerald-600" : "bg-[var(--bg-surface-3)] border-[var(--border-default)]",
+                                isCore && "opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "pointer-events-none inline-block h-3 w-3 transform rounded-full transition shadow-xs",
+                                  field.is_active ? "translate-x-3 bg-white" : "translate-x-0 bg-[var(--text-secondary)]"
+                                )}
+                              />
+                            </button>
+                          </div>
+
+                          {/* Required Switch */}
+                          <div className="flex flex-col items-center">
+                            <span className="text-[9px] font-bold text-[var(--text-tertiary)] uppercase">Req</span>
+                            <button
+                              type="button"
+                              disabled={isCore}
+                              onClick={() => handleUpdateField(field.id, { is_required: !field.is_required })}
+                              className={cn(
+                                "relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors mt-0.5 border",
+                                field.is_required ? "bg-[var(--pri)] border-[var(--pri)]" : "bg-[var(--bg-surface-3)] border-[var(--border-default)]",
+                                isCore && "opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "pointer-events-none inline-block h-3 w-3 transform rounded-full transition shadow-xs",
+                                  field.is_required ? "translate-x-3 bg-[var(--primary-contrast)]" : "translate-x-0 bg-[var(--text-secondary)]"
+                                )}
+                              />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Display Label Input */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                          Display Label
+                        </label>
+                        <Input
+                          type="text"
+                          value={field.label}
+                          onChange={(e) => handleUpdateField(field.id, { label: e.target.value })}
+                          className="h-8 text-xs font-medium bg-[var(--bg-surface)] border-[var(--border-subtle)] rounded-lg"
+                        />
+                      </div>
+
+                      {/* Country & State Note */}
+                      {fieldType === "country" && (
+                        <p className="text-[10px] text-[var(--text-tertiary)] italic leading-tight">
+                          Includes integrated cascading State / Province selector. Country and State are recorded directly to the attendee database.
+                        </p>
+                      )}
+
+                      {/* Allowed Countries restriction (Clean flexbox layout without overlap) */}
+                      {fieldType === "country" && (
+                        <div className="pt-2.5 border-t border-[var(--border-subtle)] space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                              Country Restrictions
+                            </span>
+                            <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
+                              {(field.options || []).length === 0 ? "Global (All Allowed)" : `${field.options?.length} Restricted`}
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={countryPicker[field.id] || ""}
+                              onChange={(e) => setCountryPicker(prev => ({ ...prev, [field.id]: e.target.value }))}
+                              className="h-8 min-w-0 flex-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-2.5 text-xs text-[var(--text-primary)] cursor-pointer truncate focus:border-[var(--pri)]"
+                            >
+                              <option value="">Choose country to allow...</option>
+                              {countryStates
+                                .filter(entry => !(field.options || []).includes(entry.country))
+                                .map(entry => (
+                                  <option key={entry.country} value={entry.country}>{entry.country}</option>
+                                ))}
+                            </select>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleAddAllowedCountry(field.id)}
+                              className="h-8 px-3 text-xs font-bold shrink-0 bg-[var(--pri)] text-[var(--primary-contrast)] hover:opacity-90 cursor-pointer"
+                            >
+                              <Plus className="size-3 mr-1" />
+                              Add Country
+                            </Button>
+                          </div>
+
+                          {(field.options || []).length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1 max-h-24 overflow-y-auto">
+                              {(field.options || []).map(country => (
+                                <span
+                                  key={country}
+                                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium bg-[var(--pri)]/10 text-[var(--pri)] border border-[var(--pri)]/20"
+                                >
+                                  {country}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveAllowedCountry(field.id, country)}
+                                    className="size-3.5 rounded hover:bg-rose-500/20 hover:text-rose-400 flex items-center justify-center cursor-pointer transition"
+                                  >
+                                    <X className="size-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </Panel>
+
+          {/* Section 2: Custom Form Questions */}
+          <Panel
+            title="Custom Form Questions"
+            action={
+              <Button
+                size="sm"
                 onClick={handleAddCustomField}
-                className="h-10 px-5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 font-black uppercase tracking-widest text-[9px] rounded-full hover-lift-3d"
+                className="h-8 text-xs font-bold gap-1.5 bg-[var(--pri)] text-[var(--primary-contrast)] hover:opacity-90 shadow-sm cursor-pointer"
               >
-                <Plus className="h-3.5 w-3.5 mr-1" />
+                <Plus className="size-3.5" />
                 Add Question
               </Button>
-            </div>
-
+            }
+          >
             {customFieldsList.length === 0 ? (
-              <Card className="p-10 glass-3d border-default border-dashed rounded-[2.5rem] bg-white/5 flex flex-col items-center justify-center text-center space-y-3">
-                <AlertCircle className="h-8 w-8 text-[var(--pri)] animate-pulse" />
-                <h4 className="text-xs font-black uppercase tracking-widest text-[var(--text)]">No Custom Questions Defined</h4>
-                <p className="text-[10px] text-muted leading-relaxed max-w-sm">
-                  Add custom fields for uploads, dates, select menus, or checkboxes to gather specific delegate details.
+              <div className="p-8 border border-dashed border-[var(--border-subtle)] rounded-xl flex flex-col items-center justify-center text-center space-y-2.5">
+                <ClipboardList className="size-8 text-[var(--pri)]/60" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
+                  No Custom Questions Added
+                </h4>
+                <p className="text-xs text-[var(--text-secondary)] max-w-md">
+                  Collect dietary preferences, medical registration numbers, file uploads, or survey questions from attendees during checkout.
                 </p>
-                <Button 
+                <Button
+                  size="sm"
+                  variant="outline"
                   onClick={handleAddCustomField}
-                  className="h-9 px-6 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[9px] rounded-full border-0 mt-2"
+                  className="h-8 text-xs font-semibold gap-1.5 mt-2 border-[var(--border-default)]"
                 >
+                  <Plus className="size-3.5 text-[var(--pri)]" />
                   Create First Question
                 </Button>
-              </Card>
+              </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {customFieldsList.map((field, index) => (
-                  (() => {
-                    const fieldType = getEffectiveFieldType(field);
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {customFieldsList.map((field, index) => {
+                  const fieldType = getEffectiveFieldType(field);
 
-                    return (
-                    <Card
+                  return (
+                    <div
                       key={field.id}
-                      className="p-6 glass-3d border-default rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_5%,transparent)] hover:border-[var(--pri)]/60 transition-all duration-300 relative space-y-4"
+                      className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/60 hover:border-[var(--pri)]/40 transition-all space-y-3.5"
                     >
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-default/30 pb-4">
-                      
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 bg-white/5 border border-default rounded-xl flex items-center justify-center shrink-0">
-                          <span className="text-xs font-black text-muted">{index + 1}</span>
+                      {/* Top Header */}
+                      <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="size-5 rounded-full bg-[var(--pri)]/10 text-[var(--pri)] text-[10px] font-bold flex items-center justify-center">
+                            {index + 1}
+                          </span>
+                          <span className="text-xs font-bold text-[var(--text-primary)]">Question #{index + 1}</span>
                         </div>
-                        <div>
+
+                        <div className="flex items-center gap-3">
+                          {/* Required Switch */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-bold text-[var(--text-tertiary)] uppercase">Required</span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateField(field.id, { is_required: !field.is_required })}
+                              className={cn(
+                                "relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors border",
+                                field.is_required ? "bg-[var(--pri)] border-[var(--pri)]" : "bg-[var(--bg-surface-3)] border-[var(--border-default)]"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "pointer-events-none inline-block h-3 w-3 transform rounded-full transition shadow-xs",
+                                  field.is_required ? "translate-x-3 bg-[var(--primary-contrast)]" : "translate-x-0 bg-[var(--text-secondary)]"
+                                )}
+                              />
+                            </button>
+                          </div>
+
+                          {/* Delete Question Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteField(field.id)}
+                            className="size-7 rounded-md border border-[var(--border-subtle)] hover:border-rose-500/30 hover:bg-rose-500/10 text-[var(--text-tertiary)] hover:text-rose-500 flex items-center justify-center transition cursor-pointer"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Question Label & Type */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                            Question / Label
+                          </label>
                           <Input
                             type="text"
                             value={field.label}
                             onChange={(e) => handleUpdateField(field.id, { label: e.target.value })}
-                            className="h-10 max-w-xs bg-transparent border-0 border-b border-dashed border-default focus:border-[var(--pri)] focus:ring-0 rounded-none px-0 font-black text-sm text-[var(--text)] py-0"
-                            placeholder="Enter Question / Label"
+                            className="h-8 text-xs font-medium bg-[var(--bg-surface)] border-[var(--border-subtle)] rounded-lg"
+                            placeholder="e.g. Dietary Restrictions"
                           />
-                          <p className="text-[9px] text-muted font-bold mt-1 uppercase tracking-widest">Type: {fieldType}</p>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-6 self-end sm:self-auto">
-                        {/* Requirement Toggle */}
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-bold text-muted uppercase tracking-wider">Required</span>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateField(field.id, { is_required: !field.is_required })}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                              field.is_required ? "bg-[var(--pri)]" : "bg-neutral-800"
-                            }`}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                            Input Type
+                          </label>
+                          <select
+                            value={fieldType}
+                            onChange={(e) => handleUpdateField(field.id, { type: e.target.value, options: e.target.value === "select" || e.target.value === "checkbox" || e.target.value === "country" ? [] : undefined })}
+                            className="h-8 w-full text-xs font-medium bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-2 text-[var(--text-primary)] cursor-pointer"
                           >
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                field.is_required ? "translate-x-4" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
+                            <option value="text">Short Answer (Text)</option>
+                            <option value="email">Email Address</option>
+                            <option value="phone">Phone Number</option>
+                            <option value="country">Country & State Selector</option>
+                            <option value="date">Date Selector</option>
+                            <option value="select">Dropdown Menu</option>
+                            <option value="checkbox">Checkbox List</option>
+                            <option value="image">Photo / Image Upload</option>
+                            <option value="file">Document / PDF Upload</option>
+                          </select>
                         </div>
-
-                        {/* Delete Field */}
-                        <Button 
-                          type="button"
-                          onClick={() => handleDeleteField(field.id)}
-                          className="h-8 w-8 p-0 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 rounded-full shrink-0 flex items-center justify-center hover-lift-3d"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-4">
-                      {/* Select Input Type */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-muted uppercase tracking-widest">Question Input Type</label>
-                        <select
-                          value={fieldType}
-                          onChange={(e) => handleUpdateField(field.id, { type: e.target.value, options: e.target.value === "select" || e.target.value === "checkbox" || e.target.value === "country" ? [] : undefined })}
-                          className="h-10 w-full bg-white/5 border border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all cursor-pointer"
-                        >
-                          <option value="text" className="bg-[var(--surf)]">Short Answer (Text)</option>
-                          <option value="email" className="bg-[var(--surf)]">Email Address</option>
-                          <option value="phone" className="bg-[var(--surf)]">Phone Number</option>
-                          <option value="country" className="bg-[var(--surf)]">Country & State Selectors</option>
-                          <option value="date" className="bg-[var(--surf)]">Date Selector</option>
-                          <option value="select" className="bg-[var(--surf)]">Dropdown Selection</option>
-                          <option value="checkbox" className="bg-[var(--surf)]">Checkbox list</option>
-                          <option value="image" className="bg-[var(--surf)]">Profile Photo / Image Upload</option>
-                          <option value="file" className="bg-[var(--surf)]">Document / PDF File Upload</option>
-                        </select>
                       </div>
 
-                      {/* Field Placeholder */}
+                      {/* Placeholder Input */}
                       {fieldType !== "image" && fieldType !== "file" && fieldType !== "date" && (
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-black text-muted uppercase tracking-widest">Input Placeholder</label>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                            Input Placeholder / Hint
+                          </label>
                           <Input
                             type="text"
                             value={field.placeholder || ""}
                             onChange={(e) => handleUpdateField(field.id, { placeholder: e.target.value })}
-                            className="h-10 bg-white/5 border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)]"
-                            placeholder="Enter hint text..."
+                            className="h-8 text-xs font-medium bg-[var(--bg-surface)] border-[var(--border-subtle)] rounded-lg"
+                            placeholder="Enter hint text for attendee..."
                           />
                         </div>
                       )}
-                    </div>
 
-                    {fieldType === "country" && (
-                      <div className="space-y-3 bg-white/5 border border-default/50 p-5 rounded-2xl">
-                        <div>
-                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Allowed Countries</span>
-                          <p className="text-[9px] text-muted/70 font-semibold mt-1">
-                            Empty means all countries. Add one country for event-specific registrations like India-only.
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <select
-                            value={countryPicker[field.id] || ""}
-                            onChange={(e) => setCountryPicker(prev => ({ ...prev, [field.id]: e.target.value }))}
-                            className="h-10 min-w-0 flex-1 bg-white/5 border border-default rounded-xl px-3 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all cursor-pointer"
-                          >
-                            <option value="" className="bg-[var(--surf)]">Select country...</option>
-                            {countryStates
-                              .filter(entry => !(field.options || []).includes(entry.country))
-                              .map(entry => (
-                                <option key={entry.country} value={entry.country} className="bg-[var(--surf)]">{entry.country}</option>
-                              ))}
-                          </select>
-                          <Button
-                            type="button"
-                            onClick={() => handleAddAllowedCountry(field.id)}
-                            className="h-10 px-4 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[8px] rounded-xl"
-                          >
-                            Add
-                          </Button>
-                        </div>
-                        {(field.options || []).length > 0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {(field.options || []).map(country => (
-                              <button
-                                key={country}
-                                type="button"
-                                onClick={() => handleRemoveAllowedCountry(field.id, country)}
-                                className="inline-flex items-center gap-1 rounded-full border border-[var(--pri)]/20 bg-[var(--pri)]/10 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-[var(--pri)] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20"
-                              >
-                                {country}
-                                <X className="h-3 w-3" />
-                              </button>
-                            ))}
+                      {/* Country restriction for custom country question */}
+                      {fieldType === "country" && (
+                        <div className="pt-2.5 border-t border-[var(--border-subtle)] space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                              Country Restrictions
+                            </span>
+                            <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
+                              {(field.options || []).length === 0 ? "Global (All Allowed)" : `${field.options?.length} Restricted`}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    )}
+                          
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={countryPicker[field.id] || ""}
+                              onChange={(e) => setCountryPicker(prev => ({ ...prev, [field.id]: e.target.value }))}
+                              className="h-8 min-w-0 flex-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-2.5 text-xs text-[var(--text-primary)] cursor-pointer truncate focus:border-[var(--pri)]"
+                            >
+                              <option value="">Choose country to allow...</option>
+                              {countryStates
+                                .filter(entry => !(field.options || []).includes(entry.country))
+                                .map(entry => (
+                                  <option key={entry.country} value={entry.country}>{entry.country}</option>
+                                ))}
+                            </select>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleAddAllowedCountry(field.id)}
+                              className="h-8 px-3 text-xs font-bold shrink-0 bg-[var(--pri)] text-[var(--primary-contrast)] hover:opacity-90 cursor-pointer"
+                            >
+                              <Plus className="size-3 mr-1" />
+                              Add Country
+                            </Button>
+                          </div>
 
-                    {/* Dropdown Options List */}
-                    {(fieldType === "select" || fieldType === "checkbox") && (
-                      <div className="space-y-3 bg-white/5 border border-default/50 p-5 rounded-2xl">
-                        <div className="flex items-center justify-between border-b border-default/30 pb-2.5">
-                          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Options / Choices</span>
-                          <Button
-                            onClick={() => handleAddOption(field.id)}
-                            className="h-7 px-3 bg-[var(--pri)]/10 hover:bg-[var(--pri)]/20 text-[var(--pri)] border border-[var(--pri)]/20 font-black uppercase tracking-widest text-[8px] rounded-md"
-                          >
-                            <Plus className="h-3 w-3 mr-0.5" />
-                            Add Option
-                          </Button>
-                        </div>
-
-                        {(field.options || []).length === 0 ? (
-                          <p className="text-[9px] text-muted/65 italic font-bold">Please add at least one choice option for this question.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {(field.options || []).map((opt, optIndex) => (
-                              <div key={optIndex} className="flex items-center gap-2">
-                                <span className="text-xs font-black text-muted mr-1">•</span>
-                                <Input
-                                  type="text"
-                                  value={opt}
-                                  onChange={(e) => handleUpdateOption(field.id, optIndex, e.target.value)}
-                                  className="h-8 flex-1 bg-white/5 border-default rounded-lg px-2 font-bold text-xs text-[var(--text)]"
-                                  placeholder={`Choice ${optIndex + 1}`}
-                                />
-                                <Button
-                                  type="button"
-                                  onClick={() => handleRemoveOption(field.id, optIndex)}
-                                  className="h-8 w-8 p-0 bg-transparent hover:bg-rose-500/10 border border-default text-muted hover:text-rose-400 rounded-lg shrink-0 flex items-center justify-center"
+                          {(field.options || []).length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1 max-h-24 overflow-y-auto">
+                              {(field.options || []).map(country => (
+                                <span
+                                  key={country}
+                                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium bg-[var(--pri)]/10 text-[var(--pri)] border border-[var(--pri)]/20"
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            ))}
+                                  {country}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveAllowedCountry(field.id, country)}
+                                    className="size-3.5 rounded hover:bg-rose-500/20 hover:text-rose-400 flex items-center justify-center cursor-pointer transition"
+                                  >
+                                    <X className="size-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Dropdown / Checkbox Options Manager */}
+                      {(fieldType === "select" || fieldType === "checkbox") && (
+                        <div className="p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                              Options & Choices
+                            </span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleAddOption(field.id)}
+                              className="h-6 px-2 text-[9px] font-bold text-[var(--pri)] border-[var(--border-subtle)]"
+                            >
+                              <Plus className="size-2.5 mr-0.5" />
+                              Add Option
+                            </Button>
                           </div>
-                        )}
-                      </div>
-                    )}
-                    </Card>
-                    );
-                  })()                 ))}
+
+                          {(field.options || []).length === 0 ? (
+                            <p className="text-[10px] text-[var(--text-tertiary)] italic">Add choice options for this question.</p>
+                          ) : (
+                            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                              {(field.options || []).map((opt, optIndex) => (
+                                <div key={optIndex} className="flex items-center gap-1.5">
+                                  <Input
+                                    type="text"
+                                    value={opt}
+                                    onChange={(e) => handleUpdateOption(field.id, optIndex, e.target.value)}
+                                    className="h-7 text-xs bg-[var(--bg-surface-2)] border-[var(--border-subtle)] rounded-md px-2"
+                                    placeholder={`Choice ${optIndex + 1}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveOption(field.id, optIndex)}
+                                    className="size-7 rounded-md hover:bg-rose-500/10 text-[var(--text-tertiary)] hover:text-rose-500 flex items-center justify-center shrink-0 cursor-pointer"
+                                  >
+                                    <Trash2 className="size-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
-          </div>
+          </Panel>
+
+          {/* Section 3: Terms & Conditions and Policies */}
+          <Panel
+            title="Terms & Conditions and Policy"
+          >
+            <div className="space-y-3">
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Legal disclaimer, consent terms, and refund policy displayed at the bottom of the registration form.
+              </p>
+              <Textarea
+                value={termsAndConditions}
+                onChange={(e) => setTermsAndConditions(e.target.value)}
+                placeholder="Enter Terms & Conditions markdown (e.g. ## Terms & Conditions\n1. Registration is non-refundable...)"
+                rows={5}
+                className="font-mono text-xs leading-relaxed"
+              />
+              <p className="text-[10px] text-[var(--text-tertiary)]">
+                Supports Markdown syntax (`## Heading`, `*bullet point*`, `**bold text**`, `[link](url)`).
+              </p>
+            </div>
+          </Panel>
         </div>
       )}
 
-      {/* Preview Modal */}
+      {/* Live Portal Preview Modal */}
       {previewOpen && (
         <Portal>
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-            <div className="relative w-full max-w-2xl bg-[var(--base)] border border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-              
-              {/* Modal Header */}
-              <div className="px-8 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="relative w-full max-w-xl bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between bg-[var(--bg-surface-2)]/60">
                 <div className="flex items-center gap-2">
-                  <Eye className="h-4.5 w-4.5 text-[var(--pri)]" />
-                  <h3 className="text-sm font-black uppercase tracking-[0.25em] text-[var(--text)]">Live Portal Preview</h3>
+                  <Eye className="size-4 text-[var(--pri)]" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
+                    Registration Portal Preview
+                  </h3>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setPreviewOpen(false)}
-                  className="h-8 w-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-muted hover:text-[var(--text)] transition-all"
+                  className="size-7 rounded-md hover:bg-[var(--bg-surface-3)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="size-4" />
                 </button>
               </div>
 
-              {/* Modal Scrollable Content (Mockup Registration Form) */}
-              <div className="p-8 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
-                <div className="text-center space-y-2 pb-4 border-b border-white/5">
-                  <h2 className="text-xl font-black tracking-tight text-[var(--text)]">Attendee Registration</h2>
-                  <p className="text-[10px] font-bold text-muted uppercase tracking-widest">Public Registration Portal Preview</p>
+              {/* Body */}
+              <div className="p-6 overflow-y-auto space-y-5 flex-1 text-left">
+                <div className="text-center pb-3 border-b border-[var(--border-subtle)] space-y-1">
+                  <h2 className="text-base font-bold text-[var(--text-primary)]">
+                    {event?.name || "Event Registration"}
+                  </h2>
+                  <p className="text-xs text-[var(--text-secondary)]">Attendee Registration Form Mockup</p>
                 </div>
 
-                <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+                <form className="space-y-3.5" onSubmit={(e) => e.preventDefault()}>
                   {fields
                     .filter(f => f.is_active)
                     .map(f => {
                       const fieldType = getEffectiveFieldType(f);
 
                       return (
-                        <div key={f.id} className="space-y-1.5 text-left">
-                          <label className="text-[10px] font-black uppercase tracking-wider text-muted flex items-center gap-1">
+                        <div key={f.id} className="space-y-1">
+                          <label className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1">
                             {f.label}
                             {f.is_required && <span className="text-rose-500 font-bold">*</span>}
                           </label>
 
                           {fieldType === "select" ? (
-                            <select className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer">
-                              <option value="" className="bg-[var(--base)] text-[var(--text)]">Select option...</option>
+                            <select className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-lg px-3 text-xs text-[var(--text-primary)] cursor-pointer">
+                              <option value="">Select option...</option>
                               {f.id === "role" ? (
                                 <>
-                                  <option value="Delegate" className="bg-[var(--base)] text-[var(--text)]">Delegate</option>
-                                  <option value="Speaker" className="bg-[var(--base)] text-[var(--text)]">Speaker</option>
-                                  <option value="VIP Guest" className="bg-[var(--base)] text-[var(--text)]">VIP Guest</option>
-                                  <option value="Student Delegate" className="bg-[var(--base)] text-[var(--text)]">Student Delegate</option>
+                                  <option value="Delegate">Delegate</option>
+                                  <option value="Speaker">Speaker</option>
+                                  <option value="VIP Guest">VIP Guest</option>
+                                  <option value="Student Delegate">Student Delegate</option>
                                 </>
                               ) : (
                                 (f.options || []).map((o, idx) => (
-                                  <option key={idx} value={o} className="bg-[var(--base)] text-[var(--text)]">{o}</option>
+                                  <option key={idx} value={o}>{o}</option>
                                 ))
                               )}
                             </select>
                           ) : fieldType === "checkbox" ? (
-                            <div className="space-y-2 p-4 rounded-xl bg-white/[0.02] border border-white/5">
+                            <div className="space-y-1.5 p-3 rounded-lg bg-[var(--bg-surface-2)] border border-[var(--border-subtle)]">
                               {(f.options || []).map((o, idx) => (
-                                <label key={idx} className="flex items-center gap-2.5 text-xs text-muted font-semibold cursor-pointer hover:text-[var(--text)] transition-colors">
-                                  <input type="checkbox" className="rounded border-white/10 bg-white/5 text-[var(--pri)] focus:ring-0" />
+                                <label key={idx} className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                                  <input type="checkbox" className="rounded border-[var(--border-subtle)] text-[var(--pri)]" />
                                   {o}
                                 </label>
                               ))}
                             </div>
                           ) : fieldType === "date" ? (
-                            <input type="date" className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all" />
+                            <input type="date" className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-lg px-3 text-xs text-[var(--text-primary)]" />
                           ) : fieldType === "file" || fieldType === "image" ? (
-                            <div className="border border-dashed border-white/10 hover:border-[var(--pri)]/40 bg-white/[0.01] hover:bg-white/[0.02] rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all">
-                              <UploadCloud className="h-5 w-5 text-muted mb-1" />
-                              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Choose file or drag here</span>
+                            <div className="border border-dashed border-[var(--border-subtle)] rounded-lg p-3.5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[var(--pri)]/50 transition">
+                              <UploadCloud className="size-4 text-[var(--text-tertiary)] mb-1" />
+                              <span className="text-[10px] font-medium text-[var(--text-secondary)]">
+                                Choose file or drag & drop here
+                              </span>
                             </div>
                           ) : fieldType === "country" ? (
                             (() => {
@@ -712,48 +977,48 @@ export default function RegistrationFormBuilder() {
                               const states = getStatesForCountry(countryStates, selectedCountry);
 
                               return (
-                                <div className="space-y-3">
+                                <div className="space-y-2">
                                   {countries.length === 1 ? (
                                     <select
                                       disabled
                                       value={countries[0]}
-                                      className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] opacity-100 focus:border-[var(--pri)] focus:outline-none transition-all cursor-not-allowed"
+                                      className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-lg px-3 text-xs text-[var(--text-primary)] cursor-not-allowed opacity-90"
                                     >
-                                      <option value={countries[0]} className="bg-[var(--base)] text-[var(--text)]">{countries[0]}</option>
+                                      <option value={countries[0]}>{countries[0]}</option>
                                     </select>
                                   ) : (
                                     <select
                                       value={selectedCountry}
                                       onChange={(e) => setPreviewCountry(prev => ({ ...prev, [f.id]: e.target.value }))}
-                                      className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer"
+                                      className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-lg px-3 text-xs text-[var(--text-primary)] cursor-pointer"
                                     >
-                                      <option value="" className="bg-[var(--base)] text-[var(--text)]">Select Country...</option>
+                                      <option value="">Select Country...</option>
                                       {countries.map(country => (
-                                        <option key={country} value={country} className="bg-[var(--base)] text-[var(--text)]">{country}</option>
+                                        <option key={country} value={country}>{country}</option>
                                       ))}
                                     </select>
                                   )}
 
                                   {selectedCountry && (
-                                    <div className="space-y-1.5 animate-in fade-in duration-200">
-                                      <label className="text-[10px] font-black uppercase tracking-wider text-muted flex items-center gap-1">
+                                    <div className="space-y-1 pt-1">
+                                      <label className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1">
                                         State / Province
                                         {f.is_required && <span className="text-rose-500 font-bold">*</span>}
                                       </label>
                                       {states.length ? (
                                         <select
-                                          className="h-11 w-full bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] focus:outline-none transition-all cursor-pointer"
+                                          className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-lg px-3 text-xs text-[var(--text-primary)] cursor-pointer"
                                         >
-                                          <option value="" className="bg-[var(--base)] text-[var(--text)]">Select State / Province...</option>
+                                          <option value="">Select State / Province...</option>
                                           {states.map(state => (
-                                            <option key={state} value={state} className="bg-[var(--base)] text-[var(--text)]">{state}</option>
+                                            <option key={state} value={state}>{state}</option>
                                           ))}
                                         </select>
                                       ) : (
                                         <Input
                                           type="text"
                                           placeholder="Enter state / province"
-                                          className="h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] transition-all"
+                                          className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-subtle)] rounded-lg text-xs"
                                         />
                                       )}
                                     </div>
@@ -761,82 +1026,75 @@ export default function RegistrationFormBuilder() {
                                 </div>
                               );
                             })()
-                          ) : fieldType === "email" ? (
-                            <Input
-                              type="email"
-                              placeholder={f.placeholder || `Enter ${f.label.toLowerCase()}`}
-                              className="h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] transition-all"
-                            />
-                          ) : fieldType === "phone" ? (
-                            <div className="flex gap-2">
-                              <select disabled className="h-11 w-24 bg-white/5 border border-white/10 rounded-xl px-2 text-xs font-semibold text-muted opacity-80 cursor-not-allowed">
-                                <option>+91</option>
+                          ) : fieldType === "phone" || f.id === "phone" ? (
+                            <div className="flex gap-1.5">
+                              <select
+                                defaultValue="+91"
+                                className="h-9 w-28 shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] px-2 text-xs font-mono text-[var(--text-primary)] cursor-pointer"
+                              >
+                                {COUNTRY_DIAL_CODES.map((c) => (
+                                  <option key={`${c.code}-${c.dial_code}`} value={c.dial_code}>
+                                    {c.flag} {c.dial_code}
+                                  </option>
+                                ))}
                               </select>
                               <Input
-                                type="text"
-                                disabled
-                                placeholder={f.placeholder || "Enter phone number..."}
-                                className="h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] flex-1 opacity-80"
+                                type="tel"
+                                placeholder={f.placeholder || "Enter phone / WhatsApp number"}
+                                className="h-9 flex-1 bg-[var(--bg-surface-2)] border-[var(--border-subtle)] rounded-lg text-xs"
                               />
                             </div>
                           ) : (
                             <Input
-                              type="text"
+                              type={fieldType === "email" ? "email" : "text"}
                               placeholder={f.placeholder || `Enter ${f.label.toLowerCase()}`}
-                              className="h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs font-semibold text-[var(--text)] focus:border-[var(--pri)] transition-all"
+                              className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-subtle)] rounded-lg text-xs"
                             />
                           )}
                         </div>
-                      )
+                      );
                     })}
 
-                  {/* Terms & Conditions preview in Form Builder Mockup */}
-                  <div className="space-y-3 pt-4 border-t border-white/5 text-left">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-muted">Terms &amp; Conditions</span>
-                      <span className="text-[9px] font-bold text-[var(--pri)]/60 uppercase tracking-widest">Markdown Preview</span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-white/5 border border-white/5 max-h-28 overflow-y-auto prose prose-invert prose-xs max-w-none
-                      prose-headings:text-[var(--text)] prose-headings:font-black prose-headings:text-xs prose-headings:mb-1
-                      prose-p:text-muted prose-p:text-[10px] prose-p:leading-relaxed prose-p:my-0.5
-                      prose-li:text-muted prose-li:text-[10px] prose-li:my-0
-                      prose-strong:text-[var(--text)] prose-em:text-indigo-300
-                      prose-a:text-indigo-400 prose-hr:border-white/10 prose-ul:my-1 prose-ol:my-1">
+                  {/* Terms & Conditions preview */}
+                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+                    <span className="text-[11px] font-bold text-[var(--text-primary)]">Terms &amp; Conditions</span>
+                    <div className="p-3 rounded-lg bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] max-h-28 overflow-y-auto text-xs text-[var(--text-secondary)] leading-relaxed">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {termsAndConditions || "## Terms & Conditions\n\n1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule without prior notice."}
+                        {termsAndConditions || "## Terms & Conditions\n\n1. Registration is non-transferable and non-refundable.\n2. Attendees must adhere to the Event Code of Conduct.\n3. The organizers reserve the right to modify the schedule."}
                       </ReactMarkdown>
                     </div>
-                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                      <input type="checkbox" disabled className="h-4 w-4 bg-white/5 border border-white/10 rounded text-[var(--pri)] focus:ring-0 mt-0.5" checked={true} readOnly />
-                      <span className="text-[10px] font-bold text-muted uppercase tracking-wider leading-normal">
+                    <label className="flex items-start gap-2 cursor-pointer select-none text-[11px] text-[var(--text-secondary)] font-medium">
+                      <input type="checkbox" disabled className="mt-0.5 rounded border-[var(--border-subtle)] text-[var(--pri)]" checked={true} readOnly />
+                      <span>
                         I have read and agree to the terms and conditions. <span className="text-rose-500 font-bold">*</span>
                       </span>
                     </label>
                   </div>
 
-                  <button
+                  <Button
                     type="button"
-                    className="w-full h-12 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white font-black uppercase tracking-widest text-[11px] rounded-xl shadow-lg mt-6 transition-all"
+                    className="w-full h-10 bg-[var(--pri)] text-[var(--primary-contrast)] font-bold text-xs rounded-xl shadow-sm mt-4"
                   >
                     Submit Registration
-                  </button>
+                  </Button>
                 </form>
               </div>
 
-              {/* Modal Footer */}
-              <div className="px-8 py-4 border-t border-white/5 bg-white/[0.01] flex items-center justify-end">
+              {/* Footer */}
+              <div className="px-5 py-3 border-t border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/60 flex items-center justify-end">
                 <Button
+                  size="sm"
+                  variant="outline"
                   onClick={() => setPreviewOpen(false)}
-                  className="h-10 px-6 bg-white/5 hover:bg-white/10 text-muted hover:text-[var(--text)] font-black uppercase tracking-widest text-[9px] rounded-full border border-default"
+                  className="h-8 text-xs font-semibold"
                 >
                   Close Preview
                 </Button>
               </div>
-
             </div>
           </div>
         </Portal>
       )}
-    </div>
+    </OrganiserPage>
   );
 }

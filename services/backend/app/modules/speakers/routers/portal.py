@@ -12,13 +12,15 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from jose import jwt, JWTError
+
 from app.config import settings
 from app.dependencies import get_db
 from app.schemas.common import MessageResponse
 from app.modules.events.models.speaker import Speaker
 from app.modules.events.models.event import Event
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.models.poster import Poster
 from app.modules.presentations.schemas.file import (
@@ -62,6 +64,8 @@ class PortalTalk(BaseModel):
     abstract_version: int = 1
     abstract_submitted_at: Optional[datetime] = None
     abstract_review_notes: Optional[str] = None
+    track_name: Optional[str] = None
+    external_url: Optional[str] = None
 
 
 class AbstractDraftUpdate(BaseModel):
@@ -284,6 +288,17 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
     except Exception:
         pass
 
+    track_name = None
+    try:
+        if getattr(session, "track", None):
+            track_name = session.track.name
+    except Exception:
+        pass
+
+    external_url = None
+    if ss.notes and (ss.notes.startswith("http://") or ss.notes.startswith("https://")):
+        external_url = ss.notes
+
     return PortalTalk(
         session_speaker_id=ss.id,
         session_name=session.name,
@@ -292,6 +307,7 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
         end_time=ss.end_time or session.end_time,
         talk_title=ss.presentation_title,
         room_name=room_name,
+        track_name=track_name,
         upload_status=upload_status,
         is_locked=is_locked,
         rejection_reason=current_file.rejection_reason if current_file else None,
@@ -299,6 +315,7 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
         download_url=download_url,
         preview_url=preview_url,
         thumbnail_url=thumbnail_url,
+        external_url=external_url,
         abstract_text=ss.abstract_text,
         abstract_keywords=ss.abstract_keywords or [],
         abstract_status=ss.abstract_status,
@@ -387,7 +404,7 @@ async def speaker_portal_auth(
     ).options(
         selectinload(Speaker.event),
         selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
-        selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.presentation_files).selectinload(PresentationFile.validation),
+        selectinload(Speaker.presentation_files).selectinload(PresentationFile.validation),
         selectinload(Speaker.srr_checkins),
         selectinload(Speaker.posters)
     )
@@ -2181,6 +2198,188 @@ async def update_speaker_profile(
         social_links=speaker.social_links,
         research_interests=speaker.research_interests,
         profile_completeness=calculate_profile_completeness(speaker),
+        registration_mode_enabled=speaker.event.registration_mode_enabled,
+        abstract_submission_enabled=abstract_enabled,
+        abstract_submission_reason=abstract_reason,
+    )
+
+
+class TalkExternalLinkBody(BaseModel):
+    url: str
+    token: Optional[str] = None
+
+
+@router.post("/talks/{session_speaker_id}/external-link", response_model=PortalTalk)
+async def portal_save_talk_external_link(
+    session_speaker_id: uuid.UUID,
+    body: TalkExternalLinkBody,
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+) -> PortalTalk:
+    """Attach an external presentation link (Google Drive, Dropbox, OneDrive, WeTransfer, etc.) to a talk slot."""
+    effective_token = body.token or token
+    if not effective_token and authorization and authorization.startswith("Bearer "):
+        effective_token = authorization.split("Bearer ")[1].strip()
+
+    if not effective_token:
+        raise HTTPException(status_code=401, detail="Token required.")
+
+    speaker = None
+    try:
+        payload = jwt.decode(effective_token, settings.PORTAL_JWT_SECRET, algorithms=["HS256"])
+        email = payload.get("sub") or payload.get("email")
+        event_id_str = payload.get("event_id")
+        if email and event_id_str:
+            speaker_q = select(Speaker).where(
+                Speaker.email == email.lower(),
+                Speaker.event_id == uuid.UUID(event_id_str)
+            ).options(selectinload(Speaker.event))
+            speaker_res = await db.execute(speaker_q)
+            speaker = speaker_res.scalar_one_or_none()
+    except Exception:
+        pass
+
+    if not speaker:
+        speaker_q = select(Speaker).where(
+            (Speaker.upload_token == effective_token) | (Speaker.speaker_code == effective_token.upper())
+        ).options(selectinload(Speaker.event))
+        speaker_res = await db.execute(speaker_q)
+        speaker = speaker_res.scalar_one_or_none()
+
+    if not speaker:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    ss_result = await db.execute(
+        select(SessionSpeaker).where(
+            SessionSpeaker.id == session_speaker_id,
+            SessionSpeaker.speaker_id == speaker.id
+        ).options(
+            selectinload(SessionSpeaker.session).selectinload(Session.room),
+            selectinload(SessionSpeaker.session).selectinload(Session.track),
+        )
+    )
+    ss = ss_result.scalar_one_or_none()
+    if ss is None:
+        raise HTTPException(status_code=404, detail="Talk slot not found.")
+
+    ss.notes = body.url.strip()
+    await db.commit()
+    await db.refresh(ss)
+    return _build_portal_talk(ss, speaker.event)
+
+
+@router.get("/speakers/me", response_model=SpeakerPortalAuthResponse)
+async def get_current_speaker_profile(
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+) -> SpeakerPortalAuthResponse:
+    """Return current speaker profile by upload token or portal session JWT."""
+    raw_token = token
+    if not raw_token and authorization and authorization.startswith("Bearer "):
+        raw_token = authorization.split("Bearer ")[1].strip()
+
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Token required.")
+
+    speaker = None
+
+    # 1. Attempt JWT decoding first (logged-in attendee token)
+    try:
+        payload = jwt.decode(raw_token, settings.PORTAL_JWT_SECRET, algorithms=["HS256"])
+        email = payload.get("sub") or payload.get("email")
+        event_id_str = payload.get("event_id")
+        if email and event_id_str:
+            speaker_q = select(Speaker).where(
+                Speaker.email == email.lower(),
+                Speaker.event_id == uuid.UUID(event_id_str)
+            ).options(
+                selectinload(Speaker.event),
+                selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+                selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.track),
+                selectinload(Speaker.presentation_files).selectinload(PresentationFile.validation),
+                selectinload(Speaker.srr_checkins),
+                selectinload(Speaker.posters)
+            )
+            speaker_res = await db.execute(speaker_q)
+            speaker = speaker_res.scalar_one_or_none()
+    except Exception:
+        pass
+
+    # 2. If not decoded or not matched, lookup by upload_token or speaker_code
+    if not speaker:
+        speaker_q = select(Speaker).where(
+            (Speaker.upload_token == raw_token) | (Speaker.speaker_code == raw_token.upper())
+        ).options(
+            selectinload(Speaker.event),
+            selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.room),
+            selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session).selectinload(Session.track),
+            selectinload(Speaker.presentation_files).selectinload(PresentationFile.validation),
+            selectinload(Speaker.srr_checkins),
+            selectinload(Speaker.posters)
+        )
+        speaker_res = await db.execute(speaker_q)
+        speaker = speaker_res.scalar_one_or_none()
+
+    if not speaker:
+        raise HTTPException(status_code=404, detail="Speaker profile not found.")
+
+    talks = []
+    for ss in speaker.session_speakers:
+        talks.append(_build_portal_talk(ss, speaker.event))
+
+    posters = []
+    for p in speaker.posters:
+        posters.append(_build_portal_poster(p, speaker.event))
+
+    from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
+    active_anns = await list_active_entitled_announcements(
+        db,
+        organization_id=speaker.event.organization_id,
+        event_id=speaker.event_id,
+        audiences=["all", "speakers"],
+    )
+    announcements_list = [
+        {
+            "id": str(ann.id),
+            "title": ann.title,
+            "message": ann.body,
+            "type": ann.priority,
+            "is_pinned": ann.is_pinned,
+            "created_at": ann.created_at.isoformat(),
+            "attachments": ann.attachments or []
+        }
+        for ann in active_anns
+    ]
+
+    abstract_enabled, abstract_reason = await _resolve_abstract_access(db, speaker.event)
+    return SpeakerPortalAuthResponse(
+        speaker_id=speaker.id,
+        first_name=speaker.first_name,
+        last_name=speaker.last_name,
+        email=speaker.email,
+        phone=speaker.phone,
+        designation=speaker.designation,
+        affiliation=speaker.affiliation,
+        country=speaker.country,
+        bio=speaker.bio,
+        photo_url=speaker.photo_url,
+        event_id=speaker.event_id,
+        event_name=speaker.event.name,
+        upload_deadline=speaker.event.upload_deadline,
+        max_file_size_mb=speaker.event.max_file_size_mb,
+        allowed_formats=speaker.event.allowed_formats,
+        allow_override=speaker.allow_override,
+        talks=talks,
+        posters=posters,
+        speaker_code=speaker.speaker_code,
+        qr_code_url=speaker.qr_code_url,
+        theme_color=speaker.event.theme_color,
+        upload_token=speaker.upload_token,
+        announcements=announcements_list,
+        social_links=speaker.social_links,
+        research_interests=speaker.research_interests,
         registration_mode_enabled=speaker.event.registration_mode_enabled,
         abstract_submission_enabled=abstract_enabled,
         abstract_submission_reason=abstract_reason,

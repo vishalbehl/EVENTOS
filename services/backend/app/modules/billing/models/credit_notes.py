@@ -26,7 +26,7 @@ class CreditNote(Base):
         'APPLIED'   – applied to a new/future invoice
     """
     __tablename__ = "credit_notes"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -37,7 +37,7 @@ class CreditNote(Base):
     )
     invoice_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("billing.invoices.id", ondelete="RESTRICT"),
+        ForeignKey("commerce.invoices.id", ondelete="RESTRICT"),
         nullable=False,
         index=True
     )
@@ -68,7 +68,7 @@ class CreditNote(Base):
         DateTime(timezone=True), nullable=True
     )
     applied_to_invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.invoices.id", ondelete="RESTRICT"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.invoices.id", ondelete="RESTRICT"), nullable=True
     )
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

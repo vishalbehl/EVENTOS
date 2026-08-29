@@ -24,11 +24,51 @@ def upgrade() -> None:
     # before the first CREATE TABLE.  ``IF NOT EXISTS`` also keeps upgrades
     # safe for environments where infrastructure provisioned them already.
     schemas = (
-        'ai', 'analytics', 'applications', 'audit', 'billing',
-        'communications', 'crm', 'developer', 'events', 'files', 'identity',
-        'integrations', 'jobs', 'marketplace', 'mobile', 'platform',
-        'presentations', 'rbac', 'registration', 'search', 'speakers',
-        'sponsors', 'support', 'venue', 'workflow',
+        'access',
+        'ai',
+        'analytics',
+        'applications',
+        'audit',
+        'automation',
+        'billing',
+        'blueprints',
+        'business',
+        'command_center_access',
+        'command_center_audit',
+        'commerce',
+        'commercial',
+        'communications',
+        'content',
+        'crm',
+        'design',
+        'developer',
+        'events',
+        'files',
+        'identity',
+        'integrations',
+        'jobs',
+        'marketplace',
+        'mobile',
+        'operation_templates',
+        'operations',
+        'organizer_access',
+        'platform',
+        'platform_communications',
+        'platform_notifications',
+        'presentations',
+        'pricing',
+        'public',
+        'rbac',
+        'registration',
+        'search',
+        'speakers',
+        'sponsors',
+        'support',
+        'templates',
+        'venue',
+        'website_builder',
+        'websites',
+        'workflow',
     )
     for schema in schemas:
         op.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
@@ -1252,7 +1292,7 @@ def upgrade() -> None:
     schema='rbac'
     )
     op.create_index(op.f('ix_rbac_feature_permissions_feature_id'), 'feature_permissions', ['feature_id'], unique=False, schema='rbac')
-    op.create_table('roles',
+    op.create_table('user_roles',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('organization_id', sa.UUID(), nullable=True),
     sa.Column('name', sa.String(length=100), nullable=False),
@@ -1265,9 +1305,9 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     schema='rbac'
     )
-    op.create_index(op.f('ix_rbac_roles_deleted_at'), 'roles', ['deleted_at'], unique=False, schema='rbac')
-    op.create_index(op.f('ix_rbac_roles_name'), 'roles', ['name'], unique=False, schema='rbac')
-    op.create_index(op.f('ix_rbac_roles_organization_id'), 'roles', ['organization_id'], unique=False, schema='rbac')
+    op.create_index(op.f('ix_rbac_user_roles_deleted_at'), 'user_roles', ['deleted_at'], unique=False, schema='rbac')
+    op.create_index(op.f('ix_rbac_user_roles_name'), 'user_roles', ['name'], unique=False, schema='rbac')
+    op.create_index(op.f('ix_rbac_user_roles_organization_id'), 'user_roles', ['organization_id'], unique=False, schema='rbac')
     op.create_table('search_indexes',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('organization_id', sa.UUID(), nullable=False),
@@ -1831,7 +1871,7 @@ def upgrade() -> None:
     sa.Column('role_id', sa.UUID(), nullable=False),
     sa.Column('permission_id', sa.UUID(), nullable=False),
     sa.ForeignKeyConstraint(['permission_id'], ['rbac.permissions.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['role_id'], ['rbac.roles.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['role_id'], ['rbac.user_roles.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     schema='rbac'
     )
@@ -1861,8 +1901,8 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('parent_role_id', sa.UUID(), nullable=False),
     sa.Column('child_role_id', sa.UUID(), nullable=False),
-    sa.ForeignKeyConstraint(['child_role_id'], ['rbac.roles.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['parent_role_id'], ['rbac.roles.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['child_role_id'], ['rbac.user_roles.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['parent_role_id'], ['rbac.user_roles.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     schema='rbac'
     )
@@ -1871,7 +1911,7 @@ def upgrade() -> None:
     sa.Column('role_id', sa.UUID(), nullable=False),
     sa.Column('permission_id', sa.UUID(), nullable=False),
     sa.ForeignKeyConstraint(['permission_id'], ['rbac.permissions.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['role_id'], ['rbac.roles.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['role_id'], ['rbac.user_roles.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     schema='rbac'
     )
@@ -2423,7 +2463,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['assigned_by'], ['identity.users.id'], ),
     sa.ForeignKeyConstraint(['event_id'], ['events.events.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['organization_id'], ['platform.organizations.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['role_id'], ['rbac.roles.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['role_id'], ['rbac.user_roles.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['user_id'], ['identity.users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     schema='rbac'
@@ -2526,7 +2566,7 @@ def upgrade() -> None:
     schema='registration'
     )
     op.create_index(op.f('ix_registration_registration_theme_settings_event_id'), 'registration_theme_settings', ['event_id'], unique=True, schema='registration')
-    op.create_table('roles',
+    op.create_table('participant_roles',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('event_id', sa.UUID(), nullable=False),
     sa.Column('category', sa.String(length=100), nullable=False),
@@ -2540,7 +2580,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     schema='registration'
     )
-    op.create_index(op.f('ix_registration_roles_event_id'), 'roles', ['event_id'], unique=False, schema='registration')
+    op.create_index(op.f('ix_registration_participant_roles_event_id'), 'participant_roles', ['event_id'], unique=False, schema='registration')
     op.create_table('ticket_types',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('event_id', sa.UUID(), nullable=False),
@@ -2806,7 +2846,7 @@ def upgrade() -> None:
     sa.Column('deleted_by', sa.UUID(), nullable=True),
     sa.ForeignKeyConstraint(['deleted_by'], ['identity.users.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['event_id'], ['events.events.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['role_id'], ['registration.roles.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['role_id'], ['registration.participant_roles.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id'),
     schema='registration'
     )
@@ -3782,8 +3822,8 @@ def downgrade() -> None:
     op.drop_table('waitlists', schema='registration')
     op.drop_index(op.f('ix_registration_ticket_types_event_id'), table_name='ticket_types', schema='registration')
     op.drop_table('ticket_types', schema='registration')
-    op.drop_index(op.f('ix_registration_roles_event_id'), table_name='roles', schema='registration')
-    op.drop_table('roles', schema='registration')
+    op.drop_index(op.f('ix_registration_participant_roles_event_id'), table_name='participant_roles', schema='registration')
+    op.drop_table('participant_roles', schema='registration')
     op.drop_index(op.f('ix_registration_registration_theme_settings_event_id'), table_name='registration_theme_settings', schema='registration')
     op.drop_table('registration_theme_settings', schema='registration')
     op.drop_index(op.f('ix_registration_registration_forms_event_id'), table_name='registration_forms', schema='registration')
@@ -4008,10 +4048,10 @@ def downgrade() -> None:
     op.drop_table('search_jobs', schema='search')
     op.drop_index(op.f('ix_search_search_indexes_organization_id'), table_name='search_indexes', schema='search')
     op.drop_table('search_indexes', schema='search')
-    op.drop_index(op.f('ix_rbac_roles_organization_id'), table_name='roles', schema='rbac')
-    op.drop_index(op.f('ix_rbac_roles_name'), table_name='roles', schema='rbac')
-    op.drop_index(op.f('ix_rbac_roles_deleted_at'), table_name='roles', schema='rbac')
-    op.drop_table('roles', schema='rbac')
+    op.drop_index(op.f('ix_rbac_roles_organization_id'), table_name='user_roles', schema='rbac')
+    op.drop_index(op.f('ix_rbac_roles_name'), table_name='user_roles', schema='rbac')
+    op.drop_index(op.f('ix_rbac_roles_deleted_at'), table_name='user_roles', schema='rbac')
+    op.drop_table('user_roles', schema='rbac')
     op.drop_index(op.f('ix_rbac_feature_permissions_feature_id'), table_name='feature_permissions', schema='rbac')
     op.drop_table('feature_permissions', schema='rbac')
     op.drop_index(op.f('ix_platform_tenant_usage_organization_id'), table_name='tenant_usage', schema='platform')

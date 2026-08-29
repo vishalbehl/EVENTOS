@@ -267,6 +267,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
             text("SELECT COUNT(*) FROM support.support_tickets WHERE status NOT IN ('RESOLVED','CLOSED')")
         ) or 0
     except Exception:
+        await db.rollback()
         open_tickets = 0
 
     # events_this_month
@@ -346,6 +347,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         while len(revenue_trend) < 7:
             revenue_trend.insert(0, 0.0)
     except Exception:
+        await db.rollback()
         revenue_trend = [0.0] * 7
 
     # top_orgs_by_mrr — top 5 orgs by MRR this period
@@ -353,11 +355,11 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
         top_orgs_res = await db.execute(text("""
             SELECT rm.organization_id, o.name as org_name,
                    SUM(rm.mrr) as mrr, sp.name as plan_name
-            FROM billing.revenue_metrics rm
+            FROM commerce.revenue_metrics rm
             JOIN platform.organizations o ON o.id = rm.organization_id
-            JOIN billing.organization_subscriptions os
+            JOIN commerce.organization_subscriptions os
               ON os.organization_id = rm.organization_id
-            JOIN billing.subscription_plans sp ON sp.id = os.plan_id
+            JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
             WHERE rm.period = TO_CHAR(NOW(), 'YYYY-MM')
             GROUP BY rm.organization_id, o.name, sp.name
             ORDER BY mrr DESC LIMIT 5
@@ -372,6 +374,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
             for r in top_orgs_res
         ]
     except Exception:
+        await db.rollback()
         top_orgs_by_mrr = []
 
     # subscription health matrix
@@ -429,6 +432,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
             SubscriptionPlan.name.label("plan_name"),
             OrganizationSubscription.trial_ends_at
         )
+        .select_from(OrganizationSubscription)
         .join(Organization, Organization.id == OrganizationSubscription.organization_id)
         .join(SubscriptionPlan, SubscriptionPlan.id == OrganizationSubscription.plan_id)
         .where(
@@ -453,6 +457,7 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
     try:
         await db.execute(select(1))
     except Exception:
+        await db.rollback()
         pg_status = "degraded"
 
     redis_status = "healthy"
@@ -1807,10 +1812,10 @@ async def list_all_subscriptions(
           THEN EXTRACT(DAY FROM os.trial_ends_at - NOW())::int
           ELSE NULL END as days_until_trial_end,
         COUNT(*) OVER() as total_count
-      FROM billing.organization_subscriptions os
+      FROM commerce.organization_subscriptions os
       JOIN platform.organizations o ON o.id = os.organization_id
-      JOIN billing.subscription_plans sp ON sp.id = os.plan_id
-      LEFT JOIN billing.revenue_metrics rm ON rm.organization_id = os.organization_id
+      JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
+      LEFT JOIN commerce.revenue_metrics rm ON rm.organization_id = os.organization_id
         AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
       WHERE (CAST(:status AS varchar) IS NULL OR os.status = CAST(:status AS varchar))
         AND (CAST(:plan_id AS uuid) IS NULL OR os.plan_id = CAST(:plan_id AS uuid))
@@ -1863,8 +1868,8 @@ async def list_all_subscriptions(
             COUNT(*) FILTER (WHERE os.status = 'ACTIVE') as active_count,
             COUNT(*) FILTER (WHERE os.status = 'TRIAL') as trial_count,
             COUNT(*) FILTER (WHERE os.status IN ('GRACE_PERIOD', 'SUSPENDED')) as at_risk_count
-        FROM billing.organization_subscriptions os
-        LEFT JOIN billing.revenue_metrics rm ON rm.organization_id = os.organization_id
+        FROM commerce.organization_subscriptions os
+        LEFT JOIN commerce.revenue_metrics rm ON rm.organization_id = os.organization_id
             AND rm.period = TO_CHAR(NOW(), 'YYYY-MM')
     """)
     summary_res = await db.execute(summary_q)
@@ -1895,10 +1900,10 @@ async def list_all_invoices(
     
     try:
         q_str = """
-        FROM billing.invoices i
+        FROM commerce.invoices i
         JOIN platform.organizations o ON o.id = i.organization_id
-        LEFT JOIN billing.organization_subscriptions os ON os.organization_id = i.organization_id
-        LEFT JOIN billing.subscription_plans sp ON sp.id = os.plan_id
+        LEFT JOIN commerce.organization_subscriptions os ON os.organization_id = i.organization_id
+        LEFT JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
         WHERE (:status IS NULL OR i.status = :status)
           AND (:search IS NULL OR o.name ILIKE :search_pattern)
           AND (:org_id IS NULL OR i.organization_id = :org_id)
@@ -1972,7 +1977,7 @@ async def list_all_invoices(
             COUNT(*) FILTER (WHERE status='PAID') as paid_count,
             COUNT(*) FILTER (WHERE status='OVERDUE') as overdue_count,
             AVG(EXTRACT(EPOCH FROM (paid_at - created_at)) / 86400.0) as avg_collection_days
-        FROM billing.invoices
+        FROM commerce.invoices
         WHERE (:org_id IS NULL OR organization_id = :org_id)
         """)
         summary_res = await db.execute(summary_q, {"org_id": org_id})
@@ -2596,7 +2601,7 @@ async def get_organization_dossier(
     # otherwise healthy dossier fail on optional columns.
     invoice_summary = (await db.execute(text("""
         SELECT COUNT(*) AS invoice_count, COALESCE(SUM(amount), 0) AS invoiced_total
-        FROM billing.invoices WHERE organization_id = :org_id
+        FROM commerce.invoices WHERE organization_id = :org_id
     """), {"org_id": org_id})).one()
 
     def subscription_payload(sub):
@@ -3543,7 +3548,7 @@ async def change_organization_plan(
     }
     sub.plan_id = payload.plan_id
     
-    # 3. INSERT billing.financial_audit_trail (activity_type='PLAN_CHANGED')
+    # 3. INSERT commerce.financial_audit_trail (activity_type='PLAN_CHANGED')
     audit_trail = FinancialAuditTrail(
         activity_type='PLAN_CHANGED',
         entity_type='SUBSCRIPTION',
@@ -3559,7 +3564,7 @@ async def change_organization_plan(
     )
     db.add(audit_trail)
     
-    # 4. INSERT billing.payment_events (event_type='PLAN_CHANGE', metadata={'from_plan': old_plan_name, 'to_plan': new_plan_name})
+    # 4. INSERT commerce.payment_events (event_type='PLAN_CHANGE', metadata={'from_plan': old_plan_name, 'to_plan': new_plan_name})
     log = ActivityTimeline(
         organization_id=org_id,
         actor_id=current_user.id,
@@ -3641,7 +3646,7 @@ async def extend_organization_trial(
     sub.trial_ends_at = new_trial
     sub.status = 'TRIAL'
     
-    # 4. INSERT into billing.financial_audit_trail:
+    # 4. INSERT into commerce.financial_audit_trail:
     audit_trail = FinancialAuditTrail(
         activity_type='TRIAL_EXTENDED',
         entity_type='SUBSCRIPTION',
@@ -3656,7 +3661,7 @@ async def extend_organization_trial(
     )
     db.add(audit_trail)
     
-    # 5. INSERT into billing.payment_events:
+    # 5. INSERT into commerce.payment_events:
     log = ActivityTimeline(
         organization_id=org_id,
         actor_id=current_user.id,
@@ -5504,8 +5509,8 @@ async def get_revenue_analytics(
             SELECT sp.name, 
                    COUNT(*) FILTER (WHERE os.status = 'ACTIVE') as upgrades,
                    0 as downgrades
-            FROM billing.organization_subscriptions os
-            JOIN billing.subscription_plans sp ON sp.id = os.plan_id
+            FROM commerce.organization_subscriptions os
+            JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
             GROUP BY sp.name
         """))
         upgrades_downgrades = [{"tier": r[0], "upgrades": int(r[1] or 0), "downgrades": int(r[2] or 0)} for r in res.fetchall()]
@@ -5549,7 +5554,7 @@ async def get_revenue_analytics(
     mrr_by_month_res = await db.execute(
         text("""
         SELECT period, SUM(mrr) as total_mrr, SUM(arr) as total_arr
-        FROM billing.revenue_metrics
+        FROM commerce.revenue_metrics
         WHERE period >= TO_CHAR(NOW() - (CAST(:months AS INTEGER) * INTERVAL '1 month'), 'YYYY-MM')
         GROUP BY period
         ORDER BY period
@@ -5562,9 +5567,9 @@ async def get_revenue_analytics(
     mrr_by_plan_res = await db.execute(
         text("""
         SELECT sp.name as plan_name, SUM(rm.mrr) as mrr, COUNT(DISTINCT rm.organization_id) as org_count
-        FROM billing.revenue_metrics rm
-        JOIN billing.organization_subscriptions os ON os.organization_id = rm.organization_id
-        JOIN billing.subscription_plans sp ON sp.id = os.plan_id
+        FROM commerce.revenue_metrics rm
+        JOIN commerce.organization_subscriptions os ON os.organization_id = rm.organization_id
+        JOIN commerce.subscription_plans sp ON sp.id = os.plan_id
         WHERE rm.period = TO_CHAR(NOW(), 'YYYY-MM')
         GROUP BY sp.name
         ORDER BY mrr DESC
@@ -5572,7 +5577,7 @@ async def get_revenue_analytics(
     )
     mrr_by_plan_rows = mrr_by_plan_res.all()
     
-    # Plan upgrades/downgrades this month from billing.payment_events / billing.financial_audit_trail
+    # Plan upgrades/downgrades this month from commerce.payment_events / commerce.financial_audit_trail
     plans_res = await db.execute(select(SubscriptionPlan.id, SubscriptionPlan.display_order, SubscriptionPlan.name))
     plan_info = {str(p.id): p.display_order for p in plans_res.all()}
     plan_name_info = {p.name.upper(): p.display_order for p in plans_res.all()}
@@ -5582,7 +5587,7 @@ async def get_revenue_analytics(
     try:
         events_res = await db.execute(text("""
             SELECT metadata_data 
-            FROM billing.payment_events
+            FROM commerce.payment_events
             WHERE action_type IN ('PLAN_CHANGED', 'PLAN_CHANGE')
               AND timestamp >= DATE_TRUNC('month', NOW())
         """))
@@ -5765,7 +5770,7 @@ async def get_financial_tax_config(
             SELECT
                 COALESCE(tax_type, 'GST') as type,
                 COALESCE(SUM(gst_amount), 0) as val
-            FROM billing.invoices
+            FROM commerce.invoices
             GROUP BY tax_type
         """))
         tax_summary_distribution = [{"type": r[0], "value": float(r[1])} for r in tax_dist_res.fetchall()]
@@ -5846,7 +5851,7 @@ async def get_financial_audit_trail(
     try:
         query_str = """
             SELECT a.id, a.organization_id, o.name as org_name, u.email as performed_by_name, a.activity_type, a.amount, a.occurred_at
-            FROM billing.financial_audit_trail a
+            FROM commerce.financial_audit_trail a
             LEFT JOIN platform.organizations o ON a.organization_id = o.id
             LEFT JOIN identity.users u ON a.performed_by = u.id
         """
@@ -5874,7 +5879,7 @@ async def get_financial_audit_trail(
             "occurred_at": r.occurred_at.isoformat()
         } for r in res.fetchall()]
         
-        count_query = "SELECT count(*) FROM billing.financial_audit_trail"
+        count_query = "SELECT count(*) FROM commerce.financial_audit_trail"
         if where_clauses:
             count_query += " WHERE " + " AND ".join(where_clauses)
         total_res = await db.execute(text(count_query), {k: v for k, v in params.items() if k not in ("limit", "offset")})

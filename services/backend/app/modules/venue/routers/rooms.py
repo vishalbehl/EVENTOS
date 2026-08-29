@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, OrganizerOrAbove, get_current_user
-from app.modules.events.models.room import Room
+from app.modules.agenda.models import Room
 from app.modules.identity.models.user import User
 from app.modules.venue.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 from app.schemas.common import MessageResponse
@@ -67,10 +67,13 @@ async def list_rooms(
 async def create_room(
     payload: RoomCreate,
     event: CurrentEvent,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RoomResponse:
+    if not idempotency_key:
+        idempotency_key = f"room-create:{uuid.uuid4()}"
+
     room = await EventResourceMutationService.create_room(
         db,
         event=event,

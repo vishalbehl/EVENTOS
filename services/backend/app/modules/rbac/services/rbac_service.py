@@ -86,8 +86,8 @@ class RBACService:
         
         if event_id:
             # Check for direct event assignment OR child node assignments (Room/Session)
-            from app.modules.events.models.room import Room
-            from app.modules.events.models.session import Session
+            from app.modules.agenda.models import Room
+            from app.modules.agenda.models import Session
 
             room_subquery = select(Room.id).where(Room.event_id == event_id)
             session_subquery = select(Session.id).where(Session.event_id == event_id)

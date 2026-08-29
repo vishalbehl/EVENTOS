@@ -161,7 +161,7 @@ async def room_breakdown(
     
     allowed = await get_allowed_sessions(current_user, event.id, db)
     if allowed is not None:
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         res = await db.execute(select(Session.room_id).where(Session.id.in_(allowed)))
         allowed_rooms = {str(r) for r in res.scalars().all() if r}
         rows = [r for r in rows if str(r["room_id"]) in allowed_rooms]

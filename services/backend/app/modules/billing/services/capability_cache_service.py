@@ -47,8 +47,8 @@ def _revision_scopes(session: Session) -> set[tuple[str, uuid.UUID, uuid.UUID | 
     from app.modules.billing.models.licensing import EventEntitlementSnapshotSet
     from app.modules.billing.models.subscription import Addon, AddonFeature, OrganizationAddon, OrganizationSubscription, PlanFeature, SubscriptionPlan
     from app.modules.events.models.event import Event
-    from app.modules.events.models.room import Room
-    from app.modules.events.models.session import Session as EventSession
+    from app.modules.agenda.models import Room
+    from app.modules.agenda.models import Session as EventSession
     from app.modules.events.models.speaker import Speaker
     from app.modules.identity.models.user import User
     from app.modules.integrations.models.integrations_domain_tables import IntegrationConnection

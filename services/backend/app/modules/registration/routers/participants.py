@@ -22,7 +22,7 @@ from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import (

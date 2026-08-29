@@ -1,0 +1,18 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
+import { apiClient } from "@/lib/api-client";
+import { EmptyState, ErrorState, EvidenceTime, LoadingState, PageFrame, Section, StatusBadge, formatBytes } from "@/components/operations/control-room";
+
+type Backup = { id: string; type: string; status: string; destination: string; manifest: Record<string, unknown>; checksum?: string; size_bytes?: number; error?: string; created_at: string; completed_at?: string; verified_at?: string };
+
+export default function BackupsPage() {
+  const client = useQueryClient(); const [destination, setDestination] = useState("D:\\EventosBackups"); const [backupType, setBackupType] = useState("full");
+  const query = useQuery({ queryKey: ["venue-backups"], queryFn: () => apiClient.get<{ items: Backup[] }>("/venue/admin/control/backups"), refetchInterval: 15000 });
+  const create = useMutation({ mutationFn: () => apiClient.post("/venue/admin/control/backups", { backup_type: backupType, destination, reason: "Manual production backup" }), onSuccess: () => { toast.success("Backup queued"); client.invalidateQueries({ queryKey: ["venue-backups"] }); }, onError: (error: Error) => toast.error(error.message) });
+  const submit = (event: FormEvent) => { event.preventDefault(); create.mutate(); };
+  return <PageFrame eyebrow="Recoverability" title="Backups" description="Durable backup requests and verification evidence. A queued job is never presented as a completed backup." actions={<button className="venue-button venue-button--secondary" onClick={() => query.refetch()}><RefreshCw className="size-4" />Refresh</button>}><Section title="Create backup" description="Administrator action recorded with destination and reason"><form onSubmit={submit} className="grid gap-3 p-4 md:grid-cols-[180px_minmax(280px,1fr)_auto]"><select className="venue-input" value={backupType} onChange={(event) => setBackupType(event.target.value)}><option value="full">Full backup</option><option value="database">Database only</option><option value="content">Content only</option><option value="emergency">Emergency package</option></select><input className="venue-input font-mono" value={destination} onChange={(event) => setDestination(event.target.value)} aria-label="Absolute backup destination" /><button disabled={create.isPending} className="venue-button venue-button--primary"><Archive className="size-4" />Queue backup</button></form></Section><Section title="Backup ledger" description="Completion and integrity are reported only by the backup worker">{query.isLoading && <LoadingState />}{query.isError && <ErrorState message={(query.error as Error).message} retry={() => query.refetch()} />}{query.data?.items.length === 0 && <EmptyState title="No backup evidence" detail="Create the first backup, then verify its worker result before production use." />}{!!query.data?.items.length && <div className="venue-table-wrap"><table className="venue-table"><thead><tr><th>Created</th><th>Type</th><th>State</th><th>Destination</th><th>Size</th><th>Integrity</th></tr></thead><tbody>{query.data.items.map((row) => <tr key={row.id}><td><EvidenceTime value={row.created_at} /></td><td>{row.type}</td><td><StatusBadge state={row.status} evidence={row.error} /></td><td className="venue-code">{row.destination}</td><td>{formatBytes(row.size_bytes)}</td><td>{row.verified_at ? <StatusBadge state="healthy" evidence={`Verified ${row.verified_at}`} /> : <StatusBadge state="unknown" evidence="No successful verification has been recorded." />}</td></tr>)}</tbody></table></div>}</Section></PageFrame>;
+}

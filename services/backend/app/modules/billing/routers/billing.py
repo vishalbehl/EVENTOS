@@ -11,6 +11,7 @@ from app.modules.analytics.models.usage import OrganizationUsage
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.registration.models.participant_registration import ParticipantRegistration
+from app.modules.platform.models.organization import Organization
 from app.modules.developer.models.developer_registry import RateLimit
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
@@ -78,6 +79,55 @@ async def get_billing_plan(user: ActiveUser, db: DB):
     subs = await EntitlementResolver.get_active_subscriptions(db, org_id)
     sub = subs[0] if subs else None
     if not sub:
+        organization = await db.get(Organization, org_id)
+        if organization and organization.has_unrestricted_capabilities:
+            events_used = await db.scalar(select(func.count(Event.id)).where(
+                Event.organization_id == org_id, Event.deleted_at.is_(None))) or 0
+            users_used = await db.scalar(select(func.count(User.id)).where(
+                User.organization_id == org_id, User.deleted_at.is_(None))) or 0
+            registrations_used = await db.scalar(
+                select(func.count(ParticipantRegistration.id))
+                .join(Event, Event.id == ParticipantRegistration.event_id)
+                .where(Event.organization_id == org_id, ParticipantRegistration.deleted_at.is_(None))) or 0
+            usage_rec = await db.get(OrganizationUsage, org_id)
+            storage_used_mb = round((usage_rec.storage_used_bytes if usage_rec else 0) / (1024 * 1024), 2)
+            return {
+                "subscription_id": None,
+                "status": "INTERNAL_UNLIMITED",
+                "trial_ends_at": None,
+                "current_period_end": None,
+                "cancel_at_period_end": False,
+                "subscriptions": [],
+                "plan": {
+                    "id": None,
+                    "name": "Eventos Internal",
+                    "tagline": "Unrestricted internal organisation",
+                    "description": "Internal verification organisation with unrestricted capabilities.",
+                    "billing_model": "internal",
+                    "currency": organization.currency,
+                    "price_per_event": None,
+                    "price_display": "Internal",
+                    "max_events": None,
+                    "max_users": None,
+                    "max_registrations": None,
+                    "max_speakers": None,
+                    "max_sessions": None,
+                    "max_rooms": None,
+                    "max_ticket_categories": None,
+                    "storage_quota_mb": None,
+                    "color_hex": organization.primary_color,
+                },
+                "usage": {
+                    "events": {"used": events_used, "max": None},
+                    "users": {"used": users_used, "max": None},
+                    "registrations": {"used": registrations_used, "max": None},
+                    "storage": {"used_mb": storage_used_mb, "max_mb": None},
+                },
+                "limits": {},
+                "availability": "AVAILABLE",
+                "freshness_at": datetime.now(timezone.utc),
+                "source": "INTERNAL_UNRESTRICTED_ORGANIZATION",
+            }
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No subscription found for this organization.")
     plan = await db.get(SubscriptionPlan, sub.plan_id)

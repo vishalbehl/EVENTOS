@@ -62,9 +62,10 @@ from app.models import (  # ensures all models are registered with Base
     AuditLog, EmailCampaign, EmailLog, EmailTemplate, Event,
     FileValidation, ImportJob, Organization, PlaybackEvent,
     PresentationBundle, BundleFile, PresentationFile, PresentationQueue, Poster, RefreshToken,
-    Room, RoomDevice, Session, SessionSpeaker, Speaker,
+    Room, RoomDevice, Session, Speaker,
     SRRCheckin, SRRStation, User, VenueSyncJob, UserOrganizationMembership,
 )
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.identity.services.auth_service import hash_password
 
 
@@ -193,7 +194,7 @@ async def setup_test_database():
     dropping one another's shared schemas.
     """
     from sqlalchemy import text
-    schemas = [
+    schemas = sorted(list(set([
         "platform", "identity", "rbac", "crm", "support", "billing", "events", "speakers",
         "registration", "presentations", "venue", "communications", "analytics", "audit",
         "applications", "marketplace", "developer", "integrations", "mobile", "ai",
@@ -202,8 +203,10 @@ async def setup_test_database():
         "platform_audit", "platform_activity", "platform_compliance",
         "commercial", "inventory", "procurement", "pricing",
         "templates", "website_builder", "blueprints", "design_system", "theme_engine",
-        "technology_services", "operations_planning", "operations", "resource_management", "deployment_management"
-    ]
+        "technology_services", "operations_planning", "operations", "resource_management", "deployment_management",
+        "commerce", "business", "content", "design", "command_center_access", "command_center_audit",
+        "organizer_access", "operation_templates", "websites", "access", "automation"
+    ]) | {t.schema for t in Base.metadata.tables.values() if t.schema}))
     lock_key = 1163284047  # Stable key reserved for the EventOS test database.
     lock_conn = await _test_engine.connect()
     acquired = await lock_conn.scalar(
@@ -490,7 +493,7 @@ async def session_obj(db: AsyncSession, event: Event, room: Room) -> Session:
         event_id=event.id,
         room_id=room.id,
         session_code="S-001",
-        name="Opening Keynote",
+        title="Opening Keynote",
         session_type="keynote",
         start_time=datetime(2026, 9, 1, 9, 0, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc),
@@ -535,9 +538,9 @@ async def session_speaker(
     ss = SessionSpeaker(
         session_id=session_obj.id,
         speaker_id=speaker.id,
-        presentation_title="Keynote Talk",
-        talk_order=0,
-        talk_duration_minutes=45,
+        role="Speaker",
+        name="Keynote Talk",
+        display_order=0,
     )
     db.add(ss)
     await db.flush()

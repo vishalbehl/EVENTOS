@@ -125,22 +125,15 @@ function commitComponentToDocument(component: Component, device: ResponsiveDevic
   const attributes = component.getAttributes() as Record<string, string>;
   const instanceId = attributes['data-wb-instance-id'];
   if (!instanceId) return;
-  const childJson = (() => {
-    try {
-      return component.components().toJSON();
-    } catch {
-      return undefined;
-    }
-  })();
-  const stringChildren = typeof childJson === 'string' ? childJson : undefined;
-  const content = component.get('content');
-  const textContent = component.getView()?.el?.textContent;
+  const childrenCount = typeof component.components === 'function' ? component.components().length : 0;
+  const isLeafComponent = childrenCount === 0;
+  const content = isLeafComponent ? component.get('content') : undefined;
+  const textContent = isLeafComponent ? component.getView()?.el?.textContent : undefined;
   useWebsiteDocumentStore.getState().updateInstance(instanceId, {
     props: {
       tagName: component.get('tagName'),
       attributes,
-      content: typeof content === 'string' && content ? content : textContent || '',
-      ...(stringChildren ? { html: stringChildren } : {}),
+      ...(isLeafComponent ? { content: typeof content === 'string' && content ? content : textContent || '' } : {}),
     },
     styles: {
       [device]: component.getStyle() as Record<string, string>,
@@ -272,17 +265,11 @@ export function usePropertySync(component: Component, property: PropertyDefiniti
         break;
       }
       case 'content': {
-        // Only set text if the component has no child components
-        if (targetComponent.components().length === 0 || mapping.selector) {
-          const el = targetComponent.getView()?.el;
-          if (el) {
-            el.innerText = strVal;
-            targetComponent.set('content', strVal);
-          }
-          if (targetComponent.components().length === 0 && typeof targetComponent.components === 'function') {
-            targetComponent.components(strVal);
-          }
+        const el = targetComponent.getView()?.el;
+        if (el) {
+          el.textContent = strVal;
         }
+        targetComponent.set('content', strVal);
         break;
       }
       case 'class': {

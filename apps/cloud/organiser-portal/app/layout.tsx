@@ -24,8 +24,14 @@ export default function RootLayout({
               (function() {
                 try {
                   var root = document.documentElement;
-                  root.classList.add('dark');
-                  root.setAttribute('data-theme', 'dark');
+                  var saved = localStorage.getItem('eventos-theme');
+                  if (saved === 'dark') {
+                    root.classList.add('dark');
+                    root.setAttribute('data-theme', 'dark');
+                  } else {
+                    root.classList.remove('dark');
+                    root.setAttribute('data-theme', 'light');
+                  }
                 } catch (e) {}
               })();
             `,

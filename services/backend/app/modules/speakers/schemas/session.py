@@ -19,6 +19,7 @@ class SessionSpeakerCreate(BaseModel):
     talk_order: int = Field(default=0, ge=0)
     talk_duration_minutes: Optional[int] = Field(None, ge=1, le=480)
     speaker_type: Optional[str] = None
+    role: str = Field(default="Speaker", max_length=100)
     is_confirmed: bool = False
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -44,6 +45,7 @@ class SessionSpeakerResponse(BaseModel):
     talk_order: int
     talk_duration_minutes: Optional[int] = None
     speaker_type: Optional[str] = None
+    role: str = "Speaker"
     is_confirmed: bool
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -57,12 +59,18 @@ class SessionCreate(BaseModel):
     session_code: str = Field(min_length=1, max_length=50)
     name: str = Field(min_length=2, max_length=255)
     room_id: Optional[uuid.UUID] = None
+    track_id: Optional[uuid.UUID] = None
     session_type: str = Field(default="regular")
     start_time: datetime
     end_time: datetime
     moderator_id: Optional[uuid.UUID] = None
     moderator_name: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = None
+    cme_credits: Optional[float] = None
+    cme_eligible: bool = False
+    operations_notes: Optional[str] = None
+    seating_layout: Optional[str] = None
+    live_stream_url: Optional[str] = None
     speakers: Optional[List[SessionSpeakerCreate]] = None
 
     @model_validator(mode="after")
@@ -83,12 +91,18 @@ class SessionUpdate(BaseModel):
     session_code: Optional[str] = Field(None, min_length=1, max_length=50)
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     room_id: Optional[uuid.UUID] = None
+    track_id: Optional[uuid.UUID] = None
     session_type: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     moderator_id: Optional[uuid.UUID] = None
     moderator_name: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = None
+    cme_credits: Optional[float] = None
+    cme_eligible: Optional[bool] = None
+    operations_notes: Optional[str] = None
+    seating_layout: Optional[str] = None
+    live_stream_url: Optional[str] = None
     status: Optional[str] = Field(None, pattern="^(scheduled|in_progress|completed|cancelled)$")
 
     @field_validator("session_code", mode="before")
@@ -105,24 +119,43 @@ class SessionResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_metadata(cls, data: Any) -> Any:
-        if isinstance(data, dict): return data
+        if isinstance(data, dict):
+            if "title" in data and "name" not in data:
+                data["name"] = data["title"]
+            elif "name" in data and "title" not in data:
+                data["title"] = data["name"]
+            return data
         if hasattr(data, "room") and data.room:
             setattr(data, "room_name", data.room.name)
+        if hasattr(data, "track") and data.track:
+            setattr(data, "track_name", data.track.name)
+            setattr(data, "track_color", data.track.display_color)
         if hasattr(data, "event") and data.event:
             setattr(data, "event_timezone", data.event.timezone)
+        if hasattr(data, "title") and not getattr(data, "name", None):
+            setattr(data, "name", getattr(data, "title", ""))
         return data
 
     id: uuid.UUID
     event_id: uuid.UUID
     room_id: Optional[uuid.UUID] = None
+    track_id: Optional[uuid.UUID] = None
+    track_name: Optional[str] = None
+    track_color: Optional[str] = None
     session_code: str
     name: str
+    title: Optional[str] = None
     session_type: str
     start_time: datetime
     end_time: datetime
     moderator_id: Optional[uuid.UUID] = None
     moderator_name: Optional[str] = None
     description: Optional[str] = None
+    cme_credits: Optional[float] = None
+    cme_eligible: bool = False
+    operations_notes: Optional[str] = None
+    seating_layout: Optional[str] = None
+    live_stream_url: Optional[str] = None
     status: str
     created_at: datetime
     updated_at: datetime
@@ -139,11 +172,22 @@ class SessionSummary(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_metadata(cls, data: Any) -> Any:
-        if isinstance(data, dict): return data
+        if isinstance(data, dict):
+            if "title" in data and "name" not in data:
+                data["name"] = data["title"]
+            elif "name" in data and "title" not in data:
+                data["title"] = data["name"]
+            return data
         if hasattr(data, "room") and data.room:
             setattr(data, "room_name", data.room.name)
+        if hasattr(data, "track") and data.track:
+            setattr(data, "track_name", data.track.name)
+            setattr(data, "track_color", data.track.display_color)
         if hasattr(data, "event") and data.event:
             setattr(data, "event_timezone", data.event.timezone)
+        if hasattr(data, "title") and not getattr(data, "name", None):
+            setattr(data, "name", getattr(data, "title", ""))
+
         
         # Calculate speaker count and readiness
         is_poster_session = getattr(data, "session_type", "") == "poster"
@@ -181,6 +225,7 @@ class SessionSummary(BaseModel):
                         "session_speaker_id": str(ss.id),
                         "full_name": f"{ss.speaker.first_name} {ss.speaker.last_name}",
                         "email": ss.speaker.email,
+                        "role": getattr(ss, "role", "Speaker"),
                         "upload_status": ss.speaker.upload_status,
                         "talk_order": ss.talk_order,
                         "presentation_title": ss.presentation_title,
@@ -195,9 +240,14 @@ class SessionSummary(BaseModel):
     session_code: str
     name: str
     room_id: Optional[uuid.UUID] = None
+    track_id: Optional[uuid.UUID] = None
+    track_name: Optional[str] = None
+    track_color: Optional[str] = None
     session_type: str
     start_time: datetime
     end_time: datetime
+    cme_credits: Optional[float] = None
+    cme_eligible: bool = False
     status: str
     room_name: Optional[str] = None
     event_timezone: str = "UTC"
@@ -220,5 +270,6 @@ class SessionSpeakerUpdate(BaseModel):
     talk_order: Optional[int] = Field(None, ge=0)
     talk_duration_minutes: Optional[int] = Field(None, ge=1)
     speaker_type: Optional[str] = None
+    role: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None

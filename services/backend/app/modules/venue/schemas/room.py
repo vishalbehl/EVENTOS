@@ -8,7 +8,22 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
-ROOM_TYPES = ("presentation", "workshop", "poster", "plenary")
+ROOM_TYPES = (
+    "presentation",
+    "workshop",
+    "poster",
+    "plenary",
+    "open_area",
+    "dining",
+    "registration",
+    "virtual",
+    "hall",
+    "breakout",
+    "boardroom",
+    "auditorium",
+    "exhibition",
+    "other",
+)
 
 
 class RoomCreate(BaseModel):
@@ -16,13 +31,18 @@ class RoomCreate(BaseModel):
     capacity: Optional[int] = Field(None, ge=1)
     screen_count: int = Field(default=1, ge=1)
     room_type: str = Field(default="presentation")
+    room_coordinator: Optional[str] = Field(None, max_length=150)
     av_technician: Optional[str] = Field(None, max_length=150)
     location_notes: Optional[str] = None
 
+    @model_validator(mode="after")
+    def populate_coordinator(self) -> "RoomCreate":
+        if not self.room_coordinator and self.av_technician:
+            self.room_coordinator = self.av_technician
+        return self
+
     @property
     def validated_room_type(self) -> str:
-        if self.room_type not in ROOM_TYPES:
-            raise ValueError(f"room_type must be one of {ROOM_TYPES}")
         return self.room_type
 
 
@@ -31,9 +51,16 @@ class RoomUpdate(BaseModel):
     capacity: Optional[int] = Field(None, ge=1)
     screen_count: Optional[int] = Field(None, ge=1)
     room_type: Optional[str] = None
+    room_coordinator: Optional[str] = Field(None, max_length=150)
     av_technician: Optional[str] = Field(None, max_length=150)
     location_notes: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def populate_coordinator(self) -> "RoomUpdate":
+        if not self.room_coordinator and self.av_technician:
+            self.room_coordinator = self.av_technician
+        return self
 
 
 class RoomResponse(BaseModel):
@@ -53,6 +80,7 @@ class RoomResponse(BaseModel):
     capacity: Optional[int] = None
     screen_count: int
     room_type: str
+    room_coordinator: Optional[str] = None
     av_technician: Optional[str] = None
     location_notes: Optional[str] = None
     is_active: bool

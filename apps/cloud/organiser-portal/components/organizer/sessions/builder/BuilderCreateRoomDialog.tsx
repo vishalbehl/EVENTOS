@@ -23,13 +23,13 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
   const updateRoom = useUpdateRoom();
   const addRoom = useSessionBuilderStore((s) => s.addRoom);
   const updateRoomInStore = useSessionBuilderStore((s) => s.updateRoom);
-  
+
   const [formData, setFormData] = useState({
     name: "",
     capacity: 100,
     screen_count: 1,
     room_type: "presentation",
-    av_technician: "",
+    room_coordinator: "",
     location_notes: "",
     is_active: true
   });
@@ -41,7 +41,7 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
         capacity: roomToEdit.capacity || 100,
         screen_count: roomToEdit.screen_count || 1,
         room_type: roomToEdit.room_type || "presentation",
-        av_technician: roomToEdit.av_technician || "",
+        room_coordinator: roomToEdit.room_coordinator || roomToEdit.av_technician || "",
         location_notes: roomToEdit.location_notes || "",
         is_active: roomToEdit.is_active ?? true
       });
@@ -51,7 +51,7 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
         capacity: 100,
         screen_count: 1,
         room_type: "presentation",
-        av_technician: "",
+        room_coordinator: "",
         location_notes: "",
         is_active: true
       });
@@ -75,8 +75,7 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Ensure numeric fields are valid
+
     const payload = {
       ...formData,
       capacity: isNaN(formData.capacity) ? 0 : formData.capacity,
@@ -139,60 +138,63 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
+          className="fixed inset-0 bg-black/60 z-[200]"
         />
       )}
       {isOpen && (
         <div key="builder-create-room-wrapper" className="fixed inset-0 flex items-center justify-center z-[210] pointer-events-none p-4">
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            initial={{ scale: 0.96, opacity: 0, y: 10 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.95, opacity: 0, y: 20 }}
-            className="w-full max-w-2xl glass-3d rounded-[2.5rem] border-default shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden relative"
+            exit={{ scale: 0.96, opacity: 0, y: 10 }}
+            className="w-full max-w-lg rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-lg pointer-events-auto flex flex-col max-h-[85vh] overflow-hidden relative"
           >
-            <button 
-              onClick={onClose} 
-              className="absolute top-8 right-8 h-10 w-10 rounded-full border border-default flex items-center justify-center text-muted hover:text-[var(--text)] transition-all z-10"
-            >
-              <X className="h-4 w-4" />
-            </button>
-
-            {/* Scrollable Body */}
-            <form onSubmit={handleSubmit} id="builder-create-room-form" className="flex-1 overflow-y-auto p-8 pt-20 space-y-8 no-scrollbar bg-background">
-              {/* Header Integrated in Body */}
-              <div className="flex items-center gap-4 mb-2">
-                <div className="h-12 w-12 rounded-2xl bg-[var(--pri)]/10 flex items-center justify-center">
-                  <Box className="h-6 w-6 text-[var(--pri)]" />
+            {/* Header */}
+            <div className="p-4 border-b border-[var(--border-default)] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-md bg-[var(--brand-primary-muted)] text-[var(--brand-primary)] flex items-center justify-center">
+                  <Box className="h-4 w-4" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black text-[var(--text)] uppercase tracking-tight">
+                  <h2 className="text-sm font-semibold text-[var(--text-primary)] tracking-wide">
                     {roomToEdit ? "Edit Room" : "Create Room"}
                   </h2>
-                  <p className="text-[11px] font-bold text-muted uppercase tracking-widest mt-0.5">Define a new event space in builder</p>
+                  <p className="text-[11px] text-[var(--text-secondary)]">Define an event space for scheduling</p>
                 </div>
               </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-7 w-7 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
 
-              <div className="space-y-2 mt-4">
-                <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Room Name *</label>
+            {/* Scrollable Body */}
+            <form onSubmit={handleSubmit} id="builder-create-room-form" className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider block">Room Name *</label>
                 <div className="relative group">
-                  <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-secondary)] group-focus-within:text-[var(--pri)] transition-colors" />
                   <Input
                     required
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="e.g. Grand Ballroom A"
-                    className="h-12 border-default pl-12 text-[13px] font-bold"
+                    className="h-9 border-[var(--border-default)] bg-[var(--card)] pl-9 text-xs font-medium text-[var(--text-primary)]"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Room Type</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider block">Room Type</label>
                   <select
                     value={formData.room_type}
                     onChange={(e) => setFormData({ ...formData, room_type: e.target.value })}
-                    className="w-full h-12 border-default rounded-xl px-4 text-[13px] font-bold text-[var(--text)] bg-background appearance-none focus:outline-none cursor-pointer border"
+                    className="w-full h-9 border border-[var(--border-default)] rounded-md px-3 text-xs font-medium text-[var(--text-primary)] bg-[var(--card)] focus:outline-none cursor-pointer"
                   >
                     {ROOM_TYPES.map(t => (
                       <option key={t.value} value={t.value}>{t.label}</option>
@@ -200,10 +202,10 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
                   </select>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Max Capacity *</label>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider block">Max Capacity *</label>
                   <div className="relative group">
-                    <Users className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
+                    <Users className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-secondary)] group-focus-within:text-[var(--pri)] transition-colors" />
                     <Input
                       required
                       type="number"
@@ -212,17 +214,17 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
                         const val = e.target.value;
                         setFormData({ ...formData, capacity: val === "" ? NaN : parseInt(val) });
                       }}
-                      className="h-12 border-default pl-12 text-[13px] font-bold"
+                      className="h-9 border-[var(--border-default)] bg-[var(--card)] pl-9 text-xs font-medium text-[var(--text-primary)]"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Screen Count *</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider block">Screen Count *</label>
                   <div className="relative group">
-                    <Monitor className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
+                    <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-secondary)] group-focus-within:text-[var(--pri)] transition-colors" />
                     <Input
                       required
                       type="number"
@@ -232,49 +234,57 @@ export function BuilderCreateRoomDialog({ isOpen, onClose, roomToEdit }: Builder
                         const val = e.target.value;
                         setFormData({ ...formData, screen_count: val === "" ? NaN : parseInt(val) });
                       }}
-                      className="h-12 border-default pl-12 text-[13px] font-bold"
+                      className="h-9 border-[var(--border-default)] bg-[var(--card)] pl-9 text-xs font-medium text-[var(--text-primary)]"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">AV Technician</label>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider block">Room Coordinator</label>
                   <div className="relative group">
-                    <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
+                    <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-secondary)] group-focus-within:text-[var(--pri)] transition-colors" />
                     <Input
-                      value={formData.av_technician}
-                      onChange={(e) => setFormData({ ...formData, av_technician: e.target.value })}
-                      placeholder="Name of onsite tech"
-                      className="h-12 border-default pl-12 text-[13px] font-bold"
+                      value={formData.room_coordinator}
+                      onChange={(e) => setFormData({ ...formData, room_coordinator: e.target.value })}
+                      placeholder="Onsite room coordinator / lead"
+                      className="h-9 border-[var(--border-default)] bg-[var(--card)] pl-9 text-xs font-medium text-[var(--text-primary)]"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Location Notes</label>
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider block">Location Notes</label>
                 <textarea
                   value={formData.location_notes}
                   onChange={(e) => setFormData({ ...formData, location_notes: e.target.value })}
                   placeholder="e.g. Floor 2, North Wing, near elevator"
-                  className="w-full min-h-[100px] bg-background border border-default rounded-2xl p-4 text-[13px] font-bold text-[var(--text)] focus:outline-none transition-all resize-none"
+                  className="w-full min-h-[80px] bg-[var(--card)] border border-[var(--border-default)] rounded-md p-2.5 text-xs text-[var(--text-primary)] focus:outline-none resize-none"
                 />
               </div>
             </form>
 
             {/* Footer */}
-            <div className="p-8 border-t border-default bg-[color-mix(in_srgb,var(--base)_50%,transparent)] backdrop-blur-sm flex gap-4">
-              <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted hover:bg-background">
+            <div className="p-3.5 border-t border-[var(--border-default)] bg-[var(--surface-subtle)] flex items-center justify-end gap-2">
+              <Button
+                onClick={onClose}
+                variant="outline"
+                className="h-8 px-3 rounded-md text-xs font-medium border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >
                 Cancel
               </Button>
               <Button
-                disabled={createRoom.isPending}
+                disabled={createRoom.isPending || updateRoom.isPending}
                 form="builder-create-room-form"
                 type="submit"
-                className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
+                className="h-8 px-4 rounded-md bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-black font-semibold text-xs tracking-wide shadow-xs border-0 flex items-center gap-1.5"
               >
-                {createRoom.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-                Add Room to Builder
+                {createRoom.isPending || updateRoom.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                {roomToEdit ? "Update Room" : "Add Room"}
               </Button>
             </div>
           </motion.div>

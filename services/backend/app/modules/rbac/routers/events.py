@@ -100,7 +100,7 @@ async def list_events(
         )
 
         # Get event IDs for assigned rooms
-        from app.modules.events.models.room import Room
+        from app.modules.agenda.models import Room
         room_event_ids = select(Room.event_id).where(
             Room.id.in_(
                 select(UserAccessNode.node_id).where(
@@ -111,7 +111,7 @@ async def list_events(
         )
 
         # Get event IDs for assigned sessions
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         session_event_ids = select(Session.event_id).where(
             Session.id.in_(
                 select(UserAccessNode.node_id).where(
@@ -178,6 +178,20 @@ async def create_event(
 async def get_event(event: CurrentEvent) -> EventResponse:
     """Get a single event. Scoped to user's org (super_admin bypasses)."""
     return EventResponse.model_validate(event)
+
+
+@router.get("/{event_id}/needs-attention", response_model=list[dict])
+async def get_event_needs_attention(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return actionable event setup/operations tasks for organizer pages."""
+    from app.modules.organiser.router import _attention_for_event
+
+    if current_user.role != "super_admin" and event.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    return await _attention_for_event(db, event)
 
 
 @router.patch("/{event_id}", response_model=EventResponse)

@@ -12,7 +12,6 @@
 
 from app.modules.audit.models.api_request_log import WorkerJobLog  # noqa: F401
 from app.modules.audit.models.audit_domain_tables import (  # noqa: F401
-    SecurityLog,
     SystemChange,
     DataExport,
     AccessReview,
@@ -20,7 +19,6 @@ from app.modules.audit.models.audit_domain_tables import (  # noqa: F401
 
 __all__ = [
     "WorkerJobLog",
-    "SecurityLog",
     "SystemChange",
     "DataExport",
     "AccessReview",

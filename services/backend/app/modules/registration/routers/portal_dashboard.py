@@ -27,6 +27,7 @@ from app.modules.registration.services.portal_service import (
 from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
+from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.identity.models.portal_otp_token import PortalOtpToken
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.routers.portal_auth import (
@@ -56,9 +57,17 @@ class EventInfoResponse(BaseModel):
     announcements: Any
     program_url: str = ""
     terms_and_conditions: str = ""
+    short_code: str = ""
     faqs: Optional[list] = None
     include_default_faqs: Optional[bool] = True
-
+    description: Optional[str] = ""
+    location: Optional[str] = ""
+    venue_name: Optional[str] = ""
+    state: Optional[str] = ""
+    country: Optional[str] = ""
+    timezone: Optional[str] = "UTC"
+    mode: Optional[str] = "IN_PERSON"
+    organizer_name: Optional[str] = ""
 
 
 class RegistrationInfoResponse(BaseModel):
@@ -67,6 +76,8 @@ class RegistrationInfoResponse(BaseModel):
     submitted_at: Optional[datetime]
     waitlist_position: Optional[int]
     rejection_reason: Optional[str]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class ParticipantInfoResponse(BaseModel):
@@ -74,15 +85,19 @@ class ParticipantInfoResponse(BaseModel):
     name: str
     first_name: Optional[str] = ""
     last_name: Optional[str] = ""
+    title: Optional[str] = None
     email: str
     phone: str
     company: str
     designation: str
     country: str
+    state: Optional[str] = None
     role: str
     paid_status: str
     custom_fields: dict
     registered_at: Optional[datetime]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class PaymentInfoResponse(BaseModel):
@@ -96,6 +111,16 @@ class PaymentInfoResponse(BaseModel):
     discount_applied: float
 
 
+class PricingInfoResponse(BaseModel):
+    base_price: float
+    currency: str
+    active_tier: str
+    payment_enabled: bool
+    active_gateway: str
+    roles: list[dict] = []
+    active_prices: dict[str, float] = {}
+
+
 class DashboardResponse(BaseModel):
     event: EventInfoResponse
     registration: RegistrationInfoResponse
@@ -104,16 +129,19 @@ class DashboardResponse(BaseModel):
     edits_locked: bool
     is_speaker: bool
     speaker_portal_url: str
+    pricing: Optional[PricingInfoResponse] = None
 
 
 class AttendeeUpdateBody(BaseModel):
     name: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    title: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
     designation: Optional[str] = None
     country: Optional[str] = None
+    state: Optional[str] = None
     custom_fields: Optional[dict[str, Any]] = None
     new_email: Optional[EmailStr] = None
     otp: Optional[str] = None
@@ -124,10 +152,12 @@ class ParticipantUpdateResponse(BaseModel):
     name: str
     first_name: Optional[str] = ""
     last_name: Optional[str] = ""
+    title: Optional[str] = None
     phone: str
     company: str
     designation: str
     country: str
+    state: Optional[str] = None
     custom_fields: dict
     updated_at: Optional[datetime] = None
     new_token: Optional[str] = None
@@ -139,7 +169,16 @@ class EmailUpdateOtpRequest(BaseModel):
 
 class AttendeeCheckoutRequest(BaseModel):
     promo_code: Optional[str] = None
-    redirect_base_url: str
+    redirect_base_url: Optional[str] = ""
+
+
+class AttendeePaymentConfirmRequest(BaseModel):
+    transaction_id: Optional[str] = None
+    gateway_order_id: Optional[str] = None
+    gateway_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
+    session_id: Optional[str] = None
+    simulated: Optional[bool] = None
 
 
 # ── Response schemas (MessageResponse) ──────────────────────────────────────
@@ -187,6 +226,7 @@ async def get_portal_dashboard(
             announcements=data.event.announcements,
             program_url=data.event.program_url,
             terms_and_conditions=data.event.terms_and_conditions,
+            short_code=data.event.short_code,
             faqs=data.event.faqs,
             include_default_faqs=data.event.include_default_faqs,
         ),
@@ -196,6 +236,8 @@ async def get_portal_dashboard(
             submitted_at=data.registration.submitted_at,
             waitlist_position=data.registration.waitlist_position,
             rejection_reason=data.registration.rejection_reason,
+            created_at=data.registration.created_at,
+            updated_at=data.registration.updated_at,
         ),
         participant=(
             ParticipantInfoResponse(
@@ -203,15 +245,19 @@ async def get_portal_dashboard(
                 name=data.participant.name,
                 first_name=data.participant.first_name,
                 last_name=data.participant.last_name,
+                title=data.participant.title,
                 email=data.participant.email,
                 phone=data.participant.phone,
                 company=data.participant.company,
                 designation=data.participant.designation,
                 country=data.participant.country,
+                state=data.participant.state,
                 role=data.participant.role,
                 paid_status=data.participant.paid_status,
                 custom_fields=data.participant.custom_fields,
                 registered_at=data.participant.registered_at,
+                created_at=data.participant.created_at,
+                updated_at=data.participant.updated_at,
             )
             if data.participant
             else None
@@ -233,6 +279,19 @@ async def get_portal_dashboard(
         edits_locked=data.edits_locked,
         is_speaker=data.is_speaker,
         speaker_portal_url=data.speaker_portal_url,
+        pricing=(
+            PricingInfoResponse(
+                base_price=data.pricing.base_price,
+                currency=data.pricing.currency,
+                active_tier=data.pricing.active_tier,
+                payment_enabled=data.pricing.payment_enabled,
+                active_gateway=data.pricing.active_gateway,
+                roles=data.pricing.roles,
+                active_prices=data.pricing.active_prices,
+            )
+            if data.pricing
+            else None
+        ),
     )
 
 
@@ -343,10 +402,12 @@ async def patch_attendee_details(
         name=details.get("name", ""),
         first_name=details.get("first_name", ""),
         last_name=details.get("last_name", ""),
+        title=details.get("title", "Dr."),
         phone=details.get("phone", ""),
         company=details.get("company", ""),
         designation=details.get("designation", ""),
         country=details.get("country", ""),
+        state=details.get("state", ""),
         custom_fields=details.get("custom_fields", {}),
         updated_at=datetime.now(timezone.utc),
         new_token=new_token
@@ -651,3 +712,124 @@ async def attendee_payment_checkout(
         "registration_id": str(reg.id)
     }
 
+
+@router.post("/portal/attendee/payment/confirm")
+async def attendee_payment_confirm(
+    payload: AttendeePaymentConfirmRequest,
+    portal_user: PortalUser = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Confirm and finalize a pending payment transaction from the dashboard.
+    Updates the registration and participant status to 'Paid', assigns a registration number if needed,
+    and returns full transaction and invoice receipt details.
+    """
+    event = await db.get(Event, portal_user.event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.payments.manage",
+    )
+
+    reg_settings = event.registration_settings or {}
+    active_gateway = reg_settings.get("active_gateway", "simulated")
+
+    # Find the registration record
+    reg_stmt = (
+        select(ParticipantRegistration)
+        .where(
+            ParticipantRegistration.event_id == portal_user.event_id,
+            text("registration_data->>'email' = :email").bindparams(email=portal_user.email.lower()),
+        )
+        .order_by(ParticipantRegistration.submitted_at.desc())
+        .limit(1)
+    )
+    reg = (await db.execute(reg_stmt)).scalar_one_or_none()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration record not found.")
+
+    # Find or create PaymentTransaction
+    tx = None
+    if payload.transaction_id:
+        try:
+            tx_uuid = uuid.UUID(payload.transaction_id)
+            tx = await db.get(PaymentTransaction, tx_uuid)
+        except Exception:
+            pass
+
+    if not tx:
+        tx_stmt = (
+            select(PaymentTransaction)
+            .where(
+                PaymentTransaction.event_id == portal_user.event_id,
+                PaymentTransaction.registration_id == reg.id
+            )
+            .order_by(PaymentTransaction.created_at.desc())
+            .limit(1)
+        )
+        tx = (await db.execute(tx_stmt)).scalar_one_or_none()
+
+    if not tx:
+        tx = PaymentTransaction(
+            event_id=portal_user.event_id,
+            registration_id=reg.id,
+            amount=float(reg.registration_data.get("amount_paid", 0.0) or 0.0),
+            currency=event.currency or "INR",
+            status="completed",
+            payment_method=active_gateway,
+            gateway_payment_id=payload.gateway_payment_id or f"pay_{uuid.uuid4().hex[:12]}",
+            gateway_order_id=payload.gateway_order_id,
+        )
+        db.add(tx)
+    else:
+        tx.status = "completed"
+        if payload.gateway_payment_id:
+            tx.gateway_payment_id = payload.gateway_payment_id
+        elif not tx.gateway_payment_id:
+            tx.gateway_payment_id = f"pay_{uuid.uuid4().hex[:12]}"
+        if payload.gateway_order_id:
+            tx.gateway_order_id = payload.gateway_order_id
+
+    # Update registration data
+    reg_data = dict(reg.registration_data or {})
+    reg_data["paid_status"] = "Paid"
+    reg.registration_data = reg_data
+
+    # Update or sync participant record
+    participant = None
+    if reg.participant_id:
+        participant = await db.get(Participant, reg.participant_id)
+    if not participant:
+        p_stmt = select(Participant).where(
+            Participant.event_id == portal_user.event_id,
+            Participant.email == portal_user.email.lower()
+        )
+        participant = (await db.execute(p_stmt)).scalar_one_or_none()
+
+    if participant:
+        participant.paid_status = "Paid"
+        if not participant.regno:
+            from app.modules.registration.routers.participants import generate_next_regno
+            participant.regno = await generate_next_regno(db, portal_user.event_id, participant.role)
+        reg.participant_id = participant.id
+
+    await db.commit()
+    if participant:
+        await db.refresh(participant)
+    await db.refresh(tx)
+
+    return {
+        "success": True,
+        "status": "Paid",
+        "transaction_id": str(tx.id),
+        "amount": tx.amount,
+        "currency": tx.currency,
+        "payment_method": tx.payment_method,
+        "gateway_payment_id": tx.gateway_payment_id,
+        "regno": participant.regno if participant else (reg.registration_data.get("regno") or ""),
+        "message": "Payment confirmed successfully."
+    }

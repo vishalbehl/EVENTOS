@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
   startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, 
-  isToday, isSameDay, parseISO 
+  isToday, isSameDay
 } from "date-fns";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -29,11 +29,12 @@ export function DatePicker({ value, onChange, className }: DatePickerProps) {
   return (
     <div className={cn("relative inline-block", className)}>
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-3 px-4 py-2 rounded-2xl glass-3d border-default hover:border-[var(--pri)]/50 transition-all group"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border-default)] bg-[var(--card)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer shadow-sm text-xs font-semibold text-[var(--text-primary)]"
       >
-        <CalendarIcon className="h-4 w-4 text-[var(--pri)] group-hover:scale-110 transition-transform" />
-        <span className="text-[13px] font-black uppercase tracking-widest text-[var(--text)]">
+        <CalendarIcon className="size-3.5 text-[var(--pri)]" />
+        <span>
           {format(value, "d MMM yyyy")}
         </span>
       </button>
@@ -46,34 +47,36 @@ export function DatePicker({ value, onChange, className }: DatePickerProps) {
             
             {/* Popover */}
             <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              initial={{ opacity: 0, y: 8, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.95 }}
-              className="absolute top-full left-0 mt-3 z-[101] w-72 p-5 glass-3d border-default rounded-[2rem] shadow-2xl backdrop-blur-2xl"
+              exit={{ opacity: 0, y: 8, scale: 0.96 }}
+              className="absolute top-full left-0 mt-2 z-[101] w-64 p-3.5 border border-[var(--border-default)] rounded-lg bg-[var(--card)] shadow-xl text-[var(--text-primary)]"
             >
               {/* Header */}
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3">
                 <button 
+                  type="button"
                   onClick={() => setCursor(subMonths(cursor, 1))}
-                  className="h-8 w-8 rounded-xl hover:bg-muted/10 flex items-center justify-center transition-all"
+                  className="size-7 rounded-md border border-[var(--border-default)] bg-[var(--card)] hover:bg-[var(--bg-surface-hover)] flex items-center justify-center transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronLeft className="size-3.5" />
                 </button>
-                <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text)]">
+                <span className="text-xs font-bold text-[var(--text-primary)]">
                   {format(cursor, "MMMM yyyy")}
                 </span>
                 <button 
+                  type="button"
                   onClick={() => setCursor(addMonths(cursor, 1))}
-                  className="h-8 w-8 rounded-xl hover:bg-muted/10 flex items-center justify-center transition-all"
+                  className="size-7 rounded-md border border-[var(--border-default)] bg-[var(--card)] hover:bg-[var(--bg-surface-hover)] flex items-center justify-center transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="size-3.5" />
                 </button>
               </div>
 
               {/* Day Labels */}
-              <div className="grid grid-cols-7 mb-2">
+              <div className="grid grid-cols-7 mb-1">
                 {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
-                  <div key={i} className="text-center text-[9px] font-black text-muted uppercase">
+                  <div key={i} className="text-center text-[10px] font-bold text-[var(--text-tertiary)] uppercase">
                     {d}
                   </div>
                 ))}
@@ -89,37 +92,23 @@ export function DatePicker({ value, onChange, className }: DatePickerProps) {
                   return (
                     <button
                       key={day.toISOString()}
+                      type="button"
                       onClick={() => {
                         onChange(day);
                         setIsOpen(false);
                       }}
                       className={cn(
-                        "h-8 w-8 rounded-xl text-[10px] font-black transition-all flex items-center justify-center",
-                        !isCurrentMonth && "opacity-20",
-                        isSelected 
-                          ? "bg-[var(--pri)] text-[var(--text)] shadow-lg shadow-[var(--pri)]/20 scale-110" 
-                          : "hover:bg-[var(--pri)]/10 text-muted hover:text-[var(--text)]",
-                        isDayToday && !isSelected && "text-[var(--pri)] border border-[var(--pri)]/20"
+                        "size-7 rounded-md flex items-center justify-center text-xs transition-colors relative cursor-pointer font-medium",
+                        !isCurrentMonth && "text-[var(--text-tertiary)] opacity-40",
+                        isCurrentMonth && !isSelected && "text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]",
+                        isSelected && "bg-[var(--pri)] text-[var(--primary-contrast)] font-bold shadow-sm",
+                        isDayToday && !isSelected && "border border-[var(--pri)]/50"
                       )}
                     >
                       {format(day, "d")}
                     </button>
                   );
                 })}
-              </div>
-
-              {/* Footer */}
-              <div className="mt-4 pt-4 border-t border-default/50 flex justify-center">
-                <button
-                  onClick={() => {
-                    onChange(new Date());
-                    setCursor(new Date());
-                    setIsOpen(false);
-                  }}
-                  className="text-[9px] font-black uppercase tracking-widest text-[var(--pri)] hover:underline"
-                >
-                  Go to Today
-                </button>
               </div>
             </motion.div>
           </>

@@ -1,8 +1,13 @@
 "use client";
 
-import { EmailBuilderStudio, type StudioAsset, type StudioDraft, type StudioFragment, type StudioTemplate } from "@eventos/email-builder-studio";
+import { EmailBuilderStudio, EmailTemplateGrid, type StudioAsset, type StudioDraft, type StudioFragment, type StudioTemplate } from "@eventos/email-builder-studio";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 import { eventEmailAssets, eventEmailComponents, eventEmailTemplates, type EmailAssetRecord, type EmailFragmentRecord, type EmailStudioRecord } from "@/services/email-template-studio-service";
 import { uploadEmailAsset } from "@/services/email-service";
@@ -14,7 +19,7 @@ const map = (row: EmailStudioRecord): StudioTemplate => ({ id: row.id, name: row
 export function EventEmailStudio({ eventId }: { eventId: string }) {
   const emailDesignerAccess = useOperationAccess("communications.email_designer.manage");
   const [rows, setRows] = useState<EmailStudioRecord[]>([]); const [fragmentRows, setFragmentRows] = useState<EmailFragmentRecord[]>([]); const [assetRows, setAssetRows] = useState<EmailAssetRecord[]>([]); const [activeId, setActiveId] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { setLoading(true); try { const [result, savedFragments, savedAssets] = await Promise.all([eventEmailTemplates.list(eventId), eventEmailComponents.list(eventId), eventEmailAssets.list(eventId)]); setRows(result); setFragmentRows(savedFragments); setAssetRows(savedAssets); setActiveId((current) => current && result.some((row) => row.id === current) ? current : result[0]?.id ?? null); } catch (error) { toast.error(error instanceof Error ? error.message : "Email templates are unavailable."); } finally { setLoading(false); } }, [eventId]);
+  const load = useCallback(async () => { setLoading(true); try { const [result, savedFragments, savedAssets] = await Promise.all([eventEmailTemplates.list(eventId), eventEmailComponents.list(eventId), eventEmailAssets.list(eventId)]); setRows(result); setFragmentRows(savedFragments); setAssetRows(savedAssets); setActiveId((current) => current && result.some((row) => row.id === current) ? current : null); } catch (error) { toast.error(error instanceof Error ? error.message : "Email templates are unavailable."); } finally { setLoading(false); } }, [eventId]);
   useEffect(() => { void load(); }, [load]);
   const replace = (saved: EmailStudioRecord, priorId: string) => { setRows((current) => [saved, ...current.filter((row) => row.id !== priorId && row.id !== saved.id)]); setActiveId(saved.id); };
   const save = async (draft: StudioDraft) => { const saved = await eventEmailTemplates.saveDraft(eventId, draft.templateId, draft.expectedVersion, { name: draft.name, subject: draft.subject, preheader: draft.preheader ?? "", body_html: draft.bodyHtml, designer_json: draft.designerJson, editor_schema_version: draft.editorSchemaVersion }); replace(saved, draft.templateId); };
@@ -27,8 +32,80 @@ export function EventEmailStudio({ eventId }: { eventId: string }) {
   const upload = async (file: File, assetKind: "IMAGE" | "ICON" = "IMAGE") => { const saved = await uploadEmailAsset(eventId, file); setAssetRows((current) => [{ ...saved, scope_type: "EVENT", asset_kind: assetKind, source_type: "UPLOAD" }, ...current]); return saved.url; };
   const deleteTemplate = async (templateId: string) => { setBusy(true); try { await eventEmailTemplates.delete(eventId, templateId); setRows((current) => current.filter((row) => row.id !== templateId)); toast.success("Event template deleted."); } catch (error) { toast.error(error instanceof Error ? error.message : "Template could not be deleted."); } finally { setBusy(false); } };
   const duplicateTemplate = async (templateId: string) => { setBusy(true); try { const saved = await eventEmailTemplates.duplicate(eventId, templateId); setRows((current) => [saved, ...current.filter((r) => r.id !== saved.id)]); setActiveId(saved.id); toast.success("Event template duplicated."); return map(saved); } catch (error) { toast.error(error instanceof Error ? error.message : "Template could not be duplicated."); } finally { setBusy(false); } };
+  const createTemplate = async ({ name, stableKey }: { name: string; stableKey: string }) => { setBusy(true); try { const saved = await eventEmailTemplates.create(eventId, { name, stable_key: stableKey, template_type: "custom", target_type: "speaker" }); setRows((current) => [saved, ...current.filter((r) => r.id !== saved.id)]); setActiveId(saved.id); toast.success("Event template draft created."); } catch (error) { toast.error(error instanceof Error ? error.message : "Template could not be created."); } finally { setBusy(false); } };
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateKey, setNewTemplateKey] = useState("");
+
   const templates = useMemo(() => rows.map(map), [rows]);
   if (loading) return <div className="grid h-full min-h-0 flex-1 place-items-center text-sm text-muted-foreground">Loading email production desk…</div>;
   if (!emailDesignerAccess.enabled) return <div className="grid h-full min-h-0 flex-1 place-items-center text-center text-sm text-muted-foreground">The email designer is unavailable for this event.</div>;
-  return <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Event design studio" busy={busy} readOnly={false} onSelectTemplate={setActiveId} onSaveDraft={save} onDeleteTemplate={deleteTemplate} onDuplicateTemplate={duplicateTemplate} onPublish={publish} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={upload} />;
+
+  const content = !activeId ? (
+    <div className="flex-1 overflow-y-auto">
+      <EmailTemplateGrid
+        templates={templates}
+        scopeLabel="Event design studio"
+        activeTemplateId={null}
+        onSelectTemplate={setActiveId}
+        onRequestCreateNew={() => setCreateOpen(true)}
+        onDeleteTemplate={deleteTemplate}
+        onDuplicateTemplate={duplicateTemplate}
+        onSendTest={undefined}
+        onOpenEditor={setActiveId}
+        onOpenDetails={setActiveId}
+      />
+    </div>
+  ) : (
+    <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Event design studio" busy={busy} readOnly={false} onSelectTemplate={setActiveId} onRequestCreateNew={() => setCreateOpen(true)} onSaveDraft={save} onDeleteTemplate={deleteTemplate} onDuplicateTemplate={duplicateTemplate} onPublish={publish} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={upload} onExit={() => setActiveId(null)} />
+  );
+
+  return (
+    <>
+      {content}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create new template</DialogTitle>
+            <DialogDescription>Create a new email directly in the designer. It starts as a private draft.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="name">Template name</Label>
+              <Input
+                id="name"
+                value={newTemplateName}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setNewTemplateName(value);
+                  if (!newTemplateKey) {
+                    setNewTemplateKey(value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+                  }
+                }}
+                placeholder="e.g. Speaker Invitation"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="stableKey">Stable key</Label>
+              <Input id="stableKey" value={newTemplateKey} onChange={(e) => setNewTemplateKey(e.target.value)} placeholder="e.g. speaker-invitation" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button
+              disabled={busy || newTemplateName.trim().length < 2 || !/^[a-z0-9][a-z0-9_-]{1,99}$/.test(newTemplateKey)}
+              onClick={async () => {
+                await createTemplate({ name: newTemplateName.trim(), stableKey: newTemplateKey.trim() });
+                setCreateOpen(false);
+                setNewTemplateName("");
+                setNewTemplateKey("");
+              }}
+            >
+              Create draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }

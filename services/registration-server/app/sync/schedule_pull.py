@@ -36,7 +36,7 @@ def _source_root_url(base_url: str, source_type: str) -> str:
     for suffix in ("/api/v1/registration-source", "/api/v1/sync"):
         if url.endswith(suffix):
             return url
-    if source_type == "registration_server":
+    if source_type in {"registration_server", "venue_server"}:
         return f"{url}/api/v1/sync"
     return f"{url}/api/v1/registration-source"
 
@@ -73,10 +73,7 @@ async def pull_event_queue(
     else:
         headers["X-Fetch-Api-Key"] = api_key or settings.CLOUD_DEVICE_KEY
         source_root = _source_root_url(base_url, effective_source_type)
-        if effective_source_type == "registration_server":
-            url = f"{source_root}/events/{event_id}/queue"
-        else:
-            url = f"{source_root}/events/{event_id}/queue"
+        url = f"{source_root}/events/{event_id}/snapshot"
     
     try:
         async with httpx.AsyncClient() as client:
@@ -85,9 +82,9 @@ async def pull_event_queue(
                 headers=headers,
                 timeout=60.0
             )
-            if response.status_code == 404 and "registration-source" in url:
+            if response.status_code == 404:
                 response = await client.get(
-                    f"{_source_root_url(base_url, 'registration_server')}/events/{event_id}/queue",
+                    f"{source_root}/events/{event_id}/queue",
                     headers=headers,
                     timeout=60.0,
                 )
@@ -99,22 +96,17 @@ async def pull_event_queue(
                 await db.commit()
             
             logger.info(f"[Sync] Queue sync complete for {event_id}.")
+            await broadcast_queue_update(event_id)
             
     except httpx.HTTPStatusError as e:
         err_msg = f"HTTP {e.response.status_code}: {e.response.text}"
         logger.error(f"[Sync] Failed to pull queue from cloud. {err_msg}")
-        with open(r"d:\DEV\conf-platform\sync_error.txt", "w") as f:
-            f.write(err_msg)
     except httpx.RequestError as e:
         # A venue can be intentionally offline. Keep the local PostgreSQL
         # snapshot authoritative for operations and retry on the next cycle.
         logger.warning(f"[Sync] Cloud unavailable; continuing with local venue data: {e}")
-        with open(r"d:\DEV\conf-platform\sync_error.txt", "w") as f:
-            f.write(str(e))
     except Exception as e:
         logger.error(f"[Sync] Failed to pull queue from cloud: {e}")
-        with open(r"d:\DEV\conf-platform\sync_error.txt", "w") as f:
-            f.write(str(e))
 
 
 async def _upsert_schedule_data(db: AsyncSession, data: dict):

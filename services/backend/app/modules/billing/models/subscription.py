@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False) # e.g. 'REGISTRATION'
@@ -66,12 +66,12 @@ class OrganizationSubscription(Base):
     __tablename__ = "organization_subscriptions"
     __table_args__ = (
         Index("ix_rls_billing_organization_subscriptions_organization", "organization_id"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
-    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.subscription_plans.id"))
+    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.subscription_plans.id"))
     
     status: Mapped[str] = mapped_column(String(50), default="TRIAL") # ACTIVE, TRIAL, SUSPENDED, EXPIRED, PENDING_PAYMENT, GRACE_PERIOD, CANCELLED, ARCHIVED
     
@@ -98,10 +98,10 @@ class OrganizationSubscription(Base):
 
 class PlanFeature(Base):
     __tablename__ = "plan_features"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
-    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.subscription_plans.id", ondelete="CASCADE"), primary_key=True)
-    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.subscription_plans.id", ondelete="CASCADE"), primary_key=True)
+    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     value_type: Mapped[str] = mapped_column(String(20), default="BOOLEAN", nullable=False)
     entitlement_value: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
@@ -112,10 +112,10 @@ class PlanFeature(Base):
 
 class OrganizationFeature(Base):
     __tablename__ = "organization_feature_overrides"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), primary_key=True)
-    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     override_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     override_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=True)
@@ -127,7 +127,7 @@ class OrganizationFeature(Base):
 
 class Addon(Base):
     __tablename__ = "addons"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -166,10 +166,10 @@ class Addon(Base):
 
 class AddonFeature(Base):
     __tablename__ = "addon_features"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
-    addon_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.addons.id", ondelete="CASCADE"), primary_key=True)
-    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
+    addon_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.addons.id", ondelete="CASCADE"), primary_key=True)
+    feature_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.feature_catalog.id", ondelete="CASCADE"), primary_key=True)
     value_type: Mapped[str] = mapped_column(String(20), default="BOOLEAN", nullable=False)
     entitlement_value: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     operation: Mapped[str] = mapped_column(String(20), default="UNLOCK", nullable=False)
@@ -187,7 +187,7 @@ class CommercialTemplateVersion(Base):
         UniqueConstraint("resource_type", "resource_id", "version", name="uq_commercial_template_resource_version"),
         UniqueConstraint("resource_type", "idempotency_key", name="uq_commercial_template_idempotency"),
         Index("ix_commercial_template_versions_resource", "resource_type", "resource_id", "created_at"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -211,19 +211,19 @@ class OrganizationAddon(Base):
     __tablename__ = "organization_addons"
     __table_args__ = (
         Index("ix_rls_billing_organization_addons_organization", "organization_id"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
-    addon_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.addons.id", ondelete="CASCADE"))
+    addon_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.addons.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String(50), default="ACTIVE")
     purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     unit_price_snapshot: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
-    subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("billing.organization_subscriptions.id", ondelete="SET NULL"), nullable=True)
+    subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="SET NULL"), nullable=True)
     assignment_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     assigned_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -233,7 +233,7 @@ class OrganizationAddon(Base):
         UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=True
     )
     activation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.event_activations.id", ondelete="CASCADE"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.event_activations.id", ondelete="CASCADE"), nullable=True
     )
 
     # Relationships
@@ -251,7 +251,7 @@ class OrganizationAddon(Base):
 
 class ActivityTimeline(Base):
     __tablename__ = "payment_events"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))
@@ -270,16 +270,16 @@ class SubscriptionTransaction(Base):
             unique=True,
             postgresql_where=text("provider_transaction_id IS NOT NULL"),
         ),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
     invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.invoices.id", ondelete="RESTRICT"), nullable=True, index=True
+        UUID(as_uuid=True), ForeignKey("commerce.invoices.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.organization_subscriptions.id", ondelete="SET NULL"), nullable=True, index=True
+        UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="SET NULL"), nullable=True, index=True
     )
     plan_name: Mapped[str] = mapped_column(String(100), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
@@ -294,7 +294,7 @@ class SubscriptionTransaction(Base):
     provider_transaction_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     provider_event_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     parent_transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.subscription_transactions.id", ondelete="RESTRICT"), nullable=True, index=True
+        UUID(as_uuid=True), ForeignKey("commerce.subscription_transactions.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     refunded_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0, server_default="0")
     reconciliation_status: Mapped[str] = mapped_column(String(30), default="PENDING", nullable=False, index=True)
@@ -317,7 +317,7 @@ class SubscriptionTransaction(Base):
 
 class RevenueMetric(Base):
     __tablename__ = "revenue_metrics"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
     
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"))

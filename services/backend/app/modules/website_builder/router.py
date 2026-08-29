@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.dependencies import ActiveUser, CurrentEvent, DB, SuperAdminOnly
 from app.modules.audit.models.audit_log import AuditLog
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
 from app.modules.sponsors.models.sponsor import Sponsor
 from app.modules.templates.models import WebsiteTemplate, WebsiteTemplateDraft, WebsiteTemplatePreview, WebsiteTemplateVersion
@@ -1347,7 +1347,11 @@ async def _event_snapshot(db: DB, event: CurrentEvent) -> WebsiteEventSnapshotRe
     sessions = (
         await db.scalars(
             select(Session)
-            .where(Session.event_id == event.id)
+            .where(
+                Session.event_id == event.id,
+                Session.is_published.is_(True),
+                Session.deleted_at.is_(None),
+            )
             .order_by(Session.start_time.asc())
             .limit(50)
         )

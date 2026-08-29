@@ -21,9 +21,9 @@ class UserEventAssignment(Base):
     """
     __tablename__ = "user_event_assignments"
     __table_args__ = (
-        Index("ix_rls_rbac_user_event_assignments_event", "event_id"),
-        UniqueConstraint("user_id", "event_id", name="uq_user_event_assignment"),
-        {"schema": "rbac"},
+        Index("ix_rls_rbac_user_event_assignments_events", "event_id"),
+        UniqueConstraint("user_id", "event_id", name="uq_user_event_assignments"),
+        {"schema": "access"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

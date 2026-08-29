@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
+
 class Printer(Base):
     """
     Temporary event-deployment endpoint supplied by an external venue vendor.
@@ -17,6 +18,7 @@ class Printer(Base):
     __table_args__ = (
         Index("ix_printers_event_organization", "event_id", "organization_id"),
         Index("ix_printers_vendor", "vendor_id"),
+        {"schema": "venue"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -31,11 +33,10 @@ class Printer(Base):
         nullable=False, index=True
     )
     vendor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("procurement.vendors.id", ondelete="SET NULL"),
-        nullable=True
+        UUID(as_uuid=True), nullable=True
     )
     room_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("events.rooms.id", ondelete="SET NULL"),
+        UUID(as_uuid=True), ForeignKey("agenda.rooms.id", ondelete="SET NULL"),
         nullable=True
     )
     external_reference: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)

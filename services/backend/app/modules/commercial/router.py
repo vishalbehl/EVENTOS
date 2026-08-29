@@ -153,7 +153,7 @@ async def get_packages(
     return packages
 
 
-# â”€â”€ SUPER ADMIN STAFF CATALOG ENDPOINTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# SUPER ADMIN STAFF CATALOG ENDPOINTS 
 
 import json
 from pydantic import BaseModel

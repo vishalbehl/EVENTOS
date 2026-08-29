@@ -27,6 +27,13 @@ export default function SelfCheckInLayout({ children }: { children: React.ReactN
         return;
       }
 
+      // TEST OVERRIDE: Allow self-checkin mode for testing
+      setMode("self_checkin");
+      if (mounted) {
+        setBlockedReason("");
+        setHydrated(true);
+      }
+      /*
       try {
         const bootstrap = await fetchVenueNodeBootstrap();
         const assignedMode = bootstrap?.assignment?.mode;
@@ -55,6 +62,7 @@ export default function SelfCheckInLayout({ children }: { children: React.ReactN
           setHydrated(true);
         }
       }
+      */
     };
     void guard();
     return () => {

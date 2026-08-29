@@ -41,10 +41,7 @@ from app.modules.platform.models.organization_console import (
     OrganizationFinancialAdjustment,
     CommercialAccessRequest,
     OrganizationBrandProfile,
-    OrganizationComplianceControl,
-    OrganizationComplianceEvidence,
     OrganizationInsightSnapshot,
-    OrganizationLegalHold,
     OrganizationLifecycleJob,
     OrganizationTeam,
     OrganizationTeamMember,
@@ -52,10 +49,11 @@ from app.modules.platform.models.organization_console import (
     OrganizationLocation,
     OrganizationNotificationChannelConfig,
     OrganizationNotificationRule,
-    OrganizationPrivacyRequest,
-    OrganizationRetentionPolicy,
     OrganizationSecurityPolicy,
     OrganizationTrustedDevice,
+    OrganizationDocument,
+    OrganizationApprovalRule,
+    OrganizationAttentionState,
 )
 
 from app.modules.billing.models.subscription import (
@@ -100,19 +98,24 @@ from app.modules.rbac.models.organization_member import OrganizationMember
 UserOrganizationMembership = OrganizationMember
 
 from app.modules.events.models.event import Event
-from app.modules.events.models.room import Room
 from app.modules.events.models.capacity_rule import CapacityRule
-from app.modules.events.models.session import Session
 from app.modules.events.models.speaker import Speaker
-from app.modules.events.models.session_speaker import SessionSpeaker
 from app.modules.events.models.speaker_profile import SpeakerProfile
-from app.modules.events.models.events_domain_tables import (
-    Track, Agenda, AgendaItem, SessionTemplate, EventSetting, EventAsset
+from app.modules.events.models.events_domain_tables import EventSetting, EventAsset
+
+from app.modules.agenda.models import (
+    MasterAgenda, AgendaDay, AgendaRoomType, AgendaRoom,
+    AgendaTrackType, AgendaTrack, AgendaSessionType,
+    AgendaSession, AgendaRole, AgendaSessionPerson, AgendaPresentationSlot,
+    AgendaSessionTemplate, AgendaTemplate, AgendaConflict,
+    AgendaVersion, AgendaSetting,
+    Agenda, Room, RoomType, Track, TrackType, Session, SessionType,
+    SessionPerson, PresentationSlot, SessionTemplate
 )
 
+from app.modules.venue.models.presentation_queue import PresentationQueue
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.models.file_validation import FileValidation
-from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
 from app.modules.presentations.models.presentation_bundle import BundleFile, PresentationBundle
 from app.modules.presentations.models.poster import Poster
 from app.modules.presentations.models.presentations_domain_tables import (
@@ -129,14 +132,14 @@ from app.modules.registration.models.registration_form_config import Registratio
 from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
 from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
 from app.modules.registration.models.print_template import PrintTemplate
-from app.modules.registration.models.check_in import CheckIn
-from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
+from app.modules.registration.models.portal_theme_setting import PortalThemeSetting, RegistrationThemeSetting
 from app.modules.registration.models.import_job import ImportJob
 from app.modules.registration.models.registration_domain_tables import (
     FormField, FormSubmission, Waitlist
 )
 
 from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting
+
 from app.modules.speakers.models.speakers_domain_tables import (
     SpeakerInvitation, SpeakerUploadToken, SpeakerTravelRequest,
     SpeakerAccommodationRequest, SpeakerHonorarium, SpeakerCommunicationHistory, SpeakerProfileVersion
@@ -145,7 +148,6 @@ from app.modules.speakers.models.speakers_domain_tables import (
 from app.modules.venue.models.srr_station import SRRStation
 from app.modules.venue.models.srr_checkin import SRRCheckin
 from app.modules.venue.models.room_device import RoomDevice
-from app.modules.venue.models.presentation_queue import PresentationQueue
 from app.modules.venue.models.playback_event import PlaybackEvent
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -215,16 +217,12 @@ from app.modules.workflow.models.workflow import (
 from app.modules.files.models.file import (
     Asset, AssetVersion, AssetTag, AssetPermission, StorageLocation, UploadSession, VirusScan
 )
-from app.modules.search.models.search import (
-    SearchIndex, SearchDocument, SearchJob
-)
+
 from app.modules.sponsors.models.sponsor import (
     Sponsor, SponsorContact, SponsorPackage, SponsorBooth, SponsorDeliverable, SponsorInvoice, SponsorAsset
 )
 
-from app.modules.mobile.models.mobile import (
-    MobileDevice, MobileSession, MobileDeviceToken, MobileAppVersion, MobileCrashLog, MobilePushQueue, MobileSyncQueue, MobileOfflineChange
-)
+
 
 # commercial models
 from app.modules.commercial.models import (
@@ -233,22 +231,18 @@ from app.modules.commercial.models import (
     CommercialQuoteRevision, QuoteApprovalWorkflow, QuoteApprovalStep
 )
 
-# inventory models
-from app.modules.inventory.models import (
-    HardwareCategory, HardwareItem, HardwareStock, HardwareMovement, HardwareMaintenance
-)
+
 
 # pricing models
 from app.modules.pricing.models import (
     PricingRule, PricingRuleCondition, PricingRuleAction, ServicePricing,
     DiscountRule, TaxRule, CurrencyRate, PricingSimulation, CostFormula,
     MarginPolicy, RevenueForecast
+
+
 )
 
-# procurement models
-from app.modules.procurement.models import (
-    Vendor, VendorService
-)
+
 
 # V1 pricing template models retain their existing templates schema.
 from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
@@ -266,45 +260,14 @@ from app.modules.website_builder.models import (
     WebsiteSiteRevision,
 )
 
-# design_system models
-from app.modules.design_system.models import (
-    DesignToken, ThemePreset, ComponentLibrary
-)
-
-# technology_services models
-from app.modules.technology_services.models import (
-    ServiceRequest, ServiceRequestItem, Requirement, ServiceLevel, ServiceSlaPolicy,
-    ServiceSlaTarget, ServiceSlaBreach, RequirementTemplate,
-    RequirementFormTemplate, RequirementFormField, RequirementResponse,
-    RequestAssignment,
-)
-
-# operations_planning models
-from app.modules.operations_planning.models import (
-    Project, Milestone, ProjectTask, TaskDependency,
-    ProjectTemplate, ProjectTemplateTask, EventTimeline, ProjectVendor, ProjectBlocker
-)
-
-# resource_management models
-from app.modules.resource_management.models import (
-    ResourcePlan, ResourceAllocation, StaffAssignment, EquipmentAssignment, TravelPlan,
-    ResourceAvailability, EmployeeCalendar, EquipmentCalendar, TravelBooking, HotelBooking, TransportBooking
-)
-
-# deployment_management models
-from app.modules.deployment_management.models import (
-    Deployment, DeploymentChecklist, DeploymentLog, ReadinessScore, Risk,
-    DeploymentRunbook, DeploymentStep, Issue, RiskAction, RiskEscalation, RiskComment, RiskEvidence,
-    ProjectCost, ProjectActual, ProjectProfitability
-)
-
 from app.modules.operations_control.models import (
-    JobControlRequest, SourceApiKey, VenueCredentialOperation,
+    SourceApiKey, VenueCredentialOperation,
+)
+from app.modules.search.models import (
+    SearchIndex, SearchDocument, SearchJob,
 )
 
 # Register after every mapped class is loaded so capability revisions can be
 # collected without introducing model-import cycles.
 from app.modules.billing.services.capability_cache_service import register_capability_revision_listeners
 register_capability_revision_listeners()
-
-

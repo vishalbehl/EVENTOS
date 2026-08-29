@@ -25,6 +25,50 @@
   font-family: var(--font-sans, Inter), ui-sans-serif, system-ui, sans-serif;
   box-shadow: none;
 }
+
+[data-theme="dark"] .ebs-shell,
+.dark .ebs-shell {
+  --ebs-bg: #09090b;
+  --ebs-panel: #111113;
+  --ebs-inset: #18181b;
+  --ebs-border: #27272a;
+  --ebs-subtle: #202023;
+  --ebs-text: #ffffff;
+  --ebs-muted: #a1a1aa;
+  --ebs-faint: #71717a;
+  --ebs-brand: #ffffff;
+  --ebs-focus: #3b82f6;
+  --ebs-success: #22c55e;
+}
+
+[data-theme="dark"] .ebs-btn-create-new,
+.dark .ebs-btn-create-new,
+[data-theme="dark"] .ebs-btn-create-primary,
+.dark .ebs-btn-create-primary,
+[data-theme="dark"] .ebs-btn-duplicate-action,
+.dark .ebs-btn-duplicate-action {
+  background: #ffffff !important;
+  color: #09090b !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="dark"] .ebs-btn-create-new:hover,
+.dark .ebs-btn-create-new:hover,
+[data-theme="dark"] .ebs-btn-create-primary:hover,
+.dark .ebs-btn-create-primary:hover,
+[data-theme="dark"] .ebs-btn-duplicate-action:hover,
+.dark .ebs-btn-duplicate-action:hover {
+  background: #e4e4e7 !important;
+}
+
+[data-theme="dark"] .ebs-btn-import,
+.dark .ebs-btn-import,
+[data-theme="dark"] .ebs-btn-edit-email,
+.dark .ebs-btn-edit-email {
+  background: #18181b !important;
+  color: #ffffff !important;
+  border-color: #27272a !important;
+}
 .ebs-shell * {
   box-sizing: border-box;
 }
@@ -3809,4 +3853,55 @@
   gap: 10px;
 }
 
+
+
+.ebs-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  background-color: hsl(var(--primary, 222.2 47.4% 11.2%));
+  color: hsl(var(--primary-foreground, 210 40% 98%));
+  border: none;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.ebs-btn-primary:hover {
+  opacity: 0.9;
+}
+.ebs-btn-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  background-color: transparent;
+  color: hsl(var(--foreground, 222.2 84% 4.9%));
+  border: 1px solid hsl(var(--border, 214.3 31.8% 91.4%));
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.ebs-btn-cancel:hover {
+  background-color: hsl(var(--accent, 210 40% 96.1%));
+}
+.ebs-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  background-color: hsl(var(--destructive, 0 84.2% 60.2%));
+  color: hsl(var(--destructive-foreground, 210 40% 98%));
+  border: none;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.ebs-btn-danger:hover {
+  opacity: 0.9;
+}
 

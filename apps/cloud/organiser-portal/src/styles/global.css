@@ -1,13 +1,7 @@
-/* ============================================================
-   EVENTOS — Global Component Styles
-   Glass effects · Cards · Tables · Typography · Animations
-   ============================================================ */
-
-/* ── Base Transitions (only on non-layout props to avoid jank) ── */
-*, *::before, *::after {
-  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
-  transition-duration: var(--duration-base);
-  transition-timing-function: var(--ease-smooth);
+button, a, input, select, textarea, [role="button"], [data-motion="standard"] {
+  transition-property: background-color, border-color, color, opacity, box-shadow, transform;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-standard);
 }
 
 .no-transition,
@@ -17,526 +11,94 @@
   transition: none !important;
 }
 
-/* ── Body ── */
+html {
+  background: var(--base);
+}
+
 body {
-  background: var(--color-bg);
-  color: var(--color-text-primary);
-  font-family: var(--font-sans), system-ui, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  background: var(--base);
+  color: var(--text);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
-/* ══════════════════════════════════════════════════════════════
-   TYPOGRAPHY BASE
-══════════════════════════════════════════════════════════════ */
-
-/* Page section headings */
-.page-title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.2;
-  color: var(--color-text-primary);
-}
-
-.section-title {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-  color: var(--color-text-primary);
-}
-
-.section-subtitle {
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-
-/* Card headers */
-.card-title {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-  color: var(--color-text-primary);
-}
-
-.card-description {
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.55;
-  color: var(--color-text-muted);
-}
-
-/* Overline / caps label */
-.overline {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  line-height: 1.3;
-}
-
-/* Body text variants */
-.body-primary   { font-size: 14px; line-height: 1.6;  color: var(--color-text-primary);   font-weight: 400; }
-.body-secondary { font-size: 13px; line-height: 1.6;  color: var(--color-text-secondary); font-weight: 400; }
-.body-muted     { font-size: 12px; line-height: 1.55; color: var(--color-text-muted);     font-weight: 400; }
-
-/* ══════════════════════════════════════════════════════════════
-   GLASS EFFECTS
-══════════════════════════════════════════════════════════════ */
-.glass {
-  background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.glass-light {
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
+.sidebar { background: var(--surf); border-right: 0.5px solid var(--border); }
+.card, .modal, .drawer { background: var(--card); border: 0.5px solid var(--border); }
+.btn-primary { background: var(--pri); color: var(--primary-contrast) !important; }
+.btn-secondary { border: 1px solid var(--border); color: var(--text) !important; background: var(--card); }
+.btn-ghost { color: var(--text) !important; }
+.btn-danger { background: color-mix(in srgb, var(--dan) 12%, transparent); color: var(--dan); }
+.input { border: 0.5px solid var(--border); color: var(--text); background: transparent; }
+.input:focus { border-color: var(--pri); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent); }
+.badge-approved { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+.badge-pending { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.badge-rejected { background: color-mix(in srgb, var(--dan) 15%, transparent); color: var(--dan); }
+.badge-processing { background: color-mix(in srgb, var(--pri) 15%, transparent); color: var(--pri); }
+.text-muted { color: var(--muted); }
+.border-default { border-color: var(--border); }
+.accent-bar { background: var(--pri); }
+.progress-fill { background: var(--pri); }
+.toggle-on { background: var(--pri); }
+.nav-active { color: var(--pri); border-left: 2px solid var(--pri); }
+.stat-primary { color: var(--pri); background: color-mix(in srgb, var(--pri) 10%, transparent); }
+.stat-secondary { color: var(--sec); background: color-mix(in srgb, var(--sec) 10%, transparent); }
+.stat-accent { color: var(--acc); background: color-mix(in srgb, var(--acc) 10%, transparent); }
+.stat-danger { color: var(--dan); background: color-mix(in srgb, var(--dan) 10%, transparent); }
 
 .glass-3d,
 .glass-card {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, white 8%, transparent),
-    0 4px 16px color-mix(in srgb, var(--color-bg) 70%, transparent),
-    inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+  background: var(--card);
+  border: 1px solid var(--border);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-panel);
 }
 
-/* ══════════════════════════════════════════════════════════════
-   CARD
-══════════════════════════════════════════════════════════════ */
-.eventos-card {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  /* Multi-layer shadow: tonal depth + top highlight strip */
-  box-shadow:
-    0 1px 0 color-mix(in srgb, white 7%, transparent),
-    0 2px 8px color-mix(in srgb, var(--color-bg) 55%, transparent),
-    0 8px 24px color-mix(in srgb, var(--color-bg) 35%, transparent),
-    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
-  transition:
-    transform var(--duration-base) var(--ease-smooth),
-    box-shadow var(--duration-base) var(--ease-smooth),
-    border-color var(--duration-base) var(--ease-smooth);
+.theme-swatch {
+  background: var(--swatch-base);
 }
 
-.eventos-card:hover {
-  transform: translateY(-3px);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, white 8%, transparent),
-    0 4px 16px color-mix(in srgb, var(--color-bg) 50%, transparent),
-    0 16px 40px color-mix(in srgb, var(--color-bg) 30%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--color-primary-start) 25%, transparent),
-    0 0 20px var(--color-primary-glow),
-    inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
-  border-color: color-mix(in srgb, var(--color-primary-start) 40%, var(--color-border));
+.theme-swatch::after {
+  background: var(--swatch-pri);
 }
 
-/* ══════════════════════════════════════════════════════════════
-   SIDEBAR & NAV
-══════════════════════════════════════════════════════════════ */
-.sidebar {
-  background: var(--color-surface-1);
-  border-right: 1px solid var(--color-border);
+.theme-swatch[data-active="true"] {
+  border-color: var(--pri);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pri) 20%, transparent);
 }
 
-.nav-active {
-  color: var(--color-text-primary);
-  background: var(--sidebar-item-active-bg);
-  border-left: 3px solid var(--color-primary-end);
-}
+.theme-swatch-light { --swatch-base: var(--theme-light-base); --swatch-pri: var(--theme-light-pri); }
+.theme-swatch-dark { --swatch-base: var(--theme-dark-base); --swatch-pri: var(--theme-dark-pri); }
 
-/* ══════════════════════════════════════════════════════════════
-   BUTTONS
-══════════════════════════════════════════════════════════════ */
-.btn-primary {
-  background: linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end));
-  color: white;
-  box-shadow: var(--shadow-glow-primary);
-  border: none;
-}
-.btn-primary:hover {
-  box-shadow: 0 0 28px rgba(124, 58, 237, 0.45);
-  filter: brightness(1.08);
-}
-
-.btn-secondary {
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-primary);
-}
-
-.btn-ghost { color: var(--color-primary-start); background: transparent; }
-
-.btn-danger {
-  background: var(--color-danger-muted);
-  color: var(--color-danger);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
-}
-
-.btn-success {
-  background: var(--color-success-muted);
-  color: var(--color-success);
-  border: 1px solid color-mix(in srgb, var(--color-success) 25%, transparent);
-}
-
-/* ══════════════════════════════════════════════════════════════
-   FORM CONTROLS
-══════════════════════════════════════════════════════════════ */
-.input {
-  height: 40px;
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.input::placeholder {
-  color: var(--color-text-placeholder);
-  font-weight: 400;
-}
-
-.input:focus {
-  border-color: var(--color-primary-end);
-  box-shadow: 0 0 0 3px var(--color-primary-glow);
-  outline: none;
-}
-
-/* ── Switch checked state (CSS-only since Tailwind data-* for gradients is limited) ── */
-[data-radix-switch-root][data-state="checked"],
-button[role="switch"][data-state="checked"] {
-  background: linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end)) !important;
-  border-color: transparent !important;
-  box-shadow: 0 0 12px var(--color-primary-glow) !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   BADGES
-══════════════════════════════════════════════════════════════ */
-.badge-approved, .badge-success {
-  background: var(--color-success-muted);
-  color: var(--color-success);
-  border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent);
-}
-
-.badge-pending, .badge-warning {
-  background: var(--color-warning-muted);
-  color: var(--color-warning);
-  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
-}
-
-.badge-rejected, .badge-danger {
-  background: var(--color-danger-muted);
-  color: var(--color-danger);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
-}
-
-.badge-processing, .badge-info {
-  background: var(--color-info-muted);
-  color: var(--color-info);
-  border: 1px solid color-mix(in srgb, var(--color-info) 40%, transparent);
-}
-
-/* ══════════════════════════════════════════════════════════════
-   TYPOGRAPHY HELPERS (legacy aliases kept for backward compat)
-══════════════════════════════════════════════════════════════ */
-.text-muted      { color: var(--color-text-muted)      !important; }
-.text-secondary  { color: var(--color-text-secondary)  !important; }
-.border-default  { border-color: var(--color-border); }
-
-.kpi-value {
-  font-variant-numeric: tabular-nums;
-  font-weight: 800;
-  line-height: 1.0;
-  letter-spacing: -0.04em;
-  color: var(--color-text-primary);
-}
-.kpi-label {
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.3;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--color-text-muted);
-}
-.kpi-delta {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   STAT HELPERS
-══════════════════════════════════════════════════════════════ */
-.stat-primary { color: var(--color-primary-mid);    background: color-mix(in srgb, var(--color-primary-start) 22%, transparent); }
-.stat-cyan    { color: var(--color-accent-cyan);    background: color-mix(in srgb, var(--color-accent-cyan)   22%, transparent); }
-.stat-green   { color: var(--color-accent-green);   background: color-mix(in srgb, var(--color-accent-green)  22%, transparent); }
-.stat-pink    { color: var(--color-accent-pink);    background: color-mix(in srgb, var(--color-accent-pink)   22%, transparent); }
-.stat-amber   { color: var(--color-accent-amber);   background: color-mix(in srgb, var(--color-accent-amber)  22%, transparent); }
-.stat-danger  { color: var(--color-danger);         background: var(--color-danger-muted); }
-
-/* ══════════════════════════════════════════════════════════════
-   DATA TABLE
-══════════════════════════════════════════════════════════════ */
-.data-table thead th {
-  background: var(--color-surface-3);
-  color: var(--color-text-muted);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  border-bottom: 1px solid var(--color-border);
-  padding: 10px 14px;
-  white-space: nowrap;
-}
-
-.data-table tbody td {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  padding: 11px 14px;
-}
-
-.data-table tbody tr {
-  border-bottom: 1px solid var(--color-border-subtle);
-  transition: background var(--duration-fast) var(--ease-smooth);
-}
-
-.data-table tbody tr:hover {
-  background: var(--color-surface-3);
-}
-
-.data-table tbody tr:hover td {
-  color: var(--color-text-primary);
-}
-
-/* ══════════════════════════════════════════════════════════════
-   SHIMMER / SKELETON
-══════════════════════════════════════════════════════════════ */
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--color-surface-2) 0%,
-    var(--color-surface-4) 50%,
-    var(--color-surface-2) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.8s linear infinite;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   PROGRESS BAR
-══════════════════════════════════════════════════════════════ */
-.progress-track {
-  background: var(--color-surface-3);  /* surface-3 is darker than surface-2 in light — bar pops */
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  overflow: hidden;
-}
-
-.progress-fill {
-  background: linear-gradient(90deg, var(--color-primary-start), var(--color-primary-end));
-  box-shadow: var(--shadow-glow-primary);
-  border-radius: var(--radius-full);
-  transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* ══════════════════════════════════════════════════════════════
-   TOGGLE / ACCENT
-══════════════════════════════════════════════════════════════ */
-.toggle-on {
-  background: linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end));
-}
-
-.accent-bar {
-  background: linear-gradient(90deg, var(--color-primary-start), var(--color-primary-end));
-}
-
-/* ══════════════════════════════════════════════════════════════
-   NEOMORPHIC
-══════════════════════════════════════════════════════════════ */
 .neomorphic-inset {
-  box-shadow:
+  box-shadow: 
     inset 4px 4px 8px color-mix(in srgb, black 30%, transparent),
-    inset -4px -4px 8px color-mix(in srgb, white 4%, transparent);
-  background: color-mix(in srgb, var(--color-surface-2) 95%, transparent);
+    inset -4px -4px 8px color-mix(in srgb, white 5%, transparent);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
 }
 
-/* ══════════════════════════════════════════════════════════════
-   SCROLLBARS
-══════════════════════════════════════════════════════════════ */
-.no-scrollbar {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.no-scrollbar::-webkit-scrollbar { display: none; }
-
-.custom-scrollbar::-webkit-scrollbar { width: 5px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, var(--color-primary-start), var(--color-primary-end));
-  border-radius: var(--radius-full);
+/* Global native select dropdown styling to follow theme design */
+select {
+  background-color: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+  outline: none !important;
+  transition: all 200ms ease !important;
+  cursor: pointer !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   DELTA CHIPS
-══════════════════════════════════════════════════════════════ */
-.delta-positive {
-  background: var(--color-success-muted);
-  color: var(--color-success);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  letter-spacing: 0;
+select:hover {
+  background-color: var(--bg-surface-hover) !important;
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text)) !important;
 }
 
-.delta-negative {
-  background: var(--color-danger-muted);
-  color: var(--color-danger);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  letter-spacing: 0;
+select:focus {
+  border-color: var(--text) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent) !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   MARKDOWN RENDERING
-══════════════════════════════════════════════════════════════ */
-.tnc-markdown {
-  font-size: 13px !important;
-  line-height: 1.65 !important;
-  color: var(--color-text-secondary) !important;
-}
-.tnc-markdown p  { margin: 0.75rem 0 !important; display: block !important; color: var(--color-text-secondary) !important; }
-.tnc-markdown ul { list-style-type: disc !important; padding-left: 1.75rem !important; margin: 0.75rem 0 !important; display: block !important; }
-.tnc-markdown ol { list-style-type: decimal !important; padding-left: 1.75rem !important; margin: 0.75rem 0 !important; display: block !important; }
-.tnc-markdown li { margin: 0.4rem 0 !important; list-style-position: outside !important; display: list-item !important; color: var(--color-text-secondary) !important; }
-.tnc-markdown h1 { font-size: 1.2rem !important; font-weight: 800 !important; margin: 1.5rem 0 0.6rem !important; color: var(--color-text-primary) !important; display: block !important; letter-spacing: -0.03em !important; }
-.tnc-markdown h2 { font-size: 1.05rem !important; font-weight: 700 !important; margin: 1.25rem 0 0.5rem !important; color: var(--color-text-primary) !important; display: block !important; letter-spacing: -0.025em !important; }
-.tnc-markdown h3 { font-size: 1rem !important; font-weight: 700 !important; margin: 1rem 0 0.4rem !important; color: var(--color-text-primary) !important; display: block !important; }
-.tnc-markdown hr { border: 0 !important; border-top: 1px solid var(--color-border) !important; margin: 1.5rem 0 !important; display: block !important; }
-.tnc-markdown strong { color: var(--color-text-primary) !important; font-weight: 700 !important; }
-.tnc-markdown em { color: var(--color-primary-mid) !important; }
-.tnc-markdown code {
-  background: color-mix(in srgb, var(--color-primary-start) 10%, transparent) !important;
-  color: var(--color-primary-end) !important;
-  padding: 1px 5px !important;
-  border-radius: 4px !important;
-  font-family: var(--font-mono) !important;
-  font-size: 0.82em !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   FORM FIELD GROUPS
-══════════════════════════════════════════════════════════════ */
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-field label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  letter-spacing: 0.01em;
-}
-
-.form-field .hint {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-}
-
-.form-field .error {
-  font-size: 11px;
-  color: var(--color-danger);
-  font-weight: 600;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   EMPTY STATES
-══════════════════════════════════════════════════════════════ */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 48px 24px;
-  text-align: center;
-}
-
-.empty-state-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-lg);
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-muted);
-}
-
-.empty-state-title {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--color-text-primary);
-}
-
-.empty-state-description {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  line-height: 1.6;
-  max-width: 320px;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   STATUS PILLS (used across event tables)
-══════════════════════════════════════════════════════════════ */
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  border: 1px solid transparent;
-}
-
-.status-pill-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
+select option, select optgroup {
+  background-color: var(--base) !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
 }

@@ -61,6 +61,9 @@ class EventCreate(BaseModel):
 
     tagline: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
+    theme_color: Optional[str] = Field(None, max_length=50)
+    logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
     map_link: Optional[str] = Field(None, max_length=1024)
     venue_images: List[str] = Field(default_factory=list)
     venue_details: dict = Field(default_factory=lambda: {
@@ -122,6 +125,9 @@ class EventUpdate(BaseModel):
 
     tagline: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
+    theme_color: Optional[str] = Field(None, max_length=50)
+    logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
     map_link: Optional[str] = Field(None, max_length=1024)
     venue_images: Optional[List[str]] = None
     venue_details: Optional[dict] = None
@@ -179,6 +185,11 @@ class EventResponse(BaseModel):
 
     tagline: Optional[str] = None
     description: Optional[str] = None
+    theme_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    support_email: Optional[str] = None
+    support_phone: Optional[str] = None
     map_link: Optional[str] = Field(None, max_length=1024)
     venue_images: List[str]
     venue_details: dict
@@ -202,6 +213,11 @@ class EventSummary(BaseModel):
     country: Optional[str] = None
     state: Optional[str] = None
     organizer_name: Optional[str] = None
+    theme_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    support_email: Optional[str] = None
+    support_phone: Optional[str] = None
     start_date: date
     end_date: date
     timezone: str
@@ -215,3 +231,4 @@ class EventSummary(BaseModel):
     is_read_only: bool = False
     created_at: datetime
     updated_at: datetime
+

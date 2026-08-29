@@ -17,7 +17,7 @@ from app.modules.audit.models.audit_log import AuditLog
 from app.modules.operations_control.models import VenueCredentialOperation
 from app.modules.venue.models.room_device import RoomDevice
 from app.modules.identity.models.user import User
-from app.modules.events.models.room import Room
+from app.modules.agenda.models import Room
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService

@@ -18,7 +18,7 @@ def _source_root_url(base_url: str, source_type: str) -> str:
     for suffix in ("/api/v1/registration-source", "/api/v1/sync"):
         if url.endswith(suffix):
             return url
-    if source_type == "registration_server":
+    if source_type in {"registration_server", "venue_server"}:
         return f"{url}/api/v1/sync"
     return f"{url}/api/v1/registration-source"
 
@@ -54,7 +54,7 @@ async def perform_initial_sync(
         target_event = None
         if api_key:
             source_root = _source_root_url(base_url, effective_source_type)
-            if effective_source_type == "registration_server":
+            if effective_source_type in {"registration_server", "venue_server"}:
                 context_resp = await client.get(f"{source_root}/device/context", headers=headers, timeout=30.0)
             else:
                 context_resp = await client.get(f"{source_root}/context", headers=headers, timeout=30.0)

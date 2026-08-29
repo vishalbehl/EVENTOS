@@ -1,15 +1,24 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { X, Upload, Save, FileSpreadsheet, Download, RefreshCw, UserPlus, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
+import {
+  X,
+  Upload,
+  Save,
+  FileSpreadsheet,
+  Download,
+  RefreshCw,
+  UserPlus,
+  Check,
+} from "lucide-react";
 import { apiClient, apiGet, apiPost } from "@/lib/api-client";
 import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
 import { CapabilityAction } from "@/lib/capabilities";
+import { cn } from "@/lib/utils";
+import { COUNTRY_DIAL_CODES, getDialCodeForCountry } from "@/lib/country-dial-codes";
+import { fetchCountryStates, CountryStateEntry, getStatesForCountry, fallbackCountryStates } from "@/lib/country-states";
 
 interface AddParticipantModalProps {
   isOpen: boolean;
@@ -37,16 +46,22 @@ interface Role {
   is_active: boolean;
 }
 
-const DEFAULT_FIELD_IDS = new Set(["name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "role"]);
-
-const COUNTRY_STATES: Record<string, string[]> = {
-  India: ["Andhra Pradesh", "Delhi", "Gujarat", "Karnataka", "Kerala", "Maharashtra", "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal"],
-  "United States": ["California", "Florida", "Georgia", "Illinois", "New York", "North Carolina", "Ohio", "Pennsylvania", "Texas", "Washington"],
-  "United Kingdom": ["England", "Northern Ireland", "Scotland", "Wales"],
-  Canada: ["Alberta", "British Columbia", "Manitoba", "Nova Scotia", "Ontario", "Quebec", "Saskatchewan"],
-  Australia: ["New South Wales", "Queensland", "South Australia", "Tasmania", "Victoria", "Western Australia"],
-  Germany: ["Bavaria", "Berlin", "Hamburg", "Hesse", "North Rhine-Westphalia", "Saxony"],
-};
+const DEFAULT_FIELD_IDS = new Set([
+  "name",
+  "title",
+  "first_name",
+  "last_name",
+  "email",
+  "phone",
+  "phone_dial_code",
+  "company",
+  "designation",
+  "country",
+  "state",
+  "city",
+  "role",
+  "paid_status",
+]);
 
 function getStoredToken() {
   if (typeof window === "undefined") return "";
@@ -59,7 +74,12 @@ function getStoredToken() {
   }
 }
 
-export default function AddParticipantModal({ isOpen, onClose, eventId, onSuccess }: AddParticipantModalProps) {
+export default function AddParticipantModal({
+  isOpen,
+  onClose,
+  eventId,
+  onSuccess,
+}: AddParticipantModalProps) {
   const [activeTab, setActiveTab] = useState<"manual" | "excel">("manual");
   const [fields, setFields] = useState<FormField[]>([]);
   const [formValues, setFormValues] = useState<Record<string, any>>({});
@@ -68,8 +88,13 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
+  const [countryStates, setCountryStates] = useState<CountryStateEntry[]>(fallbackCountryStates);
 
   const activeFields = useMemo(() => fields.filter((field) => field.is_active), [fields]);
+
+  useEffect(() => {
+    fetchCountryStates().then(setCountryStates);
+  }, []);
 
   const fetchConfig = async () => {
     if (!eventId) return;
@@ -86,11 +111,18 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       );
       setFields(configuredFields);
 
-      const defaults: Record<string, any> = { paid_status: "Unpaid", source: "manual_admin" };
+      const defaults: Record<string, any> = { 
+        paid_status: "Unpaid", 
+        source: "manual_admin",
+        phone_dial_code: "+91",
+        country: "India"
+      };
       configuredFields.forEach((field: FormField) => {
         if (!field.is_active) return;
         if (field.type === "checkbox") defaults[field.id] = [];
         else if (field.id === "role") defaults[field.id] = activeRoles[0] || "Delegate";
+        else if (field.id === "country") defaults[field.id] = "India";
+        else if (field.id === "title") defaults[field.id] = "Dr.";
         else defaults[field.id] = "";
       });
       setFormValues(defaults);
@@ -149,10 +181,19 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       }
     });
 
-    // Ensure a composed display name is sent so server-side profile matching
-    // uses the same full name the user sees in the form.
+    if (formValues.phone) {
+      const dial = formValues.phone_dial_code || "+91";
+      const rawPhone = String(formValues.phone).trim();
+      payload.phone = rawPhone.startsWith("+") ? rawPhone : `${dial} ${rawPhone}`;
+    }
+
+    if (formValues.state) {
+      payload.state = formValues.state;
+    }
+
     if (!payload.name) {
-      payload.name = `${(payload.first_name || "").toString().trim()} ${(payload.last_name || "").toString().trim()}`.trim();
+      const prefix = formValues.title ? `${formValues.title} ` : "";
+      payload.name = `${prefix}${(payload.first_name || "").toString().trim()} ${(payload.last_name || "").toString().trim()}`.trim();
     }
 
     return payload;
@@ -197,11 +238,14 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
           }
           await submitWith({ ...payload, confirm_merge: true });
           toast.success("Profile merged with the existing participant.");
-        } else if (err?.response?.status === 402 || err?.response?.data?.detail?.code === "QUOTA_EXHAUSTED") {
+        } else if (
+          err?.response?.status === 402 ||
+          err?.response?.data?.detail?.code === "QUOTA_EXHAUSTED"
+        ) {
           const detail = err?.response?.data?.detail;
           toast.error(
             detail?.code === "QUOTA_EXHAUSTED"
-              ? `Registration quota exhausted (${detail.used}/${detail.allowed}). Upgrade the plan, purchase an add-on, or waitlist via review instead.`
+              ? `Registration quota exhausted (${detail.used}/${detail.allowed}). Upgrade the plan to add more participants.`
               : formatApiError(err, "Payment required to register more participants.")
           );
         } else {
@@ -259,7 +303,9 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       if (detail?.code === "QUOTA_EXHAUSTED") {
-        toast.error(`Registration quota exhausted (${detail.used}/${detail.allowed}). Upgrade the plan to add more participants.`);
+        toast.error(
+          `Registration quota exhausted (${detail.used}/${detail.allowed}). Upgrade the plan to add more participants.`
+        );
       } else {
         toast.error(formatApiError(err, "Failed to import Excel file."));
       }
@@ -269,9 +315,9 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
   };
 
   const renderField = (field: FormField) => {
-    const requiredMark = field.is_required ? <span className="text-rose-400">*</span> : null;
+    const requiredMark = field.is_required ? <span className="text-rose-500">*</span> : null;
     const label = (
-      <label className="text-[9px] font-black uppercase tracking-[0.2em] text-muted block mb-1.5">
+      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
         {field.label} {requiredMark}
       </label>
     );
@@ -283,11 +329,11 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
           <select
             value={formValues[field.id] || ""}
             onChange={(e) => setValue(field.id, e.target.value)}
-            className="w-full h-11 px-4 rounded-xl border border-default bg-white/5 text-xs font-semibold text-[var(--text)] focus:outline-none focus:border-[var(--pri)] transition-all cursor-pointer"
+            className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
           >
-            <option value="" className="bg-[var(--surf)]">Select option</option>
+            <option value="">Select option</option>
             {(field.options || []).map((option) => (
-              <option key={option} value={option} className="bg-[var(--surf)]">
+              <option key={option} value={option}>
                 {option}
               </option>
             ))}
@@ -301,9 +347,12 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       return (
         <div key={field.id} className="space-y-1 sm:col-span-2">
           {label}
-          <div className="rounded-xl border border-default bg-white/5 p-4 grid grid-cols-2 gap-2">
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-3 grid grid-cols-2 gap-2">
             {(field.options || []).map((option) => (
-              <label key={option} className="flex items-center gap-2 text-xs font-semibold text-[var(--text)] cursor-pointer select-none">
+              <label
+                key={option}
+                className="flex items-center gap-2 text-xs font-medium text-[var(--text-primary)] cursor-pointer select-none"
+              >
                 <input
                   type="checkbox"
                   checked={selected.includes(option)}
@@ -315,7 +364,7 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                         : selected.filter((item: string) => item !== option)
                     )
                   }
-                  className="rounded accent-[var(--pri)]"
+                  className="rounded border-[var(--border-default)] accent-[var(--pri)]"
                 />
                 {option}
               </label>
@@ -327,38 +376,115 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
 
     if (field.type === "country") {
       const country = formValues[field.id] || "";
+      const states = getStatesForCountry(countryStates, country);
       return (
-        <div key={field.id} className="space-y-2 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div key={field.id} className="space-y-2 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1">
             {label}
             <select
               value={country}
-              onChange={(e) => setValue(field.id, e.target.value)}
-              className="w-full h-11 px-4 rounded-xl border border-default bg-white/5 text-xs font-semibold text-[var(--text)] focus:outline-none focus:border-[var(--pri)] transition-all cursor-pointer"
+              onChange={(e) => {
+                const newCountry = e.target.value;
+                setValue(field.id, newCountry);
+                setValue("phone_dial_code", getDialCodeForCountry(newCountry));
+                setValue("state", "");
+                setValue(`${field.id}_state`, "");
+              }}
+              className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none cursor-pointer"
             >
-              <option value="" className="bg-[var(--surf)]">Select country</option>
-              {Object.keys(COUNTRY_STATES).map((option) => (
-                <option key={option} value={option} className="bg-[var(--surf)]">
-                  {option}
+              <option value="">Select country</option>
+              {countryStates.map((item) => (
+                <option key={item.country} value={item.country}>
+                  {item.country}
                 </option>
               ))}
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-[9px] font-black uppercase tracking-[0.2em] text-muted block mb-1.5">State / Province</label>
+            <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
+              State / Province
+            </label>
+            {states.length > 0 ? (
+              <select
+                value={formValues["state"] || formValues[`${field.id}_state`] || ""}
+                onChange={(e) => {
+                  setValue("state", e.target.value);
+                  setValue(`${field.id}_state`, e.target.value);
+                }}
+                disabled={!country}
+                className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none disabled:opacity-40 cursor-pointer"
+              >
+                <option value="">Select state / province</option>
+                {states.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="Enter state or province"
+                value={formValues["state"] || formValues[`${field.id}_state`] || ""}
+                onChange={(e) => {
+                  setValue("state", e.target.value);
+                  setValue(`${field.id}_state`, e.target.value);
+                }}
+                className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none"
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (field.type === "state") {
+      const country = formValues["country"] || "";
+      const states = getStatesForCountry(countryStates, country);
+      if (states.length > 0) {
+        return (
+          <div key={field.id} className="space-y-1">
+            {label}
             <select
-              value={formValues[`${field.id}_state`] || ""}
-              onChange={(e) => setValue(`${field.id}_state`, e.target.value)}
-              disabled={!country}
-              className="w-full h-11 px-4 rounded-xl border border-default bg-white/5 text-xs font-semibold text-[var(--text)] focus:outline-none focus:border-[var(--pri)] transition-all cursor-pointer disabled:opacity-40"
+              value={formValues[field.id] || ""}
+              onChange={(e) => setValue(field.id, e.target.value)}
+              className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none cursor-pointer"
             >
-              <option value="" className="bg-[var(--surf)]">Select state</option>
-              {(COUNTRY_STATES[country] || []).map((option) => (
-                <option key={option} value={option} className="bg-[var(--surf)]">
-                  {option}
+              <option value="">Select state / province</option>
+              {states.map((st) => (
+                <option key={st} value={st}>
+                  {st}
                 </option>
               ))}
             </select>
+          </div>
+        );
+      }
+    }
+
+    if (field.type === "phone" || field.id === "phone") {
+      return (
+        <div key={field.id} className="space-y-1">
+          {label}
+          <div className="flex gap-1.5">
+            <select
+              value={formValues.phone_dial_code || "+91"}
+              onChange={(e) => setValue("phone_dial_code", e.target.value)}
+              className="h-9 w-28 shrink-0 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2 text-xs font-mono text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none cursor-pointer"
+            >
+              {COUNTRY_DIAL_CODES.map((c) => (
+                <option key={`${c.code}-${c.dial_code}`} value={c.dial_code}>
+                  {c.flag} {c.dial_code}
+                </option>
+              ))}
+            </select>
+            <input
+              type="tel"
+              placeholder={field.placeholder || "Enter mobile number"}
+              value={formValues[field.id] || ""}
+              onChange={(e) => setValue(field.id, e.target.value)}
+              className="h-9 flex-1 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none"
+            />
           </div>
         </div>
       );
@@ -368,16 +494,16 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
       return (
         <div key={field.id} className="space-y-1">
           {label}
-          <div className="relative border border-dashed border-default hover:border-[var(--pri)]/55 rounded-xl p-3 transition-colors bg-white/5 cursor-pointer">
+          <div className="relative rounded-lg border border-dashed border-[var(--border-default)] hover:border-[var(--pri)] p-3 transition-colors bg-[var(--bg-surface-2)] cursor-pointer text-center">
             <input
               type="file"
               accept={field.type === "image" ? "image/*" : undefined}
               onChange={(e) => handleFileUpload(field, e.target.files?.[0])}
               className="absolute inset-0 opacity-0 cursor-pointer"
             />
-            <div className="flex items-center gap-2.5 justify-center py-1">
-              <Upload className="h-4 w-4 text-muted" />
-              <span className="text-xs font-bold text-[var(--text)] truncate max-w-[180px]">
+            <div className="flex items-center gap-2 justify-center py-0.5">
+              <Upload className="size-3.5 text-[var(--text-tertiary)]" />
+              <span className="text-xs font-medium text-[var(--text-primary)] truncate max-w-[180px]">
                 {formValues[field.id] ? "Uploaded ✓" : "Choose file"}
               </span>
             </div>
@@ -389,20 +515,18 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
     return (
       <div key={field.id} className="space-y-1">
         {label}
-        <Input
+        <input
           type={
             field.type === "date"
               ? "date"
               : field.type === "email"
               ? "email"
-              : field.type === "phone"
-              ? "tel"
               : "text"
           }
           placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`}
           value={formValues[field.id] || ""}
           onChange={(e) => setValue(field.id, e.target.value)}
-          className="h-11 bg-white/5 border-default rounded-xl px-4 font-semibold text-xs text-[var(--text)] focus:border-[var(--pri)] focus:ring-0 transition-all placeholder:text-muted/60"
+          className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none"
         />
       </div>
     );
@@ -411,162 +535,170 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="w-full max-w-3xl bg-[var(--surf)] border border-default rounded-[2.5rem] glass-3d shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
+            initial={{ scale: 0.96, opacity: 0, y: 8 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.96, opacity: 0, y: 8 }}
+            transition={{ duration: 0.15 }}
+            className="w-full max-w-2xl rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-6 shadow-md flex flex-col max-h-[90vh] overflow-hidden space-y-4"
           >
             {/* Modal Header */}
-            <div className="p-6 border-b border-default flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 bg-[var(--pri)]/10 rounded-xl flex items-center justify-center border border-[var(--pri)]/20">
-                  <UserPlus className="h-5 w-5 text-[var(--pri)]" />
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-[var(--pri)]/10 text-[var(--pri)] border border-[var(--pri)]/20">
+                  <UserPlus className="size-4" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black tracking-tight text-[var(--text)]">Add New Participant</h2>
-                  <p className="text-[9px] font-black uppercase tracking-[0.2em] text-muted mt-0.5">Event registration intake spooler</p>
+                  <h2 className="text-sm font-bold text-[var(--text-primary)]">Add New Participant</h2>
+                  <p className="text-[11px] text-[var(--text-secondary)]">Register a single attendee or upload a bulk spreadsheet.</p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={onClose}
-                className="h-8 w-8 rounded-full bg-white/5 hover:bg-rose-500/10 hover:text-rose-400 border border-white/5 flex items-center justify-center text-muted transition-colors cursor-pointer"
+                className="rounded-md p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
-                <X className="h-4.5 w-4.5" />
+                <X className="size-4" />
               </button>
             </div>
 
-            {/* Modal Tabs Selector */}
-            <div className="px-6 py-4 border-b border-default bg-white/[0.01] flex justify-between items-center shrink-0">
-              <div className="flex items-center rounded-xl border border-white/5 bg-white/5 p-1 gap-1">
+            {/* Tab Selector */}
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
+              <div className="flex items-center rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-1 gap-1">
                 <button
+                  type="button"
                   onClick={() => setActiveTab("manual")}
-                  className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
-                    activeTab === "manual" ? "bg-[var(--pri)] text-white shadow" : "text-muted hover:text-[var(--text)]"
-                  }`}
+                  className={cn(
+                    "rounded-md px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                    activeTab === "manual"
+                      ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm font-bold"
+                      : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  )}
                 >
                   Manual Form
                 </button>
                 <button
+                  type="button"
                   onClick={() => setActiveTab("excel")}
-                  className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
-                    activeTab === "excel" ? "bg-[var(--pri)] text-white shadow" : "text-muted hover:text-[var(--text)]"
-                  }`}
+                  className={cn(
+                    "rounded-md px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                    activeTab === "excel"
+                      ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm font-bold"
+                      : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  )}
                 >
-                  Excel Import
+                  Excel Bulk Import
                 </button>
               </div>
 
               {activeTab === "manual" && (
-                <span className="text-[9px] font-black uppercase text-muted bg-white/5 border border-default px-3 py-1 rounded-full">
-                  Fields mirrored from builder
+                <span className="text-[10px] font-semibold text-[var(--text-secondary)]">
+                  Mirrored from form builder
                 </span>
               )}
             </div>
 
-            {/* Modal Body (Scrollable Content) */}
-            <div className="flex-1 overflow-y-auto p-6 min-h-0 custom-scrollbar">
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto pr-1 min-h-0">
               {loading ? (
-                <div className="py-20 flex flex-col items-center justify-center space-y-3">
-                  <RefreshCw className="h-6 w-6 text-[var(--pri)] animate-spin" />
-                  <p className="text-[10px] text-muted font-black uppercase tracking-widest">Loading intake schema...</p>
+                <div className="py-16 flex flex-col items-center justify-center space-y-2 text-xs text-[var(--text-secondary)]">
+                  <RefreshCw className="size-5 text-[var(--pri)] animate-spin" />
+                  <span>Loading registration schema...</span>
                 </div>
               ) : activeTab === "manual" ? (
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     {activeFields.map(renderField)}
                     <div className="space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-[0.2em] text-muted block mb-1.5">Payment Status</label>
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
+                        Payment Status
+                      </label>
                       <select
                         value={formValues.paid_status || "Unpaid"}
                         onChange={(e) => setValue("paid_status", e.target.value)}
-                        className="w-full h-11 px-4 rounded-xl border border-default bg-white/5 text-xs font-semibold text-[var(--text)] focus:outline-none focus:border-[var(--pri)] transition-all cursor-pointer"
+                        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                       >
-                        <option value="Unpaid" className="bg-[var(--surf)]">Unpaid</option>
-                        <option value="Paid" className="bg-[var(--surf)]">Paid</option>
+                        <option value="Unpaid">Unpaid</option>
+                        <option value="Paid">Paid</option>
                       </select>
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-default flex items-center justify-end gap-3">
-                    <Button
+                  <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-end gap-2.5">
+                    <button
                       type="button"
-                      variant="outline"
                       onClick={onClose}
-                      className="h-11 px-6 rounded-full border border-default font-black uppercase tracking-wider text-[10px]"
+                      className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-4 py-2 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
                     >
                       Cancel
-                    </Button>
+                    </button>
                     <CapabilityAction operation="registration.manage" limitKey="max_registrations">
-                      <Button
+                      <button
                         type="submit"
                         disabled={submitting}
-                        className="h-11 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 shadow-[0_10px_20px_color-mix(in_srgb,var(--pri)_25%,transparent)]"
+                        className="flex items-center gap-2 rounded-lg bg-[var(--pri)] px-5 py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-sm transition-all hover:opacity-90 disabled:opacity-40 cursor-pointer"
                       >
-                        <Save className="h-4 w-4 mr-2" />
+                        <Save className="size-3.5" />
                         {submitting ? "Registering..." : "Save Delegate"}
-                      </Button>
+                      </button>
                     </CapabilityAction>
                   </div>
                 </form>
               ) : importResult ? (
-                <div className="space-y-6">
-                  <div className="text-center space-y-2">
-                    <div className="inline-flex h-12 w-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 items-center justify-center text-emerald-400">
-                      <Check className="h-6 w-6" />
+                <div className="space-y-4">
+                  <div className="text-center space-y-1.5">
+                    <div className="inline-flex size-10 rounded-full bg-emerald-500/10 border border-emerald-500/20 items-center justify-center text-emerald-600 dark:text-emerald-400">
+                      <Check className="size-5" />
                     </div>
-                    <h3 className="text-sm font-black uppercase tracking-widest text-[var(--text)]">Import Process Complete</h3>
-                    <p className="text-[10px] text-muted font-bold leading-normal max-w-md mx-auto">{importResult.message}</p>
+                    <h3 className="text-sm font-bold text-[var(--text-primary)]">Import Process Complete</h3>
+                    <p className="text-xs text-[var(--text-secondary)]">{importResult.message}</p>
                   </div>
 
-                  {/* Summary Cards */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
-                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Approved</p>
-                      <p className="text-2xl font-black text-emerald-400">{importResult.inserted}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 text-center">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] mb-0.5">Approved</p>
+                      <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{importResult.inserted}</p>
                     </div>
-                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
-                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Merged</p>
-                      <p className="text-2xl font-black text-blue-400">{importResult.merged}</p>
+                    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 text-center">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] mb-0.5">Merged</p>
+                      <p className="text-xl font-bold text-blue-600 dark:text-blue-400">{importResult.merged}</p>
                     </div>
-                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
-                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Waitlisted</p>
-                      <p className="text-2xl font-black text-amber-500">{importResult.waitlisted}</p>
+                    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 text-center">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] mb-0.5">Waitlisted</p>
+                      <p className="text-xl font-bold text-amber-600 dark:text-amber-400">{importResult.waitlisted}</p>
                     </div>
-                    <div className="glass-card rounded-2xl p-4 border border-white/5 bg-white/[0.01] text-center">
-                      <p className="text-[9px] font-black uppercase tracking-wider text-muted mb-1">Skipped</p>
-                      <p className="text-2xl font-black text-rose-500">{importResult.skipped}</p>
+                    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-3 text-center">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] mb-0.5">Skipped</p>
+                      <p className="text-xl font-bold text-rose-600 dark:text-rose-400">{importResult.skipped}</p>
                     </div>
                   </div>
 
-                  {/* Skipped Details Table */}
                   {importResult.skipped_details && importResult.skipped_details.length > 0 && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-[9px] font-black uppercase tracking-widest text-rose-400">Skipped Entries / Errors</h4>
-                        <span className="text-[8px] font-black uppercase tracking-wider text-muted">{importResult.skipped_details.length} issues found</span>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-rose-500">Skipped Entries / Errors</span>
+                        <span className="text-[10px] text-[var(--text-tertiary)]">{importResult.skipped_details.length} issues found</span>
                       </div>
-                      <div className="rounded-xl border border-white/5 bg-white/[0.01] overflow-hidden max-h-56 overflow-y-auto no-scrollbar">
-                        <table className="w-full text-left text-[11px] font-medium border-collapse">
-                          <thead className="bg-white/5 text-[8px] font-black uppercase tracking-wider text-muted border-b border-white/5 sticky top-0 backdrop-blur">
+                      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] overflow-hidden max-h-48 overflow-y-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-[var(--card)] text-[10px] font-bold uppercase text-[var(--text-tertiary)] border-b border-[var(--border-subtle)] sticky top-0">
                             <tr>
-                              <th className="px-4 py-2 text-center w-12">Row</th>
-                              <th className="px-4 py-2">Name</th>
-                              <th className="px-4 py-2">Email</th>
-                              <th className="px-4 py-2">Category</th>
-                              <th className="px-4 py-2">Reason</th>
+                              <th className="px-3 py-2 w-12 text-center">Row</th>
+                              <th className="px-3 py-2">Name</th>
+                              <th className="px-3 py-2">Email</th>
+                              <th className="px-3 py-2">Role</th>
+                              <th className="px-3 py-2">Reason</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-white/5 text-muted/80">
+                          <tbody className="divide-y divide-[var(--border-subtle)] text-[var(--text-secondary)]">
                             {importResult.skipped_details.map((detail: any, dIdx: number) => (
-                              <tr key={dIdx} className="hover:bg-white/[0.02] transition-colors">
-                                <td className="px-4 py-2.5 text-center font-mono font-bold text-rose-400">{detail.row}</td>
-                                <td className="px-4 py-2.5 font-bold text-[var(--text)]">{detail.name || "—"}</td>
-                                <td className="px-4 py-2.5 font-semibold">{detail.email || "—"}</td>
-                                <td className="px-4 py-2.5 font-bold uppercase tracking-wider text-[10px] text-muted">{detail.role || "—"}</td>
-                                <td className="px-4 py-2.5 text-xs text-rose-400 font-bold">{detail.reason}</td>
+                              <tr key={dIdx}>
+                                <td className="px-3 py-2 text-center font-mono font-bold text-rose-500">{detail.row}</td>
+                                <td className="px-3 py-2 font-medium text-[var(--text-primary)]">{detail.name || "—"}</td>
+                                <td className="px-3 py-2">{detail.email || "—"}</td>
+                                <td className="px-3 py-2">{detail.role || "—"}</td>
+                                <td className="px-3 py-2 text-rose-500 font-medium">{detail.reason}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -575,70 +707,72 @@ export default function AddParticipantModal({ isOpen, onClose, eventId, onSucces
                     </div>
                   )}
 
-                  <div className="pt-4 border-t border-default flex items-center justify-end">
-                    <Button
+                  <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-end">
+                    <button
+                      type="button"
                       onClick={() => {
                         setImportResult(null);
                         setImportFile(null);
                         onSuccess();
                         onClose();
                       }}
-                      className="h-11 px-8 bg-[var(--pri)] hover:bg-[var(--pri-hover)] text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0"
+                      className="rounded-lg bg-[var(--pri)] px-5 py-2 text-xs font-bold text-[var(--primary-contrast)] shadow-sm transition-all hover:opacity-90 cursor-pointer"
                     >
                       Done
-                    </Button>
+                    </button>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-6 max-w-xl mx-auto py-4">
-                  <div className="space-y-3">
-                    <p className="text-xs font-bold text-muted uppercase tracking-widest text-center">Excel Bulk Intake Spooler</p>
-                    <p className="text-[10px] text-muted/80 text-center leading-relaxed">
-                      Download the template file matching your active layout configurations. Fill in delegate rows and upload the spreadsheet back.
+                <div className="space-y-4 max-w-lg mx-auto py-2">
+                  <div className="text-center space-y-1">
+                    <p className="text-xs font-bold text-[var(--text-primary)]">Excel Bulk Intake Spooler</p>
+                    <p className="text-xs text-[var(--text-secondary)]">
+                      Download the template spreadsheet matching your configured fields. Fill in attendee details and upload it back here.
                     </p>
                   </div>
 
-                  <Button
+                  <button
+                    type="button"
                     onClick={downloadTemplate}
-                    className="w-full h-12 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[10px] rounded-2xl border border-default hover-lift-3d"
+                    className="w-full h-10 flex items-center justify-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--card)] text-xs font-bold text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
                   >
-                    <Download className="h-4 w-4 mr-2" />
-                    Download Excel Template
-                  </Button>
+                    <Download className="size-4 text-[var(--pri)]" />
+                    Download Excel Template (.xlsx)
+                  </button>
 
-                  <div className="relative border-2 border-dashed border-default hover:border-emerald-500/55 rounded-2xl p-10 transition-colors flex flex-col items-center justify-center bg-white/5 text-center cursor-pointer">
+                  <div className="relative rounded-lg border-2 border-dashed border-[var(--border-default)] hover:border-[var(--pri)] p-8 transition-colors flex flex-col items-center justify-center bg-[var(--bg-surface-2)] text-center cursor-pointer">
                     <input
                       type="file"
                       accept=".xlsx,.xlsm"
                       onChange={(e) => setImportFile(e.target.files?.[0] || null)}
                       className="absolute inset-0 opacity-0 cursor-pointer"
                     />
-                    <FileSpreadsheet className="h-10 w-10 text-muted mb-3" />
-                    <span className="text-xs font-black text-[var(--text)] uppercase tracking-wider">
+                    <FileSpreadsheet className="size-8 text-[var(--text-tertiary)] mb-2" />
+                    <span className="text-xs font-bold text-[var(--text-primary)]">
                       {importFile ? importFile.name : "Choose completed spreadsheet"}
                     </span>
-                    <span className="text-[8px] text-muted/65 font-bold mt-1 uppercase tracking-wider">
+                    <span className="text-[10px] text-[var(--text-tertiary)] mt-0.5">
                       Drag & drop or browse .xlsx files
                     </span>
                   </div>
 
-                  <div className="pt-4 border-t border-default flex items-center justify-end gap-3">
-                    <Button
+                  <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-end gap-2.5">
+                    <button
                       type="button"
-                      variant="outline"
                       onClick={onClose}
-                      className="h-11 px-6 rounded-full border border-default font-black uppercase tracking-wider text-[10px]"
+                      className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-4 py-2 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
                     >
                       Cancel
-                    </Button>
+                    </button>
                     <CapabilityAction operation="registration.import" limitKey="max_registrations">
-                      <Button
+                      <button
+                        type="button"
                         onClick={handleExcelImport}
                         disabled={importing || !importFile}
-                        className="h-11 px-8 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] rounded-full border-0 disabled:opacity-40"
+                        className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-sm transition-all hover:bg-emerald-700 disabled:opacity-40 cursor-pointer"
                       >
-                        {importing ? "Importing delegates..." : "Import delegates"}
-                      </Button>
+                        {importing ? "Importing delegates..." : "Import Delegates"}
+                      </button>
                     </CapabilityAction>
                   </div>
                 </div>

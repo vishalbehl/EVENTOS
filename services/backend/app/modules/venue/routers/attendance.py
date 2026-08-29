@@ -18,7 +18,7 @@ from app.modules.identity.models.user import User
 from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.badge_models import Badge
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.registration.services.checkin_service import CheckInService
 from app.modules.venue.schemas.attendance import (
     CheckInRequest,

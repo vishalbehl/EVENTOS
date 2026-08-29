@@ -11,7 +11,7 @@ from app.database import SoftDeleteMixin
 
 if TYPE_CHECKING:
     from app.modules.events.models.speaker import Speaker
-    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.agenda.models.session_person import AgendaSessionPerson
     from app.modules.events.models.event import Event
     from app.modules.identity.models.user import User
     from app.modules.presentations.models.file_validation import FileValidation
@@ -40,6 +40,7 @@ class PresentationFile(Base, SoftDeleteMixin):
             "upload_source IN ('web','kiosk','station','api','portal')",
             name="ck_pf_upload_source"
         ),
+        {"schema": "presentations"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -47,14 +48,14 @@ class PresentationFile(Base, SoftDeleteMixin):
     )
     speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.speakers.id", ondelete="CASCADE"),
+        ForeignKey("speakers.speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    session_speaker_id: Mapped[uuid.UUID] = mapped_column(
+    session_speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.session_speakers.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("agenda.session_people.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
@@ -137,8 +138,8 @@ class PresentationFile(Base, SoftDeleteMixin):
     speaker: Mapped["Speaker"] = relationship(
         "Speaker", back_populates="presentation_files"
     )
-    session_speaker: Mapped["SessionSpeaker"] = relationship(
-        "SessionSpeaker", back_populates="presentation_files"
+    session_speaker: Mapped[Optional["AgendaSessionPerson"]] = relationship(
+        "AgendaSessionPerson"
     )
     event: Mapped["Event"] = relationship("Event", back_populates="presentation_files")
     approver: Mapped[Optional["User"]] = relationship(

@@ -1,0 +1,14 @@
+<service>
+  <id>EventosVenueGateway</id>
+  <name>Eventos Venue HTTPS Gateway</name>
+  <description>TLS termination and private-LAN gateway for Venue Server.</description>
+  <executable>%BASE%\..\gateway\caddy.exe</executable>
+  <arguments>run --config %BASE%\..\gateway\Caddyfile</arguments>
+  <workingdirectory>%BASE%\..\gateway</workingdirectory>
+  <env name="XDG_DATA_HOME" value="%ProgramData%\Eventos\VenueServer\caddy-data" />
+  <startmode>Automatic</startmode>
+  <depend>EventosVenueApi</depend>
+  <depend>EventosVenueUi</depend>
+  <onfailure action="restart" delay="10 sec" />
+  <log mode="roll-by-size"><sizeThreshold>10485760</sizeThreshold><keepFiles>10</keepFiles></log>
+</service>

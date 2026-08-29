@@ -110,7 +110,7 @@ export default function CampaignDetail({ eventId, campaign, onBack }: Props) {
                     className={`
                         flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all
                         ${failed > 0 
-                            ? 'bg-[var(--pri)] text-white shadow-lg shadow-[var(--pri)]/20 hover:scale-105 active:scale-95' 
+                            ? 'bg-[var(--pri)] text-[var(--primary-contrast)] shadow-lg shadow-[var(--pri)]/20 hover:scale-105 active:scale-95' 
                             : 'bg-white/5 text-[var(--muted)] border border-white/5 opacity-50 cursor-not-allowed'
                         }
                     `}

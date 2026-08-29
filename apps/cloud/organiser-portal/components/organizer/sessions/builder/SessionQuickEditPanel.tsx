@@ -130,7 +130,7 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex justify-end"
+        className="fixed inset-0 z-50 bg-black/60 flex justify-end"
         onClick={() => toggleQuickEdit(false)}
       >
         <motion.aside
@@ -139,30 +139,44 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
           exit={{ x: "100%" }}
           transition={{ type: "spring", damping: 25, stiffness: 200 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-lg bg-background border-l border-default h-full shadow-2xl flex flex-col"
+          className="w-full max-w-lg bg-[var(--card)] border-l border-[var(--border-default)] h-full shadow-lg flex flex-col"
         >
           {/* Header */}
-          <div className="p-6 border-b border-default flex items-center justify-between">
+          <div className="p-4 border-b border-[var(--border-default)] flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase text-muted bg-[color-mix(in_srgb,var(--text)_10%,transparent)] px-2 py-0.5 rounded">
+                <span className="text-[10px] font-bold uppercase text-[var(--pri)] bg-[var(--pri)]/10 px-1.5 py-0.5 rounded">
                   {currentSession.session_code}
                 </span>
-                <Badge variant="outline" className="text-[10px] uppercase font-bold">
+                <Badge variant="outline" className="text-[10px] uppercase font-semibold border-[var(--border-subtle)]">
                   {currentSession.session_type}
                 </Badge>
+                {currentSession.is_published ? (
+                  <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    Published
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    Draft
+                  </span>
+                )}
               </div>
-              <h3 className="font-black text-[16px] text-[var(--text)] tracking-tight mt-1 line-clamp-1">
+              <h3 className="font-semibold text-sm text-[var(--text-primary)] tracking-tight mt-1 line-clamp-1">
                 {currentSession.name}
               </h3>
             </div>
-            <Button variant="ghost" size="icon" onClick={() => toggleQuickEdit(false)} className="h-8 w-8 rounded-full">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => toggleQuickEdit(false)}
+              className="h-7 w-7 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            >
               <X className="h-4 w-4" />
             </Button>
           </div>
 
           {/* Tabs */}
-          <div className="flex items-center border-b border-default bg-[color-mix(in_srgb,var(--text)_2%,transparent)] px-4 gap-4">
+          <div className="flex items-center border-b border-[var(--border-default)] bg-[var(--surface-subtle)] px-3 gap-3">
             {[
               { id: "overview", label: "Overview", icon: Settings },
               { id: "talks", label: "Talks", icon: AlignLeft },
@@ -176,11 +190,13 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
                   className={cn(
-                    "flex items-center gap-2 py-3 border-b-2 text-[12px] font-bold transition-all",
-                    isActive ? "border-[var(--pri)] text-[var(--pri)]" : "border-transparent text-muted hover:text-[var(--text)]"
+                    "flex items-center gap-1.5 py-2.5 border-b-2 text-xs font-semibold transition-all",
+                    isActive
+                      ? "border-[var(--pri)] text-[var(--pri)]"
+                      : "border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                   )}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-3.5 w-3.5" />
                   {tab.label}
                 </button>
               );
@@ -188,22 +204,29 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
           </div>
 
           {/* Form Body */}
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5 text-[12px]">
-            
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 text-xs">
             {activeTab === "overview" && (
-              <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-5">
+              <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="font-bold text-muted block mb-1 uppercase text-[10px]">Session ID</label>
-                    <Input value={form.session_code || ""} onChange={(e) => setForm({ ...form, session_code: e.target.value.toUpperCase() })} className="font-bold text-[13px] rounded-xl font-mono uppercase" />
+                    <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">Session ID</label>
+                    <Input
+                      value={form.session_code || ""}
+                      onChange={(e) => setForm({ ...form, session_code: e.target.value.toUpperCase() })}
+                      className="font-semibold text-xs rounded-md font-mono uppercase bg-[var(--card)] border-[var(--border-default)] text-[var(--text-primary)]"
+                    />
                   </div>
                   <div>
-                    <label className="font-bold text-muted block mb-1 uppercase text-[10px]">Session Name</label>
-                    <Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} className="font-bold text-[13px] rounded-xl" />
+                    <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">Session Name</label>
+                    <Input
+                      value={form.name || ""}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      className="font-semibold text-xs rounded-md bg-[var(--card)] border-[var(--border-default)] text-[var(--text-primary)]"
+                    />
                   </div>
                 </div>
                 <div>
-                  <label className="font-bold text-muted block mb-1 uppercase text-[10px]">Allocated Room / Hall</label>
+                  <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">Allocated Room / Hall</label>
                   <select
                     value={form.room_id || ""}
                     onChange={(e) => {
@@ -211,7 +234,7 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                       const selectedRoomObj = rooms.find((r) => r.id === selectedId);
                       setForm({ ...form, room_id: selectedId, room_name: selectedRoomObj ? selectedRoomObj.name : null });
                     }}
-                    className="w-full h-11 border border-default rounded-xl px-3 font-bold text-[12px] text-[var(--text)] bg-background appearance-none focus:outline-none cursor-pointer"
+                    className="w-full h-9 border border-[var(--border-default)] rounded-md px-3 font-medium text-xs text-[var(--text-primary)] bg-[var(--card)] focus:outline-none cursor-pointer"
                   >
                     <option value="">No Room (Unallocated)</option>
                     {rooms.map((r) => (
@@ -223,54 +246,60 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="font-bold text-muted block mb-1 uppercase text-[10px]">Start Time</label>
-                    <Input 
-                      type="datetime-local" 
-                      value={form.start_time ? toDateTimeLocalString(form.start_time, eventTimezone).slice(0, 16) : ""} 
-                      onChange={(e) => setForm({ ...form, start_time: fromDateTimeLocalString(e.target.value, eventTimezone) })} 
-                      className="rounded-xl font-mono text-[11px]" 
+                    <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">Start Time</label>
+                    <Input
+                      type="datetime-local"
+                      value={form.start_time ? toDateTimeLocalString(form.start_time, eventTimezone).slice(0, 16) : ""}
+                      onChange={(e) => setForm({ ...form, start_time: fromDateTimeLocalString(e.target.value, eventTimezone) })}
+                      className="rounded-md font-mono text-xs bg-[var(--card)] border-[var(--border-default)] text-[var(--text-primary)] [color-scheme:dark]"
                     />
                   </div>
                   <div>
-                    <label className="font-bold text-muted block mb-1 uppercase text-[10px]">End Time</label>
-                    <Input 
-                      type="datetime-local" 
-                      value={form.end_time ? toDateTimeLocalString(form.end_time, eventTimezone).slice(0, 16) : ""} 
-                      onChange={(e) => setForm({ ...form, end_time: fromDateTimeLocalString(e.target.value, eventTimezone) })} 
-                      className="rounded-xl font-mono text-[11px]" 
+                    <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">End Time</label>
+                    <Input
+                      type="datetime-local"
+                      value={form.end_time ? toDateTimeLocalString(form.end_time, eventTimezone).slice(0, 16) : ""}
+                      onChange={(e) => setForm({ ...form, end_time: fromDateTimeLocalString(e.target.value, eventTimezone) })}
+                      className="rounded-md font-mono text-xs bg-[var(--card)] border-[var(--border-default)] text-[var(--text-primary)] [color-scheme:dark]"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="font-bold text-muted block mb-1 uppercase text-[10px]">Description</label>
-                  <textarea rows={4} value={form.description || ""} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full p-3 rounded-xl border border-default bg-background text-[12px] font-medium outline-none resize-none" placeholder="Session overview, topics covered..." />
+                  <label className="font-semibold text-[var(--text-secondary)] block mb-1 uppercase text-[10px] tracking-wider">Description</label>
+                  <textarea
+                    rows={4}
+                    value={form.description || ""}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className="w-full p-2.5 rounded-md border border-[var(--border-default)] bg-[var(--card)] text-xs text-[var(--text-primary)] font-normal outline-none resize-none focus:border-[var(--pri)]"
+                    placeholder="Session overview, topics covered..."
+                  />
                 </div>
               </motion.div>
             )}
 
             {activeTab === "talks" && (
               <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}>
-                <div className="flex justify-between items-center mb-4">
-                  <label className="font-bold text-muted uppercase text-[10px]">Talk Sequence</label>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] font-bold rounded-lg px-2">Add Talk</Button>
+                <div className="flex justify-between items-center mb-3">
+                  <label className="font-semibold text-[var(--text-secondary)] uppercase text-[10px] tracking-wider">Talk Sequence</label>
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] font-semibold rounded-md px-2 border-[var(--border-default)]">Add Talk</Button>
                 </div>
                 
                 <div className="flex flex-col gap-2">
                   {form.talks && form.talks.length > 0 ? (
-                    form.talks.map((talk, idx) => (
-                      <div key={talk.id} className="flex items-center gap-3 p-3 rounded-xl border border-default bg-background shadow-sm">
-                        <GripVertical className="h-4 w-4 text-muted cursor-grab" />
+                    form.talks.map((talk) => (
+                      <div key={talk.id} className="flex items-center gap-2.5 p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-subtle)] shadow-xs">
+                        <GripVertical className="h-3.5 w-3.5 text-[var(--text-tertiary)] cursor-grab" />
                         <div className="flex-1 min-w-0">
-                          <div className="font-bold text-[12px] truncate">{talk.title}</div>
-                          <div className="text-[10px] text-muted">{talk.speaker_names?.join(", ") || "No speaker"}</div>
+                          <div className="font-semibold text-xs text-[var(--text-primary)] truncate">{talk.title}</div>
+                          <div className="text-[10px] text-[var(--text-secondary)]">{talk.speaker_names?.join(", ") || "No speaker"}</div>
                         </div>
-                        <div className="font-mono text-[11px] font-bold text-[var(--sec)] bg-[var(--sec)]/10 px-2 py-1 rounded">
+                        <div className="font-mono text-[10px] font-bold text-[var(--brand-primary)] bg-[var(--brand-primary-muted)] px-1.5 py-0.5 rounded">
                           {talk.duration_minutes}m
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="text-center py-10 border border-dashed border-default rounded-xl text-muted">
+                    <div className="text-center py-8 border border-dashed border-[var(--border-default)] rounded-lg text-[var(--text-tertiary)] text-xs">
                       No talks scheduled for this session.
                     </div>
                   )}
@@ -280,29 +309,35 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
 
             {activeTab === "speakers" && (
               <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}>
-                <label className="font-bold text-muted block mb-2 uppercase text-[10px]">
+                <label className="font-semibold text-[var(--text-secondary)] block mb-2 uppercase text-[10px] tracking-wider">
                   Assigned Speakers ({currentSession.speakers?.length || 0})
                 </label>
                 <div className="flex flex-col gap-2">
                   {currentSession.speakers && currentSession.speakers.length > 0 ? (
                     currentSession.speakers.map((spk) => (
-                      <div key={spk.id} className="flex items-center justify-between p-3 rounded-xl border border-default bg-background">
+                      <div key={spk.id} className="flex items-center justify-between p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-subtle)]">
                         <div className="flex items-center gap-2.5">
-                          <div className="h-8 w-8 rounded-full bg-[var(--pri)]/20 text-[var(--pri)] font-black flex items-center justify-center text-[12px]">
+                          <div className="h-7 w-7 rounded-full bg-[var(--brand-primary-muted)] text-[var(--brand-primary)] font-bold flex items-center justify-center text-xs">
                             {spk.full_name.charAt(0)}
                           </div>
                           <div>
-                            <div className="font-bold text-[12px]">{spk.full_name}</div>
-                            <div className="text-[10px] text-muted">{spk.email}</div>
+                            <div className="font-semibold text-xs text-[var(--text-primary)]">{spk.full_name}</div>
+                            <div className="text-[10px] text-[var(--text-secondary)]">{spk.email}</div>
                           </div>
                         </div>
-                        <Button size="icon" variant="ghost" onClick={() => removeSpeakerFromSession({ sessionId: currentSession.id, speakerId: spk.id })} className="h-7 w-7 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => removeSpeakerFromSession({ sessionId: currentSession.id, speakerId: spk.id })}
+                          className="h-6 w-6 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 rounded-md"
+                          title="Remove speaker"
+                        >
                           <UserX className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     ))
                   ) : (
-                    <div className="text-[11px] text-muted italic p-3 border border-dashed rounded-xl text-center">
+                    <div className="text-xs text-[var(--text-tertiary)] italic p-3 border border-dashed border-[var(--border-default)] rounded-lg text-center">
                       No speakers assigned yet. Drag a speaker from the left palette.
                     </div>
                   )}
@@ -311,26 +346,39 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
             )}
 
             {activeTab === "files" && (
-              <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="text-center py-10 border border-dashed border-default rounded-xl text-muted">
-                <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="text-center py-8 border border-dashed border-[var(--border-default)] rounded-lg text-[var(--text-tertiary)] text-xs">
+                <FileText className="h-6 w-6 mx-auto mb-2 opacity-40" />
                 <p>Presentation files will appear here once uploaded by speakers.</p>
               </motion.div>
             )}
-
           </div>
 
           {/* Footer Actions */}
-          <div className="p-4 border-t border-default flex items-center justify-between bg-[color-mix(in_srgb,var(--text)_2%,transparent)]">
+          <div className="p-3.5 border-t border-[var(--border-default)] flex items-center justify-between bg-[var(--surface-subtle)]">
             <div className="flex items-center gap-2">
-              <Button variant="destructive" size="sm" onClick={handleDelete} className="h-9 px-3 rounded-xl text-[11px] font-bold">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDelete}
+                className="h-8 px-2.5 rounded-md text-xs font-medium border-[var(--border-default)] text-rose-400 hover:bg-rose-500/10 hover:border-rose-500/30"
+              >
                 <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
               </Button>
-              <Button variant="outline" size="sm" onClick={handleDuplicate} className="h-9 px-3 rounded-xl text-[11px] font-bold">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDuplicate}
+                className="h-8 px-2.5 rounded-md text-xs font-medium border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >
                 <Copy className="h-3.5 w-3.5 mr-1" /> Duplicate
               </Button>
             </div>
-            <Button disabled={saving} onClick={handleSave} className="h-9 px-5 bg-[var(--pri)] text-white font-black text-[11px] uppercase tracking-wider rounded-xl shadow-md border-0">
-              {saving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />} Save Changes
+            <Button
+              disabled={saving}
+              onClick={handleSave}
+              className="h-8 px-3.5 bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-black font-semibold text-xs tracking-wide rounded-md shadow-xs border-0 flex items-center gap-1.5"
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save Changes
             </Button>
           </div>
         </motion.aside>
@@ -338,4 +386,3 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
     </AnimatePresence>
   );
 }
-

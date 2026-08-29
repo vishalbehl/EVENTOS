@@ -88,7 +88,7 @@ export function SessionTable({ sessions = [], onSelectSession }: SessionTablePro
           className={cn(
             "px-3.5 py-1.5 rounded-2xl text-[11px] font-extrabold transition-all shrink-0 border flex items-center gap-2",
             selectedRoomFilter === "ALL"
-              ? "bg-[var(--pri)] text-white border-[var(--pri)] shadow-md"
+              ? "bg-[var(--pri)] text-[var(--primary-contrast)] border-[var(--pri)] shadow-md"
               : "bg-background text-muted border-default hover:text-[var(--text)] hover:border-[var(--pri)]/40"
           )}
         >
@@ -106,7 +106,7 @@ export function SessionTable({ sessions = [], onSelectSession }: SessionTablePro
             className={cn(
               "px-3.5 py-1.5 rounded-2xl text-[11px] font-extrabold transition-all shrink-0 border flex items-center gap-2",
               selectedRoomFilter === room.id
-                ? "bg-[var(--pri)] text-white border-[var(--pri)] shadow-md"
+                ? "bg-[var(--pri)] text-[var(--primary-contrast)] border-[var(--pri)] shadow-md"
                 : "bg-background text-muted border-default hover:text-[var(--text)] hover:border-[var(--pri)]/40"
             )}
           >

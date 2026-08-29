@@ -14,8 +14,8 @@ from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_log import EmailLog
 from app.modules.events.models.speaker import Speaker
 from app.modules.presentations.models.poster import Poster
-from app.modules.events.models.session_speaker import SessionSpeaker
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
+from app.modules.agenda.models import Session
 from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.services import email_service
 from app.core.tenant_context import TenantContextGuard

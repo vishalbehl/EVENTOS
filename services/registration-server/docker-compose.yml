@@ -45,7 +45,8 @@ services:
       - MINIO_SECURE=False
       - LOCAL_BUCKET_NAME=venue-presentations
       - CLOUD_API_URL=http://host.docker.internal:8000 # Assuming cloud is local
-      - VENUE_AUTH_KEY=venue_secret_key
+      - VENUE_AUTH_KEY=${VENUE_AUTH_KEY:?VENUE_AUTH_KEY must be provisioned}
+      - VENUE_AUTH_SECRET=${VENUE_AUTH_SECRET:?VENUE_AUTH_SECRET must be provisioned}
     depends_on:
       - venue-db
       - venue-redis

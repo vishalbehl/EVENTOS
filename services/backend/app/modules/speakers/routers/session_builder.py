@@ -14,11 +14,11 @@ from sqlalchemy import select
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
 from app.modules.identity.models.user import User
-from app.modules.events.models.session import Session
-from app.modules.events.models.room import Room
-from app.modules.events.models.events_domain_tables import Track
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Track
 from app.modules.events.models.speaker import Speaker
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.speakers.schemas.session_builder import (
     BulkReorderRequest,
     BulkReorderResponse,
@@ -26,6 +26,8 @@ from app.modules.speakers.schemas.session_builder import (
     ConflictDetail,
     DuplicateSessionRequest,
     DuplicateSessionResponse,
+    PublishScheduleRequest,
+    PublishScheduleResponse,
     RoomBuilderResponse,
     SessionBuilderDetail,
     SpeakerSlimResponse,
@@ -76,7 +78,8 @@ async def get_builder_snapshot(
             "capacity": room.capacity,
             "screen_count": room.screen_count,
             "room_type": room.room_type,
-            "av_technician": room.av_technician,
+            "room_coordinator": room.room_coordinator,
+            "av_technician": room.room_coordinator,
             "location_notes": room.location_notes,
             "is_active": room.is_active,
             "sort_order": getattr(room, "sort_order", 0),
@@ -219,6 +222,41 @@ async def duplicate_session_endpoint(
         end_time=new_session.end_time,
         room_id=new_session.room_id,
         message=f"Session duplicated as '{new_session.name}'",
+    )
+
+
+@router.post("/publish-schedule", response_model=PublishScheduleResponse)
+async def publish_schedule(
+    event: CurrentEvent,
+    payload: Optional[PublishScheduleRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Atomically publish all event sessions (or specified session_ids),
+    finalizing draft sessions and making them live for attendees, website, and venue displays.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import update
+
+    stmt = update(Session).where(
+        Session.event_id == event.id,
+        Session.deleted_at.is_(None),
+    )
+    if payload and payload.session_ids:
+        stmt = stmt.where(Session.id.in_(payload.session_ids))
+
+    stmt = stmt.values(
+        is_published=True,
+        updated_at=datetime.now(timezone.utc),
+    )
+    res = await db.execute(stmt)
+    await db.commit()
+
+    count = res.rowcount or 0
+    return PublishScheduleResponse(
+        success=True,
+        published_count=count,
+        message=f"Successfully published {count} sessions to the live schedule.",
     )
 
 

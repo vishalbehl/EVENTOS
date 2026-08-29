@@ -39,7 +39,7 @@ class SRRCheckin(Base):
     )
     speaker_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.speakers.id", ondelete="CASCADE"),
+        ForeignKey("speakers.speakers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

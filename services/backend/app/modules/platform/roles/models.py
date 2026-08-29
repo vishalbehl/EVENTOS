@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import Boolean, String, Text, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,7 +29,7 @@ class DepartmentRole(Base, SoftDeleteMixin):
     )
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.departments.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.departments.id", ondelete="CASCADE"),
         nullable=True,
         index=True
     )
@@ -62,7 +62,7 @@ class DepartmentRole(Base, SoftDeleteMixin):
 
     # Relationships
     department: Mapped[Optional["Department"]] = relationship("Department", back_populates="roles")
-    organization: Mapped["Organization"] = relationship("Organization")
+    organization: Mapped["Organization"] = relationship("Organization", foreign_keys=[organization_id])
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     updater: Mapped[Optional["User"]] = relationship("User", foreign_keys=[updated_by])
     deleter: Mapped[Optional["User"]] = relationship("User", primaryjoin="DepartmentRole.deleted_by == User.id")
@@ -106,23 +106,24 @@ class UserAssignment(Base, SoftDeleteMixin):
     )
     department_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.departments.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.departments.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
     team_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.teams.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.teams.id", ondelete="CASCADE"),
         nullable=True,
         index=True
     )
     role_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.department_roles.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.department_roles.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
 
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="SET NULL"),
@@ -146,7 +147,7 @@ class UserAssignment(Base, SoftDeleteMixin):
     )
 
     # Relationships
-    organization: Mapped["Organization"] = relationship("Organization")
+    organization: Mapped["Organization"] = relationship("Organization", foreign_keys=[organization_id])
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
     department: Mapped["Department"] = relationship("Department", back_populates="assignments")
     team: Mapped[Optional["Team"]] = relationship("Team", back_populates="assignments")

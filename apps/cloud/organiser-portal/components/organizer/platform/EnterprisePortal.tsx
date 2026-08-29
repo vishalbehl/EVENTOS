@@ -40,7 +40,16 @@ export function EnterprisePanel({
   children: ReactNode;
   className?: string;
 }) {
-  return <section className={cn("hex-panel rounded-[28px] overflow-hidden", className)}>{children}</section>;
+  return (
+    <section
+      className={cn(
+        "overflow-hidden rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)]",
+        className
+      )}
+    >
+      {children}
+    </section>
+  );
 }
 
 export function EnterpriseStatCard({
@@ -106,7 +115,7 @@ export function EnterpriseChecklist({
       <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">{title}</h3>
       <div className="mt-5 space-y-3">
         {items.map((item) => (
-          <div key={item.title} className="rounded-[18px] border border-[var(--color-border)] bg-white/[0.02] px-4 py-4">
+          <div key={item.title} className="rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)] px-4 py-4">
             <div className="flex items-start gap-4">
               <div className="hex-icon-shell mt-0.5 flex h-10 w-10 items-center justify-center">
                 <item.icon className="h-5 w-5 text-[var(--color-text-primary)]" />
@@ -172,13 +181,13 @@ export function EnterprisePlanCard({
     <EnterprisePanel
       className={cn(
         "p-6",
-        featured ? "border-[rgba(224,255,0,0.28)] shadow-[0_14px_34px_rgba(224,255,0,0.10)]" : ""
+        featured ? "border-[var(--op-primary)]" : ""
       )}
     >
       <p className="text-[18px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">{title}</p>
       <p className="mt-2 text-[13px] text-[var(--color-text-secondary)]">{audience}</p>
       <p className="mt-8 text-[32px] font-bold tracking-[-0.05em] text-[var(--color-text-primary)]">{price}</p>
-      <Button variant={featured ? "default" : "outline"} className="mt-8 h-11 w-full rounded-xl text-[12px] font-semibold">
+      <Button variant={featured ? "default" : "outline"} className="mt-8 h-11 w-full rounded-lg text-[12px] font-semibold">
         {cta}
       </Button>
     </EnterprisePanel>

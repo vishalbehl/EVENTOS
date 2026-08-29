@@ -9,19 +9,9 @@ if TYPE_CHECKING:
     from app.modules.identity.models.user import User
 from app.database import Base
 
-class SecurityLog(Base):
-    __tablename__ = "security_logs"
-    __table_args__ = {"schema": "audit"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    log_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
 class DataExport(Base):
     __tablename__ = "data_exports"
-    __table_args__ = {"schema": "audit"}
+    __table_args__ = {"schema": "command_center_audit"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
@@ -45,7 +35,7 @@ class DataExport(Base):
 
 class SystemChange(Base):
     __tablename__ = "system_changes"
-    __table_args__ = {"schema": "audit"}
+    __table_args__ = {"schema": "command_center_audit"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -55,7 +45,7 @@ class SystemChange(Base):
 
 class AccessReview(Base):
     __tablename__ = "access_reviews"
-    __table_args__ = {"schema": "audit"}
+    __table_args__ = {"schema": "command_center_audit"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -74,7 +64,7 @@ class AccessReview(Base):
 
 class ImpersonationLog(Base):
     __tablename__ = "impersonation_logs"
-    __table_args__ = {"schema": "audit"}
+    __table_args__ = {"schema": "command_center_audit"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     super_admin_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -110,7 +100,7 @@ class ImpersonationLog(Base):
 
 class PermissionAuditLog(Base):
     __tablename__ = "permission_changes"
-    __table_args__ = {"schema": "audit"}
+    __table_args__ = {"schema": "command_center_audit"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     acting_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id"), index=True)

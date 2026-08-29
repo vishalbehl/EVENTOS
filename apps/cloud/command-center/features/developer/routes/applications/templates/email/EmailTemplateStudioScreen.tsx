@@ -1,8 +1,13 @@
 "use client";
 
-import { EmailBuilderStudio, type StudioAsset, type StudioDraft, type StudioFragment, type StudioTemplate } from "@eventos/email-builder-studio";
+import { EmailBuilderStudio, EmailTemplateGrid, type StudioAsset, type StudioDraft, type StudioFragment, type StudioTemplate } from "@eventos/email-builder-studio";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 import { platformEmailAssets, platformEmailComponents, platformEmailTemplates, type EmailAssetRecord, type EmailFragmentRecord, type EmailStudioRecord } from "@/services/email-template-studio-service";
 
@@ -43,6 +48,10 @@ export default function EmailTemplateStudioScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateKey, setNewTemplateKey] = useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -56,7 +65,7 @@ export default function EmailTemplateStudioScreen() {
       setFragmentRows(savedFragments);
       setAssetRows(savedAssets);
       setOrganizations(orgs);
-      setActiveId((current) => current && result.some((row) => row.id === current) ? current : result[0]?.id ?? null);
+      setActiveId((current) => current && result.some((row) => row.id === current) ? current : null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Template library is unavailable.");
     } finally {
@@ -214,5 +223,71 @@ export default function EmailTemplateStudioScreen() {
 
   if (loading) return <div className="grid h-full min-h-0 flex-1 place-items-center text-sm text-[var(--text-tertiary)]">Loading authoritative template versions…</div>;
 
-  return <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Command Center · platform defaults" busy={busy} organizations={organizations} onSelectTemplate={setActiveId} onCreateTemplate={create} onSaveDraft={saveDraft} onDeleteTemplate={deleteTemplate} onDuplicateTemplate={duplicateTemplate} onUpdateScope={updateScope} onPublish={publish} onLoadVersions={loadVersions} onRollback={rollback} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={uploadAsset} />;
+  const content = !activeId ? (
+    <div className="flex-1 overflow-y-auto">
+      <EmailTemplateGrid
+        templates={templates}
+        scopeLabel="Command Center · platform defaults"
+        activeTemplateId={null}
+        onSelectTemplate={setActiveId}
+        onRequestCreateNew={() => setCreateOpen(true)}
+        onDeleteTemplate={deleteTemplate}
+        onDuplicateTemplate={duplicateTemplate}
+        onSendTest={undefined}
+        onOpenEditor={setActiveId}
+        onOpenDetails={setActiveId}
+      />
+    </div>
+  ) : (
+    <EmailBuilderStudio templates={templates} fragments={fragments} assets={assets} activeTemplateId={activeId} variables={VARIABLES} scopeLabel="Command Center · platform defaults" busy={busy} organizations={organizations} onSelectTemplate={setActiveId} onRequestCreateNew={() => setCreateOpen(true)} onSaveDraft={saveDraft} onDeleteTemplate={deleteTemplate} onDuplicateTemplate={duplicateTemplate} onUpdateScope={updateScope} onPublish={publish} onLoadVersions={loadVersions} onRollback={rollback} onPreview={preview} onSendTest={sendTest} onSaveFragment={saveFragment} onUploadAsset={uploadAsset} onExit={() => setActiveId(null)} />
+  );
+
+  return (
+    <>
+      {content}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create new template</DialogTitle>
+            <DialogDescription>Create a new email directly in the designer. It starts as a private draft.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="name">Template name</Label>
+              <Input
+                id="name"
+                value={newTemplateName}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setNewTemplateName(value);
+                  if (!newTemplateKey) {
+                    setNewTemplateKey(value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+                  }
+                }}
+                placeholder="e.g. Speaker Invitation"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="stableKey">Stable key</Label>
+              <Input id="stableKey" value={newTemplateKey} onChange={(e) => setNewTemplateKey(e.target.value)} placeholder="e.g. speaker-invitation" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button
+              disabled={busy || newTemplateName.trim().length < 2 || !/^[a-z0-9][a-z0-9_-]{1,99}$/.test(newTemplateKey)}
+              onClick={async () => {
+                await create({ name: newTemplateName.trim(), stableKey: newTemplateKey.trim() });
+                setCreateOpen(false);
+                setNewTemplateName("");
+                setNewTemplateKey("");
+              }}
+            >
+              Create draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }

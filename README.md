@@ -11,8 +11,8 @@ conf-platform/
 ├── apps/                        # Frontend & Client Applications
 │   ├── cloud/                   # Cloud-Hosted Portals (Next.js / React)
 │   │   ├── command-center       # Ecosystem command center / brain (Port 3000)
-│   │   ├── registration-portal  # Attendee ticketing & badges (Port 3003)
-│   │   └── speaker-portal       # Slide uploads & speaker profile (Port 3002)
+│   │   ├── organiser-portal     # Event Organizer console & Studio (Port 3001)
+│   │   └── event-portal         # Unified Participant, Registration & Speaker Portal (Port 3003)
 │   └── venue/                   # Offline Venue Client Apps
 │       ├── kiosk-app            # Check-in self-service (Electron/Next)
 │       └── station-app          # SRR Scanning interface

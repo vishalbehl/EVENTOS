@@ -46,6 +46,18 @@ class ApiClient {
             console.error("Failed to parse auth storage", e)
           }
         }
+
+        // Automatically inject Idempotency-Key for mutating requests if not present
+        const method = (config.method || "").toUpperCase()
+        if (["POST", "PUT", "PATCH"].includes(method)) {
+          if (!config.headers["Idempotency-Key"] && !config.headers["idempotency-key"]) {
+            const randomKey = typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `idem-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+            config.headers["Idempotency-Key"] = randomKey
+          }
+        }
+
         return config
       },
       (error) => Promise.reject(error)

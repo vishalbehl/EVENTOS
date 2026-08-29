@@ -191,7 +191,7 @@ export default function VenueReadinessPage() {
             </p>
           </div>
           <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-tertiary">
-            {query.data?.deployment_profile || "local"} Â· {sourceAccess.data?.freshness_at ? new Date(sourceAccess.data.freshness_at).toLocaleString() : "No freshness"}
+            {query.data?.deployment_profile || "local"} {sourceAccess.data?.freshness_at ? new Date(sourceAccess.data.freshness_at).toLocaleString() : "No freshness"}
           </div>
         </div>
       </Card>
@@ -236,7 +236,7 @@ export default function VenueReadinessPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
             <div>
               <h2 className="font-bold text-primary">Created source APIs</h2>
-              <p className="mt-1 text-xs text-secondary">{computedKpis.registration} registration APIs Â· {computedKpis.venue} venue APIs</p>
+              <p className="mt-1 text-xs text-secondary">{computedKpis.registration} registration APIs {computedKpis.venue} venue APIs</p>
             </div>
             <Button onClick={openCreateModal}><KeyRound className="mr-2 h-4 w-4" />Create API</Button>
           </div>

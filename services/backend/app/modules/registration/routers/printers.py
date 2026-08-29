@@ -11,8 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, get_current_event, CurrentEvent, AdminOrAbove
 from app.modules.venue.models.printer import Printer
 from app.modules.registration.schemas.badge import PrinterRegister, PrinterResponse
-from app.modules.events.models.room import Room
-from app.modules.procurement.models import Vendor
+from app.modules.agenda.models import Room
 from app.core.dependencies.feature_gate import require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 
@@ -45,12 +44,8 @@ async def register_printer(
             raise HTTPException(status_code=404, detail="Room not found for this event")
 
     if payload.vendor_id:
-        vendor = await db.scalar(select(Vendor).where(
-            Vendor.id == payload.vendor_id,
-            Vendor.status == "ACTIVE",
-        ))
-        if vendor is None:
-            raise HTTPException(status_code=404, detail="Vendor not found")
+        # Vendor validation removed since procurement module is deleted
+        pass
 
     printer_id = uuid.uuid5(
         uuid.NAMESPACE_URL,

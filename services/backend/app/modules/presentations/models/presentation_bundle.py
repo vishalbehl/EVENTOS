@@ -1,7 +1,7 @@
 import enum
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -12,7 +12,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
     from app.modules.presentations.models.presentation_file import PresentationFile
-    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.agenda.models.session_person import AgendaSessionPerson
 
 
 class ChainMode(str, enum.Enum):
@@ -24,14 +24,15 @@ class PresentationBundle(Base):
     """Ordered multi-deck package for one speaker slot."""
 
     __tablename__ = "bundles"
+    __table_args__ = {"schema": "presentations"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    session_speaker_id: Mapped[uuid.UUID] = mapped_column(
+    session_speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.session_speakers.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("agenda.session_people.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     event_id: Mapped[uuid.UUID] = mapped_column(
@@ -55,15 +56,9 @@ class PresentationBundle(Base):
     )
 
     event: Mapped["Event"] = relationship("Event", back_populates="presentation_bundles")
-    owner_session_speaker: Mapped["SessionSpeaker"] = relationship(
-        "SessionSpeaker",
-        back_populates="presentation_bundles",
+    owner_session_speaker: Mapped[Optional["AgendaSessionPerson"]] = relationship(
+        "AgendaSessionPerson",
         foreign_keys=[session_speaker_id],
-    )
-    session_speaker: Mapped["SessionSpeaker"] = relationship(
-        "SessionSpeaker",
-        back_populates="presentation_bundle",
-        foreign_keys="SessionSpeaker.presentation_bundle_id",
     )
     files: Mapped[List["BundleFile"]] = relationship(
         "BundleFile",
@@ -78,6 +73,7 @@ class BundleFile(Base):
     __table_args__ = (
         UniqueConstraint("bundle_id", "file_id", name="uq_bundle_files_file"),
         UniqueConstraint("bundle_id", "deck_order", name="uq_bundle_files_order"),
+        {"schema": "presentations"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

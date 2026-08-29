@@ -25,7 +25,7 @@ class PlatformIntegration(Base):
         'HEALTHY' | 'DEGRADED' | 'DOWN' | 'UNKNOWN'
     """
     __tablename__ = "platform_integrations"
-    __table_args__ = {"schema": "platform"}
+    __table_args__ = {"schema": "integrations"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

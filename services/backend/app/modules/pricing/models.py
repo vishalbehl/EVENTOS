@@ -27,7 +27,7 @@ class PricingRuleCondition(Base):
     __tablename__ = "pricing_rule_conditions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pricing.pricing_rules.id", ondelete="CASCADE"), nullable=False)
+    rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("commerce.pricing_rules.id", ondelete="CASCADE"), nullable=False)
     field_name: Mapped[str] = mapped_column(String(100), nullable=False) # attendees, duration, region, event_type
     operator: Mapped[str] = mapped_column(String(20), nullable=False) # >, <, =, !=
     value: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -38,7 +38,7 @@ class PricingRuleAction(Base):
     __tablename__ = "pricing_rule_actions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pricing.pricing_rules.id", ondelete="CASCADE"), nullable=False)
+    rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("commerce.pricing_rules.id", ondelete="CASCADE"), nullable=False)
     action_type: Mapped[str] = mapped_column(String(50), nullable=False) # PERCENTAGE_DISCOUNT, PERCENTAGE_MARKUP, FLAT_DISCOUNT, FLAT_MARKUP
     value: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
 
@@ -47,7 +47,7 @@ class ServicePricing(Base):
     __tablename__ = "service_pricing"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("commercial.services.id", ondelete="CASCADE"), nullable=False)
+    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("business.services.id", ondelete="CASCADE"), nullable=False)
     region: Mapped[str] = mapped_column(String(50), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     base_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)

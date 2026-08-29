@@ -5,7 +5,7 @@ the external values and approvals listed below.
 
 ## Boundary
 
-- Vercel hosts only the four Next.js portals.
+- Vercel hosts only the three Next.js portals.
 - AWS hosts FastAPI, WebSockets, PostgreSQL, Redis, Celery, schedules, and S3.
 - Browsers never receive database, Redis, AWS, Resend, Meta, or payment secrets.
 - PostgreSQL is authoritative. Redis is disposable infrastructure.
@@ -17,11 +17,10 @@ the external values and approvals listed below.
 2. Create the Terraform state bucket and DynamoDB lock table before the first workflow run.
 3. Create a GitHub OIDC deployment role scoped to the sample account.
 4. Request and validate the ACM certificate for the sample API hostname.
-5. Create four Vercel projects with these roots:
+5. Create three Vercel projects with these roots:
    - `apps/cloud/command-center`
    - `apps/cloud/organiser-portal`
-   - `apps/cloud/registration-portal`
-   - `apps/cloud/speaker-portal`
+   - `apps/cloud/event-portal`
 6. Set Vercel production variables for every project:
    - `NEXT_PUBLIC_API_URL=https://api.sample.example.com`
    - `NEXT_PUBLIC_WS_URL=https://api.sample.example.com`
@@ -43,8 +42,8 @@ OPERATIONS_ALERT_EMAIL=<confirmed-alert-address>
 SAMPLE_MONTHLY_BUDGET_USD=50
 SAMPLE_API_DOMAIN=api.sample.example.com
 SAMPLE_API_CERTIFICATE_ARN=<validated-acm-certificate-arn>
-SAMPLE_SPEAKER_URL=https://speaker.sample.example.com
-SAMPLE_PORTAL_ORIGINS_TF=["https://command.sample.example.com","https://organiser.sample.example.com","https://register.sample.example.com","https://speaker.sample.example.com"]
+SAMPLE_SPEAKER_URL=https://portal.sample.example.com
+SAMPLE_PORTAL_ORIGINS_TF=["https://command.sample.example.com","https://organiser.sample.example.com","https://portal.sample.example.com"]
 ```
 
 Secrets:
@@ -54,8 +53,7 @@ VERCEL_TOKEN
 VERCEL_ORG_ID
 VERCEL_COMMAND_CENTER_PROJECT_ID
 VERCEL_ORGANISER_PROJECT_ID
-VERCEL_REGISTRATION_PROJECT_ID
-VERCEL_SPEAKER_PROJECT_ID
+VERCEL_EVENT_PORTAL_PROJECT_ID
 RUNTIME_SECRET_JSON
 DEPLOYMENT_SECRET_JSON
 IDENTITY_BOOTSTRAP_SECRET_JSON

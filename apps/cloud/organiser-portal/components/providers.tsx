@@ -61,12 +61,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <Toaster
         position="top-right"
         richColors
+        closeButton
         toastOptions={{
-          style: {
-            background: 'var(--color-surface-2)',
-            border: '1px solid var(--color-border)',
-            color: 'var(--color-text-primary)',
-            fontFamily: 'var(--font-sans)',
+          className: "text-sm font-semibold shadow-xl border rounded-xl",
+          classNames: {
+            error: "!bg-rose-600 !text-white !border-rose-700",
+            success: "!bg-emerald-600 !text-white !border-emerald-700",
+            warning: "!bg-amber-500 !text-slate-950 !border-amber-600 font-bold",
+            info: "!bg-blue-600 !text-white !border-blue-700",
           },
         }}
       />

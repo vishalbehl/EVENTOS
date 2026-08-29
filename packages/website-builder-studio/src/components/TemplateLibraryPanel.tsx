@@ -118,7 +118,20 @@ export const TemplateLibraryPanel: React.FC<TemplateLibraryPanelProps> = ({ onIn
 
       <div className="wb-template-library__list">
         {source === 'eventos' && assets.map((asset) => (
-          <article key={asset.id} className="wb-template-card">
+          <article
+            key={asset.id}
+            className="wb-template-card"
+            draggable={true}
+            onDragStart={(e) => {
+              const payload = JSON.stringify({ type: 'template', data: asset });
+              e.dataTransfer.setData('application/x-eventos-builder-drag', payload);
+              (window as any).__wb_dragged_item__ = { type: 'template', data: asset };
+              e.dataTransfer.effectAllowed = 'copy';
+            }}
+            onDragEnd={() => {
+              (window as any).__wb_dragged_item__ = null;
+            }}
+          >
             <div className="wb-template-card__preview" style={{ background: asset.preview.background }}>
               <iframe title={`${asset.name} preview`} srcDoc={buildPreviewDocument(asset)} sandbox="" />
             </div>
@@ -142,7 +155,21 @@ export const TemplateLibraryPanel: React.FC<TemplateLibraryPanelProps> = ({ onIn
         {source === 'aceternity' && aceternityAssets.map((asset) => {
           const builderAsset = getAceternityBuilderAsset(asset.name);
           return (
-          <article key={asset.id} className={`wb-template-card wb-template-card--aceternity ${builderAsset ? 'is-builder-ready' : ''}`}>
+          <article
+            key={asset.id}
+            className={`wb-template-card wb-template-card--aceternity ${builderAsset ? 'is-builder-ready' : ''}`}
+            draggable={Boolean(builderAsset)}
+            onDragStart={(e) => {
+              if (!builderAsset) return;
+              const payload = JSON.stringify({ type: 'template', data: builderAsset });
+              e.dataTransfer.setData('application/x-eventos-builder-drag', payload);
+              (window as any).__wb_dragged_item__ = { type: 'template', data: builderAsset };
+              e.dataTransfer.effectAllowed = 'copy';
+            }}
+            onDragEnd={() => {
+              (window as any).__wb_dragged_item__ = null;
+            }}
+          >
             <div className="wb-template-card__image-preview">
               {builderAsset ? (
                 <iframe title={`${asset.title} builder preview`} srcDoc={buildPreviewDocument(builderAsset)} sandbox="" loading="lazy" />

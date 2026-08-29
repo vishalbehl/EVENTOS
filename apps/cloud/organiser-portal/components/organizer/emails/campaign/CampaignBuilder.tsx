@@ -201,7 +201,7 @@ export default function CampaignBuilder({ eventId, onCreated }: Props) {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => setIsOpen(true)}
-                className="w-full py-4 bg-[var(--pri)] text-white rounded-[1.5rem] font-black uppercase tracking-[0.3em] text-[12px] flex items-center justify-center gap-3 shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 transition-all group"
+                className="w-full py-4 bg-[var(--pri)] text-[var(--primary-contrast)] rounded-[1.5rem] font-black uppercase tracking-[0.3em] text-[12px] flex items-center justify-center gap-3 shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 transition-all group"
             >
                 <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-500" />
                 Create New Campaign

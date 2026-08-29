@@ -357,12 +357,12 @@ async def get_dashboard_metrics(
             "failed_records": failed_outbox,
         },
         "storage": {
-            "db_used_gb": round((database_state.get("used_bytes") or 500000000) / (1024**3), 2),
-            "db_total_gb": 10.0,
-            "db_percentage": 5,
-            "media_used_gb": round((disk_state.get("used_bytes") or 2000000000) / (1024**3), 1),
-            "media_total_gb": round((disk_state.get("total_bytes") or 100000000000) / (1024**3), 1),
-            "media_percentage": 42
+            "db_used_gb": round(database_state["used_bytes"] / (1024**3), 2) if database_state.get("used_bytes") is not None else None,
+            "db_total_gb": None,
+            "db_percentage": None,
+            "media_used_gb": round(disk_state["used_bytes"] / (1024**3), 1) if disk_state.get("used_bytes") is not None else None,
+            "media_total_gb": round(disk_state["total_bytes"] / (1024**3), 1) if disk_state.get("total_bytes") is not None else None,
+            "media_percentage": round((disk_state["used_bytes"] / disk_state["total_bytes"]) * 100, 1) if disk_state.get("used_bytes") is not None and disk_state.get("total_bytes") else None,
         },
         "system": {
             "api": {"status": "online"},

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Calendar, Clock, MapPin, User, Hash, Loader2 } from "lucide-react";
+import { X, Plus, Calendar, Clock, MapPin, Hash, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useRooms } from "@/hooks/useRooms";
@@ -12,7 +12,6 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { fromDateTimeLocalString, formatApiError } from "@/lib/utils";
 import { SESSION_CATEGORIES } from "@/types/models";
-import { CapabilityAction } from "@/lib/capabilities";
 
 interface CreateSessionDialogProps {
   isOpen: boolean;
@@ -28,92 +27,83 @@ export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms }
   const { data: event } = useEvent(eventId);
   const [loading, setLoading] = useState(false);
 
-  const [formData, setFormData] = useState({
-    session_code: "",
-    name: "",
-    room_input: "",
-    session_type: "KEYNOTE",
-    selected_date: "",
-    start_time_only: "09:00",
-    end_time_only: "10:00",
-    moderator_name: "",
-    description: "",
-  });
-
-  const eventDates = useMemo(() => {
-    if (!event?.start_date || !event?.end_date) return [];
-    const dates = [];
-    let curr = new Date(event.start_date);
-    const end = new Date(event.end_date);
-    while (curr <= end) {
-      dates.push(new Date(curr).toISOString().split('T')[0]);
-      curr.setDate(curr.getDate() + 1);
+  const defaultStartTime = useMemo(() => {
+    if (event?.start_date) {
+      const d = new Date(event.start_date);
+      d.setHours(9, 0, 0, 0);
+      return d.toISOString().slice(0, 16);
     }
-    return dates;
+    const d = new Date();
+    d.setHours(9, 0, 0, 0);
+    return d.toISOString().slice(0, 16);
   }, [event]);
 
-  useEffect(() => {
-    if (eventDates.length > 0 && !formData.selected_date) {
-      setFormData(prev => ({ ...prev, selected_date: eventDates[0] }));
+  const defaultEndTime = useMemo(() => {
+    if (event?.start_date) {
+      const d = new Date(event.start_date);
+      d.setHours(10, 30, 0, 0);
+      return d.toISOString().slice(0, 16);
     }
-  }, [eventDates]);
+    const d = new Date();
+    d.setHours(10, 30, 0, 0);
+    return d.toISOString().slice(0, 16);
+  }, [event]);
+
+  const [formData, setFormData] = useState({
+    name: "",
+    session_code: "",
+    room_id: "",
+    start_time: defaultStartTime,
+    end_time: defaultEndTime,
+    category: "CONTENT",
+    description: "",
+    track: "",
+    max_capacity: 100,
+  });
+
+  useEffect(() => {
+    if (rooms.length > 0 && !formData.room_id) {
+      setFormData(prev => ({ ...prev, room_id: rooms[0].id }));
+    }
+  }, [rooms, formData.room_id]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setFormData(prev => ({
+        ...prev,
+        start_time: defaultStartTime,
+        end_time: defaultEndTime,
+        room_id: rooms[0]?.id || "",
+      }));
+    }
+  }, [isOpen, defaultStartTime, defaultEndTime, rooms]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.name || !formData.room_id) {
+      toast.error("Please fill in session name and choose a room");
+      return;
+    }
+
+    const start = new Date(formData.start_time);
+    const end = new Date(formData.end_time);
+    if (end <= start) {
+      toast.error("End time must be strictly after start time");
+      return;
+    }
+
     setLoading(true);
     try {
-      if (!formData.selected_date) throw new Error("Please select a date");
-      const tz = event?.timezone || 'UTC';
+      await apiPost(`/events/${eventId}/sessions`, {
+        ...formData,
+        start_time: fromDateTimeLocalString(formData.start_time),
+        end_time: fromDateTimeLocalString(formData.end_time),
+      });
 
-      // Combine date and time
-      const startTime = fromDateTimeLocalString(`${formData.selected_date}T${formData.start_time_only}`, tz);
-      const endTime = fromDateTimeLocalString(`${formData.selected_date}T${formData.end_time_only}`, tz);
-
-      // Handle dynamic room creation
-      let finalRoomId = null;
-      if (formData.room_input) {
-        const matchingRoom = rooms.find((r: any) => 
-          r.name.toLowerCase() === formData.room_input.trim().toLowerCase() ||
-          r.id === formData.room_input
-        );
-        
-        if (matchingRoom) {
-          finalRoomId = matchingRoom.id;
-        } else {
-          // Create new room
-          const newRoom = await apiPost<{ id: string }>(`/events/${eventId}/rooms`, {
-            name: formData.room_input.trim(),
-            room_type: "ROOM",
-            capacity: 50,
-            screen_count: 1
-          });
-          finalRoomId = newRoom.id;
-          queryClient.invalidateQueries({ queryKey: ["rooms", eventId] });
-        }
-      }
-
-      const payload = {
-        session_code: formData.session_code.trim().toUpperCase(),
-        name: formData.name.trim(),
-        room_id: finalRoomId,
-        session_type: formData.session_type,
-        start_time: startTime,
-        end_time: endTime,
-        moderator_name: formData.moderator_name,
-        description: formData.description,
-      };
-
-      await apiPost(`/events/${eventId}/sessions`, payload);
       toast.success("Session created successfully");
       queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["builder-sessions", eventId] });
       onClose();
-      // Reset
-      setFormData({
-        session_code: "", name: "", room_input: "", session_type: "KEYNOTE",
-        selected_date: eventDates[0] || "",
-        start_time_only: "09:00", end_time_only: "10:00", 
-        moderator_name: "", description: ""
-      });
     } catch (err: any) {
       toast.error(formatApiError(err, "Failed to create session"));
     } finally {
@@ -129,183 +119,151 @@ export function CreateSessionDialog({ isOpen, onClose, eventId, preloadedRooms }
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
-        />
-      )}
-      {isOpen && (
-        <div key="create-session-wrapper" className="fixed inset-0 flex items-center justify-center z-[210] pointer-events-none p-4">
+          className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4"
+        >
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            initial={{ scale: 0.95, opacity: 0, y: 15 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.95, opacity: 0, y: 20 }}
-            className="w-full max-w-2xl glass-3d rounded-[2.5rem] border-default shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden"
+            exit={{ scale: 0.95, opacity: 0, y: 15 }}
+            className="w-full max-w-xl rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-2xl text-[var(--text-primary)] flex flex-col max-h-[90vh] overflow-hidden"
           >
-            <div className="p-8 border-b border-default flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 rounded-2xl bg-[var(--pri)]/10 flex items-center justify-center">
-                    <Plus className="h-6 w-6 text-[var(--pri)]" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-[var(--text)] tracking-tight">Create New Session</h3>
-                    <p className="text-[11px] font-bold text-muted uppercase tracking-widest mt-0.5">Define a new academic slot</p>
-                  </div>
+            <div className="p-5 border-b border-[var(--border-subtle)] bg-[var(--bg-surface-2)] flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="size-8 rounded-lg bg-[var(--pri)]/10 text-[var(--pri)] flex items-center justify-center border border-[var(--pri)]/20">
+                  <Plus className="size-4" />
                 </div>
-                <button onClick={onClose} className="h-10 w-10 rounded-full border border-default flex items-center justify-center text-muted hover:text-[var(--text)]">
-                  <X className="h-4 w-4" />
-                </button>
+                <div>
+                  <h3 className="text-base font-bold text-[var(--text-primary)] tracking-tight">Create New Session</h3>
+                  <p className="text-[11px] text-[var(--text-secondary)]">Define a new conference session slot</p>
+                </div>
               </div>
+              <button 
+                type="button"
+                onClick={onClose} 
+                className="size-8 rounded-md border border-[var(--border-default)] bg-[var(--card)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer shadow-sm"
+              >
+                <X className="size-4" />
+              </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
-              <div className="grid grid-cols-3 gap-6">
-                <div className="space-y-2 col-span-1">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Session Code *</label>
+            <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1 col-span-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">Session Code *</label>
                   <div className="relative">
-                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+                    <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
                     <Input
                       required
                       value={formData.session_code}
                       onChange={e => setFormData({ ...formData, session_code: e.target.value.toUpperCase() })}
                       placeholder="e.g. S101"
-                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold uppercase"
+                      className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-default)] pl-8 text-xs font-bold uppercase rounded-lg"
                     />
                   </div>
                 </div>
-                <div className="space-y-2 col-span-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Session Name *</label>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">Session Name *</label>
                   <Input
                     required
                     value={formData.name}
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g. Quantum Computing Frontiers"
-                    className="h-12 glass-3d border-default px-5 text-[13px] font-bold"
+                    placeholder="e.g. Opening Keynote & Welcome"
+                    className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-default)] text-xs font-semibold rounded-lg"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Hall / Room (Optional)</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">Room *</label>
                   <div className="relative">
-                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none z-10" />
+                    <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
                     <select
-                      value={formData.room_input}
-                      onChange={e => setFormData({ ...formData, room_input: e.target.value })}
-                      className="w-full h-12 glass-3d border border-default rounded-xl pl-12 pr-4 text-[13px] font-bold text-[var(--text)] bg-background appearance-none focus:outline-none cursor-pointer"
+                      required
+                      value={formData.room_id}
+                      onChange={e => setFormData({ ...formData, room_id: e.target.value })}
+                      className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-default)] rounded-lg pl-8 pr-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none focus:border-[var(--pri)] cursor-pointer"
                     >
-                      <option value="">No Room (Unallocated)</option>
-                      {rooms.map((r: any) => (
-                        <option key={r.id} value={r.id || r.name}>
-                          {r.name} {r.capacity ? `(${r.capacity} seats)` : ""}
-                        </option>
+                      {rooms.map(r => (
+                        <option key={r.id} value={r.id}>{r.name} (Cap: {r.capacity})</option>
                       ))}
                     </select>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Session Type</label>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">Category</label>
                   <select
-                    value={formData.session_type}
-                    onChange={e => setFormData({ ...formData, session_type: e.target.value })}
-                    className="w-full h-12 glass-3d border-default rounded-xl px-4 text-[13px] font-bold text-[var(--text)] focus:outline-none cursor-pointer"
+                    value={formData.category}
+                    onChange={e => setFormData({ ...formData, category: e.target.value })}
+                    className="h-9 w-full bg-[var(--bg-surface-2)] border border-[var(--border-default)] rounded-lg px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none focus:border-[var(--pri)] cursor-pointer"
                   >
-                    {Object.entries(SESSION_CATEGORIES).map(([category, types]) => (
-                      <optgroup key={category} label={category} className="bg-[var(--surf)] text-[9px] font-black tracking-widest text-muted uppercase">
-                        {types.map(t => (
-                          <option key={t.value} value={t.value} className="bg-[var(--base)] text-[var(--text)] font-semibold">
-                            {t.label}
-                          </option>
-                        ))}
-                      </optgroup>
+                    {Object.keys(SESSION_CATEGORIES).map(c => (
+                      <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Conference Day *</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">Start Time *</label>
                   <div className="relative">
-                    <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-                    <select
+                    <Clock className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                    <Input
+                      type="datetime-local"
                       required
-                      value={formData.selected_date}
-                      onChange={e => setFormData({ ...formData, selected_date: e.target.value })}
-                      className="w-full h-12 glass-3d border-default rounded-xl pl-12 pr-4 text-[13px] font-bold text-[var(--text)] appearance-none focus:outline-none"
-                    >
-                      <option value="">Select Day...</option>
-                      {eventDates.map(d => (
-                        <option key={d} value={d}>
-                          {new Date(d).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}
-                        </option>
-                      ))}
-                    </select>
+                      value={formData.start_time}
+                      onChange={e => setFormData({ ...formData, start_time: e.target.value })}
+                      className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-default)] pl-8 text-xs font-semibold rounded-lg"
+                    />
                   </div>
                 </div>
-
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Start Time *</label>
-                    <div className="relative">
-                      <Clock className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-                      <Input
-                        required
-                        type="time"
-                        value={formData.start_time_only}
-                        onChange={e => setFormData({ ...formData, start_time_only: e.target.value })}
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">End Time *</label>
-                    <div className="relative">
-                      <Clock className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-                      <Input
-                        required
-                        type="time"
-                        value={formData.end_time_only}
-                        onChange={e => setFormData({ ...formData, end_time_only: e.target.value })}
-                        className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
-                      />
-                    </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">End Time *</label>
+                  <div className="relative">
+                    <Clock className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                    <Input
+                      type="datetime-local"
+                      required
+                      value={formData.end_time}
+                      onChange={e => setFormData({ ...formData, end_time: e.target.value })}
+                      className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-default)] pl-8 text-xs font-semibold rounded-lg"
+                    />
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Moderator Name</label>
-                <div className="relative">
-                  <User className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-                  <Input
-                    value={formData.moderator_name}
-                    onChange={e => setFormData({ ...formData, moderator_name: e.target.value })}
-                    placeholder="e.g. Dr. Jane Smith"
-                    className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider block">Track / Topic (Optional)</label>
+                <Input
+                  value={formData.track}
+                  onChange={e => setFormData({ ...formData, track: e.target.value })}
+                  placeholder="e.g. Artificial Intelligence, Cardiology"
+                  className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-default)] text-xs font-semibold rounded-lg"
+                />
+              </div>
+
+              <div className="p-4 border-t border-[var(--border-subtle)] bg-[var(--bg-surface-2)] flex items-center justify-end gap-2.5 -mx-5 -mb-5 mt-4">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={onClose}
+                  className="h-9 px-4 rounded-lg border border-[var(--border-default)] bg-[var(--card)] text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={loading}
+                  className="h-9 px-4 bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] font-bold text-xs rounded-lg shadow-sm border-0 cursor-pointer"
+                >
+                  {loading ? <Loader2 className="size-3.5 animate-spin mr-1.5" /> : null}
+                  Create Session
+                </Button>
               </div>
             </form>
-
-            <div className="p-8 border-t border-default bg-[color-mix(in_srgb,var(--base)_50%,transparent)] backdrop-blur-sm flex gap-4">
-              <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
-                Cancel
-              </Button>
-              <CapabilityAction operation="sessions.manage" limitKey="max_sessions">
-                <Button
-                  disabled={loading}
-                  onClick={handleSubmit}
-                  className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
-                >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-                  Register Session
-                </Button>
-              </CapabilityAction>
-            </div>
           </motion.div>
-        </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

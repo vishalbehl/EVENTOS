@@ -14,8 +14,8 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.dependencies import get_db, get_current_user, get_current_event, CurrentEvent
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
 from app.modules.presentations.schemas.file import (

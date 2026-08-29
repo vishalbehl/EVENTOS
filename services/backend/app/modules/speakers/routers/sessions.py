@@ -11,8 +11,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, OrganizerOrAbove, get_current_user
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.identity.models.user import User
 from app.modules.speakers.schemas.session import (
     SessionCreate, SessionUpdate, SessionResponse, SessionSummary,
@@ -280,8 +280,8 @@ async def list_sessions(
     q = select(Session).options(
         selectinload(Session.event), 
         selectinload(Session.room),
+        selectinload(Session.track),
         selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker),
-        selectinload(Session.posters)
     ).where(Session.event_id == event.id)
 
     # Restricted roles (NOT super_admin or admin) must have specific assignments
@@ -402,6 +402,8 @@ async def create_session(
             presentation_title=sp_data.get("presentation_title"),
             talk_order=sp_data.get("talk_order", idx),
             talk_duration_minutes=sp_data.get("talk_duration_minutes"),
+            speaker_type=sp_data.get("speaker_type"),
+            role=sp_data.get("role", "Speaker"),
             start_time=sp_data.get("start_time"),
             end_time=sp_data.get("end_time"),
         )
@@ -583,6 +585,7 @@ async def _get_session_or_404(
         .options(
             selectinload(Session.event),
             selectinload(Session.room),
+            selectinload(Session.track),
             selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker),
             selectinload(Session.posters)
         )

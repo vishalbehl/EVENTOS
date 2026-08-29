@@ -3,10 +3,9 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Users, Plus, Sparkles, Box, Monitor, ShieldCheck, Loader2 } from "lucide-react";
+import { X, MapPin, Users, Plus, Box, Monitor, ShieldCheck, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useCreateRoom } from "@/hooks/useRooms";
 import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
@@ -25,9 +24,9 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
     capacity: 100,
     screen_count: 1,
     room_type: "presentation",
-    av_technician: "",
+    room_coordinator: "",
     location_notes: "",
-    is_active: true
+    is_active: true,
   });
 
   useEffect(() => {
@@ -47,8 +46,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Ensure numeric fields are valid
+
     const payload = {
       ...formData,
       capacity: isNaN(formData.capacity) ? 0 : formData.capacity,
@@ -58,21 +56,21 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
     try {
       await createRoom.mutateAsync({
         eventId: eventId as string,
-        data: payload
+        data: payload,
       });
+      toast.success("Room registered successfully.");
       onClose();
       setFormData({
         name: "",
         capacity: 100,
         screen_count: 1,
         room_type: "presentation",
-        av_technician: "",
+        room_coordinator: "",
         location_notes: "",
-        is_active: true
+        is_active: true,
       });
     } catch (error: any) {
       const message = formatApiError(error, "Failed to create room.");
-      console.error("Failed to create room:", message);
       toast.error(message);
     }
   };
@@ -91,150 +89,190 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div
-          key="create-room-overlay"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 bg-[var(--base)]/80 backdrop-blur-md z-[200]"
-        />
-      )}
-      {isOpen && (
-        <div key="create-room-wrapper" className="fixed inset-0 flex items-center justify-center z-[210] pointer-events-none p-4">
+        <>
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 20 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.95, opacity: 0, y: 20 }}
-            className="w-full max-w-2xl glass-3d rounded-[2.5rem] border-default shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden relative"
-          >
-            <button 
-              onClick={onClose} 
-              className="absolute top-8 right-8 h-10 w-10 rounded-full border border-default flex items-center justify-center text-muted hover:text-[var(--text)] transition-all z-10"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            key="create-room-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-black/60 z-[200]"
+          />
 
-            {/* Scrollable Body */}
-            <form onSubmit={handleSubmit} id="create-room-form" className="flex-1 overflow-y-auto p-8 pt-20 space-y-8 no-scrollbar">
-              {/* Header Integrated in Body */}
-              <div className="flex items-center gap-4 mb-2">
-                <div className="h-12 w-12 rounded-2xl bg-[var(--pri)]/10 flex items-center justify-center">
-                  <Box className="h-6 w-6 text-[var(--pri)]" />
+          <div
+            key="create-room-wrapper"
+            className="fixed inset-0 flex items-center justify-center z-[210] pointer-events-none p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="w-full max-w-lg rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden relative text-[var(--text-primary)]"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-5 border-b border-[var(--border-subtle)]">
+                <div className="flex items-center gap-3">
+                  <div className="size-8 rounded-lg bg-[var(--pri)]/10 text-[var(--pri)] flex items-center justify-center border border-[var(--pri)]/20">
+                    <Box className="size-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[var(--text-primary)] tracking-tight">
+                      Add New Room
+                    </h3>
+                    <p className="text-[11px] text-[var(--text-secondary)]">
+                      Configure stage capacity and location details
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-xl font-black text-[var(--text)] tracking-tight">Create New Room</h3>
-                  <p className="text-[11px] font-bold text-muted uppercase tracking-widest mt-0.5">Define a new event space</p>
-                </div>
+
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="size-8 rounded-md border border-[var(--border-default)] bg-[var(--card)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer shadow-sm"
+                >
+                  <X className="size-4" />
+                </button>
               </div>
 
-              <div className="space-y-2 mt-4">
-                <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Room Name *</label>
-                <div className="relative group">
-                  <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
-                  <Input
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g. Grand Ballroom A"
-                    className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
+              {/* Form Body */}
+              <form
+                onSubmit={handleSubmit}
+                id="create-room-form"
+                className="flex-1 overflow-y-auto p-5 space-y-4 text-xs"
+              >
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                    Room Name *
+                  </label>
+                  <div className="relative">
+                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                    <Input
+                      required
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="e.g. Grand Ballroom A"
+                      className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                      Room Type
+                    </label>
+                    <select
+                      value={formData.room_type}
+                      onChange={(e) => setFormData({ ...formData, room_type: e.target.value })}
+                      className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none cursor-pointer"
+                    >
+                      {ROOM_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                      Max Capacity *
+                    </label>
+                    <div className="relative">
+                      <Users className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                      <Input
+                        required
+                        type="number"
+                        value={isNaN(formData.capacity) ? "" : formData.capacity}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData({ ...formData, capacity: val === "" ? NaN : parseInt(val) });
+                        }}
+                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                      Screens Count *
+                    </label>
+                    <div className="relative">
+                      <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                      <Input
+                        required
+                        type="number"
+                        min="1"
+                        value={isNaN(formData.screen_count) ? "" : formData.screen_count}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData({ ...formData, screen_count: val === "" ? NaN : parseInt(val) });
+                        }}
+                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                      Room Coordinator
+                    </label>
+                    <div className="relative">
+                      <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                      <Input
+                        value={formData.room_coordinator}
+                        onChange={(e) => setFormData({ ...formData, room_coordinator: e.target.value })}
+                        placeholder="Onsite room coordinator / lead"
+                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                    Location Notes
+                  </label>
+                  <textarea
+                    value={formData.location_notes}
+                    onChange={(e) => setFormData({ ...formData, location_notes: e.target.value })}
+                    placeholder="e.g. Level 2, North Wing, beside main auditorium"
+                    className="w-full min-h-[70px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-2.5 text-xs text-[var(--text-primary)] font-medium outline-none resize-none focus:border-[var(--pri)] shadow-sm"
                   />
                 </div>
-              </div>
+              </form>
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Room Type</label>
-                  <select
-                    value={formData.room_type}
-                    onChange={(e) => setFormData({ ...formData, room_type: e.target.value })}
-                    className="w-full h-12 glass-3d border-default rounded-xl px-4 text-[13px] font-bold text-[var(--text)] appearance-none focus:outline-none cursor-pointer"
+              {/* Footer */}
+              <div className="p-4 border-t border-[var(--border-subtle)] bg-[var(--bg-surface-2)] flex items-center justify-end gap-2.5">
+                <Button
+                  onClick={onClose}
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-4 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                >
+                  Cancel
+                </Button>
+                <CapabilityAction operation="venue.rooms.manage" limitKey="max_rooms">
+                  <Button
+                    disabled={createRoom.isPending}
+                    form="create-room-form"
+                    type="submit"
+                    className="h-9 rounded-lg bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] font-bold text-xs px-4 shadow-sm border-0 cursor-pointer"
                   >
-                    {ROOM_TYPES.map(t => (
-                      <option key={t.value} value={t.value} className="bg-[var(--card)] text-[var(--text)]">{t.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Max Capacity *</label>
-                  <div className="relative group">
-                    <Users className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
-                    <Input
-                      required
-                      type="number"
-                      value={isNaN(formData.capacity) ? "" : formData.capacity}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setFormData({ ...formData, capacity: val === "" ? NaN : parseInt(val) });
-                      }}
-                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
-                    />
-                  </div>
-                </div>
+                    {createRoom.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin mr-1.5" />
+                    ) : (
+                      <Plus className="size-3.5 mr-1.5" />
+                    )}
+                    Register Room
+                  </Button>
+                </CapabilityAction>
               </div>
-
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Screen Count *</label>
-                  <div className="relative group">
-                    <Monitor className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
-                    <Input
-                      required
-                      type="number"
-                      min="1"
-                      value={isNaN(formData.screen_count) ? "" : formData.screen_count}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setFormData({ ...formData, screen_count: val === "" ? NaN : parseInt(val) });
-                      }}
-                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">AV Technician</label>
-                  <div className="relative group">
-                    <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted group-focus-within:text-[var(--pri)] transition-colors" />
-                    <Input
-                      value={formData.av_technician}
-                      onChange={(e) => setFormData({ ...formData, av_technician: e.target.value })}
-                      placeholder="Name of onsite tech"
-                      className="h-12 glass-3d border-default pl-12 text-[13px] font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Location Notes</label>
-                <textarea
-                  value={formData.location_notes}
-                  onChange={(e) => setFormData({ ...formData, location_notes: e.target.value })}
-                  placeholder="e.g. Floor 2, North Wing, near elevator"
-                  className="w-full min-h-[100px] glass-3d border border-default rounded-2xl p-4 text-[13px] font-bold text-[var(--text)] focus:outline-none transition-all resize-none"
-                />
-              </div>
-            </form>
-
-            {/* Footer */}
-            <div className="p-8 border-t border-default bg-[color-mix(in_srgb,var(--base)_50%,transparent)] backdrop-blur-sm flex gap-4">
-              <Button onClick={onClose} variant="ghost" className="flex-1 h-14 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted">
-                Cancel
-              </Button>
-              <CapabilityAction operation="venue.rooms.manage" limitKey="max_rooms"><Button
-                disabled={createRoom.isPending}
-                form="create-room-form"
-                type="submit"
-                className="flex-[2] h-14 rounded-2xl bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] shadow-lg border-0"
-              >
-                {createRoom.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-                Register Room
-              </Button></CapabilityAction>
-            </div>
-          </motion.div>
-        </div>
+            </motion.div>
+          </div>
+        </>
       )}
     </AnimatePresence>
   );

@@ -24,7 +24,7 @@ class PaymentGateway(Base):
         'HEALTHY' | 'DEGRADED' | 'DOWN' | 'UNKNOWN'
     """
     __tablename__ = "payment_gateways"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

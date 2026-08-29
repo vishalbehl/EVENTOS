@@ -9,7 +9,7 @@ from app.database import Base
 
 class FeatureCatalog(Base):
     __tablename__ = "feature_catalog"
-    __table_args__ = {"schema": "billing"}
+    __table_args__ = {"schema": "commerce"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)

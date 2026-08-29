@@ -21,7 +21,7 @@ class EntitlementGrant(Base):
         Index("ix_entitlement_grants_org_id", "organization_id"),
         Index("ix_entitlement_grants_subscription_id", "subscription_id"),
         Index("ix_entitlement_grants_status", "status"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -29,7 +29,7 @@ class EntitlementGrant(Base):
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
     )
     subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.organization_subscriptions.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.organization_subscriptions.id", ondelete="SET NULL"), nullable=True
     )
     grant_type: Mapped[str] = mapped_column(String(50), nullable=False, default="EVENT_UNIT")
     scope_type: Mapped[str] = mapped_column(String(30), nullable=False, default="EVENT")
@@ -76,12 +76,12 @@ class GrantConsumption(Base):
         Index("ix_grant_consumptions_org_id", "organization_id"),
         Index("ix_grant_consumptions_event_id", "event_id"),
         Index("ix_grant_consumptions_status", "status"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     grant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.entitlement_grants.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.entitlement_grants.id", ondelete="CASCADE"), nullable=False
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
@@ -97,7 +97,7 @@ class GrantConsumption(Base):
     released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     reservation_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     transferred_to_consumption_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.grant_consumptions.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.grant_consumptions.id", ondelete="SET NULL"), nullable=True
     )
     metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
@@ -115,12 +115,12 @@ class EventEntitlementSnapshotSet(Base):
         Index("ix_event_entitlement_snapshot_sets_activation_id", "activation_id"),
         Index("ix_rls_billing_event_entitlement_snapshot_sets_organization", "organization_id"),
         UniqueConstraint("activation_id", "version", name="uq_event_entitlement_snapshot_sets_activation_version"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     activation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.event_activations.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.event_activations.id", ondelete="CASCADE"), nullable=False
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False
@@ -140,7 +140,7 @@ class EventEntitlementSnapshotSet(Base):
     )
     previous_snapshot_set_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("billing.event_entitlement_snapshot_sets.id", ondelete="SET NULL"),
+        ForeignKey("commerce.event_entitlement_snapshot_sets.id", ondelete="SET NULL"),
         nullable=True,
     )
     checksum: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -160,12 +160,12 @@ class EventEntitlementSnapshotItem(Base):
     __tablename__ = "event_entitlement_snapshot_items"
     __table_args__ = (
         UniqueConstraint("snapshot_set_id", "feature_key", name="uq_event_entitlement_snapshot_items_feature"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     snapshot_set_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.event_entitlement_snapshot_sets.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.event_entitlement_snapshot_sets.id", ondelete="CASCADE"), nullable=False
     )
     feature_key: Mapped[str] = mapped_column(String(100), nullable=False)
     scope_type: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -184,12 +184,12 @@ class EventLimitSnapshotItem(Base):
     __tablename__ = "event_limit_snapshot_items"
     __table_args__ = (
         UniqueConstraint("snapshot_set_id", "limit_key", name="uq_event_limit_snapshot_items_limit"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     snapshot_set_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.event_entitlement_snapshot_sets.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("commerce.event_entitlement_snapshot_sets.id", ondelete="CASCADE"), nullable=False
     )
     limit_key: Mapped[str] = mapped_column(String(100), nullable=False)
     scope_type: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -208,7 +208,7 @@ class BillingOperationRequest(Base):
     __table_args__ = (
         Index("ix_rls_billing_operation_requests_organization", "organization_id"),
         UniqueConstraint("organization_id", "operation_type", "idempotency_key", name="uq_billing_operation_request"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -236,7 +236,7 @@ class ActivationTransferPolicy(Base):
     __tablename__ = "activation_transfer_policies"
     __table_args__ = (
         Index("ix_activation_transfer_policies_policy_key", "policy_key"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -246,7 +246,7 @@ class ActivationTransferPolicy(Base):
     threshold_value: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     action: Mapped[str] = mapped_column(String(30), nullable=False, default="ALLOW")
     plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing.subscription_plans.id", ondelete="CASCADE"), nullable=True
+        UUID(as_uuid=True), ForeignKey("commerce.subscription_plans.id", ondelete="CASCADE"), nullable=True
     )
     grant_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

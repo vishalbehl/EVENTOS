@@ -4,6 +4,8 @@ import type { PropertyDefinition, SelectProperty, TextProperty, BaseProperty } f
 import { commitGrapesComponentToDocument, findTargetComponent, readPropertyTarget, usePropertySync, useSpacingSync } from '../../../core/properties/usePropertySync';
 import type { PageConfig, ResponsiveDevice } from '../../../types';
 import { SOCIAL_ICON_OPTIONS, lucideIconUrl, socialIconName } from '../../../core/iconLibrary';
+import { useWebsiteDocumentStore } from '../../../core/websiteDocumentStore';
+
 
 interface BaseEditorProps {
   property: PropertyDefinition;
@@ -391,21 +393,42 @@ export const SpacingEditor: React.FC<BaseEditorProps> = ({ property, component, 
 // ---------------------------------------------------------------------------
 export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, component, device }) => {
   const { value, updateValue } = usePropertySync(component, property, device);
+  const attributes = component.getAttributes() as Record<string, string>;
+  const instanceId = attributes['data-wb-instance-id'];
+
+  const handleDisconnect = () => {
+    if (!instanceId) return;
+    useWebsiteDocumentStore.getState().disconnectInstanceEvent(instanceId);
+    updateValue('manual');
+  };
+
+  const handleReconnect = () => {
+    if (!instanceId) return;
+    useWebsiteDocumentStore.getState().reconnectInstanceEvent(instanceId);
+    updateValue('current-event');
+  };
 
   return (
     <div className="mb-4">
       <label className="block text-[11px] font-medium text-muted-foreground mb-2">{property.label}</label>
-      <div className="p-3 bg-muted/20 border border-border rounded-lg space-y-2">
+      <div className="p-3 bg-muted/20 border border-border rounded-lg space-y-2.5">
         <div className="relative">
           <select
-            value={value || ''}
-            onChange={(e) => updateValue(e.target.value)}
+            value={value || 'current-event'}
+            onChange={(e) => {
+              const nextVal = e.target.value;
+              if (nextVal === 'manual' && instanceId) {
+                useWebsiteDocumentStore.getState().disconnectInstanceEvent(instanceId);
+              } else if (nextVal === 'current-event' && instanceId) {
+                useWebsiteDocumentStore.getState().reconnectInstanceEvent(instanceId);
+              }
+              updateValue(nextVal);
+            }}
             className="w-full bg-background border border-border rounded-md pl-2.5 pr-7 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all appearance-none"
           >
-            <option value="" disabled hidden>Choose data source...</option>
-            <option value="current-event">Current event</option>
+            <option value="current-event">Current event (Live)</option>
             <option value="snapshot">Saved snapshot</option>
-            <option value="manual">Manual (static)</option>
+            <option value="manual">Manual override (Static)</option>
             <option value="mock">Mock fallback</option>
           </select>
           <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
@@ -414,13 +437,41 @@ export const EventDataSourceEditor: React.FC<BaseEditorProps> = ({ property, com
             </svg>
           </div>
         </div>
-        {(value === 'current-event' || value === 'snapshot') && (
-          <div className="text-[10px] bg-primary/10 text-primary p-2 rounded flex items-center gap-1.5">
-            <span aria-hidden="true">&#9679;</span> {value === 'current-event' ? 'Connected to current event' : 'Using saved event snapshot'}
+
+        {(value === 'current-event' || value === 'snapshot' || !value) && (
+          <div className="space-y-2">
+            <div className="text-[10px] bg-primary/10 text-primary p-2 rounded flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span aria-hidden="true">&#9679;</span> {value === 'snapshot' ? 'Using saved snapshot' : 'Connected to live event'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              className="w-full py-1 px-2 text-[10px] bg-background hover:bg-muted/40 text-muted-foreground hover:text-foreground border border-border rounded transition-colors"
+            >
+              Freeze & Edit Manually
+            </button>
           </div>
         )}
+
+        {value === 'manual' && (
+          <div className="space-y-2">
+            <div className="rounded bg-muted/40 p-2 text-[10px] text-muted-foreground">
+              Manual mode active: Live event updates will not overwrite your edits.
+            </div>
+            <button
+              type="button"
+              onClick={handleReconnect}
+              className="w-full py-1 px-2 text-[10px] bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded transition-colors"
+            >
+              Reconnect Live Event Data
+            </button>
+          </div>
+        )}
+
         {value === 'mock' && (
-          <div className="rounded bg-amber-500/10 p-2 text-[10px] text-amber-300">Using builder mock data</div>
+          <div className="rounded bg-amber-500/10 p-2 text-[10px] text-amber-300">Using builder mock data (template mode)</div>
         )}
       </div>
     </div>
@@ -482,53 +533,128 @@ export const AssetEditor: React.FC<BaseEditorProps> = ({ property, component, de
 };
 
 // ---------------------------------------------------------------------------
-// LINK (page-aware href editor)
+// LINK (page-aware href and cross-page anchor editor)
 // ---------------------------------------------------------------------------
 export const LinkEditor: React.FC<BaseEditorProps> = ({ property, component, pages = [], device }) => {
   const { value, updateValue } = usePropertySync(component, property, device);
   const [linkType, setLinkType] = useState<'page' | 'anchor' | 'external' | 'email' | 'phone' | 'file' | 'registration' | 'speaker-portal' | 'custom-route'>('page');
+  const [selectedPageId, setSelectedPageId] = useState<string>('');
+  const [selectedAnchor, setSelectedAnchor] = useState<string>('');
   const [anchorIds, setAnchorIds] = useState<string[]>([]);
 
   useEffect(() => {
     const raw = String(value || '');
-    if (raw.startsWith('#')) setLinkType('anchor');
-    else if (raw.startsWith('mailto:')) setLinkType('email');
-    else if (raw.startsWith('tel:')) setLinkType('phone');
-    else if (/^https?:\/\//i.test(raw)) setLinkType('external');
-    else if (raw && pages.some(page => (page.isHomePage ? '/' : `/${page.slug}`) === raw.split('#')[0])) setLinkType('page');
+    if (raw === '/registration') {
+      setLinkType('registration');
+    } else if (raw === '/speaker-portal') {
+      setLinkType('speaker-portal');
+    } else if (raw.startsWith('#')) {
+      setLinkType('anchor');
+      setSelectedAnchor(raw.replace(/^#/, ''));
+    } else if (raw.startsWith('mailto:')) {
+      setLinkType('email');
+    } else if (raw.startsWith('tel:')) {
+      setLinkType('phone');
+    } else if (/^https?:\/\//i.test(raw)) {
+      setLinkType('external');
+    } else if (raw) {
+      const [route, hash = ''] = raw.split('#', 2);
+      const matchedPage = pages.find(page => (page.isHomePage ? '/' : `/${page.slug}`) === route);
+      if (matchedPage) {
+        setLinkType('page');
+        setSelectedPageId(matchedPage.id);
+        setSelectedAnchor(hash);
+      }
+    }
   }, [pages, value]);
 
   useEffect(() => {
     const doc = canvasDocument(component);
-    if (!doc) return;
-    const ids = Array.from(doc.querySelectorAll<HTMLElement>('[id]'))
-      .map(element => element.id)
-      .filter(Boolean);
-    setAnchorIds(Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b)));
+    const canvasIds = doc
+      ? Array.from(doc.querySelectorAll<HTMLElement>('[id]')).map(el => el.id).filter(Boolean)
+      : [];
+
+    // Also collect anchors from canonical document instances
+    const documentState = useWebsiteDocumentStore.getState().document;
+    const documentIds: string[] = [];
+    if (documentState) {
+      Object.values(documentState.instances).forEach(inst => {
+        const attrs = inst.props.attributes as Record<string, unknown> | undefined;
+        if (attrs && typeof attrs.id === 'string' && attrs.id.trim()) {
+          documentIds.push(attrs.id.trim());
+        }
+      });
+    }
+
+    const allIds = Array.from(new Set([...canvasIds, ...documentIds])).sort((a, b) => a.localeCompare(b));
+    setAnchorIds(allIds);
   }, [component, value]);
 
-  const resolveHref = (type: string, rawValue: string) => {
-    if (type === 'page') {
-      const page = pages.find(p => p.id === rawValue);
-      return page ? (page.isHomePage ? '/' : `/${page.slug}`) : rawValue;
-    }
-    if (type === 'anchor') return rawValue.startsWith('#') ? rawValue : `#${rawValue}`;
-    if (type === 'email') return rawValue.startsWith('mailto:') ? rawValue : `mailto:${rawValue}`;
-    if (type === 'phone') return rawValue.startsWith('tel:') ? rawValue : `tel:${rawValue}`;
-    return rawValue;
-  };
+  const commitLinkChange = (type: typeof linkType, pageId: string, anchor: string, customVal: string) => {
+    let finalHref = '';
+    const instanceAttributes = component.getAttributes() as Record<string, string>;
+    const instanceId = instanceAttributes['data-wb-instance-id'];
 
-  const updateLink = (type: typeof linkType, rawValue: string) => {
-    const href = resolveHref(type, rawValue);
-    updateValue(href);
+    if (type === 'page') {
+      const targetPage = pages.find(p => p.id === pageId) || pages.find(p => p.isHomePage) || pages[0];
+      const route = targetPage ? (targetPage.isHomePage ? '/' : `/${targetPage.slug}`) : '/';
+      const hash = anchor ? `#${anchor.replace(/^#/, '')}` : '';
+      finalHref = `${route}${hash}`;
+
+      if (instanceId && targetPage) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, {
+          type: 'page',
+          pageId: targetPage.id,
+          anchorId: anchor || undefined,
+        });
+      }
+    } else if (type === 'anchor') {
+      finalHref = anchor.startsWith('#') ? anchor : `#${anchor}`;
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, {
+          type: 'anchor',
+          anchorId: anchor.replace(/^#/, ''),
+        });
+      }
+    } else if (type === 'registration') {
+      finalHref = '/registration';
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, { type: 'registration' });
+      }
+    } else if (type === 'speaker-portal') {
+      finalHref = '/speaker-portal';
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, { type: 'speaker-portal' });
+      }
+    } else if (type === 'email') {
+      finalHref = customVal.startsWith('mailto:') ? customVal : `mailto:${customVal}`;
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, { type: 'email', email: customVal });
+      }
+    } else if (type === 'phone') {
+      finalHref = customVal.startsWith('tel:') ? customVal : `tel:${customVal}`;
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, { type: 'phone', phone: customVal });
+      }
+    } else if (type === 'external' || type === 'file') {
+      finalHref = customVal;
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, { type, url: customVal });
+      }
+    } else if (type === 'custom-route') {
+      finalHref = customVal;
+      if (instanceId) {
+        useWebsiteDocumentStore.getState().updateLink(instanceId, { type: 'custom-route', route: customVal });
+      }
+    }
+
+    updateValue(finalHref);
     const mapping = readPropertyTarget(property);
     const target = findTargetComponent(component, mapping.selector);
     const attrs = { ...(target.getAttributes() as Record<string, string>) };
-    delete attrs['data-page-id'];
-    delete attrs['data-anchor-id'];
     attrs['data-link-type'] = type;
-    if (type === 'page') attrs['data-page-id'] = rawValue;
-    if (type === 'anchor') attrs['data-anchor-id'] = rawValue.replace(/^#/, '');
+    if (type === 'page') attrs['data-page-id'] = pageId;
+    if (anchor) attrs['data-anchor-id'] = anchor.replace(/^#/, '');
     target.setAttributes(attrs);
     commitGrapesComponentToDocument(target);
     if (target !== component) commitGrapesComponentToDocument(component);
@@ -540,60 +666,90 @@ export const LinkEditor: React.FC<BaseEditorProps> = ({ property, component, pag
       <div className="grid grid-cols-2 gap-1.5">
         <select
           value={linkType}
-          onChange={(e) => setLinkType(e.target.value as any)}
+          onChange={(e) => {
+            const nextType = e.target.value as any;
+            setLinkType(nextType);
+            commitLinkChange(nextType, selectedPageId, selectedAnchor, value || '');
+          }}
           className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
         >
           <option value="page">Page</option>
-          <option value="anchor">Section</option>
-          <option value="external">External</option>
+          <option value="anchor">Section anchor</option>
+          <option value="external">External URL</option>
+          <option value="registration">Registration portal</option>
+          <option value="speaker-portal">Speaker portal</option>
           <option value="email">Email</option>
           <option value="phone">Phone</option>
           <option value="file">File download</option>
-          <option value="registration">Registration page</option>
-          <option value="speaker-portal">Speaker portal</option>
           <option value="custom-route">Custom route</option>
         </select>
+
         {linkType === 'page' ? (
           <select
-            value={pages.find(p => (p.isHomePage ? '/' : `/${p.slug}`) === value)?.id || ''}
-            onChange={(e) => updateLink(linkType, e.target.value)}
+            value={selectedPageId || pages[0]?.id || ''}
+            onChange={(e) => {
+              setSelectedPageId(e.target.value);
+              commitLinkChange('page', e.target.value, selectedAnchor, value || '');
+            }}
             className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           >
-            <option value="">Select page...</option>
             {pages.map(page => (
               <option key={page.id} value={page.id}>{page.name}</option>
             ))}
           </select>
-        ) : linkType === 'anchor' && anchorIds.length ? (
+        ) : linkType === 'anchor' ? (
           <select
-            value={String(value || '').replace(/^#/, '')}
-            onChange={(e) => updateLink(linkType, e.target.value)}
+            value={selectedAnchor}
+            onChange={(e) => {
+              setSelectedAnchor(e.target.value);
+              commitLinkChange('anchor', selectedPageId, e.target.value, value || '');
+            }}
             className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           >
-            <option value="">Select section...</option>
+            <option value="">Choose section...</option>
             {anchorIds.map(id => (
               <option key={id} value={id}>#{id}</option>
             ))}
           </select>
+        ) : linkType === 'registration' || linkType === 'speaker-portal' ? (
+          <div className="bg-muted/30 border border-border rounded-md px-2 py-1.5 text-xs text-muted-foreground font-mono truncate">
+            {linkType === 'registration' ? '/registration' : '/speaker-portal'}
+          </div>
         ) : (
           <input
             type="text"
             value={value || ''}
-            onChange={(e) => updateLink(linkType, e.target.value)}
-            placeholder={linkType === 'anchor' ? '#speakers' : linkType === 'external' ? 'https://...' : 'Target'}
+            onChange={(e) => commitLinkChange(linkType, selectedPageId, selectedAnchor, e.target.value)}
+            placeholder={linkType === 'email' ? 'hello@event.com' : linkType === 'phone' ? '+1 555...' : 'https://...'}
             className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         )}
       </div>
-      {linkType === 'anchor' && !anchorIds.length && (
-        <div className="text-[9px] text-muted-foreground/70">
-          Add an HTML ID to a section first, then link to it as #section-id.
+
+      {linkType === 'page' && anchorIds.length > 0 && (
+        <div className="grid grid-cols-[80px_1fr] items-center gap-1.5 pt-1">
+          <span className="text-[10px] text-muted-foreground">Section anchor:</span>
+          <select
+            value={selectedAnchor}
+            onChange={(e) => {
+              setSelectedAnchor(e.target.value);
+              commitLinkChange('page', selectedPageId || pages[0]?.id || '', e.target.value, value || '');
+            }}
+            className="bg-background border border-border rounded-md px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            <option value="">(None - top of page)</option>
+            {anchorIds.map(id => (
+              <option key={id} value={id}>#{id}</option>
+            ))}
+          </select>
         </div>
       )}
+
       <div className="text-[9px] text-muted-foreground/60 truncate">Resolved: {value || 'No link set'}</div>
     </div>
   );
 };
+
 
 type SocialLinkItem = {
   platform: string;

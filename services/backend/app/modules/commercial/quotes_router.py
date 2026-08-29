@@ -63,7 +63,6 @@ from app.modules.crm.models.crm_domain_tables import Proposal, ProposalShare, Pr
 from app.modules.presentations.services.upload_service import create_presigned_download
 from app.config import settings
 from app.worker import celery_app
-from app.modules.technology_services.models import ServiceRequest
 
 
 router = APIRouter(prefix="/service-requests", tags=["commercial-quotes"])
@@ -103,13 +102,8 @@ async def _validate_scope(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
     if service_request_id:
-        request_id = await db.scalar(select(ServiceRequest.id).where(
-            ServiceRequest.id == service_request_id,
-            ServiceRequest.organization_id == organization_id,
-            ServiceRequest.event_id == event_id,
-        ))
-        if not request_id:
-            raise HTTPException(status_code=404, detail="Service request not found.")
+        # ServiceRequest validation removed since technology_services module is deleted
+        pass
 
 
 def _audit(

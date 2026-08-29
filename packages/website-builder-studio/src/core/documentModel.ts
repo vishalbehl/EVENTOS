@@ -334,8 +334,10 @@ export function instanceToGrapesComponent(instance: ComponentInstance, document:
     style: desktopStyles,
     components: children,
   };
-  if (typeof instance.props.content === 'string') component.content = instance.props.content;
-  if (typeof instance.props.html === 'string') component.components = instance.props.html;
+  if (children.length === 0) {
+    if (typeof instance.props.content === 'string') component.content = instance.props.content;
+    if (typeof instance.props.html === 'string') component.components = instance.props.html;
+  }
   Object.keys(component).forEach(key => component[key] === undefined && delete component[key]);
   return component;
 }

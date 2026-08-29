@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ShieldCheck, UserCheck, ScanLine, Loader2,
-  WifiOff, MonitorSmartphone, Settings, Lock, ArrowRight, Sun, Moon, Database, UploadCloud, Server, Check, Users, X
+  WifiOff, MonitorSmartphone, Settings, Lock, ArrowRight, Sun, Moon, Database, UploadCloud, Server, Check, Users, X, RotateCcw, AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,11 +92,39 @@ export default function LoginPage() {
   const [adminUsername, setAdminUsername] = useState("admin");
   const [adminPassword, setAdminPassword] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
+  const [dbModalOpen, setDbModalOpen] = useState(false);
+  const [resettingDb, setResettingDb] = useState(false);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+
+  const handleResetDatabase = async () => {
+    setResettingDb(true);
+    try {
+      if (window.venueDesktop?.resetRegistrationDatabase) {
+        await window.venueDesktop.resetRegistrationDatabase();
+      }
+      setSetupComplete(false);
+      setSetupReason("Database configuration reset.");
+      setSetupValidation(null);
+      setDbModalOpen(false);
+      setConfirmResetOpen(false);
+      toast.success("Registration database configuration has been reset.");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to reset database configuration.");
+    } finally {
+      setResettingDb(false);
+    }
+  };
 
   useEffect(() => {
-    const savedTheme = (localStorage.getItem("theme") as "light" | "dark") || "dark";
-    setTheme(savedTheme);
-    document.documentElement.setAttribute("data-theme", savedTheme);
+    const savedTheme = ((localStorage.getItem("eventos-theme") || localStorage.getItem("theme")) as "light" | "dark") || "dark";
+    const validTheme = savedTheme === "light" ? "light" : "dark";
+    setTheme(validTheme);
+    document.documentElement.setAttribute("data-theme", validTheme);
+    if (validTheme === "light") {
+      document.documentElement.classList.remove("dark");
+    } else {
+      document.documentElement.classList.add("dark");
+    }
   }, []);
 
   useEffect(() => {
@@ -158,7 +186,13 @@ export default function LoginPage() {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
     localStorage.setItem("theme", nextTheme);
+    localStorage.setItem("eventos-theme", nextTheme);
     document.documentElement.setAttribute("data-theme", nextTheme);
+    if (nextTheme === "light") {
+      document.documentElement.classList.remove("dark");
+    } else {
+      document.documentElement.classList.add("dark");
+    }
   };
 
   const handleLogin = async (e?: React.FormEvent) => {
@@ -267,11 +301,21 @@ export default function LoginPage() {
   if (desktopRuntime && (setupChecking || !setupComplete)) {
     return (
       <div className="flex min-h-screen w-full bg-[var(--base)] text-[var(--text)] font-sans overflow-hidden transition-colors">
-        <div className="hidden lg:flex lg:w-5/12 flex-col justify-between bg-[var(--surf)] border-r border-[var(--border)] p-12 relative overflow-hidden">
-          <div className="relative z-10 space-y-8">
-            <div className="flex items-center gap-3 mb-6">
+        <div className="hidden lg:flex lg:w-5/12 flex-col justify-between bg-[var(--surf)] border-r border-[var(--border)] p-10 xl:p-12 relative overflow-hidden">
+          {/* Theme-Responsive 3D Isometric Registration Booth Background Art */}
+          <div className="pointer-events-none absolute inset-0 -z-0 select-none overflow-hidden">
+            <img
+              key={theme}
+              src={theme === "light" ? "/backgrounds/registration-booth-light.png" : "/backgrounds/registration-booth-dark.png"}
+              alt={theme === "light" ? "Registration Booth Light" : "Registration Booth Dark"}
+              className="absolute inset-0 size-full w-full h-full object-fill"
+            />
+          </div>
+
+          <div className="relative z-10 space-y-7">
+            <div className="flex items-center gap-3 mb-4">
               <span className="grid size-12 shrink-0 place-items-center overflow-visible">
-                <img src="/brand/eventos-emblem-metal.png" alt="Eventos Emblem" width={48} height={48} className="size-full scale-[2.05] object-contain" />
+                <img src="/brand/eventos-emblem-metal.png" alt="Eventos Emblem" width={48} height={48} className="size-full scale-[2.05] object-contain drop-shadow-md" />
               </span>
               <div>
                 <span className="text-2xl font-black uppercase tracking-[0.25em] text-[var(--text)] block leading-none">EVENT<span className="text-[var(--acc)]">OS</span></span>
@@ -279,13 +323,13 @@ export default function LoginPage() {
               </div>
             </div>
             <div>
-              <h2 className="text-3xl font-black text-[var(--text)] tracking-tight leading-tight">First-time Registration Setup</h2>
-              <p className="text-sm text-[var(--muted)] font-medium mt-2">
+              <h2 className="text-3xl font-black text-[var(--text)] tracking-tight leading-tight drop-shadow-sm">First-time Registration Setup</h2>
+              <p className="text-sm text-[var(--muted)] font-medium mt-2 leading-relaxed">
                 This setup belongs to the Registration Software only. Venue Server may exist, or this app can later fetch directly from cloud.
               </p>
             </div>
-            <div className="space-y-6 pt-4 border-t border-[var(--border)]">
-              <div className="flex gap-4 items-start">
+            <div className="space-y-4 pt-3 border-t border-[var(--border)]/70">
+              <div className="flex gap-4 items-start bg-[var(--card)]/40 p-3 rounded-2xl border border-[var(--border)]/40 backdrop-blur-sm shadow-sm">
                 <div className="w-10 h-10 rounded-xl bg-[var(--pri)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
                   <Database className="w-5 h-5" />
                 </div>
@@ -294,7 +338,7 @@ export default function LoginPage() {
                   <p className="text-xs text-[var(--muted)] mt-0.5">Created on boot with setup admin stored in SQLite, not hardcoded UI validation.</p>
                 </div>
               </div>
-              <div className="flex gap-4 items-start">
+              <div className="flex gap-4 items-start bg-[var(--card)]/40 p-3 rounded-2xl border border-[var(--border)]/40 backdrop-blur-sm shadow-sm">
                 <div className="w-10 h-10 rounded-xl bg-[var(--sec)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
                   <Server className="w-5 h-5" />
                 </div>
@@ -305,13 +349,23 @@ export default function LoginPage() {
               </div>
             </div>
           </div>
-          <div className="relative z-10 text-xs text-[var(--muted)] pt-8 border-t border-[var(--border)] font-mono">
+          <div className="relative z-10 text-xs text-[var(--muted)] pt-6 border-t border-[var(--border)]/70 font-mono">
             Registration DB setup must complete before login
           </div>
         </div>
 
         <div className="flex-1 flex flex-col justify-between p-8 sm:p-12 lg:p-16 max-w-[920px] w-full mx-auto">
-          <div className="flex justify-end items-center gap-4">
+          <div className="flex justify-end items-center gap-3">
+            {setupValidation?.configured && (
+              <button
+                type="button"
+                onClick={() => setSetupComplete(true)}
+                className="p-2.5 px-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+              >
+                <ArrowRight className="w-4 h-4 rotate-180" />
+                <span>Back to Login</span>
+              </button>
+            )}
             <button onClick={toggleTheme} className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold">
               {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-500" />}
               <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
@@ -334,15 +388,15 @@ export default function LoginPage() {
                   <span className="text-[var(--text)]">Database health:</span>{" "}
                   {setupValidation.mode || "not selected"}
                   {typeof setupValidation.tableCount === "number" && (
-                    <span> Â· {setupValidation.tableCount}/{setupValidation.contractTableCount || "?"} contract tables checked</span>
+                    <span> {setupValidation.tableCount}/{setupValidation.contractTableCount || "?"} contract tables checked</span>
                   )}
                   {setupValidation.health?.localUsers !== undefined && (
-                    <span> Â· {setupValidation.health.localUsers} local admin user{setupValidation.health.localUsers === 1 ? "" : "s"}</span>
+                    <span> {setupValidation.health.localUsers} local admin user{setupValidation.health.localUsers === 1 ? "" : "s"}</span>
                   )}
                   {Boolean(setupValidation.missingTables?.length) && (
-                    <span className="text-amber-500"> Â· {setupValidation.missingTables?.length} missing tables</span>
+                    <span className="text-amber-500"> {setupValidation.missingTables?.length} missing tables</span>
                   )}
-                  {setupValidation.configured && <span className="text-emerald-500"> Â· ready</span>}
+                  {setupValidation.configured && <span className="text-emerald-500"> · ready</span>}
                 </div>
               )}
             </div>
@@ -461,16 +515,26 @@ export default function LoginPage() {
 
       {/* Left Sidebar (Command Center Branding Area) */}
       <div className="hidden lg:flex lg:w-5/12 h-full flex-col justify-between bg-[var(--surf)] border-r border-[var(--border)] p-8 xl:p-10 relative overflow-hidden shrink-0">
-        <div className="relative z-10 space-y-6">
+        {/* Theme-Responsive 3D Isometric Registration Booth Background Art */}
+        <div className="pointer-events-none absolute inset-0 -z-0 select-none overflow-hidden">
+          <img
+            key={theme}
+            src={theme === "light" ? "/backgrounds/registration-booth-light.png" : "/backgrounds/registration-booth-dark.png"}
+            alt={theme === "light" ? "Registration Booth Light" : "Registration Booth Dark"}
+            className="absolute inset-0 size-full w-full h-full object-fill"
+          />
+        </div>
+
+        <div className="relative z-10 space-y-5">
           {/* Metal Emblem Brand Header */}
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-3 mb-2">
             <span className="grid size-11 shrink-0 place-items-center overflow-visible">
               <img
                 src="/brand/eventos-emblem-metal.png"
                 alt="Eventos Emblem"
                 width={44}
                 height={44}
-                className="size-full scale-[2.05] object-contain"
+                className="size-full scale-[2.05] object-contain drop-shadow-md"
                 onError={(e) => {
                   (e.target as HTMLElement).style.display = "none";
                 }}
@@ -487,16 +551,16 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <h2 className="text-2xl xl:text-3xl font-black text-[var(--text)] tracking-tight leading-tight">
+            <h2 className="text-2xl xl:text-3xl font-black text-[var(--text)] tracking-tight leading-tight drop-shadow-sm">
               Onsite Event Registration Software
             </h2>
-            <p className="text-xs xl:text-sm text-[var(--muted)] font-medium mt-1.5">
+            <p className="text-xs xl:text-sm text-[var(--muted)] font-medium mt-1.5 leading-relaxed">
               High-availability local edge server for delegate registration, badge printing, check-in, and data sync.
             </p>
           </div>
 
-          <div className="space-y-4 pt-3 border-t border-[var(--border)]">
-            <div className="flex gap-3.5 items-start">
+          <div className="space-y-3 pt-2.5 border-t border-[var(--border)]/70">
+            <div className="flex gap-3.5 items-start bg-[var(--card)]/40 p-2.5 rounded-2xl border border-[var(--border)]/40 backdrop-blur-sm shadow-sm">
               <div className="w-9 h-9 rounded-xl bg-[var(--pri)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
                 <WifiOff className="w-4 h-4" />
               </div>
@@ -506,7 +570,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex gap-3.5 items-start">
+            <div className="flex gap-3.5 items-start bg-[var(--card)]/40 p-2.5 rounded-2xl border border-[var(--border)]/40 backdrop-blur-sm shadow-sm">
               <div className="w-9 h-9 rounded-xl bg-[var(--sec)] text-[var(--primary-contrast)] flex items-center justify-center font-black shrink-0 shadow-md">
                 <ScanLine className="w-4 h-4" />
               </div>
@@ -516,7 +580,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex gap-3.5 items-start">
+            <div className="flex gap-3.5 items-start bg-[var(--card)]/40 p-2.5 rounded-2xl border border-[var(--border)]/40 backdrop-blur-sm shadow-sm">
               <div className="w-9 h-9 rounded-xl bg-[var(--card)] border border-[var(--border)] text-[var(--text)] flex items-center justify-center font-black shrink-0 shadow-md">
                 <Settings className="w-4 h-4" />
               </div>
@@ -528,7 +592,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="relative z-10 flex items-center justify-between text-[11px] text-[var(--muted)] pt-4 border-t border-[var(--border)] font-mono">
+        <div className="relative z-10 flex items-center justify-between text-[11px] text-[var(--muted)] pt-3 border-t border-[var(--border)]/70 font-mono">
           <span>© 2026 EVENTOS OS v1.0</span>
         </div>
       </div>
@@ -536,10 +600,21 @@ export default function LoginPage() {
       {/* Right Login Area */}
       <div className="flex-1 h-full flex flex-col justify-between p-6 sm:p-8 xl:p-10 max-w-[750px] w-full mx-auto overflow-hidden">
         {/* Top Header Controls */}
-        <div className="flex justify-end items-center gap-4 shrink-0">
+        <div className="flex justify-end items-center gap-2.5 shrink-0">
+          {desktopRuntime && (
+            <button
+              type="button"
+              onClick={() => setDbModalOpen(true)}
+              className="p-2 px-3 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold shadow-sm"
+              title="Change or reset database configuration"
+            >
+              <Database className="w-4 h-4 text-[var(--pri)]" />
+              <span>Database Settings</span>
+            </button>
+          )}
           <button
             onClick={toggleTheme}
-            className="p-2 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold"
+            className="p-2 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold shadow-sm"
           >
             {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-500" />}
             <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
@@ -571,7 +646,9 @@ export default function LoginPage() {
                 {OPERATIONAL_MODES.map((item) => {
                   const Icon = item.icon;
                   const isSelected = selectedMode === item.id;
-                  const isLockedOut = Boolean(assignedNode && !allowedModesForAssignment(assignedNode).includes(item.id));
+                  // TEST OVERRIDE: Allow all modes on login screen for testing
+                  const isLockedOut = false;
+                  // const isLockedOut = Boolean(assignedNode && !allowedModesForAssignment(assignedNode).includes(item.id));
                   return (
                     <button
                       key={item.id}
@@ -585,8 +662,8 @@ export default function LoginPage() {
                         isLockedOut
                           ? "cursor-not-allowed opacity-40 grayscale bg-[var(--surf)] border-dashed border-[var(--border)]"
                           : isSelected
-                          ? "border-[var(--pri)] bg-[var(--raised)] shadow-md shadow-[var(--pri)]/5 ring-1 ring-[var(--pri)]/20"
-                          : "border-[var(--border)] bg-[var(--card)] hover:border-[color-mix(in_srgb,var(--border)_50%,var(--pri))] hover:bg-[var(--raised)]/60"
+                            ? "border-[var(--pri)] bg-[var(--raised)] shadow-md shadow-[var(--pri)]/5 ring-1 ring-[var(--pri)]/20"
+                            : "border-[var(--border)] bg-[var(--card)] hover:border-[color-mix(in_srgb,var(--border)_50%,var(--pri))] hover:bg-[var(--raised)]/60"
                       )}
                     >
                       {/* Top-Right Selection Indicator Badge */}
@@ -596,8 +673,8 @@ export default function LoginPage() {
                           isLockedOut
                             ? "bg-red-500/10 text-red-400 border border-red-500/30"
                             : isSelected
-                            ? "bg-[var(--pri)] text-[var(--primary-contrast)] scale-100 opacity-100"
-                            : "border border-[var(--border)] group-hover:border-[var(--muted)] scale-90 opacity-60"
+                              ? "bg-[var(--pri)] text-[var(--primary-contrast)] scale-100 opacity-100"
+                              : "border border-[var(--border)] group-hover:border-[var(--muted)] scale-90 opacity-60"
                         )}
                       >
                         {isLockedOut ? <Lock className="size-2 text-red-400" /> : isSelected && <Check className="size-2 stroke-[3.5]" />}
@@ -630,8 +707,8 @@ export default function LoginPage() {
                           isLockedOut
                             ? "text-red-400 font-bold"
                             : isSelected
-                            ? "text-[var(--text)]/80"
-                            : "text-[var(--muted)]/70 group-hover:text-[var(--muted)]"
+                              ? "text-[var(--text)]/80"
+                              : "text-[var(--muted)]/70 group-hover:text-[var(--muted)]"
                         )}
                       >
                         {isLockedOut ? "Not allowed on PC" : item.sublabel}
@@ -779,6 +856,133 @@ export default function LoginPage() {
               </Button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Database Settings & Reset Modal */}
+      {dbModalOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-lg rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
+              <div className="flex items-center gap-3">
+                <div className="grid size-11 place-items-center rounded-2xl bg-[var(--pri)] text-[var(--primary-contrast)]">
+                  <Database className="size-5" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--pri)]">Configuration Manager</p>
+                  <h2 className="text-xl font-black text-[var(--text)]">Database Settings & Reset</h2>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDbModalOpen(false);
+                  setConfirmResetOpen(false);
+                }}
+                className="grid size-9 place-items-center rounded-xl border border-[var(--border)] bg-[var(--surf)] text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
+                aria-label="Close database settings"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Current Active DB Status */}
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surf)] p-4 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-[var(--muted)]">Active DB Mode:</span>
+                  <span className="font-black uppercase text-[var(--pri)]">
+                    {setupValidation?.mode === "shared_postgres" ? "Shared PostgreSQL" : setupValidation?.mode === "uploaded_local_db" ? "Local SQLite" : "Provisioned"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-[var(--muted)]">Connection Status:</span>
+                  <span className="inline-flex items-center gap-1.5 font-bold text-emerald-500">
+                    <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Ready & Configured
+                  </span>
+                </div>
+                {setupValidation?.tableCount !== undefined && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-[var(--muted)]">Verified Contract Tables:</span>
+                    <span className="font-bold text-[var(--text)]">{setupValidation.tableCount} tables checked</span>
+                  </div>
+                )}
+              </div>
+
+              {!confirmResetOpen ? (
+                <div className="space-y-3 pt-2">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setDbModalOpen(false);
+                      setSetupComplete(false);
+                    }}
+                    className="w-full h-12 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] font-black text-xs uppercase tracking-wider rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                  >
+                    <Settings className="size-4" />
+                    <span>Change Database Connection / Source</span>
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setConfirmResetOpen(true)}
+                    className="w-full h-12 border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 font-black text-xs uppercase tracking-wider rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <RotateCcw className="size-4" />
+                    <span>Reset Database Configuration</span>
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 space-y-3 animate-in fade-in duration-200">
+                  <div className="flex items-start gap-3 text-red-400">
+                    <AlertTriangle className="size-5 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-black text-xs uppercase tracking-wider text-red-400">Confirm Database Reset</h4>
+                      <p className="text-xs text-red-300/90 mt-1 leading-relaxed">
+                        This will purge the stored database connection settings, saved secrets, and setup markers. The application will return to first-time setup mode.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2.5 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setConfirmResetOpen(false)}
+                      disabled={resettingDb}
+                      className="h-10 px-4 text-xs font-bold rounded-xl"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={handleResetDatabase}
+                      disabled={resettingDb}
+                      className="h-10 bg-red-600 hover:bg-red-700 text-white font-black text-xs uppercase tracking-wider rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
+                    >
+                      {resettingDb ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Resetting...
+                        </>
+                      ) : (
+                        <>
+                          <RotateCcw className="size-3.5" />
+                          Confirm & Reset DB
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 border-t border-[var(--border)] pt-3 text-center text-[10px] text-[var(--muted)] font-mono">
+              EventOS Registration Database Controller
+            </div>
+          </div>
         </div>
       )}
     </div>

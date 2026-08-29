@@ -10,10 +10,17 @@
   "scripts": {
     "dev:command-center": "npm --workspace apps/cloud/command-center run dev -- --webpack",
     "dev:organiser-portal": "npm --workspace apps/cloud/organiser-portal run dev -- --webpack",
-    "dev:speaker": "npm --workspace apps/cloud/speaker-portal run dev -- --webpack",
-    "dev:registration": "npm --workspace apps/cloud/registration-portal run dev -- --port 3003 --webpack",
+    "dev:portal": "npm --workspace apps/cloud/event-portal run dev -- --port 3003 --webpack",
+    "dev:speaker": "npm --workspace apps/cloud/event-portal run dev -- --port 3003 --webpack",
+    "dev:registration": "npm --workspace apps/cloud/event-portal run dev -- --port 3003 --webpack",
     "dev:venue-server": "npm --workspace services/venue-server run dev -- --port 8001",
     "dev:venue-registration": "npm --workspace apps/venue/registration run dev -- --port 3004 --webpack",
+    "dev:preview-app": "npm --workspace apps/venue/preview-app run dev -- --port 3007 --webpack",
+    "dev:srr": "npm --workspace apps/venue/preview-app run dev -- --port 3007 --webpack",
+    "desktop:preview-app": "npm --workspace apps/venue/preview-app run desktop:dev",
+    "desktop:srr": "npm --workspace apps/venue/preview-app run desktop:dev",
+    "dev:venue-server-app": "npm --workspace apps/venue/venue-server-app run dev -- --port 3006",
+    "desktop:venue-server-app": "npm --workspace apps/venue/venue-server-app run desktop:dev",
     "build": "echo \"Define monorepo build orchestration\""
   },
   "dependencies": {

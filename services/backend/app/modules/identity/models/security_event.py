@@ -51,31 +51,3 @@ class SecurityEvent(Base):
     )
 
 
-class SystemErrorLog(Base):
-    """
-    Centralized capture of application exceptions and infrastructure failures.
-    Connects to distributed tracing for production crash analysis.
-    """
-    __tablename__ = "system_error_logs"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    request_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
-    correlation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
-    
-    # ── Error Details ────────────────────────────────────
-    severity: Mapped[str] = mapped_column(String(20), index=True) # ERROR, FATAL, CRITICAL
-    exception_type: Mapped[str] = mapped_column(String(255), index=True)
-    message: Mapped[str] = mapped_column(Text)
-    stack_trace: Mapped[Optional[str]] = mapped_column(Text)
-    
-    # ── Environment ──────────────────────────────────────
-    module: Mapped[Optional[str]] = mapped_column(String(255))
-    function_name: Mapped[Optional[str]] = mapped_column(String(255))
-    line_number: Mapped[Optional[int]] = mapped_column()
-    
-    # ── Runtime Metadata ─────────────────────────────────
-    worker_name: Mapped[Optional[str]] = mapped_column(String(100))
-    app_version: Mapped[Optional[str]] = mapped_column(String(50))
-    environment_metadata: Mapped[Optional[dict]] = mapped_column(JSONB) # CPU/Memory at crash
-    
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)

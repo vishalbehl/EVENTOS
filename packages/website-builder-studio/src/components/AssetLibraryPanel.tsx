@@ -3,6 +3,9 @@ import { Image, Search, Upload, Shapes, Smile } from 'lucide-react';
 import type { WebsiteAsset } from '../types';
 import { UNDRAW_CATALOG, UNDRAW_LIBRARY_COUNT, createSvgAsset, renderUndrawSvg, type UndrawIllustration } from '../core/assetLibrary';
 import { LUCIDE_ICON_NAMES, lucideIconUrl, toIconTitle } from '../core/iconLibrary';
+import { sanitizeSvg } from '../core/svgSanitizer';
+import { useWebsiteDocumentStore } from '../core/websiteDocumentStore';
+
 
 type AssetTab = 'uploads' | 'images' | 'svg' | 'icons';
 
@@ -29,8 +32,28 @@ const renderSvgCatalogButton = (item: UndrawIllustration, previewSvg: string | u
     key={item.id}
     type="button"
     onClick={onInsert}
+    draggable={!isLoading}
+    onDragStart={(e) => {
+      const asset: WebsiteAsset = {
+        id: `undraw_${item.id}_${Date.now()}`,
+        type: 'svg',
+        title: item.title,
+        svg: previewSvg || '',
+        source: 'undraw',
+        license: 'Apache-2.0 / unDraw compatible',
+        attribution: 'SVG from iblis-react-undraw / unDraw',
+        savedAt: new Date().toISOString(),
+      };
+      const payload = JSON.stringify({ type: 'asset', data: asset, rawItem: item });
+      e.dataTransfer.setData('application/x-eventos-builder-drag', payload);
+      (window as any).__wb_dragged_item__ = { type: 'asset', data: asset, rawItem: item };
+      e.dataTransfer.effectAllowed = 'copy';
+    }}
+    onDragEnd={() => {
+      (window as any).__wb_dragged_item__ = null;
+    }}
     {...(isLoading ? { disabled: true } : {})}
-    className="text-left rounded-md border border-border bg-background hover:bg-muted/40 overflow-hidden transition-colors disabled:cursor-wait disabled:opacity-70"
+    className="text-left rounded-md border border-border bg-background hover:bg-muted/40 overflow-hidden transition-colors disabled:cursor-wait disabled:opacity-70 cursor-grab active:cursor-grabbing"
     title={item.title}
   >
     <div className="h-24 bg-muted/30 flex items-center justify-center overflow-hidden">
@@ -50,17 +73,25 @@ const renderSvgCatalogButton = (item: UndrawIllustration, previewSvg: string | u
 );
 
 export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ assets, onAssetInsert, onAssetSave, onSearchImages, onUploadAsset }) => {
+  const themePrimary = useWebsiteDocumentStore(state => state.document?.tokens?.theme?.primary || '#6c63ff');
   const [activeTab, setActiveTab] = useState<AssetTab>('svg');
   const [query, setQuery] = useState('');
   const [openverseResults, setOpenverseResults] = useState<WebsiteAsset[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearchedImages, setHasSearchedImages] = useState(false);
   const [imageSearchError, setImageSearchError] = useState<string | null>(null);
-  const [svgColor, setSvgColor] = useState('#6c63ff');
-  const [iconColor, setIconColor] = useState('#6c63ff');
+  const [svgColor, setSvgColor] = useState(themePrimary);
+  const [iconColor, setIconColor] = useState(themePrimary);
   const [loadingSvgId, setLoadingSvgId] = useState<string | null>(null);
   const [svgPreviews, setSvgPreviews] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (themePrimary) {
+      setSvgColor(themePrimary);
+      setIconColor(themePrimary);
+    }
+  }, [themePrimary]);
 
   const filteredSvg = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -87,7 +118,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ assets, on
     void Promise.all(missing.map(async (item) => {
       try {
         const svg = await renderUndrawSvg(item, svgColor);
-        return { key: `${item.exportName}:${svgColor}`, svg };
+        return { key: `${item.exportName}:${svgColor}`, svg: sanitizeSvg(svg) };
       } catch {
         return null;
       }
@@ -113,6 +144,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ assets, on
     setLoadingSvgId(item.id);
     try {
       const asset = await createSvgAsset(item, svgColor);
+      asset.svg = sanitizeSvg(asset.svg || '');
       await Promise.resolve(onAssetSave(asset)).then(saved => onAssetInsert(saved || asset));
     } finally {
       setLoadingSvgId(null);
@@ -143,15 +175,36 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ assets, on
     if (!file) return;
     if (onUploadAsset) {
       void onUploadAsset(file).then(asset => {
+        if (asset.svg) asset.svg = sanitizeSvg(asset.svg);
         void Promise.resolve(onAssetSave(asset)).then(saved => onAssetInsert(saved || asset));
       });
       return;
     }
+    if (file.type.includes('svg')) {
+      const textReader = new FileReader();
+      textReader.onload = ev => {
+        const rawSvg = String(ev.target?.result || '');
+        const clean = sanitizeSvg(rawSvg);
+        const asset: WebsiteAsset = {
+          id: `upload_${Date.now()}`,
+          type: 'svg',
+          title: file.name,
+          svg: clean,
+          url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(clean)}`,
+          source: 'upload',
+          savedAt: new Date().toISOString(),
+        };
+        void Promise.resolve(onAssetSave(asset)).then(saved => onAssetInsert(saved || asset));
+      };
+      textReader.readAsText(file);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = ev => {
       const asset: WebsiteAsset = {
         id: `upload_${Date.now()}`,
-        type: file.type.includes('svg') ? 'svg' : 'upload',
+        type: 'upload',
         title: file.name,
         url: String(ev.target?.result || ''),
         source: 'upload',
@@ -181,7 +234,17 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ assets, on
       key={asset.id}
       type="button"
       onClick={() => void Promise.resolve(onAssetSave(asset)).then(saved => onAssetInsert(saved || asset))}
-      className="text-left rounded-md border border-border bg-background hover:bg-muted/40 overflow-hidden transition-colors"
+      draggable={true}
+      onDragStart={(e) => {
+        const payload = JSON.stringify({ type: 'asset', data: asset });
+        e.dataTransfer.setData('application/x-eventos-builder-drag', payload);
+        (window as any).__wb_dragged_item__ = { type: 'asset', data: asset };
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
+      onDragEnd={() => {
+        (window as any).__wb_dragged_item__ = null;
+      }}
+      className="text-left rounded-md border border-border bg-background hover:bg-muted/40 overflow-hidden transition-colors cursor-grab active:cursor-grabbing"
       title={asset.attribution || asset.title}
     >
       <div className="h-24 bg-muted/30 flex items-center justify-center overflow-hidden">
@@ -318,12 +381,32 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ assets, on
           <div className="grid grid-cols-3 gap-2">
             {filteredIcons.map(name => {
               const url = lucideIconUrl(name);
+              const iconAsset: WebsiteAsset = {
+                id: `lucide_${name}_${Date.now()}`,
+                type: 'icon',
+                title: toIconTitle(name),
+                url: url,
+                source: 'manual',
+                license: 'ISC',
+                attribution: 'Lucide icon library',
+                savedAt: new Date().toISOString(),
+              };
               return (
                 <button
                   key={name}
                   type="button"
                   onClick={() => handleIconInsert(name)}
-                  className="min-h-[84px] rounded-md border border-border bg-background p-2 text-center hover:bg-muted/40 transition-colors"
+                  draggable={true}
+                  onDragStart={(e) => {
+                    const payload = JSON.stringify({ type: 'asset', data: iconAsset });
+                    e.dataTransfer.setData('application/x-eventos-builder-drag', payload);
+                    (window as any).__wb_dragged_item__ = { type: 'asset', data: iconAsset };
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onDragEnd={() => {
+                    (window as any).__wb_dragged_item__ = null;
+                  }}
+                  className="min-h-[84px] rounded-md border border-border bg-background p-2 text-center hover:bg-muted/40 transition-colors cursor-grab active:cursor-grabbing"
                   title={toIconTitle(name)}
                 >
                   <span

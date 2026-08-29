@@ -11,14 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.event import Event
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.organization_console import (
     OrganizationBrandProfile,
-    OrganizationLegalHold,
     OrganizationLifecycleJob,
     OrganizationLocation,
     OrganizationSecurityPolicy,
@@ -75,7 +74,6 @@ class OrganizationLifecycleService:
             "registration_payments": await db.scalar(select(func.count(PaymentTransaction.id)).where(PaymentTransaction.event_id.in_(event_ids))) or 0,
             "audit_records_retained": await db.scalar(select(func.count(AuditLog.id)).where(AuditLog.organization_id == organization_id)) or 0,
         }
-        holds = (await db.scalars(select(OrganizationLegalHold).where(OrganizationLegalHold.organization_id == organization_id, OrganizationLegalHold.status == "ACTIVE"))).all()
         table_counts: dict[str, int] = {}
         if job_type in {"MERGE", "PURGE", "DELETE"}:
             for schema, table in await OrganizationLifecycleService._organization_tables(db):
@@ -91,8 +89,8 @@ class OrganizationLifecycleService:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "counts": {key: int(value) for key, value in counts.items()},
             "table_counts": table_counts,
-            "legal_holds": [{"id": str(row.id), "title": row.title, "scope": row.scope, "status": row.status} for row in holds],
-            "blocked": bool(holds and destructive),
+            "legal_holds": [],
+            "blocked": False,
             "requires_two_person_approval": destructive,
             "recoverable": job_type not in {"PURGE", "DELETE"},
             "restore_window_days": 30 if job_type == "ARCHIVE" else None,

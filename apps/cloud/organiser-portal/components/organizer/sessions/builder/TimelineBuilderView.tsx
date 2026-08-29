@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { parseISO, format, differenceInMinutes, addMinutes, startOfDay } from "date-fns";
-import { Clock, MapPin, Users, AlertTriangle } from "lucide-react";
+import { useMemo } from "react";
+import { format, differenceInMinutes } from "date-fns";
+import { AlertTriangle } from "lucide-react";
 import { useParams } from "next/navigation";
-import { cn, formatTimeInTZ } from "@/lib/utils";
-import { useSessionBuilderStore, BuilderSession } from "@/store/useSessionBuilderStore";
+import { cn } from "@/lib/utils";
+import { useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { useAssignSpeakerToSession } from "@/hooks/useSessionBuilder";
-import { Badge } from "@/components/ui/badge";
 
 const HOUR_WIDTH = 120; // px per hour
 const ROW_HEIGHT = 86; // px per room row
@@ -21,7 +20,6 @@ export function TimelineBuilderView() {
   const rooms = useSessionBuilderStore((s) => s.rooms);
   const selectedDate = useSessionBuilderStore((s) => s.selectedDate);
   const conflicts = useSessionBuilderStore((s) => s.conflicts);
-  const moveSession = useSessionBuilderStore((s) => s.moveSession);
   const setSelectedSessionId = useSessionBuilderStore((s) => s.setSelectedSessionId);
   const selectedSessionId = useSessionBuilderStore((s) => s.selectedSessionId);
 
@@ -52,18 +50,18 @@ export function TimelineBuilderView() {
   const totalWidth = timeBounds.hours.length * HOUR_WIDTH;
 
   return (
-    <div className="flex flex-col border border-default rounded-3xl overflow-hidden bg-[color-mix(in_srgb,var(--text)_2%,transparent)] shadow-lg">
+    <div className="flex flex-col border border-[var(--border-default)] rounded-lg overflow-hidden bg-[var(--card)] shadow-xs">
       {/* Scrollable Container */}
       <div className="overflow-x-auto overflow-y-hidden">
         <div style={{ width: LABEL_WIDTH + totalWidth }} className="relative">
           {/* Header Row: Hours */}
-          <div className="flex border-b border-default bg-[color-mix(in_srgb,var(--text)_4%,transparent)] font-mono text-[11px] font-bold text-muted sticky top-0 z-20">
+          <div className="flex border-b border-[var(--border-default)] bg-[var(--surface-subtle)] font-mono text-xs font-semibold text-[var(--text-secondary)] sticky top-0 z-20">
             <div
               style={{ width: LABEL_WIDTH }}
-              className="px-4 py-3 border-r border-default flex items-center justify-between font-sans text-[12px] font-black text-[var(--text)] uppercase tracking-wider bg-background"
+              className="px-3.5 py-2.5 border-r border-[var(--border-default)] flex items-center justify-between font-sans text-xs font-semibold text-[var(--text-primary)] uppercase tracking-wider bg-[var(--card)]"
             >
               <span>Room / Hall</span>
-              <span className="text-[10px] text-muted font-normal">{rooms.length} active</span>
+              <span className="text-[10px] text-[var(--text-secondary)] font-normal">{rooms.length} active</span>
             </div>
 
             <div className="flex">
@@ -71,7 +69,7 @@ export function TimelineBuilderView() {
                 <div
                   key={hour}
                   style={{ width: HOUR_WIDTH }}
-                  className="px-2 py-3 border-r border-default/40 text-center flex flex-col justify-center"
+                  className="px-2 py-2.5 border-r border-[var(--border-subtle)] text-center flex flex-col justify-center"
                 >
                   <span>{format(new Date(2026, 0, 1, hour), "HH:mm")}</span>
                 </div>
@@ -87,18 +85,18 @@ export function TimelineBuilderView() {
               <div
                 key={room.id}
                 style={{ height: ROW_HEIGHT }}
-                className="flex border-b border-default/50 hover:bg-[color-mix(in_srgb,var(--text)_2%,transparent)] transition-colors relative group"
+                className="flex border-b border-[var(--border-subtle)] hover:bg-[var(--surface-subtle)]/40 transition-colors relative group"
                 onDragOver={(e) => e.preventDefault()}
               >
                 {/* Room Label */}
                 <div
                   style={{ width: LABEL_WIDTH }}
-                  className="px-4 py-3 border-r border-default flex flex-col justify-center bg-background z-10"
+                  className="px-3.5 py-2.5 border-r border-[var(--border-default)] flex flex-col justify-center bg-[var(--card)] z-10"
                 >
-                  <div className="font-bold text-[13px] text-[var(--text)] truncate">
+                  <div className="font-semibold text-xs text-[var(--text-primary)] truncate">
                     {room.name}
                   </div>
-                  <div className="text-[10px] text-muted flex items-center gap-2 mt-0.5">
+                  <div className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1.5 mt-0.5">
                     <span>{room.room_type}</span>
                     {room.capacity && <span>• {room.capacity} seats</span>}
                   </div>
@@ -111,7 +109,7 @@ export function TimelineBuilderView() {
                     <div
                       key={hour}
                       style={{ width: HOUR_WIDTH }}
-                      className="border-r border-default/20 h-full pointer-events-none"
+                      className="border-r border-[var(--border-subtle)]/50 h-full pointer-events-none"
                     />
                   ))}
 
@@ -147,34 +145,34 @@ export function TimelineBuilderView() {
                         style={{
                           left: leftPx,
                           width: widthPx,
-                          top: 10,
-                          height: ROW_HEIGHT - 20,
+                          top: 8,
+                          height: ROW_HEIGHT - 16,
                         }}
                         className={cn(
-                          "absolute rounded-xl border p-2 flex flex-col justify-between transition-all duration-200 cursor-pointer shadow-md select-none overflow-hidden",
+                          "absolute rounded-md border p-2 flex flex-col justify-between transition-all duration-150 cursor-pointer shadow-xs select-none overflow-hidden text-xs",
                           isSelected
-                            ? "ring-2 ring-[var(--pri)] border-[var(--pri)] shadow-lg shadow-[var(--pri)]/30 z-30"
-                            : "bg-[var(--pri)]/15 border-[var(--pri)]/40 hover:border-[var(--pri)] z-10",
-                          hasConflict && "border-red-500 bg-red-500/20 ring-1 ring-red-500 z-20"
+                            ? "ring-2 ring-[var(--pri)] border-[var(--pri)] shadow-xs z-30"
+                            : "bg-[var(--brand-primary-muted)] border-[var(--border-default)] hover:border-[var(--pri)]/80 z-10",
+                          hasConflict && "border-rose-500/70 bg-rose-500/20 ring-1 ring-rose-500/40 z-20"
                         )}
                         title={`${session.name} (${format(startDt, "HH:mm")} - ${format(endDt, "HH:mm")})`}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <span className="text-[9px] font-black uppercase text-[var(--pri)] truncate">
+                          <span className="text-[9px] font-bold uppercase text-[var(--pri)] truncate">
                             {session.session_code}
                           </span>
-                          {hasConflict && <AlertTriangle className="h-3 w-3 text-red-400 flex-shrink-0" />}
+                          {hasConflict && <AlertTriangle className="h-3 w-3 text-rose-400 flex-shrink-0" />}
                         </div>
 
-                        <div className="font-bold text-[11px] text-[var(--text)] truncate leading-tight">
+                        <div className="font-medium text-[11px] text-[var(--text-primary)] truncate leading-tight">
                           {session.name}
                         </div>
 
-                        <div className="text-[9px] text-muted flex items-center justify-between font-mono">
+                        <div className="text-[9px] text-[var(--text-secondary)] flex items-center justify-between font-mono">
                           <span>
                             {format(startDt, "HH:mm")} - {format(endDt, "HH:mm")}
                           </span>
-                          <span className="font-sans text-[8px] font-black text-[var(--sec)]">
+                          <span className="font-sans text-[8px] font-bold text-[var(--brand-primary)]">
                             {durationMinutes}m
                           </span>
                         </div>
@@ -190,4 +188,3 @@ export function TimelineBuilderView() {
     </div>
   );
 }
-

@@ -31,6 +31,9 @@ import {
 } from "@usewaypoint/email-builder";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
 import { createRoot } from "react-dom/client";
+import { toast } from "sonner";
+import { SvgGallery } from "./undraw/SvgGallery";
+import { generateYouTubeThumbnailWithPlayButton } from "./utils/generateVideoThumbnail";
 import {
   Archive,
   ArrowLeft,
@@ -73,6 +76,7 @@ import {
   Palette,
   Pencil,
   PanelBottom,
+  PanelLeft,
   PanelRight,
   PanelTop,
   Plus,
@@ -83,6 +87,7 @@ import {
   Save,
   Search,
   Send,
+  Shapes,
   Share2,
   Smartphone,
   Settings2,
@@ -143,7 +148,7 @@ import type {
 import "./styles.css";
 
 type SidebarTab = "content" | "rows" | "style";
-type MediaTab = "library" | "upload" | "link" | "icons";
+type MediaTab = "library" | "upload" | "link" | "icons" | "svg";
 type Tool =
   "components" | "templates" | "structure" | "assets" | "brand" | "document";
 type InspectorTab = "content" | "style" | "settings";
@@ -336,8 +341,8 @@ const CATALOGUE_ICONS: Record<string, LucideIcon> = {
   "register-cta": MousePointerClick,
   certificate: Award,
   columns: Columns3,
-  "image-text": LayoutTemplate,
-  "text-image": LayoutTemplate,
+  "image-text": PanelLeft,
+  "text-image": PanelRight,
   "image-group": GalleryThumbnails,
   card: PanelTop,
   quote: Quote,
@@ -878,13 +883,13 @@ function editableTextStyle(
     backgroundColor: String(source.backgroundColor ?? "transparent"),
     fontSize: Number(
       source.fontSize ??
-        (node.type === "Heading"
-          ? level === "h1"
-            ? 32
-            : level === "h3"
-              ? 18
-              : 24
-          : 16),
+      (node.type === "Heading"
+        ? level === "h1"
+          ? 32
+          : level === "h3"
+            ? 18
+            : 24
+        : 16),
     ),
     fontWeight: String(
       source.fontWeight ?? (node.type === "Heading" ? "bold" : "normal"),
@@ -1036,7 +1041,7 @@ function SlotContent({
   ...props
 }: { slot: ChildSlot } & Omit<CanvasBlockProps, "id">) {
   return (
-    <>
+    <SortableContext items={slot.ids} strategy={verticalListSortingStrategy}>
       {slot.ids.map((child, index) => (
         <Fragment key={child}>
           <DropZone slot={slot} index={index} active={props.dragActive} />
@@ -1044,7 +1049,7 @@ function SlotContent({
         </Fragment>
       ))}
       <DropZone slot={slot} index={slot.ids.length} active={props.dragActive} />
-    </>
+    </SortableContext>
   );
 }
 
@@ -1082,7 +1087,7 @@ function CanvasBlock({
     opacity: isDragging ? 0.35 : 1,
     display:
       (viewport === "mobile" && visibility.hideMobile === true) ||
-      (viewport === "desktop" && visibility.hideDesktop === true)
+        (viewport === "desktop" && visibility.hideDesktop === true)
         ? "none"
         : undefined,
   };
@@ -1442,11 +1447,12 @@ function SearchableOrgSelect({
   );
 }
 
-function ProjectsGalleryView({
+export function EmailTemplateGrid({
   templates,
   scopeLabel,
   activeTemplateId,
   onSelectTemplate,
+  onRequestCreateNew,
   onCreateTemplate,
   onDeleteTemplate,
   onDuplicateTemplate,
@@ -1458,6 +1464,7 @@ function ProjectsGalleryView({
   scopeLabel: string;
   activeTemplateId: string | null;
   onSelectTemplate?: (id: string) => void;
+  onRequestCreateNew?: () => void;
   onCreateTemplate?: (template: { name: string; stableKey: string }) => void;
   onDeleteTemplate?: (id: string) => Promise<void> | void;
   onDuplicateTemplate?: (id: string) => Promise<StudioTemplate | void>;
@@ -1507,11 +1514,11 @@ function ProjectsGalleryView({
           <span className="ebs-projects-scope-badge">{scopeLabel}</span>
         </div>
         <div className="ebs-projects-actions">
-          {onCreateTemplate ? (
+          {onRequestCreateNew || onCreateTemplate ? (
             <button
               type="button"
               className="ebs-btn-create-primary"
-              onClick={() => setCreateOpen(true)}
+              onClick={() => onRequestCreateNew ? onRequestCreateNew() : setCreateOpen(true)}
             >
               <Plus size={16} />
               Create new
@@ -1564,10 +1571,10 @@ function ProjectsGalleryView({
       {/* Card Grid */}
       <div className="ebs-projects-grid">
         {/* Create Card */}
-        {onCreateTemplate ? (
+        {onRequestCreateNew || onCreateTemplate ? (
           <div
             className="ebs-card ebs-card-create"
-            onClick={() => setCreateOpen(true)}
+            onClick={() => onRequestCreateNew ? onRequestCreateNew() : setCreateOpen(true)}
           >
             <div className="ebs-card-create-body">
               <div className="ebs-create-plus-icon">
@@ -1637,7 +1644,8 @@ function ProjectsGalleryView({
                     {onDuplicateTemplate ? (
                       <button
                         type="button"
-                        onClick={async () => {
+                        onClick={async (e) => {
+                          e.stopPropagation();
                           setOpenMenuId(null);
                           const copy = await onDuplicateTemplate(template.id);
                           if (copy) {
@@ -1654,7 +1662,8 @@ function ProjectsGalleryView({
                       <button
                         type="button"
                         className="is-delete-btn"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setOpenMenuId(null);
                           setTemplateToDelete(template);
                         }}
@@ -1864,7 +1873,6 @@ function TemplateDetailsView({
   }, [tab, template, onLoadVersions]);
 
   const saveDetails = async () => {
-    if (!template.designerJson) return;
     setBusy(true);
     try {
       await onSaveDraft({
@@ -1872,7 +1880,7 @@ function TemplateDetailsView({
         name: name.trim(),
         subject: subject.trim(),
         preheader: preheader.trim(),
-        designerJson: template.designerJson,
+        designerJson: template.designerJson ?? createBlankEmailDocument(),
         bodyHtml: template.bodyHtml,
         editorSchemaVersion: 4,
         expectedVersion: template.version,
@@ -1933,17 +1941,10 @@ function TemplateDetailsView({
             </button>
             <button
               type="button"
-              className={tab === "review" ? "is-active-tab" : ""}
-              onClick={() => setTab("review")}
-            >
-              Email Review
-            </button>
-            <button
-              type="button"
               className={tab === "history" ? "is-active-tab" : ""}
               onClick={() => setTab("history")}
             >
-              Email History
+              Version Audit Log
             </button>
           </div>
 
@@ -2022,7 +2023,7 @@ function TemplateDetailsView({
               <div className="ebs-details-card">
                 <div className="ebs-card-header-row">
                   <div>
-                    <strong>Subject, Preheader, and UTMs</strong>
+                    <strong>Subject & Preheader</strong>
                     <p className="ebs-card-sub-desc">
                       {subject ? `Subject: ${subject}` : "No subject defined"}
                     </p>
@@ -2146,45 +2147,19 @@ function TemplateDetailsView({
                     Send test
                   </button>
                 ) : null}
-                {onDuplicateTemplate ? (
-                  <button
-                    type="button"
-                    className="ebs-bottom-action-btn"
-                    onClick={() => onDuplicateTemplate(template.id)}
-                  >
-                    <Copy size={14} />
-                    Make a copy
-                  </button>
-                ) : null}
                 {canDelete ? (
                   <button
                     type="button"
                     className="ebs-bottom-action-btn is-delete"
-                    onClick={() => setDeleteConfirm(true)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteConfirm(true);
+                    }}
                   >
                     <Trash2 size={14} />
                     Delete template
                   </button>
                 ) : null}
-              </div>
-            </div>
-          ) : tab === "review" ? (
-            <div className="ebs-details-tab-panel">
-              <h3>Email Diagnostics & Syntax Review</h3>
-              <p>Everything in this template is structurally valid and ready for production delivery.</p>
-              <div className="ebs-review-item">
-                <span className="ebs-review-check">✓</span>
-                <div>
-                  <strong>Schema v4 Structural Validation</strong>
-                  <p>All block nodes, icon fragments, and layout grid specs are standard compliant.</p>
-                </div>
-              </div>
-              <div className="ebs-review-item">
-                <span className="ebs-review-check">✓</span>
-                <div>
-                  <strong>Dynamic Variable Placeholders</strong>
-                  <p>Subject and body text contain valid handlebars variables.</p>
-                </div>
               </div>
             </div>
           ) : (
@@ -2202,15 +2177,44 @@ function TemplateDetailsView({
                           {ver.publishedAt ? new Date(ver.publishedAt).toLocaleString() : "Draft"}
                         </small>
                       </div>
-                      {ver.lifecycleState !== "DRAFT" && onRollback ? (
-                        <button
-                          type="button"
-                          className="ebs-btn-cancel"
-                          onClick={() => onRollback(template, ver.id, "Restored from Details view")}
-                        >
-                          Restore v{ver.version}
-                        </button>
-                      ) : null}
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        {ver.lifecycleState !== "DRAFT" && onRollback ? (
+                          <button
+                            type="button"
+                            className="ebs-btn-cancel"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRollback(template, ver.id, "Restored from Details view");
+                            }}
+                          >
+                            Restore v{ver.version}
+                          </button>
+                        ) : null}
+                        {onDuplicateTemplate ? (
+                          <button
+                            type="button"
+                            className="ebs-btn-cancel"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toast.error("Copying individual versions is not supported by the API.");
+                            }}
+                          >
+                            Copy
+                          </button>
+                        ) : null}
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            className="ebs-btn-cancel is-delete"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toast.error("Deleting individual versions is not supported. You can only delete the entire template.");
+                            }}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2277,6 +2281,7 @@ export function EmailBuilderStudio({
   onDeleteTemplate,
   onDuplicateTemplate,
   onUpdateScope,
+  onRequestCreateNew,
   onCreateTemplate,
   onSaveDraft,
   onPublish,
@@ -2288,6 +2293,7 @@ export function EmailBuilderStudio({
   onSendTest,
   onSaveFragment,
   onArchive,
+  onExit,
 }: EmailBuilderStudioProps) {
   const [viewMode, setViewMode] = useState<"gallery" | "details" | "editor">("gallery");
   const active =
@@ -2412,15 +2418,15 @@ export function EmailBuilderStudio({
     (): StudioDraft | null =>
       active
         ? {
-            templateId: active.id,
-            name: name.trim(),
-            subject: subject.trim(),
-            preheader: preheader.trim(),
-            designerJson: document,
-            bodyHtml: rawHtml,
-            editorSchemaVersion: 4,
-            expectedVersion: active.version,
-          }
+          templateId: active.id,
+          name: name.trim(),
+          subject: subject.trim(),
+          preheader: preheader.trim(),
+          designerJson: document,
+          bodyHtml: rawHtml,
+          editorSchemaVersion: 4,
+          expectedVersion: active.version,
+        }
         : null,
     [active, document, name, preheader, rawHtml, subject],
   );
@@ -2514,11 +2520,11 @@ export function EmailBuilderStudio({
   });
 
   const undo = () => {
-    const prior = history.at(-1);
-    if (!prior || !editable) return;
+    const prev = history[history.length - 1];
+    if (!prev || !editable) return;
     setFuture((items) => [document, ...items]);
     setHistory((items) => items.slice(0, -1));
-    setDocument(prior);
+    setDocument(prev);
     setSaveState("dirty");
   };
   const redo = () => {
@@ -2533,14 +2539,17 @@ export function EmailBuilderStudio({
     area: "props" | "style",
     patch: Record<string, unknown>,
   ) => {
-    if (!selectedId || !selected) return;
+    if (!selectedId) return;
+    const node = document[selectedId];
+    if (!node) return;
+    const nodeData = node.data as unknown as Record<string, unknown>;
     commit({
       ...document,
       [selectedId]: {
-        ...selected,
+        ...node,
         data: {
-          ...selected.data,
-          [area]: { ...(selected.data[area] as object | undefined), ...patch },
+          ...nodeData,
+          [area]: { ...(nodeData[area] as object | undefined), ...patch },
         },
       },
     } as EmailDocument);
@@ -2901,9 +2910,9 @@ export function EmailBuilderStudio({
     }
     insertFragment(fragment);
   };
-  const openMedia = (kind: "IMAGE" | "ICON") => {
-    setMediaKind(kind);
-    setMediaTab(kind === "ICON" ? "icons" : "library");
+  const openMedia = (kind: "IMAGE" | "ICON" | "SVG") => {
+    if (kind !== "SVG") setMediaKind(kind);
+    setMediaTab(kind === "ICON" ? "icons" : kind === "SVG" ? "svg" : "library");
     setMediaOpen(true);
   };
   const chooseAsset = (asset: StudioAsset) => {
@@ -2928,20 +2937,20 @@ export function EmailBuilderStudio({
               iconName: choosingIcon
                 ? (asset.metadata?.iconName ?? asset.name)
                 : (
-                    selected.data.editorMetadata as
-                      Record<string, unknown> | undefined
-                  )?.iconName,
+                  selected.data.editorMetadata as
+                  Record<string, unknown> | undefined
+                )?.iconName,
               iconColor: choosingIcon
                 ? (asset.metadata?.iconColor ??
                   (
                     selected.data.editorMetadata as
-                      Record<string, unknown> | undefined
+                    Record<string, unknown> | undefined
                   )?.iconColor ??
                   "#4f46e5")
                 : (
-                    selected.data.editorMetadata as
-                      Record<string, unknown> | undefined
-                  )?.iconColor,
+                  selected.data.editorMetadata as
+                  Record<string, unknown> | undefined
+                )?.iconColor,
             },
             props: {
               ...selected.data.props,
@@ -3131,17 +3140,17 @@ export function EmailBuilderStudio({
       const asset = onImportAsset
         ? await onImportAsset(mediaUrl, mediaKind)
         : {
-            id: `linked-${Date.now()}`,
-            name:
-              mediaUrl.split("/").at(-1)?.split("?")[0] ||
-              (mediaKind === "ICON" ? "Linked icon" : "Linked image"),
-            url: mediaUrl,
-            fileType: "image/*",
-            scopeType: active.scopeType,
-            assetKind: mediaKind,
-            sourceType: "URL_IMPORT" as const,
-            editable: true,
-          };
+          id: `linked-${Date.now()}`,
+          name:
+            mediaUrl.split("/").at(-1)?.split("?")[0] ||
+            (mediaKind === "ICON" ? "Linked icon" : "Linked image"),
+          url: mediaUrl,
+          fileType: "image/*",
+          scopeType: active.scopeType,
+          assetKind: mediaKind,
+          sourceType: "URL_IMPORT" as const,
+          editable: true,
+        };
       chooseAsset(asset);
       setMediaUrl("");
     } catch (error) {
@@ -3244,8 +3253,8 @@ export function EmailBuilderStudio({
   const rootSlot = slotsOf(document, ROOT_ID)[0];
   const activeDragLabel = activeDragId?.startsWith("catalogue:")
     ? CATALOGUE.find(
-        (item) => item.key === activeDragId.slice("catalogue:".length),
-      )?.label
+      (item) => item.key === activeDragId.slice("catalogue:".length),
+    )?.label
     : activeDragId
       ? nodeOf(document, activeDragId)?.type
       : null;
@@ -3253,11 +3262,12 @@ export function EmailBuilderStudio({
   if (viewMode === "gallery") {
     return (
       <section className="ebs-shell" aria-label="Email templates gallery">
-        <ProjectsGalleryView
+        <EmailTemplateGrid
           templates={templates}
           scopeLabel={scopeLabel}
           activeTemplateId={active?.id ?? null}
           onSelectTemplate={onSelectTemplate}
+          onRequestCreateNew={onRequestCreateNew}
           onCreateTemplate={onCreateTemplate}
           onDeleteTemplate={onDeleteTemplate}
           onDuplicateTemplate={onDuplicateTemplate}
@@ -3289,7 +3299,15 @@ export function EmailBuilderStudio({
           onBackToGallery={() => setViewMode("gallery")}
           onOpenEditor={() => setViewMode("editor")}
           onSaveDraft={async (draft) => {
-            if (onSaveDraft) await onSaveDraft(draft);
+            setName(draft.name);
+            setSubject(draft.subject);
+            setPreheader(draft.preheader ?? "");
+            if (onSaveDraft) {
+              await onSaveDraft({
+                ...draft,
+                designerJson: draft.designerJson || document,
+              });
+            }
           }}
           onUpdateScope={onUpdateScope}
           onDuplicateTemplate={onDuplicateTemplate}
@@ -3312,7 +3330,10 @@ export function EmailBuilderStudio({
           type="button"
           className="ebs-btn-back-gallery"
           title="Back to Projects"
-          onClick={() => setViewMode("gallery")}
+          onClick={() => {
+            if (onExit) onExit();
+            else setViewMode("gallery");
+          }}
         >
           <ArrowLeft size={16} />
           <span>All Templates</span>
@@ -3339,11 +3360,11 @@ export function EmailBuilderStudio({
             ))}
           </select>
           <span>{active.effectiveOrigin ?? active.scopeType} default</span>
-          {onCreateTemplate ? (
+          {onRequestCreateNew || onCreateTemplate ? (
             <button
               className="ebs-new-template"
               type="button"
-              onClick={() => setCreateOpen(true)}
+              onClick={() => onRequestCreateNew ? onRequestCreateNew() : setCreateOpen(true)}
             >
               <Plus size={14} />
               New default
@@ -3398,19 +3419,6 @@ export function EmailBuilderStudio({
             <Send size={16} />
             Send test
           </button>
-          {onDuplicateTemplate ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={async () => {
-                await onDuplicateTemplate(active.id);
-              }}
-              title="Make a copy of this template"
-            >
-              <Copy size={16} />
-              Make a copy
-            </button>
-          ) : null}
           <button disabled={!editable || busy} onClick={() => void save()}>
             <Save size={16} />
             Save draft
@@ -3474,10 +3482,7 @@ export function EmailBuilderStudio({
         onDragCancel={() => setActiveDragId(null)}
         onDragEnd={dragEnd}
       >
-        <SortableContext
-          items={allSlots(document).flatMap((slot) => slot.ids)}
-          strategy={verticalListSortingStrategy}
-        >
+
           <div className={`ebs-workspace ${activeDragId ? "is-dragging" : ""}`}>
             <nav className="ebs-toolrail" aria-label="Designer tools">
               {(
@@ -3814,20 +3819,6 @@ export function EmailBuilderStudio({
               }}
               onClick={() => selectNode(ROOT_ID)}
             >
-              <div className="ebs-stage-ruler">
-                <span>
-                  {screen === "desktop"
-                    ? "600px email canvas"
-                    : "390px mobile preview"}
-                </span>
-                <span>
-                  {selectedId === ROOT_ID
-                    ? "Canvas selected"
-                    : selected
-                      ? `${selected.type} selected`
-                      : "Select a block to edit it"}
-                </span>
-              </div>
               <div
                 ref={setCanvasDropRef}
                 className={`ebs-canvas is-${screen} ${canvasIsOver ? "is-drop-target" : ""}`}
@@ -3913,37 +3904,6 @@ export function EmailBuilderStudio({
                   <>
                     {inspectorTab === "content" ? (
                       <>
-                        <section
-                          className="ebs-library-launchers"
-                          aria-label="Media libraries"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => openMedia("IMAGE")}
-                          >
-                            <span>
-                              <ImageIcon size={18} />
-                            </span>
-                            <div>
-                              <strong>Image library</strong>
-                              <small>Library · Upload · Link</small>
-                            </div>
-                            <ChevronRight size={15} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openMedia("ICON")}
-                          >
-                            <span>
-                              <Star size={18} />
-                            </span>
-                            <div>
-                              <strong>Icon library</strong>
-                              <small>Brand · UI · Custom icons</small>
-                            </div>
-                            <ChevronRight size={15} />
-                          </button>
-                        </section>
                         {(
                           ["Basic", "Event components", "Content"] as const
                         ).map((group) => (
@@ -4022,7 +3982,7 @@ export function EmailBuilderStudio({
                     {selectedId === ROOT_ID ? (
                       <div className="ebs-control-stack">
                         {inspectorTab === "content" ||
-                        selectedId !== ROOT_ID ? (
+                          selectedId !== ROOT_ID ? (
                           <>
                             <Field label="Template name">
                               <input
@@ -4118,7 +4078,7 @@ export function EmailBuilderStudio({
                           </>
                         ) : null}
                         {inspectorTab === "settings" ||
-                        selectedId !== ROOT_ID ? (
+                          selectedId !== ROOT_ID ? (
                           <>
                             <Field label="Template name">
                               <input
@@ -4213,7 +4173,7 @@ export function EmailBuilderStudio({
                     ) : (
                       <>
                         {inspectorTab === "content" ||
-                        selectedId !== ROOT_ID ? (
+                          selectedId !== ROOT_ID ? (
                           <div className="ebs-control-stack">
                             <div
                               className="ebs-section-title"
@@ -4283,8 +4243,8 @@ export function EmailBuilderStudio({
                                             {String(
                                               (
                                                 child?.data.editorMetadata as
-                                                  | Record<string, unknown>
-                                                  | undefined
+                                                | Record<string, unknown>
+                                                | undefined
                                               )?.network ?? `Icon ${index + 1}`,
                                             )}
                                           </span>
@@ -4314,8 +4274,8 @@ export function EmailBuilderStudio({
                                           className={
                                             metadata.orientation ===
                                               orientation ||
-                                            (!metadata.orientation &&
-                                              orientation === "horizontal")
+                                              (!metadata.orientation &&
+                                                orientation === "horizontal")
                                               ? "is-active"
                                               : ""
                                           }
@@ -4362,7 +4322,7 @@ export function EmailBuilderStudio({
                                         key={type}
                                         className={
                                           (metadata.listType ?? "unordered") ===
-                                          type
+                                            type
                                             ? "is-active"
                                             : ""
                                         }
@@ -4457,148 +4417,148 @@ export function EmailBuilderStudio({
                             ) : null}
                             {editorRole === "MANAGED_TABLE"
                               ? (() => {
-                                  const table =
-                                    (metadata.table as
-                                      Record<string, unknown> | undefined) ??
-                                    {};
-                                  const rows =
-                                    (table.rows as string[][] | undefined) ??
-                                    [];
-                                  const updateTable = (
-                                    patch: Record<string, unknown>,
-                                  ) =>
-                                    updateMetadata({
-                                      table: { ...table, ...patch },
-                                    });
-                                  return (
-                                    <>
-                                      <div className="ebs-section-title">
-                                        Table layout
-                                      </div>
-                                      <div className="ebs-table-editor">
-                                        {rows.map((row, rowIndex) => (
-                                          <div key={rowIndex}>
-                                            {row.map((cell, columnIndex) => (
-                                              <input
-                                                key={columnIndex}
-                                                aria-label={`Row ${rowIndex + 1}, column ${columnIndex + 1}`}
-                                                value={cell}
-                                                onChange={(event) =>
-                                                  updateTable({
-                                                    rows: rows.map(
-                                                      (
-                                                        currentRow,
-                                                        currentRowIndex,
-                                                      ) =>
-                                                        currentRowIndex ===
+                                const table =
+                                  (metadata.table as
+                                    Record<string, unknown> | undefined) ??
+                                  {};
+                                const rows =
+                                  (table.rows as string[][] | undefined) ??
+                                  [];
+                                const updateTable = (
+                                  patch: Record<string, unknown>,
+                                ) =>
+                                  updateMetadata({
+                                    table: { ...table, ...patch },
+                                  });
+                                return (
+                                  <>
+                                    <div className="ebs-section-title">
+                                      Table layout
+                                    </div>
+                                    <div className="ebs-table-editor">
+                                      {rows.map((row, rowIndex) => (
+                                        <div key={rowIndex}>
+                                          {row.map((cell, columnIndex) => (
+                                            <input
+                                              key={columnIndex}
+                                              aria-label={`Row ${rowIndex + 1}, column ${columnIndex + 1}`}
+                                              value={cell}
+                                              onChange={(event) =>
+                                                updateTable({
+                                                  rows: rows.map(
+                                                    (
+                                                      currentRow,
+                                                      currentRowIndex,
+                                                    ) =>
+                                                      currentRowIndex ===
                                                         rowIndex
-                                                          ? currentRow.map(
-                                                              (
-                                                                value,
-                                                                currentColumnIndex,
-                                                              ) =>
-                                                                currentColumnIndex ===
-                                                                columnIndex
-                                                                  ? event.target
-                                                                      .value
-                                                                  : value,
-                                                            )
-                                                          : currentRow,
-                                                    ),
-                                                  })
-                                                }
-                                              />
-                                            ))}
-                                          </div>
-                                        ))}
-                                      </div>
-                                      <div className="ebs-move-actions">
-                                        <button
-                                          type="button"
-                                          disabled={rows.length >= 20}
-                                          onClick={() =>
-                                            updateTable({
-                                              rows: [
-                                                ...rows,
-                                                Array.from(
-                                                  {
-                                                    length: Number(
-                                                      table.columns ??
-                                                        rows[0]?.length ??
-                                                        1,
-                                                    ),
-                                                  },
-                                                  () => "New cell",
-                                                ),
-                                              ],
-                                            })
-                                          }
-                                        >
-                                          Add row
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={
-                                            (rows[0]?.length ?? 0) >= 10
-                                          }
-                                          onClick={() =>
-                                            updateTable({
-                                              columns:
-                                                (rows[0]?.length ?? 0) + 1,
-                                              rows: rows.map((row) => [
-                                                ...row,
-                                                "New cell",
-                                              ]),
-                                            })
-                                          }
-                                        >
-                                          Add column
-                                        </button>
-                                      </div>
-                                      <label className="ebs-check">
-                                        <input
-                                          type="checkbox"
-                                          checked={table.headerRow !== false}
-                                          onChange={(event) =>
-                                            updateTable({
-                                              headerRow: event.target.checked,
-                                            })
-                                          }
-                                        />
-                                        Header row
-                                      </label>
-                                      <label className="ebs-check">
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(table.striped)}
-                                          onChange={(event) =>
-                                            updateTable({
-                                              striped: event.target.checked,
-                                            })
-                                          }
-                                        />
-                                        Striped rows
-                                      </label>
-                                      <Field label="Cell padding">
-                                        <input
-                                          type="range"
-                                          min="2"
-                                          max="32"
-                                          value={Number(
-                                            table.cellPadding ?? 10,
-                                          )}
-                                          onChange={(event) =>
-                                            updateTable({
-                                              cellPadding: Number(
-                                                event.target.value,
+                                                        ? currentRow.map(
+                                                          (
+                                                            value,
+                                                            currentColumnIndex,
+                                                          ) =>
+                                                            currentColumnIndex ===
+                                                              columnIndex
+                                                              ? event.target
+                                                                .value
+                                                              : value,
+                                                        )
+                                                        : currentRow,
+                                                  ),
+                                                })
+                                              }
+                                            />
+                                          ))}
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <div className="ebs-move-actions">
+                                      <button
+                                        type="button"
+                                        disabled={rows.length >= 20}
+                                        onClick={() =>
+                                          updateTable({
+                                            rows: [
+                                              ...rows,
+                                              Array.from(
+                                                {
+                                                  length: Number(
+                                                    table.columns ??
+                                                    rows[0]?.length ??
+                                                    1,
+                                                  ),
+                                                },
+                                                () => "New cell",
                                               ),
-                                            })
-                                          }
-                                        />
-                                      </Field>
-                                    </>
-                                  );
-                                })()
+                                            ],
+                                          })
+                                        }
+                                      >
+                                        Add row
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          (rows[0]?.length ?? 0) >= 10
+                                        }
+                                        onClick={() =>
+                                          updateTable({
+                                            columns:
+                                              (rows[0]?.length ?? 0) + 1,
+                                            rows: rows.map((row) => [
+                                              ...row,
+                                              "New cell",
+                                            ]),
+                                          })
+                                        }
+                                      >
+                                        Add column
+                                      </button>
+                                    </div>
+                                    <label className="ebs-check">
+                                      <input
+                                        type="checkbox"
+                                        checked={table.headerRow !== false}
+                                        onChange={(event) =>
+                                          updateTable({
+                                            headerRow: event.target.checked,
+                                          })
+                                        }
+                                      />
+                                      Header row
+                                    </label>
+                                    <label className="ebs-check">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(table.striped)}
+                                        onChange={(event) =>
+                                          updateTable({
+                                            striped: event.target.checked,
+                                          })
+                                        }
+                                      />
+                                      Striped rows
+                                    </label>
+                                    <Field label="Cell padding">
+                                      <input
+                                        type="range"
+                                        min="2"
+                                        max="32"
+                                        value={Number(
+                                          table.cellPadding ?? 10,
+                                        )}
+                                        onChange={(event) =>
+                                          updateTable({
+                                            cellPadding: Number(
+                                              event.target.value,
+                                            ),
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                  </>
+                                );
+                              })()
                               : null}
                             {["Text", "Heading"].includes(selected.type) ? (
                               <>
@@ -4808,8 +4768,75 @@ export function EmailBuilderStudio({
                                 </Field>
                               </>
                             ) : null}
+                            {selected.type === "Image" && editorRole === "VIDEO" ? (
+                              (() => {
+                                const currentLink = String(props.linkHref ?? "");
+                                const currentUrl = String(props.url ?? "");
+                                const isCustom = metadata.customVideoThumbnail === true;
+                                const isPlaceholder = currentUrl === "https://placehold.co/600x320/111827/ffffff/png?text=%E2%96%B6+PLAY+VIDEO" || currentUrl === "";
+
+                                return (
+                                  <>
+                                    <div className="ebs-section-title">Video Settings</div>
+                                    <Field label="Video URL">
+                                      <input
+                                        type="url"
+                                        placeholder="https://youtube.com/..."
+                                        value={currentLink}
+                                        onChange={(event) => {
+                                          const newLinkHref = event.target.value;
+                                          if (!isCustom) {
+                                            updateNode("props", { linkHref: newLinkHref, url: "https://placehold.co/600x320/111827/ffffff/png?text=%E2%96%B6+PLAY+VIDEO" });
+                                            generateYouTubeThumbnailWithPlayButton(newLinkHref).then((dataUri) => {
+                                              if (dataUri) {
+                                                updateNode("props", { url: dataUri });
+                                              }
+                                            });
+                                          } else {
+                                            updateNode("props", { linkHref: newLinkHref });
+                                          }
+                                        }}
+                                      />
+                                    </Field>
+                                    <label style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px", fontSize: "13px" }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isCustom}
+                                        onChange={(event) => {
+                                          const custom = event.target.checked;
+                                          updateMetadata({ customVideoThumbnail: custom });
+                                          if (!custom) {
+                                            updateNode("props", { url: "https://placehold.co/600x320/111827/ffffff/png?text=%E2%96%B6+PLAY+VIDEO" });
+                                            generateYouTubeThumbnailWithPlayButton(currentLink).then((dataUri) => {
+                                              if (dataUri) {
+                                                updateNode("props", { url: dataUri });
+                                              }
+                                            });
+                                          } else if (isPlaceholder) {
+                                            updateNode("props", { url: "" });
+                                          }
+                                        }}
+                                      />
+                                      Custom preview image
+                                    </label>
+                                    {isCustom ? (
+                                      <Field label="Preview Image URL">
+                                        <input
+                                          type="url"
+                                          placeholder="https://..."
+                                          value={currentUrl}
+                                          onChange={(event) =>
+                                            updateNode("props", { url: event.target.value })
+                                          }
+                                        />
+                                      </Field>
+                                    ) : null}
+                                  </>
+                                );
+                              })()
+                            ) : null}
                             {selected.type === "ColumnsContainer" &&
-                            editorRole !== "SOCIAL_GROUP" ? (
+                              editorRole !== "SOCIAL_GROUP" ? (
                               <>
                                 <div className="ebs-section-title">Columns</div>
                                 <Field label="Column gap">
@@ -4855,7 +4882,7 @@ export function EmailBuilderStudio({
                                 </Field>
                               </>
                             ) : null}
-                            {selected.type === "Image" ? (
+                            {selected.type === "Image" && editorRole !== "VIDEO" ? (
                               <>
                                 <button
                                   className="ebs-change-media"
@@ -4919,9 +4946,9 @@ export function EmailBuilderStudio({
                                     value={String(
                                       (
                                         metadata.action as
-                                          Record<string, unknown> | undefined
+                                        Record<string, unknown> | undefined
                                       )?.type ??
-                                        (props.linkHref ? "WEB" : "NONE"),
+                                      (props.linkHref ? "WEB" : "NONE"),
                                     )}
                                     onChange={(event) =>
                                       updateMetadata({
@@ -5035,8 +5062,8 @@ export function EmailBuilderStudio({
                                     type="color"
                                     value={String(
                                       style.color ??
-                                        root.data.textColor ??
-                                        "#202124",
+                                      root.data.textColor ??
+                                      "#202124",
                                     )}
                                     onChange={(event) =>
                                       updateNode("style", {
@@ -5052,7 +5079,7 @@ export function EmailBuilderStudio({
                                     max="48"
                                     value={Number(
                                       style.fontSize ??
-                                        (selected.type === "Heading" ? 24 : 16),
+                                      (selected.type === "Heading" ? 24 : 16),
                                     )}
                                     onChange={(event) =>
                                       updateNode("style", {
@@ -5142,7 +5169,7 @@ export function EmailBuilderStudio({
                                         type="button"
                                         className={
                                           (style.direction ?? "ltr") ===
-                                          direction
+                                            direction
                                             ? "is-active"
                                             : ""
                                         }
@@ -5201,7 +5228,7 @@ export function EmailBuilderStudio({
                                     value={Number(
                                       (
                                         style.padding as
-                                          Record<string, number> | undefined
+                                        Record<string, number> | undefined
                                       )?.[edge] ?? 14,
                                     )}
                                     onChange={(event) =>
@@ -5296,8 +5323,8 @@ export function EmailBuilderStudio({
                                 ).map((edge) => {
                                   const responsive = (
                                     metadata.responsiveStyle as
-                                      | Record<string, Record<string, unknown>>
-                                      | undefined
+                                    | Record<string, Record<string, unknown>>
+                                    | undefined
                                   )?.mobile;
                                   const mobilePadding = responsive?.padding as
                                     Record<string, number> | undefined;
@@ -5310,11 +5337,11 @@ export function EmailBuilderStudio({
                                       max="120"
                                       value={Number(
                                         mobilePadding?.[edge] ??
-                                          (
-                                            style.padding as
-                                              Record<string, number> | undefined
-                                          )?.[edge] ??
-                                          14,
+                                        (
+                                          style.padding as
+                                          Record<string, number> | undefined
+                                        )?.[edge] ??
+                                        14,
                                       )}
                                       onChange={(event) =>
                                         updateResponsiveStyle("mobile", {
@@ -5365,8 +5392,8 @@ export function EmailBuilderStudio({
                               <input
                                 value={String(
                                   metadata.accessibilityLabel ??
-                                    props.alt ??
-                                    "",
+                                  props.alt ??
+                                  "",
                                 )}
                                 onChange={(event) =>
                                   updateMetadata({
@@ -5459,9 +5486,9 @@ export function EmailBuilderStudio({
                                     }
                                     value={Number(
                                       props.width ??
-                                        (editorRole.includes("ICON")
-                                          ? 48
-                                          : 552),
+                                      (editorRole.includes("ICON")
+                                        ? 48
+                                        : 552),
                                     )}
                                     onChange={(event) =>
                                       updateNode("props", {
@@ -5506,7 +5533,7 @@ export function EmailBuilderStudio({
                           </div>
                         ) : null}
                         {inspectorTab === "settings" ||
-                        selectedId !== ROOT_ID ? (
+                          selectedId !== ROOT_ID ? (
                           <div className="ebs-control-stack">
                             <div
                               className="ebs-section-title"
@@ -5607,7 +5634,7 @@ export function EmailBuilderStudio({
               </div>
             </aside>
           </div>
-        </SortableContext>
+
         <DragOverlay
           dropAnimation={{ duration: 180, easing: "cubic-bezier(.2,.8,.2,1)" }}
         >
@@ -5862,33 +5889,29 @@ export function EmailBuilderStudio({
         >
           <div className="ebs-media-picker">
             <div className="ebs-media-tabs">
-              {mediaKind === "IMAGE" ? (
-                <button
-                  className={mediaTab === "library" ? "is-active" : ""}
-                  onClick={() => setMediaTab("library")}
-                >
-                  Image library
-                </button>
-              ) : null}
-              {mediaKind === "ICON" ? (
-                <button
-                  className={mediaTab === "icons" ? "is-active" : ""}
-                  onClick={() => setMediaTab("icons")}
-                >
-                  Icons
-                </button>
-              ) : null}
               <button
                 className={mediaTab === "upload" ? "is-active" : ""}
                 onClick={() => setMediaTab("upload")}
               >
-                Upload
+                Upload file
               </button>
               <button
-                className={mediaTab === "link" ? "is-active" : ""}
-                onClick={() => setMediaTab("link")}
+                className={mediaTab === "library" ? "is-active" : ""}
+                onClick={() => setMediaTab("library")}
               >
-                Link
+                Image library
+              </button>
+              <button
+                className={mediaTab === "svg" ? "is-active" : ""}
+                onClick={() => setMediaTab("svg")}
+              >
+                Illustrations
+              </button>
+              <button
+                className={mediaTab === "icons" ? "is-active" : ""}
+                onClick={() => setMediaTab("icons")}
+              >
+                Icons
               </button>
             </div>
             {mediaTab === "library" ? (
@@ -6084,6 +6107,24 @@ export function EmailBuilderStudio({
                   Search refines the complete Lucide catalogue. Up to 180
                   matching icons are shown at once for smooth scrolling.
                 </p>
+              </div>
+            ) : null}
+            {mediaTab === "svg" ? (
+              <div style={{ height: "500px", padding: "16px 0" }}>
+                <SvgGallery
+                  onInsert={(url, title) => {
+                    if (
+                      selected &&
+                      (editorRoleOf(selected) === "IMAGE" ||
+                        editorRoleOf(selected) === "STANDALONE_ICON")
+                    ) {
+                      updateNode("props", { url, alt: title });
+                    } else {
+                      insertAsset(url, title, "IMAGE");
+                    }
+                    setMediaOpen(false);
+                  }}
+                />
               </div>
             ) : null}
             {mediaTab === "upload" ? (

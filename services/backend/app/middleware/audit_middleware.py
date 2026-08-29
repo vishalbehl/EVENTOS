@@ -2,7 +2,8 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, time as dtime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Optional, Dict, List, Tuple
 
 from jose import JWTError, jwt
@@ -171,10 +172,18 @@ def serialize_model(instance) -> Dict[str, Any]:
     data = {}
     for col in instance.__mapper__.columns:
         val = getattr(instance, col.name)
-        if isinstance(val, uuid.UUID):
+        if val is None:
+            data[col.name] = None
+        elif isinstance(val, uuid.UUID):
             data[col.name] = str(val)
-        elif isinstance(val, datetime):
+        elif isinstance(val, (datetime, date, dtime)):
             data[col.name] = val.isoformat()
+        elif isinstance(val, Decimal):
+            data[col.name] = float(val)
+        elif isinstance(val, bytes):
+            data[col.name] = val.decode("utf-8", errors="replace")
+        elif hasattr(val, "value"):  # Enum
+            data[col.name] = val.value
         else:
             data[col.name] = val
     return data

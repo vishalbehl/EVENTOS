@@ -298,7 +298,7 @@ function stopNodeAgent(): void {
   nodeAgentProcess = null;
 }
 
-async function stopVenueServerOnPort(port = 8001): Promise<void> {
+async function stopVenueServerOnPort(port = 8002): Promise<void> {
   if (venueServerProcess && !venueServerProcess.killed) {
     venueServerProcess.kill("SIGTERM");
   }
@@ -308,7 +308,7 @@ async function stopVenueServerOnPort(port = 8001): Promise<void> {
     $connections = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue;
     foreach ($connection in $connections) {
       $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($connection.OwningProcess)" -ErrorAction SilentlyContinue;
-      if ($processInfo -and ($processInfo.CommandLine -match 'uvicorn|app\\.main:app|python')) {
+      if ($processInfo -and ($processInfo.CommandLine -match 'uvicorn|app\\\\.main:app|python')) {
         Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue;
       }
     }
@@ -319,9 +319,9 @@ async function stopVenueServerOnPort(port = 8001): Promise<void> {
 function startVenueServer(): { started: boolean; status: string; port: number } {
   const { serviceRoot, pythonExe, runtimeAvailable } = serviceRuntime();
   if (!runtimeAvailable && pythonExe !== "python") {
-    return { started: false, status: "runtime_missing", port: 8001 };
+    return { started: false, status: "runtime_missing", port: 8002 };
   }
-  venueServerProcess = spawn(pythonExe, ["-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8001"], {
+  venueServerProcess = spawn(pythonExe, ["-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8002"], {
     cwd: serviceRoot,
     env: process.env,
   });
@@ -330,14 +330,14 @@ function startVenueServer(): { started: boolean; status: string; port: number } 
   venueServerProcess.once("exit", () => {
     venueServerProcess = null;
   });
-  return { started: true, status: "started", port: 8001 };
+  return { started: true, status: "started", port: 8002 };
 }
 
 async function waitForVenueServer(timeoutMs = 15000): Promise<{ ready: boolean; status: string }> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      await fetch("http://127.0.0.1:8001/api/v1/auth/verify", { headers: { "X-Venue-Key": "venue_secret_key" } });
+      await fetch("http://127.0.0.1:8002/api/v1/auth/verify", { headers: { "X-Venue-Key": "venue_secret_key" } });
       return { ready: true, status: "ready" };
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -347,7 +347,7 @@ async function waitForVenueServer(timeoutMs = 15000): Promise<{ ready: boolean; 
 }
 
 async function restartVenueServer(): Promise<Record<string, unknown>> {
-  await stopVenueServerOnPort(8001);
+  await stopVenueServerOnPort(8002);
   const start = startVenueServer();
   const readiness = await waitForVenueServer();
   return { ...start, ...readiness, restartRequired: false };
@@ -623,6 +623,41 @@ ipcMain.handle("venue-desktop:setup-registration-postgres", async (_event, setup
   } finally {
     fs.rmSync(setupPayloadPath, { force: true });
   }
+});
+
+ipcMain.handle("venue-desktop:reset-registration-database", async () => {
+  stopNodeAgent();
+  await stopVenueServerOnPort(8002);
+
+  // 1. Remove marker, shared postgres config and secret
+  if (fs.existsSync(setupMarkerPath())) {
+    fs.rmSync(setupMarkerPath(), { force: true });
+  }
+  if (fs.existsSync(registrationDbConfigPath())) {
+    fs.rmSync(registrationDbConfigPath(), { force: true });
+  }
+  if (fs.existsSync(registrationPostgresSecretPath())) {
+    fs.rmSync(registrationPostgresSecretPath(), { force: true });
+  }
+  if (fs.existsSync(uploadedRegistrationDatabasePath())) {
+    fs.rmSync(uploadedRegistrationDatabasePath(), { force: true });
+  }
+
+  // 2. Clear DATABASE_URL in registration-server .env so it returns to fresh state
+  const serviceRoot = path.join(repoRoot(), "services", "registration-server");
+  const envPath = path.join(serviceRoot, ".env");
+  if (fs.existsSync(envPath)) {
+    let content = fs.readFileSync(envPath, "utf-8");
+    content = content.replace(/^DATABASE_URL=.*$/m, "DATABASE_URL=");
+    fs.writeFileSync(envPath, content, "utf-8");
+  }
+
+  // 3. Re-initialize the bootstrap database
+  await initializeLocalDatabase();
+
+  // 4. Return fresh unconfigured status
+  const status = await registrationSetupStatus();
+  return { success: true, status };
 });
 
 app.whenReady().then(() => {

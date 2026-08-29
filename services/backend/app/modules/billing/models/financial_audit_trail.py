@@ -30,7 +30,7 @@ class FinancialAuditTrail(Base):
     __table_args__ = (
         Index("idx_financial_audit_trail_org_time", "organization_id", "occurred_at"),
         Index("idx_financial_audit_trail_type", "activity_type", "occurred_at"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

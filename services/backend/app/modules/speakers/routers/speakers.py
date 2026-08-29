@@ -19,15 +19,18 @@ from app.dependencies import (
     get_current_event, CurrentEvent, OrganizerOrAbove
 )
 from app.modules.events.models.event import Event
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
+from app.modules.agenda.models import Track
+from app.modules.registration.models.participant import Participant
+from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.presentations.models.poster import Poster
 from app.modules.identity.models.user import User
 from app.modules.speakers.schemas.speaker import (
     SpeakerCreate, SpeakerUpdate, SpeakerResponse, SpeakerSummary,
-    SpeakerBulkInviteRequest,
+    SpeakerBulkInviteRequest, ManualRegisterRequest
 )
 from app.schemas.common import MessageResponse
 from app.services import email_service, qr_service
@@ -37,7 +40,6 @@ from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.events.services.event_resource_mutation_service import (
     EventResourceMutationService,
 )
-
 router = APIRouter(prefix="/events/{event_id}/speakers", tags=["speakers"], dependencies=[require_event_operation("speakers.manage")])
 abstracts_router = APIRouter(
     prefix="/events/{event_id}/abstracts",
@@ -414,12 +416,14 @@ async def list_speakers(
             )
         )
 
-    # 3. Eager load files and posters for status calculation
+    # 3. Eager load files, posters, track, and participant
     q = q.options(
         selectinload(Speaker.presentation_files),
         selectinload(Speaker.posters),
         selectinload(Speaker.session_speakers).selectinload(SessionSpeaker.session),
-        selectinload(Speaker.profile)
+        selectinload(Speaker.profile),
+        selectinload(Speaker.track),
+        selectinload(Speaker.participant),
     )
     
     # 4. Sorting and Pagination
@@ -450,8 +454,6 @@ async def list_speakers(
 
         # Calculate derived status from both files and posters
         current_files = [f for f in speaker.presentation_files if f.is_current_version]
-        # Only consider files belonging to visible sessions for status calculation? 
-        # (Actually, let's keep status based on all files for now, or filter it too)
         if not is_admin:
             current_files = [f for f in current_files if f.session_speaker_id in [ss.id for ss in visible_session_speakers]]
 
@@ -474,6 +476,14 @@ async def list_speakers(
         s.upload_status = status_to_use
         s.event_timezone = event.timezone
         s.is_checked_in = bool(speaker.checked_in_at)
+
+        # Track & Participant metadata
+        s.track_id = speaker.track_id
+        s.track_name = speaker.track.name if speaker.track else None
+        s.track_color = getattr(speaker.track, "display_color", None) if speaker.track else None
+        s.participant_id = speaker.participant_id
+        s.role = getattr(speaker, "role", "Speaker") or "Speaker"
+        s.roles = speaker.participant.roles if (speaker.participant and speaker.participant.roles) else [s.role]
         
         # Talks count = number of session speakers + number of posters
         s.talks_count = len(visible_session_speakers) + len(visible_posters)
@@ -511,11 +521,6 @@ async def list_speakers(
     return summaries
 
 
-from app.modules.speakers.schemas.speaker import (
-    SpeakerCreate, SpeakerUpdate, SpeakerResponse, SpeakerSummary,
-    SpeakerBulkInviteRequest, ManualRegisterRequest
-)
-
 @router.post("/manual-register", response_model=SpeakerResponse)
 async def manual_register_speaker(
     payload: ManualRegisterRequest,
@@ -523,11 +528,97 @@ async def manual_register_speaker(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
+    # 0. Participant & Multi-Role Resolution
+    participant = None
+    email_clean = str(payload.email).strip().lower()
+
+    if payload.participant_id:
+        p_res = await db.execute(
+            select(Participant).where(
+                Participant.id == payload.participant_id,
+                Participant.event_id == event.id,
+                Participant.deleted_at.is_(None),
+            )
+        )
+        participant = p_res.scalar_one_or_none()
+
+    if not participant:
+        p_res = await db.execute(
+            select(Participant).where(
+                Participant.event_id == event.id,
+                func.lower(Participant.email) == email_clean,
+                Participant.deleted_at.is_(None),
+            )
+        )
+        participant = p_res.scalar_one_or_none()
+
+    if participant:
+        # Multi-role: ensure 'Speaker' is added to roles list
+        existing_roles = list(participant.roles or [])
+        if "Speaker" not in existing_roles:
+            existing_roles.append("Speaker")
+        participant.roles = existing_roles
+
+        if payload.role_action == "convert_role":
+            spk_role_res = await db.execute(
+                select(ParticipantRole).where(
+                    ParticipantRole.event_id == event.id,
+                    func.lower(ParticipantRole.name) == "speaker"
+                )
+            )
+            spk_role = spk_role_res.scalar_one_or_none()
+            if spk_role:
+                participant.role_id = spk_role.id
+
+        if payload.company or payload.affiliation:
+            participant.company = payload.company or payload.affiliation
+        if payload.designation:
+            participant.designation = payload.designation
+        if payload.country:
+            participant.country = payload.country
+        if payload.state:
+            participant.state = payload.state
+        if payload.track_id:
+            participant.track_id = payload.track_id
+        if payload.custom_fields:
+            cf = dict(participant.custom_fields or {})
+            cf.update(payload.custom_fields)
+            participant.custom_fields = cf
+    else:
+        # Create corresponding Participant record for full registration consistency
+        spk_role_res = await db.execute(
+            select(ParticipantRole).where(
+                ParticipantRole.event_id == event.id,
+                func.lower(ParticipantRole.name) == "speaker"
+            )
+        )
+        spk_role = spk_role_res.scalar_one_or_none()
+        participant = Participant(
+            event_id=event.id,
+            first_name=payload.first_name,
+            last_name=payload.last_name,
+            email=email_clean,
+            phone=payload.phone,
+            company=payload.company or payload.affiliation,
+            designation=payload.designation,
+            country=payload.country,
+            state=payload.state,
+            role_id=spk_role.id if spk_role else None,
+            roles=["Speaker"],
+            track_id=payload.track_id,
+            approval_status="Approved",
+            paid_status=payload.paid_status or "Unpaid",
+            source="speaker_registration",
+            custom_fields=payload.custom_fields or {},
+        )
+        db.add(participant)
+        await db.flush()
+
     # 1. Create or get speaker (case-insensitive email)
     dup = await db.execute(
         select(Speaker).where(
             Speaker.event_id == event.id,
-            func.lower(Speaker.email) == str(payload.email).lower(),
+            func.lower(Speaker.email) == email_clean,
             Speaker.deleted_at.is_(None),
         )
     )
@@ -543,9 +634,12 @@ async def manual_register_speaker(
                 first_name=payload.first_name,
                 last_name=payload.last_name,
                 phone=payload.phone,
-                affiliation=payload.affiliation,
+                affiliation=payload.affiliation or payload.company,
                 designation=payload.designation,
                 country=payload.country,
+                track_id=payload.track_id,
+                participant_id=participant.id if participant else None,
+                role=payload.role or "Speaker",
             ),
             actor_user_id=current_user.id,
         )
@@ -559,13 +653,16 @@ async def manual_register_speaker(
                 last_name=payload.last_name,
                 email=payload.email,
                 phone=payload.phone,
-                affiliation=payload.affiliation,
+                affiliation=payload.affiliation or payload.company,
                 designation=payload.designation,
                 country=payload.country,
+                track_id=payload.track_id,
+                participant_id=participant.id if participant else None,
+                role=payload.role or "Speaker",
             ),
             actor_user_id=current_user.id,
             idempotency_key=(
-                f"manual:{event.id}:{str(payload.email).strip().lower()}"
+                f"manual:{event.id}:{email_clean}"
             ),
             source="organizer_portal",
         )
@@ -621,8 +718,6 @@ async def manual_register_speaker(
                 )
                 db.add(ss)
 
-
-
     # 3. Set dynamic QR URL if new
     if not speaker.qr_code_url:
         speaker.qr_code_url = f"{settings.API_BASE_URL}/api/v1/portal/speaker-qr/{speaker.id}/download?format=jpg"
@@ -636,13 +731,26 @@ async def manual_register_speaker(
         )
 
     await db.commit()
-    # Eager load profile for response schema
+    # Eager load profile, track, participant for response schema
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker.id).options(selectinload(Speaker.profile))
+        select(Speaker)
+        .where(Speaker.id == speaker.id)
+        .options(
+            selectinload(Speaker.profile),
+            selectinload(Speaker.track),
+            selectinload(Speaker.participant),
+        )
     )
     speaker = result.scalar_one()
     
     s = SpeakerResponse.model_validate(speaker)
+    s.track_id = speaker.track_id
+    s.track_name = speaker.track.name if speaker.track else None
+    s.track_color = getattr(speaker.track, "display_color", None) if speaker.track else None
+    s.participant_id = speaker.participant_id
+    s.role = getattr(speaker, "role", "Speaker") or "Speaker"
+    s.roles = speaker.participant.roles if (speaker.participant and speaker.participant.roles) else [s.role]
+
     if speaker.profile:
         from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
         s.profile_completeness = SpeakerProfileResponse.model_validate(speaker.profile).profile_completeness
@@ -664,13 +772,24 @@ async def get_speaker(
             Speaker.event_id == event.id,
             Speaker.deleted_at.is_(None),
         )
-        .options(selectinload(Speaker.profile))
+        .options(
+            selectinload(Speaker.profile),
+            selectinload(Speaker.track),
+            selectinload(Speaker.participant),
+        )
     )
     sp = result.scalar_one_or_none()
     if sp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
         
     s = SpeakerResponse.model_validate(sp)
+    s.track_id = sp.track_id
+    s.track_name = sp.track.name if sp.track else None
+    s.track_color = getattr(sp.track, "display_color", None) if sp.track else None
+    s.participant_id = sp.participant_id
+    s.role = getattr(sp, "role", "Speaker") or "Speaker"
+    s.roles = sp.participant.roles if (sp.participant and sp.participant.roles) else [s.role]
+
     if sp.profile:
         from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
         s.profile_completeness = SpeakerProfileResponse.model_validate(sp.profile).profile_completeness
@@ -697,11 +816,24 @@ async def update_speaker(
     await db.commit()
     
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id).options(selectinload(Speaker.profile))
+        select(Speaker)
+        .where(Speaker.id == speaker_id)
+        .options(
+            selectinload(Speaker.profile),
+            selectinload(Speaker.track),
+            selectinload(Speaker.participant),
+        )
     )
     speaker = result.scalar_one()
     
     s = SpeakerResponse.model_validate(speaker)
+    s.track_id = speaker.track_id
+    s.track_name = speaker.track.name if speaker.track else None
+    s.track_color = getattr(speaker.track, "display_color", None) if speaker.track else None
+    s.participant_id = speaker.participant_id
+    s.role = getattr(speaker, "role", "Speaker") or "Speaker"
+    s.roles = speaker.participant.roles if (speaker.participant and speaker.participant.roles) else [s.role]
+
     if speaker.profile:
         from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
         s.profile_completeness = SpeakerProfileResponse.model_validate(speaker.profile).profile_completeness

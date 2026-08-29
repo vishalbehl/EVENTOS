@@ -1,8 +1,6 @@
-
 "use client";
 
 import { motion } from "framer-motion";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +18,7 @@ interface ReadinessHeatmapProps {
 export function ReadinessHeatmap({ data }: ReadinessHeatmapProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-48 text-muted uppercase text-[10px] font-black tracking-widest border border-dashed border-default rounded-3xl">
+      <div className="flex flex-col items-center justify-center h-40 text-[var(--text-secondary)] text-xs font-semibold border border-dashed border-[var(--border-default)] rounded-lg bg-[var(--card)]">
         No Room Data Available
       </div>
     );
@@ -30,58 +28,52 @@ export function ReadinessHeatmap({ data }: ReadinessHeatmapProps) {
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
       <TooltipProvider>
         {data.map((room, i) => {
-          // Determine color based on readiness
-          let colorClass = "bg-[color-mix(in_srgb,var(--text)_5%,transparent)]";
-          let borderClass = "border-default";
-          let textClass = "text-muted";
+          let colorClass = "bg-[var(--card)] border-[var(--border-default)]";
+          let textClass = "text-[var(--text-secondary)]";
 
           if (room.readiness_pct === 100) {
-            colorClass = "bg-[var(--success)]/20";
-            borderClass = "border-[var(--success)]/30";
-            textClass = "text-[var(--success)]";
+            colorClass = "bg-emerald-500/10 border-emerald-500/30";
+            textClass = "text-emerald-600 dark:text-emerald-400";
           } else if (room.readiness_pct > 75) {
-            colorClass = "bg-[var(--pri)]/20";
-            borderClass = "border-[var(--pri)]/30";
+            colorClass = "bg-[var(--pri)]/10 border-[var(--pri)]/30";
             textClass = "text-[var(--pri)]";
           } else if (room.readiness_pct > 0) {
-            colorClass = "bg-[var(--warn)]/20";
-            borderClass = "border-[var(--warn)]/30";
-            textClass = "text-[var(--warn)]";
+            colorClass = "bg-amber-500/10 border-amber-500/30";
+            textClass = "text-amber-600 dark:text-amber-400";
           }
 
           return (
             <Tooltip key={room.room_name}>
               <TooltipTrigger asChild>
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
+                  initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.05 }}
+                  transition={{ delay: i * 0.03 }}
                   className={cn(
-                    "relative aspect-square rounded-2xl border flex flex-col items-center justify-center p-4 transition-all hover:scale-105 cursor-pointer group hover-lift-3d",
-                    colorClass,
-                    borderClass
+                    "relative aspect-square rounded-lg border flex flex-col items-center justify-center p-3 transition-colors cursor-pointer group shadow-sm",
+                    colorClass
                   )}
                 >
-                  <span className={cn("text-[10px] font-black uppercase tracking-widest mb-1 text-center truncate w-full", textClass)}>
+                  <span className={cn("text-[10px] font-bold uppercase tracking-wider mb-1 text-center truncate w-full", textClass)}>
                     {room.room_name}
                   </span>
-                  <span className="text-xl font-black tracking-tighter text-[var(--text)]">
+                  <span className="text-xl font-bold text-[var(--text-primary)]">
                     {Math.round(room.readiness_pct)}%
                   </span>
-                  <div className="absolute bottom-2 left-2 right-2 h-1 bg-[color-mix(in_srgb,var(--text)_10%,transparent)] rounded-full overflow-hidden">
+                  <div className="absolute bottom-2 left-2 right-2 h-1 bg-[var(--bg-surface-2)] rounded-full overflow-hidden">
                     <motion.div 
                       initial={{ width: 0 }}
                       animate={{ width: `${room.readiness_pct}%` }}
-                      className={cn("h-full", room.readiness_pct === 100 ? "bg-[var(--success)]" : "bg-[var(--pri)]")}
+                      className={cn("h-full", room.readiness_pct === 100 ? "bg-emerald-500" : "bg-[var(--pri)]")}
                     />
                   </div>
                 </motion.div>
               </TooltipTrigger>
-              <TooltipContent className="glass-3d border-default p-4 rounded-xl">
+              <TooltipContent className="bg-[var(--card)] border border-[var(--border-default)] p-3 rounded-lg shadow-md text-xs">
                 <div className="space-y-1">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-muted">{room.room_name}</p>
-                  <p className="text-sm font-bold text-[var(--text)]">{room.ready_sessions} / {room.total_sessions} Sessions Ready</p>
-                  <p className="text-[10px] text-muted">{room.readiness_pct.toFixed(1)}% Completion</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">{room.room_name}</p>
+                  <p className="text-xs font-semibold text-[var(--text-primary)]">{room.ready_sessions} / {room.total_sessions} Sessions Ready</p>
+                  <p className="text-[11px] text-[var(--text-secondary)]">{room.readiness_pct.toFixed(1)}% Completion</p>
                 </div>
               </TooltipContent>
             </Tooltip>

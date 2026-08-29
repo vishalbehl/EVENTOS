@@ -36,7 +36,7 @@ class CommunicationDeliveryBatch(Base):
     channel_config_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
-            "platform.organization_notification_channel_configs.id",
+            "communications.organization_notification_channel_configs.id",
             ondelete="RESTRICT",
         ),
         nullable=False,

@@ -353,7 +353,7 @@ export default function AnnouncementsTab({ eventId, filterAudience }: { eventId:
                       onClick={() => setAudience(aud)}
                       className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
                         audience === aud 
-                          ? "bg-[var(--pri)] text-white" 
+                          ? "bg-[var(--pri)] text-[var(--primary-contrast)]" 
                           : "text-muted hover:text-[var(--text)]"
                       }`}
                     >

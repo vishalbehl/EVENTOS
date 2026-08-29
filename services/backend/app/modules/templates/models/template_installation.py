@@ -28,7 +28,7 @@ class TemplateInstallation(Base):
             "ix_templates_template_installations_event_id",
             "event_id",
         ),
-        {"schema": "templates"},
+        {"schema": "operation_templates"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

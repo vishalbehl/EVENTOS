@@ -2,17 +2,34 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
-  BarChart3, TrendingUp, Users, FileUp, Globe, Shield,
-  Zap, Clock, Download, Share2, Layers, Activity,
-  ArrowUpRight, CheckCircle2, Mail, Server, Fingerprint,
-  Map, Presentation, FileText, Table2, PieChart, Timer,
-  Loader2, FileSpreadsheet, FileImage, PlayCircle, MapPin, Calendar, ArrowRight
+  BarChart3,
+  TrendingUp,
+  Users,
+  FileUp,
+  Globe,
+  Zap,
+  Clock,
+  Layers,
+  Activity,
+  CheckCircle2,
+  Mail,
+  Fingerprint,
+  Map,
+  Presentation,
+  FileText,
+  Table2,
+  PieChart,
+  Timer,
+  Loader2,
+  FileSpreadsheet,
+  FileImage,
+  PlayCircle,
+  MapPin,
+  Calendar,
+  Share2,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn, getFallbackTimezone } from "@/lib/utils";
 import {
   useDashboardStats,
@@ -23,11 +40,18 @@ import {
   useMainDashboardStats,
   useEvent,
 } from "@/hooks/useEvents";
-import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/Tooltip";
-import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/Tooltip";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip,
-  ResponsiveContainer, PieChart as RechartPie, Pie, Cell, Legend,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartTooltip,
+  ResponsiveContainer,
+  PieChart as RechartPie,
+  Pie,
+  Cell,
 } from "recharts";
 import { toast } from "sonner";
 
@@ -35,49 +59,38 @@ import { DailyUploadsChart } from "@/components/organizer/dashboard/DailyUploads
 import { RoomReadinessChart } from "@/components/organizer/dashboard/RoomReadinessChart";
 import { ReadinessHeatmap } from "@/components/organizer/dashboard/ReadinessHeatmap";
 
-// ── Colour palette for charts ──────────────────────────────────
 const CHART_COLORS = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#ec4899"];
 
 const FORMAT_LABELS: Record<string, string> = {
-  pptx: "PowerPoint", pdf: "PDF", mp4: "Video", zip: "ZIP",
-  ppt: "PPT (Old)", key: "Keynote", docx: "Word", unknown: "Other",
+  pptx: "PowerPoint",
+  pdf: "PDF",
+  mp4: "Video",
+  zip: "ZIP",
+  ppt: "PPT (Old)",
+  key: "Keynote",
+  docx: "Word",
+  unknown: "Other",
 };
-
-// ── Sub-components ─────────────────────────────────────────────
 
 function SectionHeader({ title, sub, icon: Icon }: { title: string; sub: string; icon: any }) {
   return (
-    <div className="flex items-center gap-4 mb-8">
-      <div className="h-10 w-10 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center border border-[var(--pri)]/20">
-        <Icon className="h-5 w-5 text-[var(--pri)]" />
+    <div className="flex items-center gap-3 mb-4">
+      <div className="flex size-8 items-center justify-center rounded-lg bg-[var(--pri)]/10 text-[var(--pri)] border border-[var(--pri)]/20">
+        <Icon className="size-4" />
       </div>
       <div>
-        <h3 className="text-xl font-black text-[var(--text)] tracking-tight">{title}</h3>
-        <p className="text-[10px] font-black text-muted uppercase tracking-[0.3em] mt-0.5">{sub}</p>
+        <h3 className="text-sm font-bold text-[var(--text-primary)]">{title}</h3>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+          {sub}
+        </p>
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value, sub, icon: Icon, color }: any) {
-  return (
-    <div className="glass-3d p-6 rounded-[2rem] border-default flex items-center gap-5 group hover-lift-3d">
-      <div className={cn("h-12 w-12 rounded-2xl flex items-center justify-center border", color ? `bg-[${color}]/10 border-[${color}]/20` : "bg-[var(--pri)]/10 border-[var(--pri)]/20")}>
-        <Icon className="h-6 w-6 text-[var(--pri)]" />
-      </div>
-      <div>
-        <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">{label}</p>
-        <p className="text-2xl font-black text-[var(--text)] tracking-tighter">{value}</p>
-        {sub && <p className="text-[10px] font-bold text-muted mt-0.5">{sub}</p>}
-      </div>
-    </div>
-  );
-}
-
-// ── Main Page ──────────────────────────────────────────────────
 export default function AnalyticsPage() {
-  const { eventId } = useParams();
-  const eventIdStr = eventId as string;
+  const params = useParams();
+  const eventIdStr = (params?.eventId as string) || "";
   const [exportLoading, setExportLoading] = useState<string | null>(null);
 
   const { data, isLoading } = useDashboardStats(eventIdStr);
@@ -102,14 +115,9 @@ export default function AnalyticsPage() {
 
   if (isLoading || eventLoading) {
     return (
-      <div className="h-[80vh] flex flex-col items-center justify-center gap-4">
-        <div className="relative h-20 w-20">
-          <Activity className="h-20 w-20 text-[var(--pri)] animate-spin opacity-20" />
-          <Activity className="absolute inset-0 h-20 w-20 text-[var(--pri)] animate-pulse" />
-        </div>
-        <p className="text-[11px] font-black text-muted uppercase tracking-[0.4em] animate-pulse">
-          Synchronizing Analytics...
-        </p>
+      <div className="h-[70vh] flex flex-col items-center justify-center gap-3 text-xs text-[var(--text-secondary)]">
+        <Loader2 className="size-6 text-[var(--pri)] animate-spin" />
+        <span className="font-semibold">Loading real-time analytics telemetry...</span>
       </div>
     );
   }
@@ -121,269 +129,254 @@ export default function AnalyticsPage() {
 
   return (
     <TooltipProvider>
-      <div className="space-y-14 max-w-[1600px] mx-auto pb-32 animate-fade-in">
-
+      <div className="w-full space-y-6 p-6">
         {/* ── Header ── */}
-        <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 px-2">
-          <div className="space-y-1">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="h-10 w-10 rounded-xl bg-[var(--pri)]/10 flex items-center justify-center border border-[var(--pri)]/20">
-                <Activity className="h-5 w-5 text-[var(--pri)]" />
-              </div>
-              <h1 className="text-4xl font-black tracking-tighter text-[var(--text)] text-glow-indigo">
-                {event?.name} <span className="text-[var(--sec)]">Intelligence</span>
-              </h1>
-              {event && (
-                <Badge className="bg-[var(--pri)]/10 text-[var(--pri)] border-0 font-black text-[10px] px-3 py-1 rounded-full flex items-center gap-1">
-                  <Calendar className="h-3.5 w-3.5" />
-                  <span>
-                    {new Date(event.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: getFallbackTimezone() })}
-                    {" - "}
-                    {new Date(event.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getFallbackTimezone() })}
-                  </span>
-                </Badge>
-              )}
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Activity className="size-4 text-[var(--pri)]" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--pri)]">
+                Telemetry & Insights
+              </span>
             </div>
-            <p className="text-[12px] font-bold text-muted uppercase tracking-[0.4em] ml-1">
-              Real-time analytics dashboard
+            <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+              {event?.name} Intelligence
+            </h1>
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+              Live funnel performance, venue readiness scans, and file distribution analytics.
             </p>
           </div>
 
           {/* Export Buttons */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             {(["csv", "xlsx", "pdf"] as const).map((fmt) => {
               const icons = { csv: FileText, xlsx: FileSpreadsheet, pdf: FileImage };
               const Icon = icons[fmt];
-              const labels = { csv: "CSV", xlsx: "Excel", pdf: "PDF Summary" };
+              const labels = { csv: "CSV", xlsx: "Excel", pdf: "PDF Report" };
               return (
-                <Button
+                <button
+                  type="button"
                   key={fmt}
                   onClick={() => handleExport(fmt)}
                   disabled={exportLoading !== null}
-                  className="h-11 px-5 glass-3d border-default text-[var(--text)] font-black uppercase tracking-widest text-[10px] rounded-2xl hover:border-[var(--pri)]/50 transition-all"
-                  variant="outline"
+                  className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-40 transition-colors shadow-sm cursor-pointer"
                 >
                   {exportLoading === fmt ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                    <Loader2 className="size-3.5 animate-spin text-[var(--pri)]" />
                   ) : (
-                    <Icon className="h-3.5 w-3.5 mr-2" />
+                    <Icon className="size-3.5 text-[var(--pri)]" />
                   )}
                   Export {labels[fmt]}
-                </Button>
+                </button>
               );
             })}
           </div>
-        </header>
+        </div>
 
         {/* ── KPI Row ── */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-6 px-2">
-          <StatCard label="Total Speakers" value={overview.total_speakers ?? 0} icon={Users} />
-          <StatCard label="Upload Rate" value={`${Math.round(funnel.upload_rate_pct ?? 0)}%`} sub={`${overview.files_uploaded ?? 0} files received`} icon={FileUp} />
-          <StatCard label="Approval Rate" value={`${Math.round(funnel.approval_rate_pct ?? 0)}%`} sub={`${overview.files_approved ?? 0} approved`} icon={CheckCircle2} />
-          <StatCard label="Sessions Ready" value={`${overview.sessions_ready ?? 0} / ${overview.total_sessions ?? 0}`} icon={Zap} />
-        </section>
-
-        {/* ── Conversion Funnel ── */}
-        <section className="px-2">
-          <Card className="glass-3d border-default rounded-[3rem] p-10 md:p-14 overflow-hidden relative">
-            <div className="absolute top-0 right-0 p-12 opacity-5">
-              <Layers className="h-64 w-64 text-[var(--pri)] rotate-12" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+              Total Speakers
+            </span>
+            <div className="text-2xl font-bold text-[var(--text-primary)] mt-1">
+              {overview.total_speakers ?? 0}
             </div>
-            <SectionHeader title="Conversion Architecture" sub="Upload → Validation → Approval funnel" icon={TrendingUp} />
-            <div className="space-y-8">
-              {[
-                { label: "Total Speakers (Invited)", val: overview.total_speakers ?? 0, p: 100, color: "bg-[var(--pri)]/20" },
-                { label: "Files Uploaded", val: overview.files_uploaded ?? 0, p: funnel.upload_rate_pct ?? 0, color: "bg-[var(--pri)]/50" },
-                { label: "Files Approved", val: overview.files_approved ?? 0, p: funnel.approval_rate_pct ?? 0, color: "bg-[var(--sec)]" },
-              ].map((step, i) => (
-                <div key={i} className="flex items-center gap-8">
-                  <div className="w-44 shrink-0">
-                    <p className="text-[11px] font-black text-muted uppercase tracking-widest mb-1">{step.label}</p>
-                    <p className="text-2xl font-black text-[var(--text)] tracking-tighter">{step.val.toLocaleString()}</p>
-                  </div>
-                  <div className="flex-1 h-12 relative">
-                    <div className="absolute inset-0 bg-muted/5 rounded-2xl overflow-hidden border border-default/30">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${step.p}%` }}
-                        transition={{ duration: 1.8, delay: 0.5 + i * 0.2, ease: [0.16, 1, 0.3, 1] }}
-                        className={cn("h-full rounded-2xl relative", step.color)}
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-white/10 to-transparent" />
-                      </motion.div>
-                    </div>
-                  </div>
-                  <div className="w-16 text-right font-mono text-[13px] font-black text-[var(--text)]">
-                    {Math.round(step.p)}%
-                  </div>
-                </div>
-              ))}
+            <span className="text-[11px] text-[var(--text-secondary)]">Registered faculty slots</span>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+              Upload Rate
+            </span>
+            <div className="text-2xl font-bold text-[var(--pri)] mt-1">
+              {Math.round(funnel.upload_rate_pct ?? 0)}%
             </div>
-          </Card>
-        </section>
+            <span className="text-[11px] text-[var(--text-secondary)]">
+              {overview.files_uploaded ?? 0} files received
+            </span>
+          </div>
 
-        {/* ── Operational Readiness & Venue Analytics ── */}
-        <section className="space-y-8 px-2">
-          <SectionHeader title="Operational Readiness & Venue Analytics" sub="Live ingestion, room completion, and scheduling telemetry" icon={Globe} />
-          
-          {/* Daily Uploads Ingestion Velocity & Session Timeline */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <Card className="glass-3d border-default rounded-[3rem] p-10 lg:col-span-2">
-              <SectionHeader title="Asset Upload Velocity" sub="Daily ingestion trends" icon={TrendingUp} />
-              <DailyUploadsChart data={data.daily_uploads || []} />
-            </Card>
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+              Approval Rate
+            </span>
+            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+              {Math.round(funnel.approval_rate_pct ?? 0)}%
+            </div>
+            <span className="text-[11px] text-[var(--text-secondary)]">
+              {overview.files_approved ?? 0} verified & approved
+            </span>
+          </div>
 
-            {/* Upcoming Session Timeline */}
-            <Card className="glass-3d border-default rounded-[3rem] p-8 flex flex-col justify-between">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-[12px] font-black uppercase tracking-[0.3em] text-muted mb-1">Upcoming Session Timeline</h3>
-                  <p className="text-[10px] text-muted uppercase font-bold tracking-widest">Next 5 scheduled rooms</p>
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+              Sessions Ready
+            </span>
+            <div className="text-2xl font-bold text-[var(--text-primary)] mt-1">
+              {overview.sessions_ready ?? 0} / {overview.total_sessions ?? 0}
+            </div>
+            <span className="text-[11px] text-[var(--text-secondary)]">Fully staged session rooms</span>
+          </div>
+        </div>
+
+        {/* ── Conversion Funnel Card ── */}
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm space-y-4">
+          <SectionHeader
+            title="Conversion Architecture"
+            sub="Upload → Validation → Approval Funnel"
+            icon={TrendingUp}
+          />
+          <div className="space-y-4">
+            {[
+              {
+                label: "Total Invited Speakers",
+                val: overview.total_speakers ?? 0,
+                p: 100,
+                color: "bg-[var(--pri)]/40",
+              },
+              {
+                label: "Files Uploaded",
+                val: overview.files_uploaded ?? 0,
+                p: funnel.upload_rate_pct ?? 0,
+                color: "bg-[var(--pri)]",
+              },
+              {
+                label: "Files Approved",
+                val: overview.files_approved ?? 0,
+                p: funnel.approval_rate_pct ?? 0,
+                color: "bg-emerald-500",
+              },
+            ].map((step, i) => (
+              <div key={i} className="flex items-center gap-4">
+                <div className="w-48 shrink-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                    {step.label}
+                  </p>
+                  <p className="text-lg font-bold text-[var(--text-primary)] tracking-tight">
+                    {step.val.toLocaleString()}
+                  </p>
                 </div>
-                <PlayCircle className="h-4 w-4 text-[var(--pri)]" />
+                <div className="flex-1 h-3 rounded-full bg-[var(--bg-surface-2)] overflow-hidden border border-[var(--border-subtle)]">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${step.p}%` }}
+                    transition={{ duration: 1, ease: "easeOut" }}
+                    className={cn("h-full rounded-full", step.color)}
+                  />
+                </div>
+                <div className="w-14 text-right font-mono text-xs font-bold text-[var(--text-primary)]">
+                  {Math.round(step.p)}%
+                </div>
               </div>
-              
-              <div className="space-y-4 overflow-y-auto max-h-[300px] pr-1 no-scrollbar flex-1">
+            ))}
+          </div>
+        </div>
+
+        {/* ── Upload Velocity & Upcoming Sessions ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm lg:col-span-2">
+            <SectionHeader
+              title="Asset Upload Velocity"
+              sub="Daily submission intake volume"
+              icon={TrendingUp}
+            />
+            <DailyUploadsChart data={data.daily_uploads || []} />
+          </div>
+
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm flex flex-col justify-between">
+            <div>
+              <SectionHeader
+                title="Upcoming Session Timeline"
+                sub="Next scheduled rooms"
+                icon={PlayCircle}
+              />
+              <div className="space-y-2.5 overflow-y-auto max-h-[280px] pr-1">
                 {mainLoading ? (
-                  <div className="space-y-3">
-                    <Skeleton className="h-12 w-full bg-muted/10 rounded-xl" />
-                    <Skeleton className="h-12 w-full bg-muted/10 rounded-xl" />
+                  <div className="py-12 text-center text-xs text-[var(--text-secondary)]">
+                    <Loader2 className="size-4 animate-spin mx-auto mb-1 text-[var(--pri)]" />
+                    Loading upcoming sessions...
                   </div>
                 ) : mainStats?.upcoming_sessions?.length > 0 ? (
                   mainStats.upcoming_sessions.map((sess: any) => (
-                    <div key={sess.id} className="p-3.5 rounded-xl bg-muted/5 border border-default/50 hover:border-default transition-all flex justify-between gap-4">
+                    <div
+                      key={sess.id}
+                      className="p-2.5 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] flex justify-between gap-3"
+                    >
                       <div className="min-w-0">
-                        <h4 className="text-[12px] font-bold text-[var(--text)] truncate mb-0.5">{sess.name}</h4>
-                        {sess.speaker_names?.length > 0 && (
-                          <p className="text-[9px] text-muted font-black uppercase tracking-wider truncate">
-                            {sess.speaker_names.join(", ")}
-                          </p>
-                        )}
-                        <Badge className="bg-purple-500/10 text-purple-400 border-0 font-black text-[8px] uppercase tracking-wider px-2 py-0.5 rounded mt-1">
-                          Room: {sess.room_name || "Unassigned"}
-                        </Badge>
+                        <h4 className="text-xs font-bold text-[var(--text-primary)] truncate">
+                          {sess.name}
+                        </h4>
+                        <span className="text-[10px] text-[var(--text-secondary)] font-medium block truncate">
+                          {sess.room_name || "Unassigned Room"}
+                        </span>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-[12px] font-black text-[var(--pri)] tracking-tight">
-                          {new Date(sess.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: getFallbackTimezone() })}
-                        </p>
-                        <p className="text-[8px] font-black text-muted uppercase tracking-widest mt-0.5">
-                          {new Date(sess.start_time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: getFallbackTimezone() })}
-                        </p>
+                        <span className="font-mono text-xs font-bold text-[var(--pri)] block">
+                          {new Date(sess.start_time).toLocaleTimeString("en-IN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true,
+                            timeZone: getFallbackTimezone(),
+                          })}
+                        </span>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted">
-                    <PlayCircle className="h-8 w-8 opacity-20 mb-2" />
-                    <p className="text-[10px] font-black uppercase tracking-widest">No scheduled sessions</p>
+                  <div className="py-12 text-center text-xs text-[var(--text-secondary)]">
+                    No scheduled sessions pending.
                   </div>
                 )}
               </div>
-            </Card>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Room Readiness Bar & Heatmap ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm lg:col-span-2">
+            <SectionHeader
+              title="Room-Wise Completion"
+              sub="Ready sessions per venue"
+              icon={Layers}
+            />
+            <RoomReadinessChart data={data.room_readiness || []} />
           </div>
 
-          {/* Room completion charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Room Completion Bar Chart */}
-            <Card className="glass-3d border-default rounded-[3rem] p-10 lg:col-span-2">
-              <SectionHeader title="Room-Wise Completion" sub="Ready sessions per venue" icon={Layers} />
-              <RoomReadinessChart data={data.room_readiness || []} />
-            </Card>
-
-            {/* Room Readiness Heatmap */}
-            <Card className="glass-3d border-default rounded-[3rem] p-10 flex flex-col justify-between">
-              <div>
-                <SectionHeader title="Readiness Scan Map" sub="Venue readiness percentages" icon={Map} />
-                <div className="overflow-y-auto max-h-[300px] pr-1 no-scrollbar mt-6">
-                  <ReadinessHeatmap data={data.room_heatmap || []} />
-                </div>
-              </div>
-            </Card>
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm">
+            <SectionHeader
+              title="Readiness Scan Map"
+              sub="Venue readiness percentages"
+              icon={Map}
+            />
+            <div className="overflow-y-auto max-h-[280px] pr-1">
+              <ReadinessHeatmap data={data.room_heatmap || []} />
+            </div>
           </div>
+        </div>
 
-          {/* Session Clusters & Room Occupancy (2 columns) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Session Clusters */}
-            <Card className="glass-3d border-default rounded-[3rem] p-10">
-              <div className="flex items-center justify-between mb-8">
-                <SectionHeader title="Session Clusters" sub="Scheduled sessions per room" icon={Presentation} />
-              </div>
-              <div className="h-[220px]">
-                {mainLoading ? (
-                  <div className="h-full flex items-center justify-center"><Loader2 className="h-8 w-8 text-[var(--pri)] animate-spin" /></div>
-                ) : mainStats?.session_distribution?.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={mainStats.session_distribution} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="label" stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
-                      <YAxis stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
-                      <RechartTooltip contentStyle={{ background: "var(--base)", border: "1px solid color-mix(in srgb,var(--text) 10%,transparent)", borderRadius: "1rem", fontSize: 12 }} />
-                      <Bar dataKey="value" name="Sessions" fill="var(--pri)" radius={[4, 4, 0, 0]}>
-                        {mainStats.session_distribution.map((entry: any, index: number) => (
-                          <Cell key={`cell-${index}`} fill="var(--pri)" opacity={0.6 + (index % 3) * 0.2} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted text-[10px] font-black uppercase tracking-widest border border-dashed border-default rounded-3xl">
-                    No scheduled sessions mapped
-                  </div>
-                )}
-              </div>
-            </Card>
-
-            {/* Room Occupancy */}
-            <Card className="glass-3d border-default rounded-[3rem] p-10">
-              <div className="flex items-center justify-between mb-8">
-                <SectionHeader title="Room Occupancy" sub="Total scheduled hours per room" icon={MapPin} />
-              </div>
-              <div className="h-[220px]">
-                {mainLoading ? (
-                  <div className="h-full flex items-center justify-center"><Loader2 className="h-8 w-8 text-[var(--sec)] animate-spin" /></div>
-                ) : mainStats?.room_occupancy?.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={mainStats.room_occupancy} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="label" stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
-                      <YAxis stroke="var(--text)" opacity={0.5} fontSize={9} tickLine={false} />
-                      <RechartTooltip contentStyle={{ background: "var(--base)", border: "1px solid color-mix(in srgb,var(--text) 10%,transparent)", borderRadius: "1rem", fontSize: 12 }} />
-                      <Bar dataKey="value" name="Hours" fill="var(--sec)" radius={[4, 4, 0, 0]}>
-                        {mainStats.room_occupancy.map((entry: any, index: number) => (
-                          <Cell key={`cell-${index}`} fill="var(--sec)" opacity={0.6 + (index % 3) * 0.2} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted text-[10px] font-black uppercase tracking-widest border border-dashed border-default rounded-3xl">
-                    No occupancy telemetry compiled
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-        </section>
-
-        {/* ── Format Distribution + Approval Times side by side ── */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-8 px-2">
-
+        {/* ── Formats & Approval Times ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Format Pie Chart */}
-          <Card className="glass-3d border-default rounded-[3rem] p-10">
-            <SectionHeader title="File Format Distribution" sub="Submission types breakdown" icon={PieChart} />
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm space-y-4">
+            <SectionHeader
+              title="File Format Distribution"
+              sub="Submission types breakdown"
+              icon={PieChart}
+            />
             {fmtLoading ? (
-              <div className="h-64 flex items-center justify-center">
-                <Loader2 className="h-8 w-8 text-[var(--pri)] animate-spin" />
+              <div className="h-56 flex items-center justify-center text-xs text-[var(--text-secondary)]">
+                <Loader2 className="size-5 text-[var(--pri)] animate-spin" />
               </div>
             ) : !formats?.length ? (
-              <div className="h-64 flex flex-col items-center justify-center text-muted">
-                <Presentation className="h-12 w-12 opacity-20 mb-4" />
-                <p className="text-[12px] font-black uppercase tracking-widest">No files uploaded yet</p>
+              <div className="h-56 flex flex-col items-center justify-center text-xs text-[var(--text-secondary)]">
+                <Presentation className="size-8 text-[var(--text-tertiary)] mx-auto mb-2" />
+                No files uploaded yet.
               </div>
             ) : (
-              <div className="flex items-center gap-6">
-                <ResponsiveContainer width="55%" height={220}>
+              <div className="flex items-center gap-4">
+                <ResponsiveContainer width="50%" height={180}>
                   <RechartPie>
                     <Pie
                       data={formats}
@@ -391,8 +384,8 @@ export default function AnalyticsPage() {
                       nameKey="format"
                       cx="50%"
                       cy="50%"
-                      outerRadius={90}
-                      innerRadius={50}
+                      outerRadius={70}
+                      innerRadius={40}
                       paddingAngle={2}
                     >
                       {formats.map((_, i) => (
@@ -400,67 +393,75 @@ export default function AnalyticsPage() {
                       ))}
                     </Pie>
                     <RechartTooltip
-                      contentStyle={{ background: "var(--base)", border: "1px solid color-mix(in srgb,var(--text) 10%,transparent)", borderRadius: "1rem", fontSize: 12 }}
-                      formatter={(val: any, name: any) => [`${val} files`, FORMAT_LABELS[name] || name]}
+                      formatter={(val: any, name: any) => [
+                        `${val} files`,
+                        FORMAT_LABELS[name] || name,
+                      ]}
                     />
                   </RechartPie>
                 </ResponsiveContainer>
-                <div className="flex-1 space-y-3">
+                <div className="flex-1 space-y-2">
                   {formats.map((f: any, i: number) => (
-                    <div key={f.format} className="flex items-center justify-between gap-3">
+                    <div key={f.format} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
-                        <span className="text-[11px] font-black text-[var(--text)] uppercase">
+                        <div
+                          className="size-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
+                        />
+                        <span className="font-semibold text-[var(--text-primary)]">
                           {FORMAT_LABELS[f.format] || f.format}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-bold text-muted">{f.count}</span>
-                        <span className="text-[10px] font-black text-muted bg-muted/10 px-2 py-0.5 rounded-full">
-                          {f.pct}%
-                        </span>
-                      </div>
+                      <span className="font-mono text-[var(--text-secondary)] font-bold">
+                        {f.count} ({f.pct}%)
+                      </span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-          </Card>
+          </div>
 
           {/* Approval Times Bar Chart */}
-          <Card className="glass-3d border-default rounded-[3rem] p-10">
-            <SectionHeader title="Approval Performance" sub="Avg. days upload → approval per room" icon={Timer} />
+          <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm space-y-4">
+            <SectionHeader
+              title="Approval Performance"
+              sub="Avg. days upload → approval per room"
+              icon={Timer}
+            />
             {atLoading ? (
-              <div className="h-64 flex items-center justify-center">
-                <Loader2 className="h-8 w-8 text-[var(--pri)] animate-spin" />
+              <div className="h-56 flex items-center justify-center text-xs text-[var(--text-secondary)]">
+                <Loader2 className="size-5 text-[var(--pri)] animate-spin" />
               </div>
             ) : !approvalTimes?.length ? (
-              <div className="h-64 flex flex-col items-center justify-center text-muted">
-                <Clock className="h-12 w-12 opacity-20 mb-4" />
-                <p className="text-[12px] font-black uppercase tracking-widest">No approved files yet</p>
+              <div className="h-56 flex flex-col items-center justify-center text-xs text-[var(--text-secondary)]">
+                <Clock className="size-8 text-[var(--text-tertiary)] mx-auto mb-2" />
+                No approved files yet.
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={approvalTimes} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="color-mix(in srgb,var(--text) 8%,transparent)" vertical={false} />
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart
+                  data={approvalTimes}
+                  margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
                   <XAxis
                     dataKey="group_name"
-                    tick={{ fontSize: 10, fontWeight: 700, fill: "var(--text)", opacity: 0.5 }}
+                    tick={{ fontSize: 10, fill: "var(--text-secondary)" }}
                     tickFormatter={(value) => value?.toUpperCase()}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
-                    tick={{ fontSize: 10, fontWeight: 700, fill: "var(--text)", opacity: 0.5 }}
+                    tick={{ fontSize: 10, fill: "var(--text-secondary)" }}
                     axisLine={false}
                     tickLine={false}
                     unit=" d"
                   />
                   <RechartTooltip
-                    contentStyle={{ background: "var(--base)", border: "1px solid color-mix(in srgb,var(--text) 10%,transparent)", borderRadius: "1rem", fontSize: 12 }}
                     formatter={(val: any) => [`${val} days`, "Avg. Approval Time"]}
                   />
-                  <Bar dataKey="avg_days" radius={[6, 6, 0, 0]}>
+                  <Bar dataKey="avg_days" radius={[4, 4, 0, 0]}>
                     {approvalTimes.map((_: any, i: number) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                     ))}
@@ -468,143 +469,68 @@ export default function AnalyticsPage() {
                 </BarChart>
               </ResponsiveContainer>
             )}
-            {!!approvalTimes?.length && (
-              <p className="text-[10px] font-bold text-muted mt-3 text-center">
-                Based on {approvalTimes.reduce((s: number, r: any) => s + r.sample_count, 0)} approved files
-              </p>
-            )}
-          </Card>
-        </section>
+          </div>
+        </div>
 
         {/* ── Per-Room Breakdown Table ── */}
-        <section className="px-2">
-          <Card className="glass-3d border-default rounded-[3rem] p-10 md:p-14 overflow-hidden">
-            <SectionHeader title="Per-Room Breakdown" sub="Upload · Validation · Approval rates side by side" icon={Table2} />
-            {rbLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full rounded-xl bg-muted/10" />)}
-              </div>
-            ) : !roomBreakdown?.length ? (
-              <div className="py-16 text-center text-muted">
-                <Map className="h-12 w-12 opacity-20 mx-auto mb-4" />
-                <p className="text-[12px] font-black uppercase tracking-widest">No room data yet</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="border-b border-default">
-                      {["Room", "Sessions", "Speaker Slots", "Upload %", "Validation %", "Approval %"].map(h => (
-                        <th key={h} className="text-left p-4 text-[10px] font-black text-muted uppercase tracking-[0.2em]">{h}</th>
-                      ))}
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-5 shadow-sm space-y-4">
+          <SectionHeader
+            title="Per-Room Breakdown"
+            sub="Upload · Validation · Approval rates by venue"
+            icon={Table2}
+          />
+          {rbLoading ? (
+            <div className="py-12 text-center text-xs text-[var(--text-secondary)]">
+              <Loader2 className="size-5 text-[var(--pri)] animate-spin mx-auto mb-1" />
+              Loading venue metrics...
+            </div>
+          ) : !roomBreakdown?.length ? (
+            <div className="py-12 text-center text-xs text-[var(--text-secondary)]">
+              No venue room data available yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)] text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                    <th className="py-2.5 px-3">Room</th>
+                    <th className="py-2.5 px-3">Sessions</th>
+                    <th className="py-2.5 px-3">Speaker Slots</th>
+                    <th className="py-2.5 px-3">Upload %</th>
+                    <th className="py-2.5 px-3">Validation %</th>
+                    <th className="py-2.5 px-3">Approval %</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {roomBreakdown.map((r: any, i: number) => (
+                    <tr key={r.room_id} className="hover:bg-[var(--bg-surface-hover)]">
+                      <td className="py-2.5 px-3 font-semibold text-[var(--text-primary)]">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="size-2 rounded-full"
+                            style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
+                          />
+                          {r.room_name}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-[var(--text-secondary)]">{r.session_count}</td>
+                      <td className="py-2.5 px-3 text-[var(--text-secondary)]">{r.speaker_slots}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-[var(--pri)]">
+                        {r.upload_pct}% ({r.uploaded_count})
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-[var(--sec)]">
+                        {r.validation_pct}% ({r.validated_count})
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        {r.approval_pct}% ({r.approved_count})
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[color-mix(in_srgb,var(--text)_5%,transparent)]">
-                    {roomBreakdown.map((r: any, i: number) => (
-                      <tr key={r.room_id} className="group hover:bg-[var(--pri)]/5 transition-all">
-                        <td className="p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="h-2 w-2 rounded-full" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
-                            <span className="text-[13px] font-black text-[var(--text)]">{r.room_name}</span>
-                          </div>
-                        </td>
-                        <td className="p-4 text-[12px] font-bold text-muted">{r.session_count}</td>
-                        <td className="p-4 text-[12px] font-bold text-muted">{r.speaker_slots}</td>
-                        {[
-                          { pct: r.upload_pct, count: r.uploaded_count, color: "var(--pri)" },
-                          { pct: r.validation_pct, count: r.validated_count, color: "var(--sec)" },
-                          { pct: r.approval_pct, count: r.approved_count, color: "var(--success)" },
-                        ].map((col, ci) => (
-                          <td key={ci} className="p-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex-1 h-2 bg-muted/10 rounded-full overflow-hidden max-w-[80px]">
-                                <motion.div
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${col.pct}%` }}
-                                  transition={{ duration: 1, delay: i * 0.05 }}
-                                  style={{ backgroundColor: col.color }}
-                                  className="h-full rounded-full"
-                                />
-                              </div>
-                              <span className="text-[12px] font-black text-[var(--text)] w-12">{col.pct}%</span>
-                              <span className="text-[10px] text-muted">({col.count})</span>
-                            </div>
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </section>
-
-        {/* ── Secondary Row: Communication Matrix + Format Cards ── */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-8 px-2">
-
-          {/* Communication Matrix */}
-          <Card className="glass-3d border-default rounded-[3rem] p-10 relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-8 opacity-5">
-              <Mail className="h-48 w-48 text-[var(--success)]" />
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <SectionHeader title="Communication Matrix" sub="Email delivery stats" icon={Mail} />
-            <div className="space-y-8 relative">
-              {[
-                { label: "Transmission Rate", val: `${data.email_stats?.delivery_rate_pct ?? 0}%`, color: "var(--success)" },
-                { label: "User Interaction (Open Rate)", val: `${data.email_stats?.open_rate_pct ?? 0}%`, color: "var(--pri)" },
-              ].map((stat, i) => (
-                <div key={i} className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-black text-muted uppercase tracking-widest">{stat.label}</p>
-                    <span className="text-lg font-black text-[var(--text)]">{stat.val}</span>
-                  </div>
-                  <div className="h-2.5 bg-muted/10 rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: stat.val }}
-                      transition={{ duration: 1.5, delay: 0.8 + i * 0.2 }}
-                      style={{ backgroundColor: stat.color }}
-                      className="h-full rounded-full"
-                    />
-                  </div>
-                </div>
-              ))}
-              <div className="grid grid-cols-2 gap-6 pt-4 border-t border-default">
-                <div>
-                  <p className="text-[10px] font-black text-muted uppercase tracking-widest">Total Sent</p>
-                  <p className="text-2xl font-black text-[var(--text)]">{(data.email_stats?.total_sent ?? 0).toLocaleString()}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-black text-muted uppercase tracking-widest">Unique Opens</p>
-                  <p className="text-2xl font-black text-[var(--text)]">{(data.email_stats?.opened ?? 0).toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* Cluster Health */}
-          <Card className="glass-3d border-default rounded-[3rem] p-10 bg-gradient-to-br from-[var(--sec)]/5 to-transparent">
-            <SectionHeader title="Cluster Overview" sub="Event-wide health summary" icon={Globe} />
-            <div className="grid grid-cols-2 gap-5">
-              {[
-                { label: "Active Sessions", val: overview.total_sessions ?? 0, icon: Layers, color: "text-[var(--pri)]" },
-                { label: "SRR Check-ins", val: data.srr_stats?.total_checkins ?? 0, icon: Fingerprint, color: "text-[var(--sec)]" },
-                { label: "Email Open Rate", val: `${data.email_stats?.open_rate_pct ?? 0}%`, icon: Mail, color: "text-[var(--success)]" },
-                { label: "Format Types", val: formats?.length ?? 0, icon: Share2, color: "text-[var(--warn)]" },
-              ].map((item) => (
-                <div key={item.label} className="p-5 rounded-2xl bg-muted/5 border border-default/50 flex flex-col gap-2 hover:border-[var(--pri)]/20 transition-all">
-                  <div className="flex items-center gap-2">
-                    <item.icon className={cn("h-4 w-4", item.color)} />
-                    <span className="text-[9px] font-black text-muted uppercase tracking-widest">{item.label}</span>
-                  </div>
-                  <p className="text-2xl font-black text-[var(--text)] tracking-tighter">{item.val}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </section>
-
+          )}
+        </div>
       </div>
     </TooltipProvider>
   );

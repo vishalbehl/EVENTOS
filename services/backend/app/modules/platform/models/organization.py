@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,7 @@ class Organization(Base):
     Every event, user, and resource belongs to an organization.
     """
     __tablename__ = "organizations"
+    __table_args__ = {"schema": "platform"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -52,7 +53,10 @@ class Organization(Base):
         so `is_platform_org` and a copied database row can never inherit the
         commercial bypass accidentally.
         """
-        return bool(self.is_internal_unrestricted and self.slug == "Eventos")
+        return bool(
+            self.is_internal_unrestricted
+            and (self.slug or "").casefold() == "eventos"
+        )
     event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     banner_thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     readiness_score: Mapped[Optional[float]] = mapped_column(nullable=True)
@@ -63,6 +67,15 @@ class Organization(Base):
     max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=2)  # DEPRECATED: Use billing entitlement queries instead
     max_storage_gb: Mapped[int] = mapped_column(Integer, nullable=False, default=10)  # DEPRECATED: Use billing entitlement queries instead
     billing_email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    legal_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    registration_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    website_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    billing_address: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    verification_status: Mapped[str] = mapped_column(String(24), nullable=False, default="UNVERIFIED")
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    profile_updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="IN")
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="Asia/Kolkata")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -97,7 +110,8 @@ class Organization(Base):
 
     # ── Relationships ─────────────────────────────────────
     users: Mapped[List["User"]] = relationship(
-        "User", back_populates="organization", cascade="all, delete-orphan"
+        "User", back_populates="organization", cascade="all, delete-orphan",
+        foreign_keys="User.organization_id",
     )
     events: Mapped[List["Event"]] = relationship(
         "Event", back_populates="organization", cascade="all, delete-orphan"

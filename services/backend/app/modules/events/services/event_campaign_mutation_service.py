@@ -15,8 +15,8 @@ from app.core.dependencies.feature_gate import (
 from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_template import EmailTemplate
 from app.modules.events.models.event import Event
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
 from app.modules.notifications.schemas.notification import (

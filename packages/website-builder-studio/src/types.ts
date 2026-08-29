@@ -178,6 +178,10 @@ export interface BuilderLink {
   pageId?: string;
   anchorId?: string;
   href?: string;
+  url?: string;
+  email?: string;
+  phone?: string;
+  route?: string;
   target?: '_self' | '_blank';
 }
 

@@ -4,39 +4,50 @@ import { Fragment, useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Users, Search, Filter, Mail, CheckCircle2,
-  Clock, UserPlus, FileText, X,
-  ChevronDown, MapPin, Presentation, Phone, Send, Calendar, Loader2, RefreshCw,
+  Users,
+  Search,
+  Filter,
+  Mail,
+  CheckCircle2,
+  Clock,
+  UserPlus,
+  FileText,
+  X,
+  MapPin,
+  Send,
+  Calendar,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  RotateCcw,
+  CheckSquare,
+  Square,
+  AlertCircle,
+  FileUp,
 } from "lucide-react";
 import { apiPost } from "@/lib/api-client";
 import { useSpeakers, SpeakerSummary } from "@/hooks/useSpeakers";
 import { usePosters } from "@/hooks/usePosters";
 import { useSessions } from "@/hooks/useSessions";
 import { useRooms } from "@/hooks/useRooms";
-import { useEvent, useDashboardStats } from "@/hooks/useEvents";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useDashboardStats } from "@/hooks/useEvents";
 import { SpeakerDrawer } from "@/components/organizer/speakers/SpeakerDrawer";
 import { Portal } from "@/components/ui/portal";
 import { EmailCampaignDialog } from "@/components/organizer/speakers/EmailCampaignDialog";
 import { RegisterSpeakerDialog } from "@/components/organizer/speakers/RegisterSpeakerDialog";
 import { toast } from "sonner";
-import { cn, formatDateInTZ, formatTimeInTZ } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { useFloatingToolbarStore } from "@/store/useFloatingToolbarStore";
 import { useOperationAccess } from "@/lib/capabilities";
 
 export default function SpeakersPage() {
-  const { eventId } = useParams();
-  const eventIdStr = eventId as string;
+  const params = useParams();
+  const eventIdStr = (params?.eventId as string) || "";
   const router = useRouter();
   const speakerSendAccess = useOperationAccess("communications.speaker.send");
 
   const [selectedSpeaker, setSelectedSpeaker] = useState<SpeakerSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterOpen, setFilterOpen] = useState(false);
   const [roomFilter, setRoomFilter] = useState("");
   const [sessionFilter, setSessionFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -49,14 +60,15 @@ export default function SpeakersPage() {
   const [targetIds, setTargetIds] = useState<string[]>([]);
 
   const setToolbarActions = useFloatingToolbarStore((state) => state.setActions);
-
   const [syncing, setSyncing] = useState(false);
 
   const handleSyncFromRegistration = async () => {
     try {
       setSyncing(true);
-      const res = await apiPost<{ message: string }>(`/events/${eventIdStr}/speakers/fetch-from-registration`);
-      toast.success(res.message || "Sync completed successfully.");
+      const res = await apiPost<{ message: string }>(
+        `/events/${eventIdStr}/speakers/fetch-from-registration`
+      );
+      toast.success(res.message || "Speakers synchronized from registration.");
       refetch();
     } catch (err: any) {
       toast.error(err.message || "Failed to sync speakers from registration.");
@@ -74,8 +86,9 @@ export default function SpeakersPage() {
   const { data: rooms } = useRooms(eventIdStr);
   const { data: sessions } = useSessions(eventIdStr);
   const { data: posters } = usePosters(eventIdStr);
+  const { data: stats } = useDashboardStats(eventIdStr);
 
-  // Deduplicate by Name + Email to keep distinct people with same name separate
+  // Deduplicate by Name + Email
   const uniqueSpeakers = useMemo(() => {
     if (!speakers) return [];
     const groups = new Map<string, SpeakerSummary[]>();
@@ -86,24 +99,27 @@ export default function SpeakersPage() {
       groups.set(key, group);
     }
     const result = Array.from(groups.values()).map((group) => {
-      const base = group.reduce((best, s) => (s.talks_count || 0) >= (best.talks_count || 0) ? s : best, group[0]);
+      const base = group.reduce(
+        (best, s) => ((s.talks_count || 0) >= (best.talks_count || 0) ? s : best),
+        group[0]
+      );
       const totalTalks = group.reduce((sum, s) => sum + (s.talks_count || 0), 0);
-      
+
       const earliestStart = group.reduce((earliest, s) => {
         if (!s.next_talk_start) return earliest;
         if (!earliest) return s.next_talk_start;
         return new Date(s.next_talk_start) < new Date(earliest) ? s.next_talk_start : earliest;
       }, undefined as string | undefined);
 
-      return { 
-        ...base, 
-        talks_count: Math.max(base.talks_count || 0, totalTalks), 
-        next_talk_start: earliestStart 
+      return {
+        ...base,
+        talks_count: Math.max(base.talks_count || 0, totalTalks),
+        next_talk_start: earliestStart,
       };
     });
 
     const filtered = showIncompleteOnly
-      ? result.filter(s => (s.profile_completeness ?? 0) < 80)
+      ? result.filter((s) => (s.profile_completeness ?? 0) < 80)
       : result;
 
     return filtered.sort((a, b) => {
@@ -111,7 +127,7 @@ export default function SpeakersPage() {
       const nameB = `${b.first_name} ${b.last_name}`.toLowerCase();
       return nameA.localeCompare(nameB);
     });
-  }, [speakers, posters, showIncompleteOnly]);
+  }, [speakers, showIncompleteOnly]);
 
   useEffect(() => {
     if (selectedIds.length > 0) {
@@ -121,416 +137,455 @@ export default function SpeakersPage() {
           icon: Send,
           onClick: () => {
             if (!speakerSendAccess.enabled) {
-              toast.error(`Speaker messaging is unavailable: ${(speakerSendAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+              toast.error("Speaker messaging is not permitted.");
               return;
             }
-            setTargetIds(selectedIds); setEmailDialogOpen(true);
+            setTargetIds(selectedIds);
+            setEmailDialogOpen(true);
           },
-          color: "bg-[var(--pri)] text-[var(--text)]"
+          color: "bg-[var(--pri)] text-[var(--primary-contrast)]",
         },
       ]);
     } else {
       setToolbarActions([
-        { label: "Register Speaker", icon: UserPlus, onClick: () => setRegisterDialogOpen(true), color: "bg-[var(--pri)]/10" },
         {
-          label: "Global Invite", icon: Mail, onClick: () => {
+          label: "Register Speaker",
+          icon: UserPlus,
+          onClick: () => setRegisterDialogOpen(true),
+          color: "bg-[var(--pri)]/10",
+        },
+        {
+          label: "Global Invite",
+          icon: Mail,
+          onClick: () => {
             if (!speakerSendAccess.enabled) {
-              toast.error(`Speaker messaging is unavailable: ${(speakerSendAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}.`);
+              toast.error("Speaker messaging is not permitted.");
               return;
             }
             if (uniqueSpeakers.length > 0) {
-              setTargetIds(uniqueSpeakers.map(s => s.id));
+              setTargetIds(uniqueSpeakers.map((s) => s.id));
               setEmailDialogOpen(true);
             }
-          }
+          },
         },
-        { label: "Export Roster", icon: FileText, onClick: () => router.push(`/events/${eventIdStr}/speakers/export`) },
+        {
+          label: "Export Roster",
+          icon: FileText,
+          onClick: () => router.push(`/events/${eventIdStr}/speakers/export`),
+        },
       ]);
     }
-  }, [eventIdStr, router, selectedIds, setToolbarActions, uniqueSpeakers, speakerSendAccess.enabled, speakerSendAccess.reason]);
-
-  // LIVE STATS
-  const stats = useMemo(() => {
-    const totalTalks = uniqueSpeakers.reduce((acc, s) => acc + (s.talks_count || 0), 0);
-    const readyStatuses = ["uploaded", "approved", "valid", "pending_validation", "processing"];
-    const readyCount = uniqueSpeakers.filter(s => readyStatuses.includes(s.upload_status || "")).length;
-    const pendingCount = uniqueSpeakers.filter(s => s.upload_status === "pending" || !s.upload_status).length;
-    const rejectedCount = uniqueSpeakers.filter(s => s.upload_status === "rejected").length;
-
-    return [
-      { label: "Total Speakers", val: uniqueSpeakers.length, icon: Users, color: "text-[var(--pri)]" },
-      { label: "Total Talks", val: totalTalks, icon: Presentation, color: "text-[var(--sec)]" },
-      { label: "Waiting for Files", val: pendingCount, icon: Clock, color: "text-[var(--warn)]" },
-      { label: "Need Changes", val: rejectedCount, icon: X, color: "text-[var(--dan)]" },
-    ];
-  }, [uniqueSpeakers]);
-
-  const activeFilters = [roomFilter, sessionFilter, statusFilter].filter(Boolean).length;
+  }, [
+    eventIdStr,
+    router,
+    selectedIds,
+    setToolbarActions,
+    uniqueSpeakers,
+    speakerSendAccess.enabled,
+  ]);
 
   const toggleSelectAll = () => {
     if (selectedIds.length === uniqueSpeakers.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(uniqueSpeakers.map(s => s.id));
+      setSelectedIds(uniqueSpeakers.map((s) => s.id));
     }
   };
 
   const toggleSelect = (id: string) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
   };
 
+  const approvedCount = uniqueSpeakers.filter((s) => (s.files_approved || 0) > 0).length;
+  const pendingCount = uniqueSpeakers.filter((s) => (s.files_pending || 0) > 0).length;
+  const incompleteCount = uniqueSpeakers.filter((s) => (s.profile_completeness ?? 0) < 80).length;
+
   return (
-    <div className="h-[calc(100vh-140px)] flex flex-col gap-8 animate-fade-in overflow-hidden">
-      <header className="flex-shrink-0 flex flex-col md:flex-row items-center justify-between gap-6 px-2">
+    <div className="w-full space-y-6 p-6">
+      {/* ── Top Header ── */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tighter text-[var(--text)] mb-2 text-glow-indigo">
-            Speaker <span className="text-[var(--sec)]">List</span>
+          <div className="flex items-center gap-2 mb-1">
+            <Users className="size-4 text-[var(--pri)]" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--pri)]">
+              Speaker Directory
+            </span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+            Speakers & Presenters Roster
           </h1>
-          <p className="text-[13px] font-bold text-muted uppercase tracking-[0.3em]">Manage your speakers</p>
+          <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+            Manage keynote speakers, track presentation submissions, and dispatch invitations.
+          </p>
         </div>
-        <div className="flex items-center gap-4">
-          <AnimatePresence>
-            {selectedIds.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-              >
-                <Button
-                  onClick={() => { setTargetIds(selectedIds); setEmailDialogOpen(true); }}
-                  disabled={speakerSendAccess.loading || !speakerSendAccess.enabled}
-                  className="h-12 px-8 bg-gradient-to-r from-[var(--pri)] to-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-lg border-0 hover:scale-105 transition-all"
-                >
-                  <Mail className="mr-2 h-4 w-4" /> Bulk Email ({selectedIds.length})
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <Button
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isLoading || syncing}
+            className="flex size-9 items-center justify-center rounded-lg border border-[var(--border-default)] bg-[var(--card)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors shadow-sm cursor-pointer"
+            title="Refresh speaker roster"
+          >
+            <RefreshCw className={cn("size-4", (isLoading || syncing) && "animate-spin")} />
+          </button>
+
+          <button
+            type="button"
             onClick={handleSyncFromRegistration}
             disabled={syncing}
-            className="h-12 px-6 bg-white/5 hover:bg-white/10 text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full border border-default hover-lift-3d"
+            className="flex h-9 items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors shadow-sm disabled:opacity-40 cursor-pointer"
           >
-            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Sync Registrations
-          </Button>
-          <Button
+            <Sparkles className={cn("size-3.5 text-amber-500", syncing && "animate-spin")} />
+            Sync Registrations
+          </button>
+
+          <button
+            type="button"
             onClick={() => setRegisterDialogOpen(true)}
-            className="h-12 px-8 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-full shadow-[0_15px_30px_color-mix(in_srgb,var(--pri)_30%,transparent)] border-0 hover-lift-3d"
+            className="flex h-9 items-center gap-2 rounded-lg bg-[var(--pri)] px-4 text-xs font-bold text-[var(--primary-contrast)] shadow-sm transition-all hover:opacity-90 cursor-pointer"
           >
-            <UserPlus className="mr-2 h-4 w-4" /> Register Speaker
-          </Button>
+            <UserPlus className="size-4" />
+            Register Speaker
+          </button>
         </div>
-      </header>
+      </div>
 
-      {/* Metrics Bar */}
-      <section className="flex-shrink-0 grid grid-cols-4 gap-6">
-        {stats.map((s) => (
-          <div key={s.label} className="glass-3d p-6 rounded-[2rem] border-default flex items-center gap-6 group hover-lift-3d">
-            <div className="h-12 w-12 rounded-2xl bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border border-default flex items-center justify-center group-hover:bg-[var(--pri)]/10 transition-all">
-              <s.icon className={cn("h-6 w-6", s.color)} />
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em] mb-1">{s.label}</p>
-              <p className="text-2xl font-black text-[var(--text)] tracking-tighter">{s.val}</p>
-            </div>
+      {/* ── KPI Metrics Bar ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Total Speakers
+          </span>
+          <div className="text-2xl font-bold text-[var(--text-primary)] mt-1">
+            {uniqueSpeakers.length}
           </div>
-        ))}
-      </section>
-
-      {/* Search and Filter Bar */}
-      <section className="flex-shrink-0 flex items-center gap-4 px-2">
-        <div className="flex-1 max-w-md relative group">
-          <div className="absolute inset-0 bg-[var(--pri)]/5 blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity" />
-          <div className="relative neomorphic-inset rounded-2xl p-0.5 border border-default focus-within:border-[var(--pri)]/50 transition-all">
-            <Search className="absolute left-5 top-3.5 h-4 w-4 text-muted group-focus-within:text-[var(--pri)]" />
-            <Input
-              placeholder="Search by name, email or phone..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-11 bg-transparent border-0 pl-14 text-[13px] font-bold text-[var(--text)] placeholder:text-muted focus-visible:ring-0"
-            />
-          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">All registered presenters</span>
         </div>
 
-        <div className="flex items-center gap-3 glass-3d p-1.5 rounded-2xl border-default">
-           <div className="flex items-center gap-2 px-3 border-r border-default">
-              <Filter className="h-4 w-4 text-[var(--pri)]" />
-              <span className="text-[10px] font-black text-muted uppercase tracking-widest">Filters</span>
-           </div>
-           
-           <div className="flex items-center gap-4 px-3">
-              {/* Room Filter */}
-              <div className="flex items-center gap-2">
-                 <MapPin className="h-3 w-3 text-muted" />
-                 <select 
-                    value={roomFilter} 
-                    onChange={(e) => setRoomFilter(e.target.value)}
-                    className="bg-transparent text-[11px] font-black uppercase tracking-widest text-[var(--text)] outline-none cursor-pointer hover:text-[var(--pri)] transition-colors"
-                 >
-                    <option value="" className="bg-[var(--base)]">All Rooms</option>
-                    {rooms?.map((r: any) => (
-                       <option key={r.id} value={r.id} className="bg-[var(--base)]">{r.name}</option>
-                    ))}
-                 </select>
-              </div>
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Slides Approved
+          </span>
+          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+            {approvedCount}
+          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">Passed QA screening</span>
+        </div>
 
-              <div className="h-4 w-px bg-default" />
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Pending Submissions
+          </span>
+          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
+            {pendingCount}
+          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">Awaiting file upload</span>
+        </div>
 
-              {/* Session Filter */}
-              <div className="flex items-center gap-2">
-                 <Calendar className="h-3 w-3 text-muted" />
-                 <select 
-                    value={sessionFilter} 
-                    onChange={(e) => setSessionFilter(e.target.value)}
-                    className="bg-transparent text-[11px] font-black uppercase tracking-widest text-[var(--text)] outline-none cursor-pointer hover:text-[var(--pri)] transition-colors max-w-[150px] truncate"
-                 >
-                    <option value="" className="bg-[var(--base)]">All Sessions</option>
-                    {sessions?.map((s: any) => (
-                       <option key={s.id} value={s.id} className="bg-[var(--base)]">[{s.session_code}] {s.name}</option>
-                    ))}
-                 </select>
-              </div>
+        <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+            Incomplete Profiles
+          </span>
+          <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">
+            {incompleteCount}
+          </div>
+          <span className="text-[11px] text-[var(--text-secondary)]">&lt;80% bio completion</span>
+        </div>
+      </div>
 
-              <div className="h-4 w-px bg-default" />
+      {/* ── Search & Filter Controls ── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+          <input
+            type="text"
+            placeholder="Search by name, email, or affiliation..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--card)] pl-9 pr-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none shadow-sm"
+          />
+        </div>
 
-              {/* Status Filter */}
-              <div className="flex items-center gap-2">
-                 <CheckCircle2 className="h-3 w-3 text-muted" />
-                 <select 
-                    value={statusFilter} 
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="bg-transparent text-[11px] font-black uppercase tracking-widest text-[var(--text)] outline-none cursor-pointer hover:text-[var(--pri)] transition-colors"
-                 >
-                    <option value="" className="bg-[var(--base)]">Any Status</option>
-                    <option value="pending" className="bg-[var(--base)]">Pending</option>
-                    <option value="uploaded" className="bg-[var(--base)]">Uploaded</option>
-                    <option value="approved" className="bg-[var(--base)]">Approved</option>
-                    <option value="rejected" className="bg-[var(--base)]">Rejected</option>
-                 </select>
-              </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <select
+            value={roomFilter}
+            onChange={(e) => setRoomFilter(e.target.value)}
+            className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
+          >
+            <option value="">All Rooms</option>
+            {rooms?.map((r: any) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
 
-              {(roomFilter || sessionFilter || statusFilter) && (
-                 <>
-                    <div className="h-4 w-px bg-default" />
-                    <button 
-                       onClick={() => { setRoomFilter(""); setSessionFilter(""); setStatusFilter(""); }}
-                       className="text-[10px] font-black text-[var(--dan)] uppercase tracking-widest hover:scale-105 transition-transform"
+          <select
+            value={sessionFilter}
+            onChange={(e) => setSessionFilter(e.target.value)}
+            className="h-9 max-w-48 truncate rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
+          >
+            <option value="">All Sessions</option>
+            {sessions?.map((s: any) => (
+              <option key={s.id} value={s.id}>
+                [{s.session_code}] {s.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none shadow-sm cursor-pointer"
+          >
+            <option value="">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="uploaded">Uploaded</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+
+          <button
+            type="button"
+            onClick={() => setShowIncompleteOnly(!showIncompleteOnly)}
+            className={cn(
+              "h-9 rounded-lg border px-3 text-xs font-semibold transition-colors cursor-pointer",
+              showIncompleteOnly
+                ? "border-[var(--pri)] bg-[var(--pri)] text-[var(--primary-contrast)]"
+                : "border-[var(--border-default)] bg-[var(--card)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+            )}
+          >
+            Incomplete Only
+          </button>
+
+          {(roomFilter || sessionFilter || statusFilter || showIncompleteOnly) && (
+            <button
+              type="button"
+              onClick={() => {
+                setRoomFilter("");
+                setSessionFilter("");
+                setStatusFilter("");
+                setShowIncompleteOnly(false);
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-default)] bg-[var(--card)] px-3 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors shadow-sm cursor-pointer"
+            >
+              <RotateCcw className="size-3.5" /> Reset
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Multi-Select Batch Actions Bar ── */}
+      {selectedIds.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-[var(--pri)]/30 bg-[var(--pri)]/5 p-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="flex size-5 items-center justify-center rounded-full bg-[var(--pri)] text-[10px] font-bold text-[var(--primary-contrast)]">
+              {selectedIds.length}
+            </span>
+            <span className="text-xs font-bold text-[var(--text-primary)]">
+              {selectedIds.length} speaker{selectedIds.length === 1 ? "" : "s"} selected
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setTargetIds(selectedIds);
+              setEmailDialogOpen(true);
+            }}
+            disabled={speakerSendAccess.loading || !speakerSendAccess.enabled}
+            className="flex h-8 items-center gap-1.5 rounded-lg bg-[var(--pri)] px-3 text-xs font-bold text-[var(--primary-contrast)] shadow-sm hover:opacity-90 disabled:opacity-40 cursor-pointer"
+          >
+            <Mail className="size-3.5" />
+            Bulk Email ({selectedIds.length})
+          </button>
+        </div>
+      )}
+
+      {/* ── Speakers Table ── */}
+      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] table-fixed text-left text-xs">
+            <colgroup>
+              <col className="w-[4%]" />
+              <col className="w-[26%]" />
+              <col className="w-[14%]" />
+              <col className="w-[12%]" />
+              <col className="w-[16%]" />
+              <col className="w-[18%]" />
+              <col className="w-[10%]" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] select-none">
+                <th className="px-4 py-3 text-center">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
+                    title="Select all"
+                  >
+                    {uniqueSpeakers.length > 0 && selectedIds.length === uniqueSpeakers.length ? (
+                      <CheckSquare className="size-4 text-[var(--pri)]" />
+                    ) : (
+                      <Square className="size-4" />
+                    )}
+                  </button>
+                </th>
+                <th className="px-4 py-3 truncate">Speaker</th>
+                <th className="px-4 py-3 truncate">Access Code</th>
+                <th className="px-4 py-3 text-center truncate">Sessions</th>
+                <th className="px-4 py-3 truncate">Profile Status</th>
+                <th className="px-4 py-3 truncate">File QA Status</th>
+                <th className="px-4 py-3 text-right truncate">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border-subtle)]">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center text-xs text-[var(--text-secondary)]">
+                    <RefreshCw className="size-5 text-[var(--pri)] animate-spin mx-auto mb-2" />
+                    Loading speakers roster...
+                  </td>
+                </tr>
+              ) : uniqueSpeakers.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center text-xs text-[var(--text-secondary)]">
+                    <Users className="size-6 text-[var(--text-tertiary)] mx-auto mb-2" />
+                    No speakers found matching your search filters.
+                  </td>
+                </tr>
+              ) : (
+                uniqueSpeakers.map((s) => {
+                  const isSelected = selectedIds.includes(s.id);
+                  const completeness = s.profile_completeness ?? 0;
+                  return (
+                    <tr
+                      key={s.id}
+                      onClick={() => setSelectedSpeaker(s)}
+                      className={cn(
+                        "hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer",
+                        isSelected && "bg-[var(--pri)]/5"
+                      )}
                     >
-                       Reset
-                    </button>
-                 </>
-              )}
-           </div>
-        </div>
-
-        <Button
-           onClick={() => setShowIncompleteOnly(!showIncompleteOnly)}
-           variant={showIncompleteOnly ? "primary" : "outline"}
-           className={cn(
-             "h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border border-default shrink-0",
-             showIncompleteOnly 
-               ? "bg-[var(--pri)] text-[var(--text)] hover:bg-[var(--sec)] border-transparent" 
-               : "bg-[color-mix(in_srgb,var(--text)_3%,transparent)] text-muted hover:text-[var(--text)]"
-           )}
-         >
-           Incomplete Profiles Only
-         </Button>
-      </section>
-
-      {/* Main Table View */}
-      <AnimatePresence mode="wait">
-          <motion.div
-            key="table-view"
-            initial={{ rotateX: -10, opacity: 0 }}
-            animate={{ rotateX: 0, opacity: 1 }}
-            exit={{ rotateX: 10, opacity: 0 }}
-            transition={{ duration: 0.5 }}
-            className="flex-1 min-h-0 glass-3d rounded-[2.5rem] border-default overflow-hidden flex flex-col"
-          >
-            <div className="flex-1 overflow-y-auto no-scrollbar">
-              <table className="w-full border-collapse">
-                <thead className="sticky top-0 z-20 glass-3d border-b border-default shadow-sm">
-                  <tr>
-                    <th className="w-14 p-6">
-                      <button
-                        onClick={toggleSelectAll}
-                        className={cn(
-                          "h-5 w-5 rounded border-2 flex items-center justify-center transition-all",
-                          selectedIds.length === uniqueSpeakers.length
-                            ? "bg-[var(--pri)] border-[var(--pri)] text-[var(--text)]"
-                            : "border-default hover:border-[var(--pri)]/50"
-                        )}
-                      >
-                        {selectedIds.length === uniqueSpeakers.length && <CheckCircle2 className="h-3.5 w-3.5" />}
-                      </button>
-                    </th>
-                    <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Speaker</th>
-                    <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Access Code</th>
-
-                    <th className="text-center p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Talks</th>
-                    <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Profile</th>
-                    <th className="text-left p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">File Status</th>
-                    <th className="text-right p-6 text-[10px] font-black text-muted uppercase tracking-[0.2em]">Manage</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[color-mix(in_srgb,var(--text)_5%,transparent)]">
-                  {isLoading ? (
-                    [1, 2, 3, 4, 5].map((i) => (
-                      <tr key={i}>
-                        <td colSpan={8} className="p-6"><Skeleton className="h-12 w-full rounded-xl bg-[color-mix(in_srgb,var(--text)_5%,transparent)]" /></td>
-                      </tr>
-                    ))
-                  ) : uniqueSpeakers.length === 0 ? (
-                    <tr><td colSpan={8} className="p-20 text-center text-muted font-bold">No speakers found matching your criteria.</td></tr>
-                  ) : (
-                    uniqueSpeakers.map((s, idx) => {
-                      const isSelected = selectedIds.includes(s.id);
-                      return (
-                        <tr
-                          key={s.id || `speaker-${idx}`}
-                          className={cn(
-                            "group hover:bg-[var(--pri)]/5 transition-all cursor-pointer",
-                            isSelected && "bg-[var(--pri)]/10"
-                          )}
-                          onClick={() => setSelectedSpeaker(s)}
+                      <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(s.id)}
+                          className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                         >
-                          <td className="p-6" onClick={(e) => { e.stopPropagation(); toggleSelect(s.id); }}>
-                            <div className={cn(
-                              "h-5 w-5 rounded border-2 flex items-center justify-center transition-all",
-                              isSelected
-                                ? "bg-[var(--pri)] border-[var(--pri)] text-[var(--text)]"
-                                : "border-default group-hover:border-[var(--pri)]/30"
-                            )}>
-                              {isSelected && <CheckCircle2 className="h-3.5 w-3.5" />}
-                            </div>
-                          </td>
-                          <td className="p-6">
-                            <div>
-                              <p className="text-[14px] font-black text-[var(--text)] tracking-tight">{s.first_name} {s.last_name}</p>
-                              <p className="text-[10px] font-black text-muted uppercase tracking-widest">{s.affiliation || "Independent"}</p>
-                            </div>
-                          </td>
-                          <td className="p-6">
-                            <code className="px-3 py-1.5 rounded-lg bg-[color-mix(in_srgb,var(--text)_5%,transparent)] border border-default text-[13px] font-black tracking-widest text-[var(--pri)]">
-                              {s.speaker_code || "---"}
-                            </code>
-                          </td>
+                          {isSelected ? (
+                            <CheckSquare className="size-4 text-[var(--pri)]" />
+                          ) : (
+                            <Square className="size-4" />
+                          )}
+                        </button>
+                      </td>
 
-                          <td className="p-6 text-center">
-                            <Badge className="bg-[var(--sec)]/10 text-[var(--sec)] border-0 font-black text-[10px] px-3 py-1">
-                              {s.talks_count} TALK{s.talks_count !== 1 ? "S" : ""}
-                            </Badge>
-                          </td>
-                          <td className="p-6">
-                            <div className="flex flex-col gap-1 w-28">
-                              <div className="flex justify-between items-center text-[10px] font-black uppercase">
-                                <span className={cn(
-                                  (s.profile_completeness ?? 0) >= 80 ? "text-[var(--success)]" :
-                                  (s.profile_completeness ?? 0) >= 50 ? "text-[var(--warn)]" : "text-[var(--dan)]"
-                                )}>
-                                  {s.profile_completeness ?? 0}%
-                                </span>
-                                <span className="text-muted text-[8px] tracking-wider">Complete</span>
-                              </div>
-                              <div className="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text)_8%,transparent)] overflow-hidden">
-                                <div
-                                  className={cn(
-                                    "h-full rounded-full transition-all duration-500",
-                                    (s.profile_completeness ?? 0) >= 80 ? "bg-[var(--success)]" :
-                                    (s.profile_completeness ?? 0) >= 50 ? "bg-[var(--warn)]" : "bg-[var(--dan)]"
-                                  )}
-                                  style={{ width: `${s.profile_completeness ?? 0}%` }}
-                                />
-                              </div>
-                            </div>
-                          </td>
+                      <td className="px-4 py-3 truncate">
+                        <div className="flex items-center gap-2.5 truncate">
+                          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--pri)]/10 text-[var(--pri)] font-bold text-[10px] border border-[var(--pri)]/20 overflow-hidden">
+                            {s.first_name?.[0]}
+                            {s.last_name?.[0]}
+                          </div>
+                          <div className="flex flex-col truncate">
+                            <span className="font-semibold text-[var(--text-primary)] truncate">
+                              {s.first_name} {s.last_name}
+                            </span>
+                            <span className="text-[11px] text-[var(--text-secondary)] truncate">
+                              {s.affiliation || s.email}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
 
-                          <td className="p-6">
-                            <div className="w-56">
-                              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-1">
-                                {(() => {
-                                  const total = s.files_total || 1;
-                                  const uploaded = s.files_uploaded || 0;
-                                  const approved = s.files_approved || 0;
-                                  
-                                  const isFullyApproved = approved >= total && total > 0;
-                                  const isPartiallyApproved = approved > 0 && !isFullyApproved;
-                                  const isFullyUploaded = uploaded >= total && total > 0;
-                                  const isPartiallyUploaded = uploaded > 0 && !isFullyUploaded;
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-xs font-bold text-[var(--pri)]">
+                          {s.speaker_code || "---"}
+                        </span>
+                      </td>
 
-                                  const activeColor = isFullyApproved
-                                    ? "bg-[var(--pri)]"
-                                    : isPartiallyApproved || isFullyUploaded || isPartiallyUploaded
-                                      ? "bg-[var(--success)]"
-                                      : "bg-[var(--warn)]";
-                                  
-                                  const activeText = isFullyApproved
-                                    ? "text-[var(--pri)]"
-                                    : isPartiallyApproved || isFullyUploaded || isPartiallyUploaded
-                                      ? "text-[var(--success)]"
-                                      : "text-[var(--warn)]";
+                      <td className="px-4 py-3 text-center">
+                        <span className="inline-flex items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">
+                          {s.talks_count || 0} Talk{s.talks_count === 1 ? "" : "s"}
+                        </span>
+                      </td>
 
-                                  const steps = [
-                                    { key: 'pending', label: 'Pending', active: true },
-                                    { 
-                                      key: 'uploaded', 
-                                      label: isPartiallyUploaded ? `${uploaded}/${total} Uploaded` : 'Uploaded', 
-                                      active: uploaded > 0 
-                                    },
-                                    { 
-                                      key: 'approved', 
-                                      label: isPartiallyApproved ? `${approved}/${total} Approved` : 'Approved', 
-                                      active: isFullyApproved 
-                                    },
-                                  ];
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1 w-24">
+                          <div className="flex items-center justify-between text-[10px] font-bold">
+                            <span
+                              className={cn(
+                                completeness >= 80
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : completeness >= 50
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-rose-600 dark:text-rose-400"
+                              )}
+                            >
+                              {completeness}%
+                            </span>
+                            <span className="text-[9px] text-[var(--text-tertiary)]">bio</span>
+                          </div>
+                          <div className="h-1 rounded-full bg-[var(--bg-surface-2)] overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full",
+                                completeness >= 80
+                                  ? "bg-emerald-500"
+                                  : completeness >= 50
+                                  ? "bg-amber-500"
+                                  : "bg-rose-500"
+                              )}
+                              style={{ width: `${completeness}%` }}
+                            />
+                          </div>
+                        </div>
+                      </td>
 
-                                  return steps.map((step, idx, arr) => (
-                                  <Fragment key={step.key}>
-                                    <div className="flex flex-col items-center gap-1 min-w-0">
-                                      <div className={cn(
-                                        "h-3 w-3 rounded-full border transition-all",
-                                        step.active ? `${activeColor} border-transparent shadow-sm` : "bg-transparent border-default"
-                                      )} />
-                                      <span className={cn(
-                                        "text-[8px] font-black uppercase tracking-widest truncate max-w-[80px]",
-                                        step.active ? activeText : "text-muted"
-                                      )}>
-                                        {step.label}
-                                      </span>
-                                    </div>
-                                    {idx < arr.length - 1 && (
-                                      <div className={cn(
-                                        "h-0.5 w-10 rounded-full transition-all",
-                                        arr[idx + 1].active ? activeColor : "bg-[color-mix(in_srgb,var(--text)_10%,transparent)]"
-                                      )} />
-                                    )}
-                                  </Fragment>
-                                  ));
-                                })()}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="p-6 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setTargetIds([s.id]); setEmailDialogOpen(true); }}
-                                className="h-9 w-9 rounded-xl glass-3d border-default flex items-center justify-center text-muted hover:text-[var(--pri)] transition-all"
-                              >
-                                <Mail className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
-      </AnimatePresence>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5 text-[10px]">
+                          {(s.files_approved || 0) > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
+                              <CheckCircle2 className="size-3" /> Approved
+                            </span>
+                          ) : (s.files_uploaded || 0) > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 font-bold">
+                              <FileUp className="size-3" /> Uploaded
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-bold">
+                              <Clock className="size-3" /> Pending
+                            </span>
+                          )}
+                        </div>
+                      </td>
 
-      {/* Global Modals */}
+                      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetIds([s.id]);
+                            setEmailDialogOpen(true);
+                          }}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-2)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                          title="Email speaker"
+                        >
+                          <Mail className="size-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Slide-Over Speaker Details Drawer ── */}
       <AnimatePresence>
         {selectedSpeaker && (
           <Portal>
@@ -553,7 +608,10 @@ export default function SpeakersPage() {
       <Portal>
         <EmailCampaignDialog
           isOpen={emailDialogOpen}
-          onClose={() => { setEmailDialogOpen(false); setTargetIds([]); }}
+          onClose={() => {
+            setEmailDialogOpen(false);
+            setTargetIds([]);
+          }}
           selectedSpeakerIds={targetIds}
           onSuccess={() => setSelectedIds([])}
         />

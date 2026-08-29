@@ -1,145 +1,142 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MonitorPlay, Save, CheckCircle2, Circle, ChevronDown, CheckSquare, Square, Users, Search, Loader2, MousePointer2 } from "lucide-react";
+import { 
+  X, MonitorPlay, CheckSquare, 
+  Search, Save, Loader2, MousePointer2,
+  CheckCircle2, LayoutGrid, Monitor
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { PosterSummary, useBatchSchedulePosters } from "@/hooks/usePosters";
-import { RoomSummary } from "@/hooks/useRooms";
-import { SpeakerSummary } from "@/hooks/useSpeakers";
-import { SessionSummary } from "@/hooks/useSessions";
 import { cn } from "@/lib/utils";
+import { apiPost } from "@/lib/api-client";
+import { toast } from "sonner";
 
 interface ManageScreensDialogProps {
   isOpen: boolean;
   onClose: () => void;
   eventId: string;
-  rooms: RoomSummary[];
-  posters: PosterSummary[];
-  speakers: SpeakerSummary[];
-  sessions: SessionSummary[];
+  rooms: any[];
+  posters: any[];
+  speakers: any[];
+  sessions?: any[];
 }
 
-export function ManageScreensDialog({ isOpen, onClose, eventId, rooms, posters, speakers, sessions }: ManageScreensDialogProps) {
+export function ManageScreensDialog({
+  isOpen,
+  onClose,
+  eventId,
+  rooms,
+  posters,
+  speakers,
+}: ManageScreensDialogProps) {
   const [selectedScreenIds, setSelectedScreenIds] = useState<string[]>([]);
-  const [screenAssignments, setScreenAssignments] = useState<Record<string, string[]>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [syncAllScreens, setSyncAllScreens] = useState(false);
 
-  // Generate virtual screens based on room screen_count
   const virtualScreens = useMemo(() => {
-    const screens: { id: string; name: string; roomName: string }[] = [];
-    let screenIndex = 1;
-    rooms.forEach(room => {
-      const count = room.screen_count || 1;
+    const list: any[] = [];
+    rooms.forEach(r => {
+      const count = r.screen_count || 1;
       for (let i = 1; i <= count; i++) {
-        screens.push({
-          id: screenIndex.toString(),
-          name: count === 1 ? room.name : `${room.name} - Screen ${i}`,
-          roomName: room.name,
+        list.push({
+          id: `${r.id}_${i}`,
+          roomId: r.id,
+          roomName: r.name,
+          screenNumber: i,
+          name: count > 1 ? `${r.name} - Screen ${i}` : `${r.name} Display`,
+          capacity: r.capacity
         });
-        screenIndex++;
       }
     });
-    return screens;
+    return list;
   }, [rooms]);
 
   const activePosters = useMemo(() => {
-    return posters.filter(p => p.status !== 'rejected' && p.status !== 'withdrawn');
+    return posters.filter(p => p.status === "approved" || p.status === "valid" || p.status === "pending_validation");
   }, [posters]);
 
-  const getSpeakerName = (poster?: PosterSummary) => {
-    if (!poster) return "N/A";
-    if (poster.speaker_name) return poster.speaker_name;
-    if (poster.speaker_id) {
-      const speaker = speakers.find(s => s.id === poster.speaker_id);
-      if (speaker) return `${speaker.first_name} ${speaker.last_name}`;
-    }
-    if (poster.session_id && sessions) {
-      const session = sessions.find(s => s.id === poster.session_id);
-      if (session && session.speakers && session.speakers.length > 0) {
-        return session.speakers.map(s => s.full_name).join(", ");
+  const [screenAssignments, setScreenAssignments] = useState<Record<string, string[]>>(() => {
+    const initial: Record<string, string[] | any> = {};
+    activePosters.forEach(p => {
+      if (p.assigned_screen_ids && p.assigned_screen_ids.length > 0) {
+        p.assigned_screen_ids.forEach((sid: string) => {
+          if (!initial[sid]) initial[sid] = [];
+          initial[sid].push(p.id);
+        });
+      } else if (p.assigned_screen_id) {
+        if (!initial[p.assigned_screen_id]) initial[p.assigned_screen_id] = [];
+        initial[p.assigned_screen_id].push(p.id);
       }
-    }
-    if (poster.authors && poster.authors.trim() !== "") return poster.authors;
-    return poster.speaker_id ? "Unknown" : "N/A";
+    });
+    return initial;
+  });
+
+  const getSpeakerName = (poster: any) => {
+    const sp = speakers.find(s => s.id === poster.speaker_id);
+    if (!sp) return "Unknown Presenter";
+    return `${sp.first_name || ""} ${sp.last_name || ""}`.trim();
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-      const initialAssignments: Record<string, string[]> = {};
-      virtualScreens.forEach(s => {
-        initialAssignments[s.id] = posters
-          .filter(p => {
-            if (!p.display_screen) return false;
-            const screens = p.display_screen.split(',').map(str => str.trim());
-            return screens.includes(s.id);
-          })
-          .map(p => p.id);
-      });
-      setScreenAssignments(initialAssignments);
-    } else {
-      document.body.style.overflow = "unset";
-      setSelectedScreenIds([]);
-      setSearchQuery("");
-      setSyncAllScreens(false);
-    }
-  }, [isOpen, virtualScreens, posters]);
-
-  const handleSelectScreen = (id: string) => {
+  const handleSelectScreen = (screenId: string) => {
+    if (syncAllScreens) return;
+    
     if (isMultiSelectMode) {
-      setSelectedScreenIds(prev => {
-        const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-        // Keep syncAllScreens in sync with the actual selection
-        setSyncAllScreens(next.length === virtualScreens.length);
-        return next;
-      });
+      if (selectedScreenIds.includes(screenId)) {
+        setSelectedScreenIds(selectedScreenIds.filter(id => id !== screenId));
+      } else {
+        setSelectedScreenIds([...selectedScreenIds, screenId]);
+      }
     } else {
-      setSelectedScreenIds([id]);
-      setSyncAllScreens(virtualScreens.length === 1); // Only true if there's only one screen
+      setSelectedScreenIds([screenId]);
     }
   };
 
-  const handleTogglePoster = (screenIds: string[], posterId: string) => {
+  const handleTogglePoster = (targetScreenIds: string[], posterId: string) => {
+    const targets = syncAllScreens ? virtualScreens.map(s => s.id) : targetScreenIds;
+    if (targets.length === 0) return;
+
     setScreenAssignments(prev => {
       const next = { ...prev };
-      const targetIds = syncAllScreens ? virtualScreens.map(s => s.id) : screenIds;
-      
-      targetIds.forEach(sid => {
-        const current = next[sid] || [];
-        if (current.includes(posterId)) {
-          next[sid] = current.filter(id => id !== posterId);
+      const allHaveIt = targets.every(sid => (next[sid] || []).includes(posterId));
+
+      targets.forEach(sid => {
+        const currentList = next[sid] || [];
+        if (allHaveIt) {
+          next[sid] = currentList.filter(id => id !== posterId);
         } else {
-          next[sid] = [...current, posterId];
+          if (!currentList.includes(posterId)) {
+            next[sid] = [...currentList, posterId];
+          }
         }
       });
-      
       return next;
     });
   };
 
-  const batchScheduleMutation = useBatchSchedulePosters(eventId);
-
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await batchScheduleMutation.mutateAsync(screenAssignments);
+      const updates = activePosters.map(p => {
+        const assignedTo = Object.keys(screenAssignments).filter(sid => 
+          screenAssignments[sid]?.includes(p.id)
+        );
+        return {
+          id: p.id,
+          assigned_screen_ids: assignedTo,
+          assigned_screen_id: assignedTo[0] || null
+        };
+      });
+
+      await apiPost(`/events/${eventId}/eposters/batch-screen-assignments`, { updates });
+      toast.success("Display configurations updated successfully.");
       onClose();
     } catch (err: any) {
-      console.error("Failed to save assignments", err);
-      if (err.response) {
-        console.error("Response data:", err.response.data);
-        console.error("Response status:", err.response.status);
-      } else if (err.request) {
-        console.error("No response received. Request details:", err.request);
-      } else {
-        console.error("Error setting up request:", err.message);
-      }
+      toast.error(err.message || "Failed to update configurations");
     } finally {
       setIsSaving(false);
     }
@@ -159,267 +156,228 @@ export function ManageScreensDialog({ isOpen, onClose, eventId, rooms, posters, 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-[var(--base)] z-[150] flex flex-col"
+          className="fixed inset-0 bg-black/60 z-[150] flex items-center justify-center p-4 md:p-8"
         >
-          {/* Background Elements */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[var(--pri)]/5 blur-[120px] rounded-full animate-pulse-slow" />
-            <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[var(--sec)]/5 blur-[120px] rounded-full animate-pulse-slow" />
-          </div>
-
-          {/* Premium Header */}
-          <header className="relative z-10 px-10 pt-12 pb-8 flex items-center justify-between shrink-0">
-            <div>
-               <div className="flex items-center gap-3 mb-2">
-                  <div className="h-10 w-10 rounded-2xl bg-[var(--pri)]/10 flex items-center justify-center border border-[var(--pri)]/20">
-                    <MonitorPlay className="h-5 w-5 text-[var(--pri)]" />
-                  </div>
-                  <h1 className="text-3xl font-black tracking-tighter text-[var(--text)] text-glow-indigo">
-                    Screen <span className="text-[var(--sec)]">Orchestrator</span>
+          <div className="w-full max-w-6xl h-[90vh] rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] relative">
+            {/* Header */}
+            <header className="p-5 border-b border-[var(--border-subtle)] bg-[var(--bg-surface-2)] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="size-8 rounded-lg bg-[var(--pri)]/10 text-[var(--pri)] flex items-center justify-center border border-[var(--pri)]/20">
+                  <MonitorPlay className="size-4" />
+                </div>
+                <div>
+                  <h1 className="text-base font-bold tracking-tight text-[var(--text-primary)]">
+                    Screen Orchestrator
                   </h1>
-               </div>
-               <p className="text-[11px] font-bold text-muted uppercase tracking-[0.3em] ml-1">Mapping knowledge to the physical world</p>
-            </div>
-            
-            <div className="flex items-center gap-4">
-               <div className="flex items-center gap-2 glass-3d p-1 rounded-2xl border-default mr-4">
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
+                  <p className="text-[11px] text-[var(--text-secondary)]">Map posters to onsite display screens</p>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-[var(--card)] p-1 rounded-lg border border-[var(--border-default)]">
+                  <button 
+                    type="button"
                     onClick={() => {
                       const next = !syncAllScreens;
                       setSyncAllScreens(next);
-                      if (next) {
-                        setSelectedScreenIds(virtualScreens.map(s => s.id));
-                      } else {
-                        setSelectedScreenIds([]);
-                      }
+                      if (next) setSelectedScreenIds(virtualScreens.map(s => s.id));
+                      else setSelectedScreenIds([]);
                     }}
                     className={cn(
-                      "h-10 px-4 text-[9px] font-black uppercase tracking-[0.2em] rounded-xl transition-all",
-                      syncAllScreens ? "bg-[var(--pri)] text-white" : "text-muted hover:text-[var(--text)]"
+                      "h-7 px-2.5 text-xs font-bold rounded-md transition-colors cursor-pointer",
+                      syncAllScreens ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                     )}
                   >
                     Sync All Screens
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
+                  </button>
+                  <button 
+                    type="button"
                     onClick={() => {
                       setIsMultiSelectMode(!isMultiSelectMode);
                       if (!isMultiSelectMode) setSelectedScreenIds(selectedScreenIds.slice(0, 1));
                     }}
                     className={cn(
-                      "h-10 px-4 text-[9px] font-black uppercase tracking-[0.2em] rounded-xl transition-all",
-                      isMultiSelectMode ? "bg-[var(--sec)] text-white" : "text-muted hover:text-[var(--text)]"
+                      "h-7 px-2.5 text-xs font-bold rounded-md transition-colors cursor-pointer",
+                      isMultiSelectMode ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                     )}
                   >
                     Multi-Select Mode
-                  </Button>
-               </div>
+                  </button>
+                </div>
 
-               <Button 
-                onClick={onClose}
-                variant="ghost"
-                className="h-12 w-12 p-0 rounded-full glass-3d border-default text-muted hover:text-[var(--text)] transition-all"
-               >
-                 <X className="h-5 w-5" />
-               </Button>
-            </div>
-          </header>
+                <button 
+                  type="button"
+                  onClick={onClose}
+                  className="size-8 rounded-md border border-[var(--border-default)] bg-[var(--card)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer shadow-sm"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </header>
 
-          {/* Main Grid View */}
-          <div className="flex-1 overflow-hidden px-10 pb-10 flex gap-8">
-             {/* Screen Grid */}
-             <div className="flex-1 overflow-y-auto no-scrollbar pr-4">
-                <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
-                   {virtualScreens.map(screen => {
-                      const assigned = screenAssignments[screen.id] || [];
-                      const isSelected = selectedScreenIds.includes(screen.id);
+            {/* Main Grid View */}
+            <div className="flex-1 overflow-hidden p-5 flex gap-5">
+              {/* Screen Grid */}
+              <div className="flex-1 overflow-y-auto pr-2">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {virtualScreens.map(screen => {
+                    const assigned = screenAssignments[screen.id] || [];
+                    const isSelected = selectedScreenIds.includes(screen.id);
+                    
+                    return (
+                      <div 
+                        key={screen.id}
+                        onClick={() => handleSelectScreen(screen.id)}
+                        className={cn(
+                          "rounded-lg border p-4 cursor-pointer transition-all relative overflow-hidden bg-[var(--bg-surface-2)]",
+                          isSelected ? "border-[var(--pri)] ring-1 ring-[var(--pri)] shadow-sm" : "border-[var(--border-default)] hover:border-[var(--pri)]/50"
+                        )}
+                      >
+                        {isSelected && (
+                          <div className="absolute top-3 right-3">
+                            <CheckCircle2 className="size-4 text-[var(--pri)]" />
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className={cn(
+                            "size-10 rounded-lg flex items-center justify-center transition-colors shrink-0",
+                            isSelected ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "bg-[var(--card)] border border-[var(--border-default)] text-[var(--text-secondary)]"
+                          )}>
+                            <Monitor className="size-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-bold text-[var(--text-primary)] truncate max-w-[200px]">{screen.name}</h4>
+                            <p className="text-[10px] text-[var(--text-secondary)] uppercase">{screen.roomName} • Screen #{screen.screenNumber}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs pt-2 border-t border-[var(--border-subtle)]">
+                          <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Assigned Posters:</span>
+                          <span className="font-bold text-[var(--pri)]">{assigned.length}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Side Panel: Poster Selector */}
+              <div className="w-[360px] flex flex-col rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] overflow-hidden shrink-0">
+                <div className="p-4 border-b border-[var(--border-subtle)] space-y-3 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">
+                      {selectedScreenIds.length > 0 ? (
+                        syncAllScreens ? "Syncing All Screens" : 
+                        selectedScreenIds.length === 1 ? "Assign Posters" : 
+                        `Editing ${selectedScreenIds.length} Screens`
+                      ) : "Select a Screen"}
+                    </h3>
+                    {(selectedScreenIds.length > 0 || syncAllScreens) && (
+                      <div className="flex gap-1.5">
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const targetIds = syncAllScreens ? virtualScreens.map(s => s.id) : selectedScreenIds;
+                            setScreenAssignments(prev => {
+                              const next = { ...prev };
+                              targetIds.forEach(sid => next[sid] = activePosters.map(p => p.id));
+                              return next;
+                            });
+                          }} 
+                          className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[var(--card)] border border-[var(--border-default)] text-[var(--pri)] cursor-pointer"
+                        >All</button>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const targetIds = syncAllScreens ? virtualScreens.map(s => s.id) : selectedScreenIds;
+                            setScreenAssignments(prev => {
+                              const next = { ...prev };
+                              targetIds.forEach(sid => next[sid] = []);
+                              return next;
+                            });
+                          }} 
+                          className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[var(--card)] border border-[var(--border-default)] text-rose-500 cursor-pointer"
+                        >Clear</button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                    <Input 
+                      placeholder="Search posters or speakers..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="h-8 pl-8 bg-[var(--card)] border-[var(--border-default)] rounded-lg text-xs font-semibold"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-1.5 text-xs">
+                  {selectedScreenIds.length === 0 && !syncAllScreens ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[var(--text-secondary)]">
+                      <MousePointer2 className="size-8 text-[var(--text-tertiary)] mb-2" />
+                      <p className="font-semibold text-xs text-[var(--text-primary)]">Click a screen to assign posters</p>
+                    </div>
+                  ) : filteredPosters.length === 0 ? (
+                    <div className="text-center py-10 text-[var(--text-secondary)]">No posters found.</div>
+                  ) : (
+                    filteredPosters.map(poster => {
+                      const isAssigned = syncAllScreens 
+                        ? Object.values(screenAssignments).every(ids => ids.includes(poster.id))
+                        : selectedScreenIds.every(sid => screenAssignments[sid]?.includes(poster.id));
                       
+                      const isPartiallyAssigned = !isAssigned && (
+                        syncAllScreens 
+                          ? Object.values(screenAssignments).some(ids => ids.includes(poster.id))
+                          : selectedScreenIds.some(sid => screenAssignments[sid]?.includes(poster.id))
+                      );
+
                       return (
-                        <motion.div 
-                          key={screen.id}
-                          layoutId={screen.id}
-                          onClick={() => handleSelectScreen(screen.id)}
+                        <div 
+                          key={poster.id}
+                          onClick={() => handleTogglePoster(selectedScreenIds, poster.id)}
                           className={cn(
-                            "glass-3d rounded-[2rem] border-default p-8 cursor-pointer transition-all hover-lift-3d group relative overflow-hidden",
-                            isSelected ? "ring-2 ring-[var(--pri)] border-[var(--pri)]/30 shadow-[0_20px_50px_rgba(var(--pri-rgb),0.2)]" : "hover:border-[var(--pri)]/30"
+                            "flex items-center gap-2.5 p-2.5 rounded-lg border transition-colors cursor-pointer bg-[var(--card)]",
+                            isAssigned 
+                              ? "bg-[var(--pri)]/10 border-[var(--pri)]/30" 
+                              : isPartiallyAssigned
+                                ? "bg-amber-500/10 border-amber-500/30"
+                                : "border-[var(--border-default)] hover:border-[var(--pri)]"
                           )}
                         >
-                           {isSelected && (
-                             <div className="absolute top-0 right-0 p-4">
-                               <CheckCircle2 className="h-5 w-5 text-[var(--pri)] animate-in zoom-in duration-300" />
-                             </div>
-                           )}
-
-                           <div className="flex items-center gap-4 mb-6">
-                              <div className={cn(
-                                "h-14 w-14 rounded-2xl flex items-center justify-center transition-all",
-                                isSelected ? "bg-[var(--pri)] text-white" : "bg-[var(--pri)]/5 text-[var(--pri)] group-hover:bg-[var(--pri)]/10"
-                              )}>
-                                 <MonitorPlay className="h-7 w-7" />
-                              </div>
-                              <div>
-                                 <h4 className="text-[16px] font-black text-[var(--text)] tracking-tight">{screen.name}</h4>
-                                 <p className="text-[10px] font-black text-muted uppercase tracking-widest">{screen.roomName}</p>
-                              </div>
-                           </div>
-
-                           <div className="space-y-4">
-                              <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-muted border-b border-default pb-2">
-                                 <span>Assignments</span>
-                                 <span className={cn(assigned.length > 0 ? "text-[var(--pri)]" : "")}>{assigned.length} Posters</span>
-                              </div>
-                              
-                              <div className="flex flex-wrap gap-2">
-                                 {assigned.length === 0 ? (
-                                   <div className="w-full py-4 flex flex-col items-center justify-center rounded-2xl bg-white/5 border border-dashed border-default">
-                                      <p className="text-[11px] font-bold text-muted">No posters assigned</p>
-                                   </div>
-                                 ) : (
-                                   assigned.slice(0, 5).map(id => {
-                                      const p = activePosters.find(x => x.id === id);
-                                      return (
-                                        <div key={id} className="h-8 w-8 rounded-full bg-[var(--text)] text-[var(--base)] flex items-center justify-center text-[10px] font-black ring-2 ring-[var(--base)] transition-transform hover:scale-110 shadow-sm" title={p?.title}>
-                                          {getSpeakerName(p).charAt(0).toUpperCase()}
-                                        </div>
-                                      );
-                                   })
-                                 )}
-                                 {assigned.length > 5 && (
-                                   <div className="h-8 w-8 rounded-lg bg-white/10 border border-default text-muted flex items-center justify-center text-[10px] font-black">
-                                      +{assigned.length - 5}
-                                   </div>
-                                 )}
-                              </div>
-                           </div>
-                        </motion.div>
-                      );
-                   })}
-                </div>
-             </div>
-
-             {/* Side Panel: Poster Selector */}
-             <div className="w-[450px] flex flex-col glass-3d rounded-[2.5rem] border-default overflow-hidden relative group">
-                <div className="p-8 border-b border-default shrink-0">
-                   <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-black text-[var(--text)] tracking-tighter">
-                        {selectedScreenIds.length > 0 ? (
-                           syncAllScreens ? "Syncing All Screens" : 
-                           selectedScreenIds.length === 1 ? "Assign Posters" : 
-                           `Editing ${selectedScreenIds.length} Screens`
-                        ) : "Select a Screen"}
-                      </h3>
-                      {(selectedScreenIds.length > 0 || syncAllScreens) && (
-                        <div className="flex gap-2">
-                           <Button 
-                             size="sm" 
-                             variant="ghost" 
-                             onClick={() => {
-                               const targetIds = syncAllScreens ? virtualScreens.map(s => s.id) : selectedScreenIds;
-                               setScreenAssignments(prev => {
-                                 const next = { ...prev };
-                                 targetIds.forEach(sid => next[sid] = activePosters.map(p => p.id));
-                                 return next;
-                               });
-                             }} 
-                             className="text-[9px] font-black uppercase tracking-widest text-[var(--pri)] hover:bg-[var(--pri)]/10"
-                           >All</Button>
-                           <Button 
-                             size="sm" 
-                             variant="ghost" 
-                             onClick={() => {
-                               const targetIds = syncAllScreens ? virtualScreens.map(s => s.id) : selectedScreenIds;
-                               setScreenAssignments(prev => {
-                                 const next = { ...prev };
-                                 targetIds.forEach(sid => next[sid] = []);
-                                 return next;
-                               });
-                             }} 
-                             className="text-[9px] font-black uppercase tracking-widest text-[var(--dan)] hover:bg-[var(--dan)]/10"
-                           >Clear</Button>
-                        </div>
-                      )}
-                   </div>
-
-                   <div className="relative">
-                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-                      <Input 
-                        placeholder="Search posters or speakers..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="h-12 pl-12 bg-white/5 border-default rounded-2xl text-[13px] font-bold focus:ring-[var(--pri)]/30"
-                      />
-                   </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-2">
-                   {selectedScreenIds.length === 0 && !syncAllScreens ? (
-                     <div className="h-full flex flex-col items-center justify-center text-center p-10">
-                        <div className="h-20 w-20 rounded-full bg-[var(--pri)]/5 border border-[var(--pri)]/20 flex items-center justify-center mb-6">
-                           <MousePointer2 className="h-8 w-8 text-[var(--pri)] opacity-50" />
-                        </div>
-                        <p className="text-[14px] font-bold text-muted">Click a screen on the left to start assigning posters.</p>
-                     </div>
-                   ) : filteredPosters.length === 0 ? (
-                     <div className="text-center py-20 text-muted font-bold">No posters found.</div>
-                   ) : (
-                     filteredPosters.map(poster => {
-                        const isAssigned = syncAllScreens 
-                          ? Object.values(screenAssignments).every(ids => ids.includes(poster.id))
-                          : selectedScreenIds.every(sid => screenAssignments[sid]?.includes(poster.id));
-                        
-                        const isPartiallyAssigned = !isAssigned && (
-                          syncAllScreens 
-                            ? Object.values(screenAssignments).some(ids => ids.includes(poster.id))
-                            : selectedScreenIds.some(sid => screenAssignments[sid]?.includes(poster.id))
-                        );
-
-                        return (
-                          <div 
-                            key={poster.id}
-                            onClick={() => handleTogglePoster(selectedScreenIds, poster.id)}
-                            className={cn(
-                              "flex items-center gap-4 p-4 rounded-2xl border transition-all cursor-pointer group",
-                              isAssigned 
-                                ? "bg-[var(--pri)]/10 border-[var(--pri)]/30" 
-                                : isPartiallyAssigned
-                                  ? "bg-[var(--warn)]/10 border-[var(--warn)]/30"
-                                  : "hover:bg-white/5 border-transparent hover:border-default"
-                            )}
-                          >
-                             <div className={cn(
-                               "h-6 w-6 rounded-md border flex items-center justify-center transition-all",
-                               isAssigned ? "bg-[var(--pri)] border-[var(--pri)] text-white" : 
-                               isPartiallyAssigned ? "bg-[var(--warn)] border-[var(--warn)] text-white" : "border-default"
-                             )}>
-                                {isAssigned && <CheckSquare className="h-3 w-3" />}
-                                {isPartiallyAssigned && <div className="h-1 w-3 bg-white rounded-full" />}
-                             </div>
-                             <div className="min-w-0 flex-1">
-                                <p className="text-[13px] font-bold text-[var(--text)] truncate">{poster.title}</p>
-                                <p className="text-[10px] font-black text-muted uppercase tracking-tighter mt-0.5">{getSpeakerName(poster)}</p>
-                             </div>
-                             <Badge variant="outline" className="text-[8px] opacity-50">{poster.category?.slice(0, 8)}</Badge>
+                          <div className={cn(
+                            "size-4 rounded border flex items-center justify-center transition-colors shrink-0",
+                            isAssigned ? "bg-[var(--pri)] border-[var(--pri)] text-white" : 
+                            isPartiallyAssigned ? "bg-amber-500 border-amber-500 text-white" : "border-[var(--border-default)]"
+                          )}>
+                            {isAssigned && <CheckSquare className="size-3" />}
+                            {isPartiallyAssigned && <div className="h-0.5 w-2 bg-white rounded-full" />}
                           </div>
-                        );
-                     })
-                   )}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-[var(--text-primary)] truncate">{poster.title}</p>
+                            <p className="text-[10px] text-[var(--text-secondary)] truncate">{getSpeakerName(poster)}</p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
 
                 {/* Status Bar */}
-                <div className="p-8 border-t border-default shrink-0 bg-[color-mix(in_srgb,var(--text)_2%,transparent)]">
-                   <Button 
+                <div className="p-3 border-t border-[var(--border-subtle)] bg-[var(--card)]">
+                  <Button 
                     onClick={handleSave}
                     disabled={isSaving}
-                    className="w-full h-14 bg-[var(--pri)] hover:bg-[var(--sec)] text-[var(--text)] font-black uppercase tracking-widest text-[11px] rounded-2xl shadow-lg border-0"
-                   >
-                     {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                     Sync Configuration
-                   </Button>
+                    className="w-full h-9 bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] font-bold text-xs rounded-lg shadow-sm border-0 cursor-pointer"
+                  >
+                    {isSaving ? <Loader2 className="size-3.5 animate-spin mr-1.5" /> : <Save className="size-3.5 mr-1.5" />}
+                    Sync Configuration
+                  </Button>
                 </div>
-             </div>
+              </div>
+            </div>
           </div>
         </motion.div>
       )}

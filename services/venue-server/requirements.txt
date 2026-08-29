@@ -3,6 +3,7 @@ aiohttp==3.11.6
 aiosignal==1.4.0
 alembic==1.14.0
 annotated-types==0.7.0
+argon2-cffi==25.1.0
 anyio==4.13.0
 APScheduler==3.10.4
 asyncpg==0.30.0

@@ -8,8 +8,8 @@ from app.modules.analytics.models.usage import OrganizationUsage
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.communications.models.channel_delivery import CommunicationDelivery
 from app.modules.communications.models.email_log import EmailLog
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
 from app.modules.presentations.models.poster import Poster
 from app.modules.presentations.models.presentation_file import PresentationFile

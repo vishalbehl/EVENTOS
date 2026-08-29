@@ -1,0 +1,14 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
+import { apiClient } from "@/lib/api-client";
+import { EmptyState, ErrorState, EvidenceTime, LoadingState, PageFrame, Section, StatusBadge } from "@/components/operations/control-room";
+
+type Audit = { id: string; category: string; action: string; result: string; actor_role?: string; source_ip?: string; object_type?: string; object_id?: string; reason?: string; correlation_id: string; details: Record<string, unknown>; created_at: string };
+
+export default function LogsPage() {
+  const [category, setCategory] = useState(""); const query = useQuery({ queryKey: ["venue-audit", category], queryFn: () => apiClient.get<{ items: Audit[] }>(`/venue/admin/control/audit${category ? `?category=${category}` : ""}`) });
+  return <PageFrame eyebrow="Immutable venue evidence" title="Logs & audit" description="Who changed what, from where, with the result and correlation ID retained." actions={<button className="venue-button venue-button--secondary" onClick={() => query.refetch()}><RefreshCw className="size-4" />Refresh</button>}><Section title="Audit ledger" description="Latest 200 records"><div className="venue-toolbar"><select className="venue-input !w-52" value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option><option value="auth">Authentication</option><option value="service">Services</option><option value="device">Devices</option><option value="content">Content</option><option value="room">Rooms</option><option value="alert">Alerts</option><option value="backup">Backups</option><option value="settings">Settings</option></select></div>{query.isLoading && <LoadingState />}{query.isError && <ErrorState message={(query.error as Error).message} retry={() => query.refetch()} />}{query.data?.items.length === 0 && <EmptyState title="No audit records" detail="Audited mutations will appear here. No sample entries are generated." />}{!!query.data?.items.length && <div className="venue-table-wrap"><table className="venue-table"><thead><tr><th>Time</th><th>Category / action</th><th>Result</th><th>Actor</th><th>Object</th><th>Reason</th><th>Correlation</th></tr></thead><tbody>{query.data.items.map((row) => <tr key={row.id}><td><EvidenceTime value={row.created_at} /></td><td><strong>{row.action}</strong><div className="venue-code">{row.category}</div></td><td><StatusBadge state={row.result} /></td><td>{row.actor_role || "System"}<div className="venue-code">{row.source_ip || "Local"}</div></td><td>{row.object_type || "-"}<div className="venue-code">{row.object_id || ""}</div></td><td className="max-w-xs">{row.reason || "No reason recorded"}</td><td className="venue-code">{row.correlation_id}</td></tr>)}</tbody></table></div>}</Section></PageFrame>;
+}

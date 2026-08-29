@@ -55,20 +55,3 @@ class DeveloperOAuthToken(Base):
     refresh_token: Mapped[Optional[str]] = mapped_column(String(500), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-class DeveloperSdkVersion(Base):
-    __tablename__ = "sdk_versions"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    language: Mapped[str] = mapped_column(String(50), nullable=False) # e.g. python, node, go
-    version: Mapped[str] = mapped_column(String(50), nullable=False)
-    released_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-class DeveloperApiAuditLog(Base):
-    __tablename__ = "api_audit_logs"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), index=True)
-    action: Mapped[str] = mapped_column(String(100), nullable=False)
-    details: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

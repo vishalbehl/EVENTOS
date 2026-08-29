@@ -242,13 +242,10 @@ async def add_role(
     await UsageReservationService.consume(
         db,
         reservation.id,
-        source="organizer_portal.registration.roles.create",
+        source="organizer_portal.registration.participant_roles.create",
         actor_user_id=actor.id,
     )
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
+    await db.commit()
     await db.refresh(role)
     return role
 
@@ -262,11 +259,11 @@ async def bulk_toggle_roles(
     """Enable or disable multiple roles at once."""
     for update in payload.updates:
         role_id = uuid.UUID(update["id"])
-        is_active = bool(update["is_active"])
+        is_active = bool(update.get("is_active", True))
         result = await db.execute(
             select(ParticipantRole).where(
                 ParticipantRole.id == role_id,
-                ParticipantRole.event_id == event.id
+                ParticipantRole.event_id == event.id,
             )
         )
         role = result.scalar_one_or_none()
@@ -288,7 +285,7 @@ async def update_role(
     result = await db.execute(
         select(ParticipantRole).where(
             ParticipantRole.id == role_id,
-            ParticipantRole.event_id == event.id
+            ParticipantRole.event_id == event.id,
         )
     )
     role = result.scalar_one_or_none()

@@ -52,6 +52,14 @@ class OrganizationResponse(BaseModel):
     primary_color: str = "#6366f1"
     secondary_color: str = "#8b5cf6"
     billing_email: Optional[str] = None
+    legal_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    website_url: Optional[str] = None
+    billing_address: dict = Field(default_factory=dict)
+    verification_status: str = "UNVERIFIED"
+    profile_version: int = 1
     country: str = "IN"
     timezone: str = "Asia/Kolkata"
     organization_type: Optional[str] = None

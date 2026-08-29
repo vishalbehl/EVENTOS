@@ -1,4 +1,5 @@
 import uuid
+import json
 from sqlalchemy import select, delete, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
@@ -10,6 +11,24 @@ from app.modules.platform.models.organization import Organization
 from app.modules.identity.services.auth_service import hash_password
 
 from app.modules.rbac.models.rbac import Role, Permission, RolePermission
+
+LEGACY_NON_ENFORCED_FEATURE_KEYS = {
+    "FEAT_24x7_SUPPORT",
+    "FEAT_EMAIL_SUPPORT",
+    "FEAT_OFFICE_HOURS_SUPPORT",
+    "FEAT_PRIORITY_SUPPORT",
+}
+
+try:
+    import bcrypt
+
+    if not hasattr(bcrypt, "__about__"):
+        class MockAbout:
+            __version__ = getattr(bcrypt, "__version__", "4.0.0")
+
+        bcrypt.__about__ = MockAbout
+except ImportError:
+    pass
 
 async def ensure_rbac_defaults():
     """Seed the database with standard roles and permissions."""
@@ -280,11 +299,11 @@ async def ensure_rbac_defaults():
             logger.error(f"Failed to seed RBAC defaults: {e}")
             await db.rollback()
 
+
 async def ensure_event_settings_defaults(db: AsyncSession):
-    """Scan all events and ensure they have registration and speaker theme settings seeded with defaults."""
+    """Scan all events and ensure they have unified portal theme settings seeded with defaults."""
     from app.modules.events.models.event import Event
-    from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
-    from app.modules.speakers.models.speaker_theme_setting import SpeakerThemeSetting, DEFAULT_SPEAKER_TERMS, DEFAULT_SPEAKER_FAQS
+    from app.modules.registration.models.portal_theme_setting import PortalThemeSetting
     from app.modules.registration.routers.registration_portal import DEFAULT_TERMS, DEFAULT_FAQS
 
     result = await db.execute(select(Event))
@@ -292,38 +311,30 @@ async def ensure_event_settings_defaults(db: AsyncSession):
     
     updated = False
     for event in events:
-        if not event.registration_theme_setting:
-            event.registration_theme_setting = RegistrationThemeSetting(
+        if not event.portal_theme_setting:
+            event.portal_theme_setting = PortalThemeSetting(
+                theme_color="#6366F1",
+                primary_color="#6366F1",
+                secondary_color="#8B5CF6",
+                theme_preset="dark-luxury",
+                svg_pattern="glow-wave",
+                dark_mode_default=True,
                 terms_and_conditions=DEFAULT_TERMS,
-                faqs=DEFAULT_FAQS
+                faqs=DEFAULT_FAQS,
             )
-            db.add(event.registration_theme_setting)
+            db.add(event.portal_theme_setting)
             updated = True
         else:
-            if not event.registration_theme_setting.terms_and_conditions:
-                event.registration_theme_setting.terms_and_conditions = DEFAULT_TERMS
+            if not event.portal_theme_setting.terms_and_conditions:
+                event.portal_theme_setting.terms_and_conditions = DEFAULT_TERMS
                 updated = True
-            if not event.registration_theme_setting.faqs:
-                event.registration_theme_setting.faqs = DEFAULT_FAQS
-                updated = True
-
-        if not event.speaker_theme_setting:
-            event.speaker_theme_setting = SpeakerThemeSetting(
-                terms_and_conditions=DEFAULT_SPEAKER_TERMS,
-                faqs=DEFAULT_SPEAKER_FAQS
-            )
-            db.add(event.speaker_theme_setting)
-            updated = True
-        else:
-            if not event.speaker_theme_setting.terms_and_conditions:
-                event.speaker_theme_setting.terms_and_conditions = DEFAULT_SPEAKER_TERMS
-                updated = True
-            if not event.speaker_theme_setting.faqs:
-                event.speaker_theme_setting.faqs = DEFAULT_SPEAKER_FAQS
+            if not event.portal_theme_setting.faqs:
+                event.portal_theme_setting.faqs = DEFAULT_FAQS
                 updated = True
                 
     if updated:
         await db.commit()
+
         logger.info("Database default templates and FAQ/Terms settings auto-seeded/synced.")
 
 
@@ -433,6 +444,12 @@ async def ensure_plans_and_features():
                     feat.category_order = f_data["category_order"]
                     feat.feature_order = f_data["feature_order"]
                     feat.description = f_data["description"]
+
+            await db.execute(
+                update(FeatureCatalog)
+                .where(FeatureCatalog.key.in_(LEGACY_NON_ENFORCED_FEATURE_KEYS))
+                .values(is_active=False)
+            )
             
             await db.flush()
             
@@ -771,7 +788,7 @@ async def ensure_plans_and_features():
             # Sync FeatureCatalog value_type for numeric limit features
             await db.execute(
                 text("""
-                    UPDATE billing.feature_catalog
+                    UPDATE commerce.feature_catalog
                     SET value_type = 'LIMIT',
                         unit = CASE key
                             WHEN 'FEAT_TICKET_CATEGORIES' THEN 'categories'
@@ -787,10 +804,10 @@ async def ensure_plans_and_features():
             # Sync value_type and scope_type for all existing plan_features from feature_catalog
             await db.execute(
                 text("""
-                    UPDATE billing.plan_features pf
+                    UPDATE commerce.plan_features pf
                     SET value_type = fc.value_type,
                         scope_type = fc.scope_type
-                    FROM billing.feature_catalog fc
+                    FROM commerce.feature_catalog fc
                     WHERE pf.feature_id = fc.id
                       AND (pf.value_type != fc.value_type OR pf.scope_type != fc.scope_type)
                 """)
@@ -1038,35 +1055,6 @@ async def ensure_plans_and_features():
                     pass
 
             """
-            # 4. Seed Addon ↔ Feature Mappings
-            addon_feature_mappings = {
-                "ADDON_WHATSAPP": ["FEAT_WHATSAPP"],
-                "ADDON_EPOSTER": ["FEAT_EPOSTER_MGMT"],
-                "ADDON_WHITE_LABEL": ["FEAT_WHITE_LABEL"],
-            }
-            # Refresh addon map after possible inserts
-            refreshed_addons_res = await db.execute(select(Addon))
-            refreshed_addons = {a.key: a for a in refreshed_addons_res.scalars().all()}
-
-            for addon_key, feature_keys in addon_feature_mappings.items():
-                addon_obj = refreshed_addons.get(addon_key)
-                if not addon_obj:
-                    logger.warning(f"Addon key '{addon_key}' not found, skipping feature mapping.")
-                    continue
-                for feat_key in feature_keys:
-                    feat_obj = all_feats.get(feat_key)
-                    if not feat_obj:
-                        logger.warning(f"Feature key '{feat_key}' not found, skipping mapping for addon '{addon_key}'.")
-                        continue
-                    existing_mapping = await db.execute(
-                        select(AddonFeature).where(
-                            AddonFeature.addon_id == addon_obj.id,
-                            AddonFeature.feature_id == feat_obj.id
-                        )
-                    )
-                    if not existing_mapping.scalar_one_or_none():
-                        db.add(AddonFeature(addon_id=addon_obj.id, feature_id=feat_obj.id))
-                        logger.info(f"Seeded addon-feature mapping: {addon_key} -> {feat_key}")
             await db.flush()
             await db.commit()
             logger.info("Subscription plans and features seeded.")
@@ -1083,83 +1071,88 @@ async def ensure_admin_user():
     first super administrator must be provisioned through an audited one-off
     identity bootstrap process.
     """
-    # Seed RBAC first
-    await ensure_rbac_defaults()
-    
+    import app.models  # noqa: F401
+
     # Seed plans and features
     await ensure_plans_and_features()
-    
-    # Seed Email Templates
-    try:
-        from app.modules.notifications.tasks.seed_email_data import seed_templates
-        await seed_templates()
-    except Exception as e:
-        logger.error(f"Failed to seed email templates: {e}")
     
     async with AsyncSessionLocal() as db:
         try:
             # Seed event default settings if missing
             await ensure_event_settings_defaults(db)
 
-            # 1. Check if default org with slug "default-org" exists to migrate it
-            result = await db.execute(select(Organization).where(Organization.slug == "default-org"))
-            default_org = result.scalar_one_or_none()
-            if default_org:
-                logger.info("Migrating default organization slug/name to Eventos...")
-                default_org.name = "Eventos"
-                default_org.slug = "Eventos"
-                default_org.is_platform_org = True
-                await db.flush()
-
-            # 2. Check if any organization exists
-            result = await db.execute(select(Organization))
-            org = result.scalars().first()
-
-            if not org:
-                logger.info("No organization found. Creating default organization Eventos...")
-                org = Organization(
-                    id=uuid.uuid4(),
-                    name="Eventos",
-                    slug="Eventos",
-                    is_platform_org=True,
-                    is_internal_unrestricted=True,
+            await db.execute(
+                text(
+                    """
+                    UPDATE platform.organizations
+                    SET name = 'Eventos',
+                        slug = 'Eventos',
+                        is_platform_org = true
+                    WHERE slug = 'default-org'
+                    """
                 )
-                db.add(org)
-                await db.flush()
+            )
 
-            all_orgs_res = await db.execute(select(Organization))
+            org_id = await db.scalar(text("SELECT id FROM platform.organizations LIMIT 1"))
+            if not org_id:
+                org_id = uuid.uuid4()
+                logger.info("No organization found. Creating default organization Eventos...")
+                await db.execute(
+                    text(
+                        """
+                        INSERT INTO platform.organizations (
+                            id, name, slug, plan, is_platform_org,
+                            is_internal_unrestricted, event_count, primary_color,
+                            secondary_color, max_events, max_users, max_storage_gb,
+                            country, timezone, is_active, onboarding_completed,
+                            language, date_format, time_format, currency,
+                            onboarding_step, onboarding_draft, created_at, updated_at
+                        )
+                        VALUES (
+                            :id, 'Eventos', 'Eventos', 'trial', true,
+                            true, 0, '#6366f1', '#8b5cf6', 1, 2, 10,
+                            'IN', 'Asia/Kolkata', true, false,
+                            'English', 'DD/MM/YYYY', '24 Hour', 'INR (₹)',
+                            0, '{}'::jsonb, now(), now()
+                        )
+                        """
+                    ),
+                    {"id": org_id},
+                )
+
             # Startup validation keeps the durable bypass exclusive to the
             # canonical seed tenant. Clear any copied/invalid marker before
             # enabling Eventos so the partial unique index is never contested.
             invalid_unrestricted = await db.execute(
-                update(Organization)
-                .where(
-                    Organization.slug != "Eventos",
-                    Organization.is_internal_unrestricted.is_(True),
+                text(
+                    """
+                    UPDATE platform.organizations
+                    SET is_internal_unrestricted = false
+                    WHERE lower(slug) != 'eventos'
+                      AND is_internal_unrestricted = true
+                    """
                 )
-                .values(is_internal_unrestricted=False)
             )
             if invalid_unrestricted.rowcount:
                 logger.warning(
                     "Cleared is_internal_unrestricted from {} non-Eventos organization(s).",
                     invalid_unrestricted.rowcount,
                 )
-            await db.flush()
-
-            for target_org in all_orgs_res.scalars().all():
-                if target_org.slug != "Eventos":
-                    continue
-                
-                # This durable marker, not a subscription or legacy plan
-                # column, grants the canonical main tenant every capability
-                # with unlimited metered allowances.
-                target_org.is_platform_org = True
-                target_org.is_internal_unrestricted = True
-                await db.flush()
+            await db.execute(
+                text(
+                    """
+                    UPDATE platform.organizations
+                    SET is_platform_org = true,
+                        is_internal_unrestricted = true
+                    WHERE lower(slug) = 'eventos'
+                    """
+                )
+            )
                     
             # 2. Check if any Super Admin exists
-            result = await db.execute(select(User).where(User.role == "super_admin"))
-            super_admin = result.first()
+            super_admin = await db.scalar(
+                text("SELECT id FROM identity.users WHERE role = 'super_admin' LIMIT 1")
+            )
 
             if not super_admin:
                 if settings.is_production:
@@ -1171,17 +1164,35 @@ async def ensure_admin_user():
                 else:
                     admin_email = "admin@eventos.com"
                     logger.info(f"No Super Admin found. Creating local development admin {admin_email}...")
-                    admin = User(
-                        id=uuid.uuid4(),
-                        organization_id=org.id,
-                        email=admin_email,
-                        password_hash=hash_password("admin123"),
-                        first_name="Default",
-                        last_name="Admin",
-                        role="super_admin",
-                        is_active=True
+                    await db.execute(
+                        text(
+                            """
+                            INSERT INTO identity.users (
+                                id, organization_id, email, password_hash,
+                                first_name, last_name, role, is_active,
+                                is_platform_admin, is_2fa_enabled,
+                                notification_preferences, created_at
+                            )
+                            VALUES (
+                                :id, :organization_id, :email, :password_hash,
+                                'Default', 'Admin', 'super_admin', true,
+                                true, false,
+                                CAST(:notification_preferences AS jsonb), now()
+                            )
+                            """
+                        ),
+                        {
+                            "id": uuid.uuid4(),
+                            "organization_id": org_id,
+                            "email": admin_email,
+                            "password_hash": hash_password("admin123"),
+                            "notification_preferences": json.dumps({
+                                "email_alerts": True,
+                                "security_alerts": True,
+                                "marketing": False,
+                            }),
+                        },
                     )
-                    db.add(admin)
                     await db.commit()
                     logger.info("Created local development admin account.")
             else:

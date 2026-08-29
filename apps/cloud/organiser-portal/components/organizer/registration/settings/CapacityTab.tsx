@@ -184,7 +184,7 @@ export default function CapacityTab() {
           </Button>
           <Button
             onClick={openCreateModal}
-            className="bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white font-bold glass-3d flex items-center gap-2"
+            className="bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] font-bold glass-3d flex items-center gap-2"
           >
             <PlusCircle className="h-4 w-4" />
             Add Rule
@@ -327,150 +327,155 @@ export default function CapacityTab() {
 
       {/* Create / Edit Modal */}
       {ruleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="w-full max-w-md bg-[var(--surf)] border border-default p-6 rounded-2xl glass-3d space-y-6 shadow-2xl"
+            initial={{ scale: 0.95, opacity: 0, y: 10 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            className="w-full max-w-md bg-[var(--card)] border border-[var(--border-default)] p-5 rounded-lg space-y-4 shadow-2xl text-[var(--text-primary)]"
           >
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Box className="h-5 w-5 text-[var(--pri)]" />
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+              <h2 className="text-sm font-bold flex items-center gap-2 text-[var(--text-primary)]">
+                <Box className="size-4 text-[var(--pri)]" />
                 {selectedStatus ? "Modify Capacity Limit" : "New Capacity Policy"}
               </h2>
               <button 
+                type="button"
                 onClick={() => setRuleModalOpen(false)}
-                className="text-muted hover:text-white"
+                className="size-7 rounded-md border border-[var(--border-default)] bg-[var(--card)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer shadow-sm"
               >
-                <XCircleIcon className="h-5 w-5" />
+                <XCircleIcon className="size-3.5" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3 text-xs">
               {/* Level selection */}
               {!selectedStatus && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider">Policy Level</label>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Policy Level</label>
                   <select
                     value={level}
                     onChange={(e) => {
                       setLevel(e.target.value as any);
                       setTargetId("");
                     }}
-                    className="w-full rounded-md bg-background/50 border border-default p-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--pri)] text-white"
+                    className="w-full rounded-lg bg-[var(--bg-surface-2)] border border-[var(--border-default)] h-9 px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none focus:border-[var(--pri)] cursor-pointer"
                   >
-                    <option value="event" className="bg-[var(--surf)]">Event Intake</option>
-                    <option value="room" className="bg-[var(--surf)]">Specific Room</option>
-                    <option value="session" className="bg-[var(--surf)]">Specific Session</option>
+                    <option value="event">Event Intake</option>
+                    <option value="room">Specific Room</option>
+                    <option value="session">Specific Session</option>
                   </select>
                 </div>
               )}
 
               {/* Target entity selection */}
               {!selectedStatus && level === "room" && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider">Select Room</label>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Select Room</label>
                   <select
                     value={targetId}
                     onChange={(e) => setTargetId(e.target.value)}
-                    className="w-full rounded-md bg-background/50 border border-default p-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--pri)] text-white"
+                    className="w-full rounded-lg bg-[var(--bg-surface-2)] border border-[var(--border-default)] h-9 px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none focus:border-[var(--pri)] cursor-pointer"
                     required
                   >
                     <option value="">-- Choose Room --</option>
                     {rooms.map((r) => (
-                      <option key={r.id} value={r.id} className="bg-[var(--surf)]">{r.name}</option>
+                      <option key={r.id} value={r.id}>{r.name}</option>
                     ))}
                   </select>
                 </div>
               )}
 
               {!selectedStatus && level === "session" && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider">Select Session</label>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Select Session</label>
                   <select
                     value={targetId}
                     onChange={(e) => setTargetId(e.target.value)}
-                    className="w-full rounded-md bg-background/50 border border-default p-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--pri)] text-white"
+                    className="w-full rounded-lg bg-[var(--bg-surface-2)] border border-[var(--border-default)] h-9 px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none focus:border-[var(--pri)] cursor-pointer"
                     required
                   >
                     <option value="">-- Choose Session --</option>
                     {sessions.map((s) => (
-                      <option key={s.id} value={s.id} className="bg-[var(--surf)]">{s.name}</option>
+                      <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
                 </div>
               )}
 
               {selectedStatus && (
-                <div className="bg-background/40 p-3 rounded-lg border border-default text-xs">
+                <div className="bg-[var(--bg-surface-2)] p-2.5 rounded-lg border border-[var(--border-default)] text-xs">
                   Target: <strong className="text-[var(--pri)]">{selectedStatus.target_name}</strong> ({selectedStatus.level} level)
                 </div>
               )}
 
               {/* Capacity limit input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-muted uppercase tracking-wider">Seat Capacity Limit</label>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Seat Capacity Limit</label>
                 <Input
                   type="number"
                   value={capacity}
                   onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
                   placeholder="Maximum allowed attendees"
-                  className="bg-background/50 border-default focus-visible:ring-[var(--pri)]"
+                  className="h-9 bg-[var(--bg-surface-2)] border-[var(--border-default)] rounded-lg text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
                 />
               </div>
 
               {/* Toggles */}
-              <div className="space-y-3 pt-2">
+              <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-semibold">Enable Waitlist</div>
-                    <div className="text-xs text-muted">Hold submissions in queue when capacity limit is reached.</div>
+                    <div className="text-xs font-semibold text-[var(--text-primary)]">Enable Waitlist</div>
+                    <div className="text-[11px] text-[var(--text-secondary)]">Hold submissions in queue when capacity limit is reached.</div>
                   </div>
                   <button 
+                    type="button"
                     onClick={() => setWaitlistEnabled(!waitlistEnabled)}
-                    className="text-[var(--pri)] hover:opacity-80 transition-opacity"
+                    className="text-[var(--pri)] cursor-pointer"
                   >
                     {waitlistEnabled ? (
-                      <ToggleRight className="h-8 w-8 text-[var(--pri)]" />
+                      <ToggleRight className="size-6 text-[var(--pri)]" />
                     ) : (
-                      <ToggleLeft className="h-8 w-8 text-muted" />
+                      <ToggleLeft className="size-6 text-[var(--text-tertiary)]" />
                     )}
                   </button>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-semibold">Auto-Promote (FIFO)</div>
-                    <div className="text-xs text-muted">Automatically promote waitlisted users if seats free up.</div>
+                    <div className="text-xs font-semibold text-[var(--text-primary)]">Auto-Promote (FIFO)</div>
+                    <div className="text-[11px] text-[var(--text-secondary)]">Automatically promote waitlisted users if seats free up.</div>
                   </div>
                   <button 
+                    type="button"
                     onClick={() => setAutoPromote(!autoPromote)}
-                    className="text-[var(--pri)] hover:opacity-80 transition-opacity"
+                    className="text-[var(--pri)] cursor-pointer"
                   >
                     {autoPromote ? (
-                      <ToggleRight className="h-8 w-8 text-[var(--pri)]" />
+                      <ToggleRight className="size-6 text-[var(--pri)]" />
                     ) : (
-                      <ToggleLeft className="h-8 w-8 text-muted" />
+                      <ToggleLeft className="size-6 text-[var(--text-tertiary)]" />
                     )}
                   </button>
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button
-                variant="outline"
-                onClick={() => setRuleModalOpen(false)}
-                className="glass-3d"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={submitRule}
-                className="bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white font-bold"
-              >
-                Save Policy
-              </Button>
+              <div className="flex gap-2 pt-3 border-t border-[var(--border-subtle)]">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setRuleModalOpen(false)}
+                  className="flex-1 h-9 rounded-lg border border-[var(--border-default)] bg-[var(--card)] text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={submitRule}
+                  disabled={loading}
+                  className="flex-1 h-9 rounded-lg bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] font-bold text-xs shadow-sm border-0 cursor-pointer"
+                >
+                  {loading ? "Saving..." : "Save Policy"}
+                </Button>
+              </div>
             </div>
           </motion.div>
         </div>

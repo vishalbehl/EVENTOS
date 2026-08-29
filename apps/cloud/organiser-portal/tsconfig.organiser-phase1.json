@@ -1,0 +1,42 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "app/(dashboard)/layout.tsx",
+    "app/(dashboard)/dashboard/page.tsx",
+    "app/(dashboard)/organisation/**/*.tsx",
+    "app/(dashboard)/people-teams/**/*.tsx",
+    "app/(dashboard)/access-roles/**/*.tsx",
+    "app/(dashboard)/plans-entitlements/**/*.tsx",
+    "app/(dashboard)/billing/*/page.tsx",
+    "app/(dashboard)/reports/**/*.tsx",
+    "app/(dashboard)/settings/general/page.tsx",
+    "app/(dashboard)/settings/notifications/page.tsx",
+    "app/(dashboard)/settings/integrations/page.tsx",
+    "app/(dashboard)/settings/security/page.tsx",
+    "app/(dashboard)/settings/branding/page.tsx",
+    "app/(dashboard)/settings/custom-fields/page.tsx",
+    "app/(dashboard)/settings/developer/page.tsx",
+    "app/(dashboard)/settings/audit/page.tsx",
+    "app/(dashboard)/events/page.tsx",
+    "app/(dashboard)/events/all/page.tsx",
+    "app/(dashboard)/events/live/page.tsx",
+    "app/(dashboard)/events/upcoming/page.tsx",
+    "app/(dashboard)/events/completed/page.tsx",
+    "app/(dashboard)/events/drafts/page.tsx",
+    "components/organizer/workspace/**/*.tsx",
+    "components/organizer/layout/**/*.tsx",
+    "components/organizer/org/org-api.ts",
+    "components/ui/**/*.tsx",
+    "hooks/useOrganiserDashboard.ts",
+    "hooks/useBilling.ts",
+    "hooks/useEvents.ts",
+    "lib/**/*.ts",
+    "store/**/*.ts"
+  ],
+  "exclude": [
+    "components/organizer/emails/designer/**",
+    "app/**/design-studio/**",
+    "../../../packages/email-builder-studio/**"
+  ]
+}

@@ -8,10 +8,10 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
-from app.modules.events.models.session_speaker import SessionSpeaker
-from app.modules.events.models.room import Room
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
+from app.modules.agenda.models import Room
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_role import ParticipantRole

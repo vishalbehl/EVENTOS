@@ -7,6 +7,9 @@ from app.node_replica import NodeReplica
 def test_node_replica_persists_event_snapshot_and_deduplicates_outbox(tmp_path):
     replica = NodeReplica(tmp_path / "node.db")
     admin_row = replica.connection.execute("SELECT username,role,allowed_modes,password_hash FROM local_users WHERE username='admin'").fetchone()
+    assert admin_row is None
+    replica.ensure_default_admin("venue.admin", "test-password-with-strong-length", "venue.admin@example.test")
+    admin_row = replica.connection.execute("SELECT username,role,allowed_modes,password_hash FROM local_users WHERE username='venue.admin'").fetchone()
     assert admin_row["role"] == "super_admin"
     assert json.loads(admin_row["allowed_modes"]) == ["admin"]
     assert admin_row["password_hash"].startswith("pbkdf2_sha256$")

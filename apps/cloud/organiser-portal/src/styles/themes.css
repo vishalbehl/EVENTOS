@@ -1,65 +1,74 @@
-/* ============================================================
-   EVENTOS — Theme Definitions
-   Only two themes: dark (default) and light
-   Token application is in globals.css via .dark class
-   ============================================================ */
-
-/* Dark mode surfaces (applied via .dark on <html>) */
-/* All dark tokens are defined in globals.css .dark block */
-
-/* Light mode surfaces (applied via removing .dark from <html>) */
-/* All light tokens are defined in globals.css :root block */
-
-/* Legacy data-theme attribute — kept for backward compat, maps to dark only */
 :root,
-[data-theme="dark"] {
-  color-scheme: dark;
-}
-
 [data-theme="light"] {
   color-scheme: light;
+  --base: #f0f1f3;
+  --surf: #ffffff;
+  --card: #ffffff;
+  --raised: #f7f7f8;
+  --inset: #f3f3f4;
+  --border: #e3e4e7;
+  --text: #202124;
+  --muted: #55585d;
+  --pri: #252629;
+  --sec: #3d3f43;
+  --acc: #2f58bf;
+  --warn: #765000;
+  --dan: #b3263a;
+  --success: #0f6f3e;
+  --shadow-color: 28 31 36;
+  --theme-light-base: #f0f1f3;
+  --theme-light-pri: #252629;
+  --primary-contrast: #ffffff;
+  --primary-foreground: #ffffff;
+  --theme-dark-base: #050505;
+  --theme-dark-pri: #f4f4f5;
 }
 
-/* App wallpaper / radial gradient overlays — controlled by JS */
-[data-wallpaper="on"] .bg-app-wallpaper {
-  opacity: 1;
-}
-[data-wallpaper="off"] .bg-app-wallpaper {
-  opacity: 0;
-}
-
-/* Global select native dropdown theming */
-select {
-  background-color: var(--color-surface-2) !important;
-  border: 1px solid var(--color-border) !important;
-  border-radius: var(--radius-sm) !important;
-  color: var(--color-text-primary) !important;
-  font-family: var(--font-sans) !important;
-  font-weight: 500 !important;
-  outline: none !important;
-  transition: all var(--duration-base) var(--ease-smooth) !important;
-  cursor: pointer !important;
-  caret-color: var(--color-primary-mid) !important;
-  -webkit-text-fill-color: var(--color-text-primary) !important;
+[data-theme="dark"] {
+  color-scheme: dark;
+  --base: #050505;
+  --surf: #111111;
+  --card: #0a0a0a;
+  --raised: #121212;
+  --inset: #1b1b1d;
+  --border: #303034;
+  --text: #f7f7f8;
+  --muted: #929298;
+  --pri: #f4f4f5;
+  --sec: #d4d4d8;
+  --acc: #a1a1aa;
+  --warn: #ff9f2f;
+  --dan: #ff4d57;
+  --success: #2ed57b;
+  --primary-contrast: #09090b;
+  --primary-foreground: #09090b;
+  --shadow-color: 0 0 0;
 }
 
-select:hover {
-  border-color: color-mix(in srgb, var(--color-text-primary) 20%, var(--color-border)) !important;
-}
-
-select:focus {
-  border-color: var(--color-primary-end) !important;
-  box-shadow: 0 0 0 3px var(--color-primary-glow) !important;
-}
-
-select option,
-select optgroup {
-  background-color: var(--color-surface-2) !important;
-  color: var(--color-text-primary) !important;
-  font-weight: 500 !important;
-}
-
-select option:checked {
-  background: linear-gradient(135deg, rgba(224, 255, 0, 0.18), rgba(224, 255, 0, 0.08)) !important;
-  color: var(--color-text-primary) !important;
+/* Compatibility for saved preferences created before the paired theme system. */
+[data-theme="plasma-violet"],
+[data-theme="void-indigo"],
+[data-theme="obsidian-rose"],
+[data-theme="carbon-teal"],
+[data-theme="amber-noir"],
+[data-theme="slate-aurora"],
+[data-theme="forest-ink"],
+[data-theme="copper-oxide"] {
+  color-scheme: dark;
+  --base: #050505;
+  --surf: #111111;
+  --card: #0a0a0a;
+  --raised: #121212;
+  --inset: #1b1b1d;
+  --border: #303034;
+  --text: #f7f7f8;
+  --muted: #929298;
+  --pri: #f4f4f5;
+  --sec: #d4d4d8;
+  --acc: #a1a1aa;
+  --warn: #ff9f2f;
+  --dan: #ff4d57;
+  --success: #2ed57b;
+  --primary-contrast: #09090b;
+  --shadow-color: 0 0 0;
 }

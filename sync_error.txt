@@ -1,1 +1,1 @@
-HTTP 403: {"detail":"Fetch API key has expired."}
+HTTP 500: Internal Server Error

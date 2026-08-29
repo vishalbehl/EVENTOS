@@ -315,4 +315,59 @@ describe('canonical website document lifecycle', () => {
     });
     expect(document.instances.hero.props.attributes).not.toHaveProperty('data-event-name');
   });
+
+  it('handles 50 pages and 5,000 instances with stable checksums and zero validation errors', () => {
+    useWebsiteDocumentStore.getState().initialize(project);
+    const store = useWebsiteDocumentStore.getState();
+
+    // Create 48 more pages to reach 50 pages total
+    for (let p = 3; p <= 50; p++) {
+      store.createPage(`Page ${p}`);
+    }
+
+    const doc50 = JSON.parse(JSON.stringify(useWebsiteDocumentStore.getState().document!));
+    expect(doc50.pages).toHaveLength(50);
+
+    // Populate instances across pages to reach ~5,000 instances
+    // Each page gets a cluster of sections, headings, cards, and buttons
+    const targetInstancesPerPage = 98;
+    doc50.pages.forEach((page: any, pageIdx: number) => {
+      const rootId = page.rootInstanceId;
+      for (let i = 0; i < targetInstancesPerPage; i++) {
+        const instId = `inst_p${pageIdx}_${i}`;
+        doc50.instances[instId] = {
+          id: instId,
+          componentType: i % 4 === 0 ? 'section' : i % 4 === 1 ? 'heading' : i % 4 === 2 ? 'card' : 'button',
+          componentVersion: 1,
+          parentId: rootId,
+          children: [],
+          props: {
+            content: `Item ${i} on ${page.name}`,
+            attributes: { 'data-index': String(i) },
+          },
+          styles: { desktop: { padding: '12px' } },
+          bindings: [],
+          states: {},
+        };
+        doc50.instances[rootId].children.push(instId);
+      }
+    });
+
+    const totalInstances = Object.keys(doc50.instances).length;
+    expect(totalInstances).toBeGreaterThanOrEqual(5000);
+
+    // Validate the stress document
+    const errors = validateWebsiteDocument(doc50);
+    expect(errors).toEqual([]);
+
+    // Round-trip serialize through project adapter
+    const projectData = projectDataFromWebsiteDocument(doc50);
+    const reloaded = ensureWebsiteDocument(projectData);
+
+    expect(reloaded.pages).toHaveLength(50);
+    expect(Object.keys(reloaded.instances).length).toBe(totalInstances);
+    expect(validateWebsiteDocument(reloaded)).toEqual([]);
+    expect(reloaded.checksum).toBeDefined();
+  });
 });
+

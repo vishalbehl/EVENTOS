@@ -369,7 +369,7 @@ export default function EventSettingsPage() {
               className={cn(
                 "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 flex items-center gap-2",
                 activeTab === t.id
-                  ? "bg-[var(--pri)] text-white shadow-lg shadow-[var(--pri)]/20"
+                  ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-lg shadow-[var(--pri)]/20"
                   : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-white/5"
               )}
             >
@@ -454,7 +454,7 @@ export default function EventSettingsPage() {
                     </Button>
                     <Button
                       onClick={() => setActiveTab("venue")}
-                      className="rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-[9px] font-black uppercase tracking-wider h-9 shadow-lg shadow-[var(--pri)]/20"
+                      className="rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-[var(--primary-contrast)] text-[9px] font-black uppercase tracking-wider h-9 shadow-lg shadow-[var(--pri)]/20"
                     >
                       Edit Venue setup
                     </Button>
@@ -685,7 +685,7 @@ export default function EventSettingsPage() {
                     <Button
                       onClick={handleSave}
                       disabled={isSaving}
-                      className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5"
+                      className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-[var(--primary-contrast)] text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5"
                     >
                       {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       <span>Save & Apply Venue Settings</span>
@@ -901,7 +901,7 @@ export default function EventSettingsPage() {
 
                     {isAdmin && (
                       <div className="flex justify-end pt-4 border-t border-white/5">
-                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
+                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-[var(--primary-contrast)] text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
                           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                           <span>Apply Configuration</span>
                         </Button>
@@ -951,7 +951,7 @@ export default function EventSettingsPage() {
 
                     {isAdmin && (
                       <div className="flex justify-end pt-4 border-t border-white/5">
-                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
+                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-[var(--primary-contrast)] text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
                           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                           <span>Save Settings</span>
                         </Button>
@@ -967,7 +967,7 @@ export default function EventSettingsPage() {
                   <Card className="glass-3d border-default p-6 rounded-[2rem] bg-[color-mix(in_srgb,var(--text)_3%,transparent)] space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {capabilitiesLoading ? (
-                        <p className="col-span-full text-xs text-muted">Loading contract capabilitiesâ€¦</p>
+                        <p className="col-span-full text-xs text-muted">Loading contract capabilities</p>
                       ) : capabilitiesError ? (
                         <p className="col-span-full text-xs text-rose-400">Capability service is unavailable. No feature is assumed enabled.</p>
                       ) : Object.values(capabilityData?.features ?? {}).slice(0, 8).map((feature) => (
@@ -1016,7 +1016,7 @@ export default function EventSettingsPage() {
 
                     {isAdmin && (
                       <div className="flex justify-end pt-4 border-t border-white/5">
-                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
+                        <Button onClick={handleSave} disabled={isSaving} className="px-6 py-2 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-[var(--primary-contrast)] text-xs font-black uppercase tracking-wider h-11 shadow-lg shadow-[var(--pri)]/20 flex items-center gap-1.5">
                           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                           <span>Apply Policies</span>
                         </Button>

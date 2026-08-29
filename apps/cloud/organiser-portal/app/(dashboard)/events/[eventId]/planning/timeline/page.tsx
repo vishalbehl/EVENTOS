@@ -266,7 +266,7 @@ export default function WorkflowsPage() {
             <button 
               onClick={() => handleTriggerWorkflow(workflows[0].id)}
               disabled={triggering}
-              className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider text-white bg-[var(--pri)] hover:bg-[var(--pri)]/80 transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-wider text-[var(--primary-contrast)] bg-[var(--pri)] hover:bg-[var(--pri)]/80 transition-all disabled:opacity-50"
             >
               <Play className="h-4 w-4 fill-white" />
               {triggering ? "Running..." : "Trigger Workflow"}

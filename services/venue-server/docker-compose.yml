@@ -11,12 +11,22 @@ services:
       - "5433:5432" # Expose to host on 5433 to avoid conflict if cloud DB is running locally
     volumes:
       - venue-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d venue_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 
   venue-redis:
     image: redis:7-alpine
     ports:
       - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 
   venue-minio:
@@ -30,6 +40,11 @@ services:
       - "9001:9001"
     volumes:
       - venue-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 
   venue-api:
@@ -45,11 +60,15 @@ services:
       - MINIO_SECURE=False
       - LOCAL_BUCKET_NAME=venue-presentations
       - CLOUD_API_URL=http://host.docker.internal:8000 # Assuming cloud is local
-      - VENUE_AUTH_KEY=venue_secret_key
+      - VENUE_AUTH_KEY=${VENUE_AUTH_KEY:?VENUE_AUTH_KEY must be provisioned}
+      - VENUE_AUTH_SECRET=${VENUE_AUTH_SECRET:?VENUE_AUTH_SECRET must be provisioned}
     depends_on:
-      - venue-db
-      - venue-redis
-      - venue-minio
+      venue-db:
+        condition: service_healthy
+      venue-redis:
+        condition: service_healthy
+      venue-minio:
+        condition: service_healthy
     restart: always
 
 volumes:

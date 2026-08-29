@@ -58,7 +58,7 @@ async def list_posters(
 ) -> List[PosterResponse]:
     """List ePosters for this event. Supports filtering by status and screen."""
     from app.modules.events.models.speaker import Speaker
-    from app.modules.events.models.session import Session
+    from app.modules.agenda.models import Session
     from sqlalchemy import or_
 
     q = select(Poster, Speaker.first_name, Speaker.last_name, Speaker.email).outerjoin(Speaker, Poster.speaker_id == Speaker.id).where(Poster.event_id == event.id)
@@ -487,7 +487,7 @@ async def batch_approve_posters(
     # Enforce assignments for restricted roles
     if current_user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         from app.modules.rbac.models.user_assignment import UserEventAssignment
         from sqlalchemy import or_, and_
 
@@ -601,7 +601,7 @@ async def batch_update_posters_status(
     # Enforce assignments for restricted roles
     if current_user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         from app.modules.rbac.models.user_assignment import UserEventAssignment
         from sqlalchemy import or_, and_
 
@@ -666,7 +666,7 @@ async def batch_delete_posters(
     # Enforce assignments for restricted roles
     if user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         from app.modules.rbac.models.user_assignment import UserEventAssignment
         from sqlalchemy import or_, and_
 
@@ -728,7 +728,7 @@ async def _get_poster_or_404(
     # Enforce assignments for restricted roles
     if user and user.role not in ["super_admin", "admin", "organiser"]:
         from app.modules.rbac.models.rbac import UserAccessNode
-        from app.modules.events.models.session import Session
+        from app.modules.agenda.models import Session
         from sqlalchemy import or_, and_
 
         # Check if assigned to the event, or the specific session/room of this poster

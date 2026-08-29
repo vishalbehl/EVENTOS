@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import CurrentEvent, get_db, get_current_user
 from app.modules.presentations.models.presentation_bundle import BundleFile, ChainMode, PresentationBundle
 from app.modules.presentations.models.presentation_file import PresentationFile
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.identity.models.user import User
 from app.modules.presentations.schemas.bundle import BundleCreate, BundleResponse
 from app.core.dependencies.feature_gate import require_event_operation

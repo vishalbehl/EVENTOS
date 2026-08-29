@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -13,6 +13,7 @@ from app.database import SoftDeleteMixin
 
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
+    from app.modules.agenda.models.track import AgendaTrack
     from app.modules.registration.models.participant_role import ParticipantRole
 
 
@@ -21,6 +22,7 @@ class Participant(Base, SoftDeleteMixin):
     Conference delegates / participants registered for on-site execution.
     """
     __tablename__ = "participants"
+    __table_args__ = {"schema": "registration"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -39,7 +41,16 @@ class Participant(Base, SoftDeleteMixin):
     
     role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("registration.roles.id", ondelete="SET NULL"),
+        ForeignKey("registration.participant_roles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    roles: Mapped[List[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    track_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agenda.tracks.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -47,6 +58,7 @@ class Participant(Base, SoftDeleteMixin):
     company: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     designation: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
     
     approval_status: Mapped[str] = mapped_column(String(50), nullable=False, default="Approved")
     paid_status: Mapped[str] = mapped_column(String(30), nullable=False, default="Unpaid")
@@ -83,7 +95,13 @@ class Participant(Base, SoftDeleteMixin):
             self.first_name = ""
             self.last_name = ""
             return
-        parts = val.strip().split(" ", 1)
+        cleaned = val.strip()
+        title_prefixes = ("dr. ", "dr ", "prof. ", "prof ", "mr. ", "mr ", "mrs. ", "mrs ", "ms. ", "ms ", "mx. ")
+        for pfx in title_prefixes:
+            if cleaned.lower().startswith(pfx):
+                cleaned = cleaned[len(pfx):].strip()
+                break
+        parts = cleaned.split(" ", 1)
         self.first_name = parts[0]
         self.last_name = parts[1] if len(parts) > 1 else ""
 

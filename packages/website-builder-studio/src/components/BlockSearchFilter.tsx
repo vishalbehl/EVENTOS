@@ -183,14 +183,15 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
             onClick={() => setActiveCategory(cat.id)}
             style={{
               flex: '0 0 auto',
-              padding: '7px 12px',
+              padding: '6px 12px',
               borderRadius: 7,
-              border: activeCategory === cat.id ? '1px solid color-mix(in srgb, var(--primary) 65%, transparent)' : '1px solid var(--border)',
-              background: activeCategory === cat.id ? 'color-mix(in srgb, var(--primary) 18%, transparent)' : 'var(--bg-surface-hover, rgba(255,255,255,0.04))',
-              color: activeCategory === cat.id ? 'var(--pri, var(--primary))' : 'var(--foreground)',
+              border: activeCategory === cat.id ? '1px solid var(--pri, var(--primary))' : '1px solid var(--border)',
+              background: activeCategory === cat.id ? 'var(--pri, var(--primary))' : 'var(--inset)',
+              color: activeCategory === cat.id ? 'var(--primary-contrast, #ffffff)' : 'var(--text)',
               fontSize: 11,
               fontWeight: 700,
               cursor: 'pointer',
+              transition: 'all 0.15s ease',
             }}
           >
             {cat.label}
@@ -206,10 +207,10 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
           style={{
             width: '100%',
             padding: '8px 10px',
-            background: 'var(--bg-surface-hover, rgba(255,255,255,0.04))',
+            background: 'var(--inset)',
             border: '1px solid var(--border)',
-            borderRadius: 8,
-            color: 'var(--foreground)',
+            borderRadius: 7,
+            color: 'var(--text)',
             fontSize: 12,
             outline: 'none',
             boxSizing: 'border-box',
@@ -218,12 +219,12 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
           }}
         >
           {CATEGORIES.map(cat => (
-            <option key={cat.id} value={cat.id} style={{ background: 'var(--card)', color: '#fff' }}>
+            <option key={cat.id} value={cat.id} style={{ background: 'var(--surf, var(--card))', color: 'var(--text)' }}>
               {cat.label}
             </option>
           ))}
         </select>
-        <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--muted-foreground)' }}>
+        <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--muted)' }}>
           ▼
         </div>
       </div>
@@ -235,7 +236,7 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
-          style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, color: 'var(--muted-foreground)', pointerEvents: 'none' }}
+          style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, color: 'var(--muted)', pointerEvents: 'none' }}
         >
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -249,14 +250,14 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
           style={{
             width: '100%',
             padding: '8px 10px 8px 30px',
-            background: 'var(--bg-surface-hover, rgba(255,255,255,0.04))',
+            background: 'var(--inset)',
             border: '1px solid var(--border)',
-            borderRadius: 8,
-            color: 'var(--foreground)',
+            borderRadius: 7,
+            color: 'var(--text)',
             fontSize: 12,
             outline: 'none',
             boxSizing: 'border-box',
-            transition: 'border-color 0.2s',
+            transition: 'border-color 0.15s ease',
           }}
           onFocus={e => { e.target.style.borderColor = 'var(--pri, var(--primary))'; }}
           onBlur={e => { e.target.style.borderColor = 'var(--border)'; }}
@@ -264,7 +265,7 @@ export const BlockSearchFilter: React.FC<BlockSearchFilterProps> = ({ editor }) 
         {query && (
           <button
             onClick={() => setQuery('')}
-            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: 'var(--muted-foreground)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 2 }}
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 2 }}
             title="Clear"
           >
             ✕

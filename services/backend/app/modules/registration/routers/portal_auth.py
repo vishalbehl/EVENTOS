@@ -38,7 +38,7 @@ router = APIRouter(prefix="/portal/auth", tags=["portal-auth"])
 # ── Constants ─────────────────────────────────────────────────────────────
 _OTP_TTL_MINUTES = 10
 _THROTTLE_WINDOW_MINUTES = 15
-_THROTTLE_MAX_REQUESTS = 3
+_THROTTLE_MAX_REQUESTS = 5
 _MAX_VERIFY_ATTEMPTS = 5
 _JWT_ALGORITHM = "HS256"
 _JWT_TTL_DAYS = 7
@@ -47,23 +47,28 @@ _JWT_TTL_DAYS = 7
 # ── Pydantic schemas ───────────────────────────────────────────────────────
 
 class OtpRequestBody(BaseModel):
-    email: EmailStr
-    event_id: uuid.UUID
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    event_id: Optional[uuid.UUID] = None
 
 
 class OtpVerifyBody(BaseModel):
-    email: EmailStr
-    event_id: uuid.UUID
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    event_id: Optional[uuid.UUID] = None
     otp: str
 
 
 class TokenResponse(BaseModel):
     access_token: str
+    token: str
     token_type: str = "bearer"
+    dev_otp: Optional[str] = None
 
 
 class MessageResponse(BaseModel):
     message: str
+    dev_otp: Optional[str] = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -93,7 +98,7 @@ async def _get_event(event_id: uuid.UUID, db: AsyncSession) -> Optional[Event]:
 
 
 async def _throttle_check(email: str, event_id: uuid.UUID, db: AsyncSession) -> None:
-    """Raise 429 if 3+ OTP rows exist in the last 15 min for this email+event."""
+    """Raise 429 if 5+ OTP rows exist in the last 15 min for this email+event."""
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=_THROTTLE_WINDOW_MINUTES)
     stmt = select(func.count()).where(
         and_(
@@ -117,8 +122,8 @@ async def _create_and_send_otp(
     event_id: uuid.UUID,
     event_name: str,
     db: AsyncSession,
-) -> None:
-    """Insert a new OTP token row and dispatch the email."""
+) -> str:
+    """Insert a new OTP token row and dispatch the email. Returns plain OTP."""
     otp = _generate_otp()
     token = PortalOtpToken(
         email=email.lower(),
@@ -161,6 +166,7 @@ async def _create_and_send_otp(
         event_id=event_id,
         db=db,
     )
+    return otp
 
 
 def _issue_portal_jwt(email: str, event_id: uuid.UUID) -> str:
@@ -174,7 +180,7 @@ def _issue_portal_jwt(email: str, event_id: uuid.UUID) -> str:
         "email": email.lower(),
         "event_id": str(event_id),
         "role": "portal_attendee",
-        "exp": datetime.utcnow() + timedelta(days=_JWT_TTL_DAYS),
+        "exp": datetime.now(timezone.utc) + timedelta(days=_JWT_TTL_DAYS),
     }
     return jwt.encode(payload, settings.PORTAL_JWT_SECRET, algorithm=_JWT_ALGORITHM)
 
@@ -182,21 +188,34 @@ def _issue_portal_jwt(email: str, event_id: uuid.UUID) -> str:
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
 @router.post("/request-otp", response_model=MessageResponse)
+@router.post("/{event_id}/request-otp", response_model=MessageResponse)
 async def request_otp(
     body: OtpRequestBody,
+    event_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Step 1: attendee enters their email.
+    Step 1: attendee enters their email or phone.
     Always returns HTTP 200 — no email enumeration.
     """
-    event = await _get_event(body.event_id, db)
+    eff_event_id = event_id or body.event_id
+    if not eff_event_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event ID is required.",
+        )
+
+    target_email = body.email or (f"{body.phone.strip()}@phone.eventos.local" if body.phone else None)
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email or phone number is required.",
+        )
+
+    event = await _get_event(eff_event_id, db)
 
     # Guard: event must exist and registration must be open
     if not event or not event.registration_allowed:
-        # Return 403 only for the registration-closed case so the UI can
-        # show a static message. For a non-existent event we also 403 to
-        # avoid leaking event existence.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration is not open for this event.",
@@ -208,13 +227,14 @@ async def request_otp(
         "registration.submit",
     )
 
-    await _throttle_check(body.email, body.event_id, db)
+    await _throttle_check(target_email, eff_event_id, db)
 
+    dev_otp_value: Optional[str] = None
     # Create & send OTP (best-effort — do not reveal send failure to caller)
     try:
-        await _create_and_send_otp(
-            email=body.email,
-            event_id=body.event_id,
+        dev_otp_value = await _create_and_send_otp(
+            email=target_email,
+            event_id=eff_event_id,
             event_name=event.name,
             db=db,
         )
@@ -225,25 +245,45 @@ async def request_otp(
     logger.info(
         "otp_requested",
         extra={
-            "event_id": str(body.event_id),
-            "email_hash": _email_sha256(body.email),
+            "event_id": str(eff_event_id),
+            "email_hash": _email_sha256(target_email),
             "action": "otp_requested",
         },
     )
 
-    return MessageResponse(message="OTP sent if account exists.")
+    is_dev = getattr(settings, "ENVIRONMENT", "development") != "production"
+    return MessageResponse(
+        message="OTP sent if account exists.",
+        dev_otp=dev_otp_value if is_dev else None,
+    )
 
 
 @router.post("/verify-otp", response_model=TokenResponse)
+@router.post("/{event_id}/verify-otp", response_model=TokenResponse)
 async def verify_otp(
     body: OtpVerifyBody,
+    event_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Step 2: attendee submits the 6-digit OTP.
     On success issues a 7-day portal JWT.
     """
-    event = await _get_event(body.event_id, db)
+    eff_event_id = event_id or body.event_id
+    if not eff_event_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event ID is required.",
+        )
+
+    target_email = body.email or (f"{body.phone.strip()}@phone.eventos.local" if body.phone else None)
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email or phone number is required.",
+        )
+
+    event = await _get_event(eff_event_id, db)
     if event is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -262,8 +302,8 @@ async def verify_otp(
         select(PortalOtpToken)
         .where(
             and_(
-                PortalOtpToken.email == body.email.lower(),
-                PortalOtpToken.event_id == body.event_id,
+                PortalOtpToken.email == target_email.lower(),
+                PortalOtpToken.event_id == eff_event_id,
                 PortalOtpToken.used == False,  # noqa: E712
                 PortalOtpToken.expires_at > now,
             )
@@ -278,8 +318,8 @@ async def verify_otp(
         logger.info(
             "otp_verify_failed",
             extra={
-                "event_id": str(body.event_id),
-                "email_hash": _email_sha256(body.email),
+                "event_id": str(eff_event_id),
+                "email_hash": _email_sha256(target_email),
                 "action": "otp_not_found",
             },
         )
@@ -296,8 +336,8 @@ async def verify_otp(
         logger.info(
             "otp_verify_failed",
             extra={
-                "event_id": str(body.event_id),
-                "email_hash": _email_sha256(body.email),
+                "event_id": str(eff_event_id),
+                "email_hash": _email_sha256(target_email),
                 "action": "otp_max_attempts",
             },
         )
@@ -311,8 +351,8 @@ async def verify_otp(
         logger.info(
             "otp_verify_failed",
             extra={
-                "event_id": str(body.event_id),
-                "email_hash": _email_sha256(body.email),
+                "event_id": str(eff_event_id),
+                "email_hash": _email_sha256(target_email),
                 "action": "otp_mismatch",
             },
         )
@@ -326,30 +366,46 @@ async def verify_otp(
     token_row.used = True
     await db.commit()
 
-    access_token = _issue_portal_jwt(body.email, body.event_id)
+    access_token = _issue_portal_jwt(target_email, eff_event_id)
 
     logger.info(
         "otp_verify_success",
         extra={
-            "event_id": str(body.event_id),
-            "email_hash": _email_sha256(body.email),
+            "event_id": str(eff_event_id),
+            "email_hash": _email_sha256(target_email),
             "action": "otp_verified",
         },
     )
 
-    return TokenResponse(access_token=access_token)
+    return TokenResponse(access_token=access_token, token=access_token)
 
 
 @router.post("/resend-otp", response_model=MessageResponse)
+@router.post("/{event_id}/resend-otp", response_model=MessageResponse)
 async def resend_otp(
     body: OtpRequestBody,
+    event_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Invalidate existing OTPs and send a fresh one.
     Uses same throttle logic as request-otp.
     """
-    event = await _get_event(body.event_id, db)
+    eff_event_id = event_id or body.event_id
+    if not eff_event_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event ID is required.",
+        )
+
+    target_email = body.email or (f"{body.phone.strip()}@phone.eventos.local" if body.phone else None)
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email or phone number is required.",
+        )
+
+    event = await _get_event(eff_event_id, db)
     if not event or not event.registration_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -362,14 +418,14 @@ async def resend_otp(
         "registration.submit",
     )
 
-    await _throttle_check(body.email, body.event_id, db)
+    await _throttle_check(target_email, eff_event_id, db)
 
     # Mark all existing unused tokens as used
     now = datetime.now(timezone.utc)
     stmt = select(PortalOtpToken).where(
         and_(
-            PortalOtpToken.email == body.email.lower(),
-            PortalOtpToken.event_id == body.event_id,
+            PortalOtpToken.email == target_email.lower(),
+            PortalOtpToken.event_id == eff_event_id,
             PortalOtpToken.used == False,  # noqa: E712
         )
     )
@@ -377,11 +433,12 @@ async def resend_otp(
     for row in result.scalars().all():
         row.used = True
 
+    dev_otp_value: Optional[str] = None
     # Send fresh OTP
     try:
-        await _create_and_send_otp(
-            email=body.email,
-            event_id=body.event_id,
+        dev_otp_value = await _create_and_send_otp(
+            email=target_email,
+            event_id=eff_event_id,
             event_name=event.name,
             db=db,
         )
@@ -392,10 +449,14 @@ async def resend_otp(
     logger.info(
         "otp_resent",
         extra={
-            "event_id": str(body.event_id),
-            "email_hash": _email_sha256(body.email),
+            "event_id": str(eff_event_id),
+            "email_hash": _email_sha256(target_email),
             "action": "otp_resent",
         },
     )
 
-    return MessageResponse(message="OTP sent if account exists.")
+    is_dev = getattr(settings, "ENVIRONMENT", "development") != "production"
+    return MessageResponse(
+        message="OTP sent if account exists.",
+        dev_otp=dev_otp_value if is_dev else None,
+    )

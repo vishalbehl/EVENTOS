@@ -6,18 +6,41 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Lock, Loader2, X } from "lucide-react";
 import { Sidebar } from "@/components/organizer/layout/Sidebar";
 import { Header } from "@/components/organizer/layout/Header";
+import { FloatingNeedsAttentionBoard } from "@/components/organizer/layout/FloatingNeedsAttentionBoard";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useSocket } from "@/hooks/use-socket";
 import { useEvent } from "@/hooks/useEvents";
+import { useOrganiserNeedsAttention } from "@/hooks/useOrganiserDashboard";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/useUIStore";
 import { useAuthStore } from "@/store/use-auth-store";
-import { capabilityForPath, CapabilityBoundary, EventCapabilitiesProvider, OrganizationCapabilitiesProvider, useEventCapabilities } from "@/lib/capabilities";
+import {
+  capabilityForPath,
+  CapabilityBoundary,
+  EventCapabilitiesProvider,
+  OrganizationCapabilitiesProvider,
+  useEventCapabilities,
+} from "@/lib/capabilities";
 
-function EventPageBoundary({ eventId, pathname, children }: { eventId?: string; pathname: string; children: React.ReactNode }) {
+function EventPageBoundary({
+  eventId,
+  pathname,
+  children,
+}: {
+  eventId?: string;
+  pathname: string;
+  children: React.ReactNode;
+}) {
   const { data } = useEventCapabilities();
-  const featureKey = eventId ? capabilityForPath(data?.features, pathname, eventId) : undefined;
-  return featureKey ? <CapabilityBoundary featureKey={featureKey}>{children}</CapabilityBoundary> : <>{children}</>;
+  const featureKey = eventId
+    ? capabilityForPath(data?.features, pathname, eventId)
+    : undefined;
+  return featureKey ? (
+    <CapabilityBoundary featureKey={featureKey}>{children}</CapabilityBoundary>
+  ) : (
+    <>{children}</>
+  );
 }
 
 export default function DashboardLayout({
@@ -32,22 +55,30 @@ export default function DashboardLayout({
   const isPlatformWorkspace = !eventId;
   const { data: event, isLoading: isEventLoading } = useEvent(eventId);
 
-  const { isAuthenticated, accessToken, user, setAuth, logout, hasHydrated } = useAuthStore();
-  const { isSidebarCollapsed, isMobileOpen, setMobileOpen } = useUIStore();
+  const { isAuthenticated, accessToken, user, setAuth, logout, hasHydrated } =
+    useAuthStore();
+  const { isSidebarCollapsed, isMobileOpen, setMobileOpen, isSecondarySidebarOpen } = useUIStore();
   const [hydrated, setHydrated] = useState(false);
   const [impersonatingOrg, setImpersonatingOrg] = useState<string | null>(null);
 
   useSocket();
 
   useEffect(() => {
+    // Client mount is the final fallback for persisted-store hydration. In some
+    // browser reload paths Zustand has already restored state before its
+    // rehydration callback subscriber is attached.
+    useAuthStore.getState().setHasHydrated(true);
     setHydrated(true);
     setImpersonatingOrg(localStorage.getItem("eventos_impersonating_org"));
+    const controller = new AbortController();
     const fetchGlobalSettings = async () => {
       try {
         const token = useAuthStore.getState().accessToken;
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const baseUrl =
+          process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
         const response = await fetch(`${baseUrl}/api/v1/global-settings`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
         });
         if (!response.ok) return;
         const data = await response.json();
@@ -56,10 +87,16 @@ export default function DashboardLayout({
           window.dispatchEvent(new Event("system-timezone-changed"));
         }
       } catch (error) {
-        console.error("Failed to fetch global timezone settings:", error);
+        if (!controller.signal.aborted) {
+          console.warn(
+            "Global timezone settings are unavailable; using the local default.",
+            error,
+          );
+        }
       }
     };
     fetchGlobalSettings();
+    return () => controller.abort();
   }, []);
 
   const exitImpersonation = () => {
@@ -88,16 +125,19 @@ export default function DashboardLayout({
       if (!isAuthenticated || !accessToken) return;
       if (user && user.onboarding_completed) return;
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          },
+        );
         if (response.ok) {
           const userData = await response.json();
           setAuth(
             userData,
             accessToken,
             useAuthStore.getState().refreshToken || undefined,
-            useAuthStore.getState().rememberMe
+            useAuthStore.getState().rememberMe,
           );
         } else if (response.status === 401) {
           logout();
@@ -110,7 +150,15 @@ export default function DashboardLayout({
     if (hydrated && hasHydrated) {
       fetchUser();
     }
-  }, [isAuthenticated, accessToken, user, setAuth, logout, hydrated, hasHydrated]);
+  }, [
+    isAuthenticated,
+    accessToken,
+    user,
+    setAuth,
+    logout,
+    hydrated,
+    hasHydrated,
+  ]);
 
   useEffect(() => {
     if (!hydrated || !hasHydrated || !isAuthenticated) return;
@@ -160,10 +208,16 @@ export default function DashboardLayout({
     if (isAuthenticated) {
       const { loginTime, lastActivity, rememberMe } = useAuthStore.getState();
       const now = Date.now();
-      const maxSessionDuration = rememberMe ? 15 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      const maxSessionDuration = rememberMe
+        ? 15 * 24 * 60 * 60 * 1000
+        : 24 * 60 * 60 * 1000;
       const maxInactivityDuration = 36 * 60 * 60 * 1000;
-      const isSessionExpired = loginTime ? now - loginTime > maxSessionDuration : false;
-      const isInactiveExpired = lastActivity ? now - lastActivity > maxInactivityDuration : false;
+      const isSessionExpired = loginTime
+        ? now - loginTime > maxSessionDuration
+        : false;
+      const isInactiveExpired = lastActivity
+        ? now - lastActivity > maxInactivityDuration
+        : false;
 
       if (isSessionExpired || isInactiveExpired) {
         logout();
@@ -184,24 +238,29 @@ export default function DashboardLayout({
   const isRegPath = pathname?.includes(`/events/${eventId}/registration`);
   const speakerModeEnabled = event?.speaker_settings?.enabled ?? true;
   const regModeEnabled = event?.registration_settings?.enabled ?? true;
-  const isBlocked = (isSpeakerPath && !speakerModeEnabled) || (isRegPath && !regModeEnabled);
+  const isBlocked =
+    (isSpeakerPath && !speakerModeEnabled) || (isRegPath && !regModeEnabled);
 
   let content = children;
 
   if (eventId && !isEventLoading && isBlocked) {
     content = (
       <div className="animate-slide-up-fade flex flex-1 flex-col items-center justify-center space-y-6 p-8 text-center">
-        <div className="hex-icon-shell flex h-20 w-20 items-center justify-center">
-          <Lock className="h-8 w-8 text-[var(--color-text-primary)]" />
+        <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)]">
+          <Lock className="h-8 w-8 text-[var(--op-text)]" />
         </div>
         <div className="space-y-3">
-          <h3 className="text-[22px] font-bold tracking-tight text-[var(--color-text-primary)]">
+          <h3 className="text-[22px] font-bold tracking-tight text-[var(--op-text)]">
             Module access restricted
           </h3>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-            The {isSpeakerPath ? "speaker presentation desk" : "on-site registration"} module is not enabled for this event.
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--op-muted)]">
+            The{" "}
+            {isSpeakerPath
+              ? "speaker presentation desk"
+              : "on-site registration"}{" "}
+            module is not enabled for this event.
           </p>
-          <p className="text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+          <p className="text-[12px] leading-relaxed text-[var(--op-muted)]">
             Enable it in event configuration or contact your administrator.
           </p>
         </div>
@@ -228,104 +287,83 @@ export default function DashboardLayout({
 
   if (!hydrated || !hasHydrated || !isAuthenticated || !accessToken) {
     return (
-      <div className="h-screen w-screen bg-[#050505] flex flex-col items-center justify-center space-y-3 z-50">
-        <Loader2 className="h-8 w-8 text-[#e0ff00] animate-spin" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-white/50">Verifying Session...</span>
+      <div className="z-50 flex h-screen w-screen flex-col items-center justify-center space-y-3 bg-[var(--op-page-bg)]">
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--op-primary)]" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--op-muted)]">
+          Verifying Session...
+        </span>
       </div>
     );
   }
 
   return (
     <OrganizationCapabilitiesProvider>
-    <EventCapabilitiesProvider eventId={eventId}>
-    <div className="relative h-screen overflow-hidden" style={{ background: "var(--color-bg)" }}>
-      {/* Mobile Sidebar Navigation Drawer Overlay */}
-      <AnimatePresence>
-        {isMobileOpen && (
-          <div className="fixed inset-0 z-[100] md:hidden">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setMobileOpen(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", stiffness: 320, damping: 32 }}
-              className="relative h-full w-[280px] bg-[#08080a] border-r border-white/10"
-            >
+      <EventCapabilitiesProvider eventId={eventId}>
+        <div
+          className="relative h-screen overflow-hidden"
+          style={{ background: "var(--op-page-bg)" }}
+        >
+          {/* Mobile Sidebar Navigation Drawer Overlay */}
+          <Sheet open={isMobileOpen} onOpenChange={setMobileOpen}>
+            <SheetContent side="left" aria-describedby={undefined} className={cn("p-0 md:hidden overflow-hidden", eventId ? (isSecondarySidebarOpen ? "w-[min(92vw,308px)]" : "w-[72px]") : "w-[min(88vw,20rem)]")}>
+              <SheetTitle className="sr-only">Organiser Portal navigation</SheetTitle>
               <Sidebar />
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-      <div
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          backgroundImage: `
-            radial-gradient(circle at 78% 0%, rgba(224,255,0,0.10), transparent 24%),
-            radial-gradient(circle at 0% 100%, rgba(125,211,252,0.08), transparent 18%),
-            linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)
-          `,
-          backgroundSize: "auto, auto, 36px 36px, 36px 36px",
-        }}
-      />
+            </SheetContent>
+          </Sheet>
 
-      <aside
-        className={cn(
-          "hidden h-full md:fixed md:inset-y-0 md:z-[80] md:flex md:flex-col transition-all duration-300 ease-in-out",
-          isSidebarCollapsed ? "md:w-[72px]" : "md:w-64"
-        )}
-      >
-        <Sidebar />
-      </aside>
-
-      <main
-        className={cn(
-          "relative flex h-screen flex-col overflow-hidden transition-all duration-300 ease-in-out",
-          isSidebarCollapsed ? "md:pl-[72px]" : "md:pl-64"
-        )}
-      >
-        <Header />
-
-        {impersonatingOrg && (
-          <div
-            className="mx-4 mt-3 flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-semibold md:mx-6"
-            style={{
-              background: "var(--color-warning-muted)",
-              border: "1px solid color-mix(in srgb, var(--color-warning) 30%, transparent)",
-              color: "var(--color-warning)",
-            }}
+          <aside
+            className={cn(
+              "hidden h-full md:fixed md:inset-y-0 md:z-[80] md:flex md:flex-col transition-all duration-200 ease-in-out",
+              eventId
+                ? (isSecondarySidebarOpen ? "md:w-[308px]" : "md:w-[68px]")
+                : (isSidebarCollapsed ? "md:w-[72px]" : "md:w-[248px]")
+            )}
           >
-            <span>Viewing as {impersonatingOrg}</span>
-            <button
-              onClick={exitImpersonation}
-              className="text-[10px] font-bold uppercase tracking-widest transition-opacity hover:opacity-80"
-            >
-              Exit Impersonation
-            </button>
-          </div>
-        )}
+            <Sidebar />
+          </aside>
 
-        <div className="flex min-h-0 flex-1 flex-col p-2 sm:p-3 md:p-4">
-          <div
-            className="hex-panel flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto custom-scrollbar rounded-[16px]"
-            style={{
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)), var(--color-surface-1)",
-              border: "1px solid var(--color-border-subtle)",
-            }}
+          <main
+            className={cn(
+              "relative flex h-screen flex-col overflow-hidden transition-all duration-200 ease-in-out",
+              eventId
+                ? (isSecondarySidebarOpen ? "md:pl-[308px]" : "md:pl-[68px]")
+                : (isSidebarCollapsed ? "md:pl-[72px]" : "md:pl-[248px]")
+            )}
           >
-            <EventPageBoundary eventId={eventId} pathname={pathname || ""}>{content}</EventPageBoundary>
-          </div>
+            <Header />
+
+            {impersonatingOrg && (
+              <div
+                className="mx-4 mt-3 flex items-center justify-between rounded-lg px-4 py-2.5 text-sm font-semibold md:mx-6"
+                style={{
+                  background:
+                    "color-mix(in srgb, var(--status-warning) 10%, var(--bg-surface))",
+                  border:
+                    "1px solid color-mix(in srgb, var(--status-warning) 35%, var(--border-default))",
+                  color: "var(--status-warning)",
+                }}
+              >
+                <span>Viewing as {impersonatingOrg}</span>
+                <button
+                  onClick={exitImpersonation}
+                  className="text-[10px] font-bold uppercase tracking-widest transition-opacity hover:opacity-80"
+                >
+                  Exit Impersonation
+                </button>
+              </div>
+            )}
+
+            <div className="flex min-h-0 flex-1 flex-col p-2 sm:p-3 md:p-4">
+              <div id="organiser-main" tabIndex={-1} className="cc-route-enter cc-scroll-region custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-[16px] border border-[var(--border-default)] bg-[var(--bg-surface-2)] shadow-sm">
+                <EventPageBoundary eventId={eventId} pathname={pathname || ""}>
+                  {content}
+                </EventPageBoundary>
+              </div>
+            </div>
+            <FloatingNeedsAttentionBoard />
+          </main>
         </div>
-      </main>
-    </div>
-    </EventCapabilitiesProvider>
+      </EventCapabilitiesProvider>
     </OrganizationCapabilitiesProvider>
   );
 }

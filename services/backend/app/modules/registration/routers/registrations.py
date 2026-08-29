@@ -1,5 +1,6 @@
 # backend/app/routers/registrations.py
 from __future__ import annotations
+import app.models
 
 import uuid
 from datetime import datetime, timezone
@@ -206,6 +207,7 @@ async def helper_approve_registration(
         company=company,
         designation=designation,
         country=country,
+        state=reg_data.get("state"),
         paid_status=paid_status,
         source="online_registration",
         custom_fields=reg_data.get("custom_fields", {})

@@ -85,7 +85,7 @@ class User(Base):
 
     # ── Relationships ─────────────────────────────────────
     organization: Mapped["Organization"] = relationship(
-        "Organization", back_populates="users"
+        "Organization", back_populates="users", foreign_keys=[organization_id]
     )
 
     @property

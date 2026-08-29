@@ -1,0 +1,19 @@
+venue.local, 127.0.0.1 {
+    tls internal
+    encode zstd gzip
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8001
+    }
+    handle /socket.io/* {
+        reverse_proxy 127.0.0.1:8001
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3006
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+    }
+}

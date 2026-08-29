@@ -10,6 +10,7 @@ export interface BuilderSpeaker {
   session_speaker_id?: string;
   full_name: string;
   email: string;
+  role?: string;
   avatar_url?: string;
   upload_status: string;
   talk_order?: number;
@@ -45,8 +46,15 @@ export interface BuilderSession {
   talks?: BuilderTalk[];
   registered_attendees?: number;
   track_id?: string | null;
+  track_name?: string | null;
   display_color?: string | null;
+  cme_credits?: number | null;
+  cme_eligible?: boolean;
+  operations_notes?: string | null;
+  seating_layout?: string | null;
+  live_stream_url?: string | null;
   sort_order?: number;
+  is_published?: boolean;
 }
 
 export interface BuilderRoom {
@@ -56,6 +64,7 @@ export interface BuilderRoom {
   capacity?: number;
   screen_count: number;
   room_type: string;
+  room_coordinator?: string;
   av_technician?: string;
   location_notes?: string;
   is_active: boolean;

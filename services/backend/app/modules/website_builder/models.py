@@ -16,11 +16,11 @@ class WebsiteSiteDraft(Base):
     __table_args__ = (
         Index("ix_site_drafts_site_id", "site_id"),
         UniqueConstraint("site_id", name="uq_website_site_drafts_site_id"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     document: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     checksum: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -37,7 +37,7 @@ class WebsiteSite(Base):
         Index("ix_website_builder_sites_event_id", "event_id"),
         Index("ix_website_builder_sites_status", "status"),
         Index("ix_website_builder_sites_slug", "slug", unique=True),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -62,11 +62,11 @@ class WebsiteSiteRevision(Base):
     __table_args__ = (
         Index("ix_site_revisions_site_id", "site_id"),
         UniqueConstraint("site_id", "revision_number", name="uq_website_site_revisions_number"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(String(40), nullable=False)
     document: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -81,12 +81,12 @@ class WebsiteSiteDeployment(Base):
     __tablename__ = "site_deployments"
     __table_args__ = (
         Index("ix_site_deployments_site_id", "site_id"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
-    revision_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.site_revisions.id", ondelete="SET NULL"))
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
+    revision_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.site_revisions.id", ondelete="SET NULL"))
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
     storage_prefix: Mapped[str] = mapped_column(Text, nullable=False)
     rendered_manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
@@ -101,11 +101,11 @@ class WebsiteEditorSession(Base):
     __tablename__ = "site_editor_sessions"
     __table_args__ = (
         Index("ix_site_editor_sessions_site_id", "site_id"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), nullable=False)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="EDITOR")
     heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -118,11 +118,11 @@ class WebsiteSiteAssetRef(Base):
     __tablename__ = "site_asset_refs"
     __table_args__ = (
         Index("ix_site_asset_refs_site_id", "site_id"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="upload")
@@ -139,11 +139,11 @@ class WebsiteSiteLinkIndex(Base):
     __tablename__ = "site_link_index"
     __table_args__ = (
         Index("ix_site_link_index_site_id", "site_id"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     source_instance_id: Mapped[str] = mapped_column(String(120), nullable=False)
     source_page_id: Mapped[Optional[str]] = mapped_column(String(120))
     target_type: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -159,16 +159,16 @@ class WebsiteSiteDomain(Base):
     __table_args__ = (
         Index("ix_site_domains_site_id", "site_id"),
         Index("ix_site_domains_domain", "domain", unique=True),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     domain: Mapped[str] = mapped_column(String(255), nullable=False)
     verification_token: Mapped[str] = mapped_column(String(120), nullable=False)
     dns_state: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
     tls_state: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
-    active_deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.site_deployments.id", ondelete="SET NULL"))
+    active_deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.site_deployments.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -177,11 +177,11 @@ class WebsiteFormSubmission(Base):
     __tablename__ = "form_submissions"
     __table_args__ = (
         Index("ix_form_submissions_site_id", "site_id"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("website_builder.sites.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("websites.sites.id", ondelete="CASCADE"), nullable=False)
     event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"))
     component_instance_id: Mapped[str] = mapped_column(String(120), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -197,7 +197,7 @@ class WebsiteMutationRequest(Base):
     __table_args__ = (
         Index("ix_website_mutation_requests_scope", "scope_type", "scope_id"),
         UniqueConstraint("scope_type", "scope_id", "operation", "idempotency_key", name="uq_website_mutation_request_key"),
-        {"schema": "website_builder"},
+        {"schema": "websites"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

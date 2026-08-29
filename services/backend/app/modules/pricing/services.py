@@ -10,7 +10,6 @@ from app.modules.pricing.models import (
     MarginPolicy, RevenueForecast
 )
 from app.modules.commercial.models import Service, StaffRole
-from app.modules.inventory.models import HardwareItem
 
 class PricingService:
     """
@@ -238,11 +237,8 @@ class CostEngineService:
         days: float
     ) -> float:
         """Calculate equipment depreciation cost over operational days."""
-        stmt = select(HardwareItem.purchase_cost).where(HardwareItem.id == hardware_id)
-        purchase_cost = (await db.execute(stmt)).scalar() or 0.0
-        # Simple daily depreciation model: purchase cost divided by 1000 days operational lifetime
-        daily_rate = float(purchase_cost) / 1000.0
-        return max(1.0, daily_rate * days)
+        # Hardware cost calculation removed since inventory module is deleted
+        return 0.0
 
     @staticmethod
     async def calculate_project_cost(

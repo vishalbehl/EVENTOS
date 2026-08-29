@@ -23,6 +23,7 @@ from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.modules.events.models.speaker import Speaker
+from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 
 
 @dataclass
@@ -35,9 +36,17 @@ class EventInfo:
     announcements: Any
     program_url: str
     terms_and_conditions: str
+    short_code: str = ""
     faqs: Optional[list] = None
     include_default_faqs: Optional[bool] = True
-
+    description: Optional[str] = ""
+    location: Optional[str] = ""
+    venue_name: Optional[str] = ""
+    state: Optional[str] = ""
+    country: Optional[str] = ""
+    timezone: Optional[str] = "UTC"
+    mode: Optional[str] = "IN_PERSON"
+    organizer_name: Optional[str] = ""
 
 
 @dataclass
@@ -47,6 +56,8 @@ class RegistrationInfo:
     submitted_at: Optional[datetime]
     waitlist_position: Optional[int]
     rejection_reason: Optional[str]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 @dataclass
@@ -64,6 +75,10 @@ class ParticipantInfo:
     paid_status: str
     custom_fields: dict
     registered_at: Optional[datetime]
+    state: Optional[str] = None
+    title: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 @dataclass
@@ -79,6 +94,17 @@ class PaymentInfo:
 
 
 @dataclass
+class PricingInfo:
+    base_price: float
+    currency: str
+    active_tier: str
+    payment_enabled: bool
+    active_gateway: str
+    roles: list[dict]
+    active_prices: dict[str, float]
+
+
+@dataclass
 class DashboardData:
     event: EventInfo
     registration: RegistrationInfo
@@ -87,9 +113,7 @@ class DashboardData:
     edits_locked: bool
     is_speaker: bool
     speaker_portal_url: str
-
-
-from app.modules.registration.models.registration_form_config import RegistrationFormConfig
+    pricing: Optional[PricingInfo] = None
 
 
 def _check_edits_locked(event: Event, is_live: bool = True) -> bool:
@@ -179,12 +203,21 @@ async def get_dashboard_data(
         start_date=event.start_date,
         end_date=event.end_date,
         venue=", ".join([v for v in [event.venue_name, event.location, event.state, event.country] if v]),
-        support_email=reg_settings.get("support_email", ""),
+        support_email=reg_settings.get("support_email", "") or event.support_email or "",
         announcements=announcements_list,
         program_url=reg_settings.get("program_url", ""),
         terms_and_conditions=terms,
+        short_code=event.short_code or "",
         faqs=faqs,
         include_default_faqs=include_default,
+        description=getattr(event, "description", "") or reg_settings.get("description", "") or "",
+        location=getattr(event, "location", "") or "",
+        venue_name=getattr(event, "venue_name", "") or "",
+        state=getattr(event, "state", "") or "",
+        country=getattr(event, "country", "") or "",
+        timezone=getattr(event, "timezone", "Asia/Kolkata") or "Asia/Kolkata",
+        mode="In-Person" if getattr(event, "location", None) or getattr(event, "venue_name", None) else "Virtual",
+        organizer_name=getattr(event, "organizer_name", "") or "",
     )
 
     # 2 — Load confirmed participant by email
@@ -245,6 +278,8 @@ async def get_dashboard_data(
             submitted_at=reg_row.submitted_at if reg_row else p.registered_at,
             waitlist_position=None,
             rejection_reason=None,
+            created_at=getattr(reg_row, "created_at", None) or getattr(p, "created_at", None),
+            updated_at=getattr(reg_row, "updated_at", None) or getattr(p, "updated_at", None),
         )
         participant_info = ParticipantInfo(
             regno=p.regno or "",
@@ -260,6 +295,10 @@ async def get_dashboard_data(
             paid_status=p.paid_status,
             custom_fields=p.custom_fields or {},
             registered_at=p.registered_at,
+            state=p.state or (reg_row.registration_data.get("state") if reg_row and reg_row.registration_data else ""),
+            title=reg_row.registration_data.get("title") if reg_row and reg_row.registration_data else "Dr.",
+            created_at=getattr(p, "created_at", None),
+            updated_at=getattr(p, "updated_at", None),
         )
     else:
         # No confirmed participant, check for an unapproved registration workflow submission
@@ -319,6 +358,8 @@ async def get_dashboard_data(
             submitted_at=reg_row.submitted_at,
             waitlist_position=reg_row.waitlist_position,
             rejection_reason=reg_row.rejection_reason,
+            created_at=getattr(reg_row, "created_at", None),
+            updated_at=getattr(reg_row, "updated_at", None),
         )
         reg_data = reg_row.registration_data or {}
         participant_info = ParticipantInfo(
@@ -335,6 +376,10 @@ async def get_dashboard_data(
             paid_status=reg_data.get("paid_status", "Unpaid"),
             custom_fields=reg_data.get("custom_fields", {}),
             registered_at=reg_row.submitted_at,
+            state=reg_data.get("state", ""),
+            title=reg_data.get("title", "Dr."),
+            created_at=getattr(reg_row, "created_at", None),
+            updated_at=getattr(reg_row, "updated_at", None),
         )
 
     # 4 — Latest payment transaction (load for any registration status if reg_row exists)
@@ -370,28 +415,72 @@ async def get_dashboard_data(
     speaker_rec = sp_result.scalar_one_or_none()
     is_speaker = speaker_rec is not None
 
-    # Check if participant's role belongs to "Presentation Related" category
+    from app.modules.registration.services.pricing_service import get_ticket_price, get_active_tier, get_active_prices_for_event
     from app.modules.registration.models.participant_role import ParticipantRole
-    is_speaker_category = False
+
+    # Dynamic pricing and roles resolution from database and organizer settings
+    active_tier = get_active_tier(event)
+    active_prices = await get_active_prices_for_event(db, event)
+    payment_enabled = bool(reg_settings.get("payment_enabled", False))
+    active_gateway = str(reg_settings.get("active_gateway", "simulated"))
+    currency = str(event.currency or "INR")
+
+    attendee_role = "Delegate"
     if participant_info and participant_info.role:
-        role_stmt = select(ParticipantRole).where(
-            ParticipantRole.event_id == event_id,
-            ParticipantRole.name == participant_info.role
-        ).limit(1)
-        role_res = await db.execute(role_stmt)
-        role_row = role_res.scalar_one_or_none()
-        if role_row and role_row.category == "Presentation Related":
-            is_speaker_category = True
+        attendee_role = participant_info.role
+    elif reg_row and reg_row.registration_data and reg_row.registration_data.get("role"):
+        attendee_role = reg_row.registration_data.get("role")
 
-    if is_speaker_category:
-        is_speaker = True
+    # Fetch all active roles configured for this event by organizer
+    role_stmt = select(ParticipantRole).where(ParticipantRole.event_id == event_id)
+    roles_db = (await db.execute(role_stmt)).scalars().all()
+    roles_list = [
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "category": r.category,
+            "is_default": r.is_default,
+        }
+        for r in roles_db
+    ]
 
+    # Resolve exact ticket price from TicketType table for attendee's role and active tier
+    resolved_price = await get_ticket_price(db, event_id, attendee_role, active_tier)
+    if resolved_price is None and attendee_role in active_prices:
+        resolved_price = active_prices[attendee_role]
+    if resolved_price is None:
+        for r_name, r_price in active_prices.items():
+            if r_name.strip().lower() == attendee_role.strip().lower():
+                resolved_price = r_price
+                break
+    if resolved_price is None and reg_row and reg_row.registration_data:
+        saved_amt = reg_row.registration_data.get("amount_paid") or reg_row.registration_data.get("amount")
+        if saved_amt is not None:
+            try:
+                resolved_price = float(saved_amt)
+            except Exception:
+                pass
+
+    base_price = float(resolved_price if resolved_price is not None else 0.0)
+
+    pricing_info = PricingInfo(
+        base_price=base_price,
+        currency=currency,
+        active_tier=active_tier,
+        payment_enabled=payment_enabled,
+        active_gateway=active_gateway,
+        roles=roles_list,
+        active_prices=active_prices,
+    )
     from app.config import settings
     speaker_portal_url = ""
     if speaker_rec:
         speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}/{speaker_rec.speaker_code}"
-    elif is_speaker_category:
-        speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}"
+    else:
+        role_row = next((r for r in roles_db if r.name.lower() == attendee_role.lower()), None)
+        if role_row and role_row.category == "Presentation Related":
+            is_speaker = True
+            speaker_portal_url = f"{settings.SPEAKER_PORTAL_BASE_URL}/{event_id}"
 
     return DashboardData(
         event=event_info,
@@ -401,6 +490,7 @@ async def get_dashboard_data(
         edits_locked=_check_edits_locked(event, is_live=is_live),
         is_speaker=is_speaker,
         speaker_portal_url=speaker_portal_url,
+        pricing=pricing_info,
     )
 
 
@@ -416,7 +506,7 @@ async def update_attendee_details(
     If new_email is verified, we also update the email field.
     Returns a tuple of (updated_email, updated_details_dict).
     """
-    allowed_fields = {"name", "first_name", "last_name", "phone", "company", "designation", "country"}
+    allowed_fields = {"name", "first_name", "last_name", "title", "phone", "company", "designation", "country", "state"}
     target_email = new_email.lower() if new_email else email.lower()
 
     # Check if a confirmed Participant exists first
@@ -446,9 +536,25 @@ async def update_attendee_details(
         else:
             reg_row = None
 
-        for field_name in allowed_fields:
-            if field_name in updates and updates[field_name] is not None:
-                setattr(participant, field_name, updates[field_name])
+        # Directly assign first_name and last_name first
+        if "first_name" in updates and updates["first_name"] is not None:
+            participant.first_name = updates["first_name"].strip()
+        if "last_name" in updates and updates["last_name"] is not None:
+            participant.last_name = updates["last_name"].strip()
+        if "name" in updates and updates["name"] is not None and "first_name" not in updates and "last_name" not in updates:
+            participant.name = updates["name"].strip()
+
+        if "phone" in updates and updates["phone"] is not None:
+            participant.phone = updates["phone"]
+        if "company" in updates and updates["company"] is not None:
+            participant.company = updates["company"]
+        if "designation" in updates and updates["designation"] is not None:
+            participant.designation = updates["designation"]
+        if "country" in updates and updates["country"] is not None:
+            participant.country = updates["country"]
+        if "state" in updates and updates["state"] is not None:
+            participant.state = updates["state"]
+
         if "custom_fields" in updates and updates["custom_fields"] is not None:
             participant.custom_fields = {
                 **(participant.custom_fields or {}),
@@ -476,6 +582,16 @@ async def update_attendee_details(
             for field_name in allowed_fields:
                 if field_name in updates and updates[field_name] is not None:
                     reg_data[field_name] = updates[field_name]
+            if "name" in updates and updates["name"] is not None and "first_name" not in updates and "last_name" not in updates:
+                parts = updates["name"].strip().split(" ", 1)
+                reg_data["first_name"] = parts[0]
+                reg_data["last_name"] = parts[1] if len(parts) > 1 else ""
+                reg_data["name"] = updates["name"].strip()
+            elif "first_name" in updates or "last_name" in updates:
+                f = updates.get("first_name", reg_data.get("first_name", ""))
+                l = updates.get("last_name", reg_data.get("last_name", ""))
+                reg_data["name"] = f"{f} {l}".strip()
+
             if "custom_fields" in updates and updates["custom_fields"] is not None:
                 reg_data["custom_fields"] = {
                     **(reg_data.get("custom_fields") or {}),
@@ -496,6 +612,8 @@ async def update_attendee_details(
             "company": participant.company or "",
             "designation": participant.designation or "",
             "country": participant.country or "",
+            "state": participant.state or (reg_row.registration_data.get("state") if reg_row and reg_row.registration_data else ""),
+            "title": reg_row.registration_data.get("title") if reg_row and reg_row.registration_data else "Dr.",
             "custom_fields": participant.custom_fields or {},
         }
         return target_email, participant_details
@@ -526,6 +644,16 @@ async def update_attendee_details(
     for field_name in allowed_fields:
         if field_name in updates and updates[field_name] is not None:
             reg_data[field_name] = updates[field_name]
+    if "name" in updates and updates["name"] is not None and "first_name" not in updates and "last_name" not in updates:
+        parts = updates["name"].strip().split(" ", 1)
+        reg_data["first_name"] = parts[0]
+        reg_data["last_name"] = parts[1] if len(parts) > 1 else ""
+        reg_data["name"] = updates["name"].strip()
+    elif "first_name" in updates or "last_name" in updates:
+        f = updates.get("first_name", reg_data.get("first_name", ""))
+        l = updates.get("last_name", reg_data.get("last_name", ""))
+        reg_data["name"] = f"{f} {l}".strip()
+
     if "custom_fields" in updates and updates["custom_fields"] is not None:
         reg_data["custom_fields"] = {
             **(reg_data.get("custom_fields") or {}),
@@ -546,6 +674,8 @@ async def update_attendee_details(
         "company": reg_data.get("company", ""),
         "designation": reg_data.get("designation", ""),
         "country": reg_data.get("country", ""),
+        "state": reg_data.get("state", ""),
+        "title": reg_data.get("title", "Dr."),
         "custom_fields": reg_data.get("custom_fields", {}),
     }
     return target_email, participant_details
@@ -651,4 +781,3 @@ async def verify_and_resolve_registration(
             return match_participant
 
     return None
-

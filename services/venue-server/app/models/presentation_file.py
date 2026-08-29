@@ -59,6 +59,7 @@ class PresentationFile(Base):
     stored_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     # Full bucket path: presentations/event-id/speaker-id/uuid.pptx
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     # pptx | pdf | mp4 | key | ppt

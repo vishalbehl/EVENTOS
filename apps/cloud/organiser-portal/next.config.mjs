@@ -7,7 +7,19 @@ const __dirname = path.dirname(__filename);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
-    transpilePackages: ["@eventos/email-builder-studio"],
+    transpilePackages: [
+        "@eventos/email-builder-studio",
+        "@eventos/website-builder-studio"
+    ],
+    experimental: {
+        optimizePackageImports: [
+            "@heroui/react",
+            "lucide-react",
+            "recharts",
+            "date-fns",
+            "framer-motion"
+        ],
+    },
     outputFileTracingRoot: path.join(__dirname, '../../..'),
     images: {
         remotePatterns: [

@@ -1,9 +1,37 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, date, time as dtime, timezone
+from decimal import Decimal
 from dataclasses import dataclass, asdict
 from typing import Optional, Any, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.audit.models.audit_log import AuditLog
+
+
+def make_json_serializable(obj: Any) -> Any:
+    """
+    Recursively converts dates, datetimes, UUIDs, Decimals, and complex structures
+    into standard JSON-serializable Python primitives.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (datetime, date, dtime)):
+        return obj.isoformat()
+    elif isinstance(obj, uuid.UUID):
+        return str(obj)
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    elif hasattr(obj, "value") and not callable(obj.value):  # Enum
+        return obj.value
+    elif isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple, set)):
+        return [make_json_serializable(item) for item in obj]
+    elif hasattr(obj, "to_dict") and callable(obj.to_dict):
+        return make_json_serializable(obj.to_dict())
+    return obj
+
 
 @dataclass
 class AuditContext:
@@ -28,12 +56,7 @@ class AuditContext:
 
     def to_dict(self) -> dict:
         data = asdict(self)
-        for k, v in data.items():
-            if isinstance(v, uuid.UUID):
-                data[k] = str(v)
-            elif isinstance(v, datetime):
-                data[k] = v.isoformat()
-        return data
+        return make_json_serializable(data)
 
 
 class AuditService:
@@ -70,12 +93,12 @@ class AuditService:
             resource_id=ctx.resource_id,
             action_type=ctx.action_type,
             actor_role=ctx.actor_role,
-            old_state=ctx.old_state,
-            new_state=ctx.new_state,
-            change_diff=ctx.change_diff,
+            old_state=make_json_serializable(ctx.old_state),
+            new_state=make_json_serializable(ctx.new_state),
+            change_diff=make_json_serializable(ctx.change_diff),
             actor_ip=ctx.actor_ip,
             actor_user_agent=ctx.actor_user_agent,
-            geo_location=ctx.geo_location,
+            geo_location=make_json_serializable(ctx.geo_location),
             is_sensitive=ctx.is_sensitive,
             occurred_at=ctx.occurred_at or datetime.now(timezone.utc),
             retention_until=ctx.retention_until

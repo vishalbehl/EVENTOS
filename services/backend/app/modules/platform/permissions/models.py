@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 class PlatformPermission(Base):
     __tablename__ = "permissions"
+    __table_args__ = {"schema": "command_center_access"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
@@ -32,12 +33,12 @@ class PlatformRolePermission(Base):
     # Explicit schema paths to bypass ForeignKey rewriter in SchemaDeclarativeMeta
     role_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.department_roles.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.department_roles.id", ondelete="CASCADE"),
         nullable=False
     )
     permission_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform.permissions.id", ondelete="CASCADE"),
+        ForeignKey("command_center_access.permissions.id", ondelete="CASCADE"),
         nullable=False
     )
 
@@ -47,6 +48,7 @@ class PlatformRolePermission(Base):
 
     __table_args__ = (
         UniqueConstraint("role_id", "permission_id", name="uq_platform_role_permission"),
+        {"schema": "command_center_access"},
     )
 
     def __repr__(self) -> str:

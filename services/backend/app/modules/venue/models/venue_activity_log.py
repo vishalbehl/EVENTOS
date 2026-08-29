@@ -33,7 +33,7 @@ class VenueActivityLog(Base):
     
     # ── Context ──────────────────────────────────────────
     station_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("venue.srr_stations.id", ondelete="SET NULL"), nullable=True, index=True)
-    speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.speakers.id", ondelete="SET NULL"), nullable=True, index=True)
+    speaker_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("speakers.speakers.id", ondelete="SET NULL"), nullable=True, index=True)
     performed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     file_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("presentations.files.id", ondelete="SET NULL"), nullable=True)
 

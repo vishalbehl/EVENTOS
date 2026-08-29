@@ -10,7 +10,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.modules.registration.models.participant import Participant
-    from app.modules.events.models.session import Session
+    from app.modules.agenda.models.session import AgendaSession
 
 
 class AttendanceLog(Base):
@@ -18,6 +18,16 @@ class AttendanceLog(Base):
     Detailed log of participant attendance, supporting check-in, check-out, duration, and device logging.
     """
     __tablename__ = "attendance_logs"
+    __table_args__ = (
+        Index(
+            "uq_attendance_logs_active_participant_session",
+            "participant_id",
+            "session_id",
+            unique=True,
+            postgresql_where=text("checkout_time IS NULL"),
+        ),
+        {"schema": "analytics"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -30,7 +40,7 @@ class AttendanceLog(Base):
     )
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.sessions.id", ondelete="CASCADE"),
+        ForeignKey("agenda.sessions.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -60,17 +70,7 @@ class AttendanceLog(Base):
 
     # Relationships
     participant: Mapped["Participant"] = relationship("Participant")
-    session: Mapped[Optional["Session"]] = relationship("Session")
-
-    __table_args__ = (
-        Index(
-            "uq_attendance_logs_active_participant_session",
-            "participant_id",
-            "session_id",
-            unique=True,
-            postgresql_where=text("checkout_time IS NULL"),
-        ),
-    )
+    session: Mapped[Optional["AgendaSession"]] = relationship("AgendaSession")
 
     def __repr__(self) -> str:
         return f"<AttendanceLog id={self.id} participant_id={self.participant_id} session_id={self.session_id}>"

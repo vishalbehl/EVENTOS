@@ -1,0 +1,46 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, X } from "lucide-react";
+import { toast } from "sonner";
+import { orgApi } from "@/components/organizer/org/org-api";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { useEvents } from "@/hooks/useEvents";
+import { apiClient, apiGet } from "@/lib/api-client";
+import { DataTable, Panel } from "../OrganiserPrimitives";
+import { PeoplePage, type TeamRecord } from "./shared";
+
+export function PeopleAssignmentsTab() {
+  const client = useQueryClient();
+  const teams = useQuery({ queryKey: ["organisation", "teams", "assignments"], queryFn: () => apiGet<{ items: TeamRecord[] }>("/organiser/teams?page=1&page_size=100") });
+  const members = useQuery({ queryKey: ["organisation", "members"], queryFn: orgApi.members });
+  const events = useEvents();
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<"member" | "event">("member");
+  const [teamId, setTeamId] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const [capabilities, setCapabilities] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [removal, setRemoval] = useState<{ kind: "member" | "event"; teamId: string; teamName: string; targetId: string; targetName: string; preview: any } | null>(null);
+  const refresh = () => client.invalidateQueries({ queryKey: ["organisation", "teams"] });
+  const assign = useMutation({ mutationFn: () => type === "member" ? apiClient.post(`/organiser/teams/${teamId}/members/${targetId}`) : apiClient.put(`/organiser/teams/${teamId}/events/${targetId}`, { permissions: Object.fromEntries(capabilities.split(",").map((item) => item.trim()).filter(Boolean).map((item) => [item, true])) }), onSuccess: async () => { await refresh(); setOpen(false); setTeamId(""); setTargetId(""); setCapabilities(""); }, onError: (reason: any) => setError(reason?.message || "The assignment could not be saved.") });
+  const removeMember = useMutation({ mutationFn: ({ team, member }: { team: string; member: string }) => apiClient.delete(`/organiser/teams/${team}/members/${member}`), onSuccess: async () => { await refresh(); toast.success("Member assignment removed."); }, onError: (reason: any) => toast.error(reason?.message || "The member assignment could not be removed.") });
+  const removeEvent = useMutation({ mutationFn: ({ team, event }: { team: string; event: string }) => apiClient.delete(`/organiser/teams/${team}/events/${event}`), onSuccess: async () => { await refresh(); toast.success("Event assignment removed."); }, onError: (reason: any) => toast.error(reason?.message || "The event assignment could not be removed.") });
+  const previewRemoval = async (kind: "member" | "event", teamId: string, teamName: string, targetId: string, targetName: string) => {
+    try { const preview = await apiGet<any>(`/organiser/teams/${teamId}/${kind === "member" ? "members" : "events"}/${targetId}/access-loss-preview`); setRemoval({ kind, teamId, teamName, targetId, targetName, preview }); }
+    catch (cause: any) { toast.error(cause?.message || "Access impact could not be calculated."); }
+  };
+  const confirmRemoval = () => { if (!removal) return; if (removal.kind === "member") removeMember.mutate({ team: removal.teamId, member: removal.targetId }, { onSuccess: () => setRemoval(null) }); else removeEvent.mutate({ team: removal.teamId, event: removal.targetId }, { onSuccess: () => setRemoval(null) }); };
+  const submit = (event: FormEvent) => { event.preventDefault(); setError(null); if (!teamId || !targetId) { setError("Select a team and assignment target."); return; } assign.mutate(); };
+  const records = teams.data?.items || [];
+
+  return <PeoplePage actions={<Button onClick={() => setOpen(true)}><Plus className="mr-2 h-4 w-4" />Add assignment</Button>}>
+    <Panel title="Member assignments" className="p-0"><DataTable columns={["Team", "Member", "Email", "Action"]} rows={records.flatMap((team) => team.members.map((member) => [team.name, member.name, member.email, <Button key={`${team.id}-${member.member_id}`} size="icon" variant="outline" title="Review removal impact" onClick={() => previewRemoval("member", team.id, team.name, member.member_id, member.name)}><X className="h-3.5 w-3.5" /></Button>]))} empty={teams.isError ? "Team assignments are unavailable." : "No member assignments found."} /></Panel>
+    <Panel title="Event capability assignments" className="p-0"><DataTable columns={["Team", "Event", "Capabilities", "Action"]} rows={records.flatMap((team) => team.events.map((event) => [team.name, event.event_name, Object.keys(event.permissions || {}).filter((key) => Boolean(event.permissions[key])).join(", ") || "No explicit capabilities", <Button key={`${team.id}-${event.event_id}`} size="icon" variant="outline" title="Review removal impact" onClick={() => previewRemoval("event", team.id, team.name, event.event_id, event.event_name)}><X className="h-3.5 w-3.5" /></Button>]))} empty={teams.isError ? "Event assignments are unavailable." : "No event assignments found."} /></Panel>
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-md"><form onSubmit={submit} className="space-y-5"><DialogHeader><DialogTitle>Assign organiser team</DialogTitle><DialogDescription>Add a member or grant a team event capabilities.</DialogDescription></DialogHeader><label className="block text-sm font-medium text-[var(--op-text)]">Assignment type<select className="op-select mt-2 w-full" value={type} onChange={(event) => { setType(event.target.value as "member" | "event"); setTargetId(""); }}><option value="member">Member</option><option value="event">Event capabilities</option></select></label><label className="block text-sm font-medium text-[var(--op-text)]">Team<select className="op-select mt-2 w-full" value={teamId} onChange={(event) => setTeamId(event.target.value)}><option value="">Select team</option>{records.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label className="block text-sm font-medium text-[var(--op-text)]">{type === "member" ? "Member" : "Event"}<select className="op-select mt-2 w-full" value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">Select {type}</option>{type === "member" ? (members.data || []).filter((member) => member.is_active).map((member) => <option key={member.id} value={member.id}>{member.name} ({member.email})</option>) : (events.data || []).map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}</select></label>{type === "event" ? <label className="block text-sm font-medium text-[var(--op-text)]">Capabilities<Input className="mt-2" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} placeholder="registration, speakers, reports" /></label> : null}{error ? <p role="alert" className="text-sm text-[var(--op-danger)]">{error}</p> : null}<DialogFooter><Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button type="submit" disabled={assign.isPending}>{assign.isPending ? "Saving..." : "Save assignment"}</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={Boolean(removal)} onOpenChange={(value) => { if (!value) setRemoval(null); }}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Review access loss</DialogTitle><DialogDescription>Remove {removal?.targetName} from {removal?.teamName} only after reviewing effective access.</DialogDescription></DialogHeader>{removal?.preview.requires_owner_reassignment ? <p className="rounded-md border border-[var(--op-danger)] p-3 text-sm text-[var(--op-danger)]">Reassign the team owner before removing this member.</p> : null}{removal?.kind === "member" ? <div className="space-y-2">{removal.preview.impacted_events?.length ? removal.preview.impacted_events.map((impact: any) => <div key={impact.event_id} className="rounded-md border border-[var(--op-border)] p-3"><strong>{impact.event_name}</strong><p className="text-sm text-[var(--op-muted)]">Lost capabilities: {impact.lost_capabilities.join(", ")}</p></div>) : <p className="text-sm text-[var(--op-muted)]">No event capabilities will be lost because access is inherited elsewhere.</p>}</div> : <div className="space-y-2">{removal?.preview.impacted_members?.length ? <><strong>{removal.preview.impacted_members.length} members lose event access</strong><p className="text-sm text-[var(--op-muted)]">Capabilities: {Array.from(new Set(removal.preview.impacted_members.flatMap((impact: any) => impact.lost_capabilities))).join(", ")}</p></> : <p className="text-sm text-[var(--op-muted)]">No member loses effective access because capabilities are inherited elsewhere.</p>}</div>}<DialogFooter><Button variant="outline" onClick={() => setRemoval(null)}>Cancel</Button><Button disabled={Boolean(removal?.preview.requires_owner_reassignment) || removeMember.isPending || removeEvent.isPending} onClick={confirmRemoval}>Confirm removal</Button></DialogFooter></DialogContent></Dialog>
+  </PeoplePage>;
+}

@@ -1,40 +1,24 @@
 import pytest
 from app.websocket.connection import ConnectionManager
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 @pytest.mark.asyncio
-async def test_connection_manager_connect(mocker):
-    # Mock redis during init
-    mocker.patch("redis.asyncio.from_url", return_value=AsyncMock())
-    manager = ConnectionManager()
+async def test_connection_manager_publish(mocker):
+    mock_redis = AsyncMock()
+    mock_redis.pubsub = MagicMock(return_value=AsyncMock())
+    mocker.patch("redis.asyncio.from_url", return_value=mock_redis)
+    manager = ConnectionManager("redis://localhost:6379/0")
     
-    mock_ws = AsyncMock()
-    await manager.connect(mock_ws, "global")
-    
-    mock_ws.accept.assert_called_once()
-    assert mock_ws in manager.active_connections["global"]
+    await manager.publish("venue_events", {"event": "test_event", "data": "123"})
+    mock_redis.publish.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_connection_manager_disconnect(mocker):
-    mocker.patch("redis.asyncio.from_url", return_value=AsyncMock())
+async def test_connection_manager_close(mocker):
+    mock_redis = AsyncMock()
+    mock_pubsub = AsyncMock()
     manager = ConnectionManager()
+    manager.redis = mock_redis
+    manager.pubsub = mock_pubsub
     
-    mock_ws = AsyncMock()
-    manager.active_connections["global"] = [mock_ws]
-    
-    manager.disconnect(mock_ws, "global")
-    assert mock_ws not in manager.active_connections["global"]
-
-@pytest.mark.asyncio
-async def test_connection_manager_broadcast(mocker):
-    mocker.patch("redis.asyncio.from_url", return_value=AsyncMock())
-    manager = ConnectionManager()
-    
-    mock_ws1 = AsyncMock()
-    mock_ws2 = AsyncMock()
-    manager.active_connections["global"] = [mock_ws1, mock_ws2]
-    
-    await manager.broadcast_local({"event": "test"}, "global")
-    
-    mock_ws1.send_json.assert_called_once_with({"event": "test"})
-    mock_ws2.send_json.assert_called_once_with({"event": "test"})
+    await manager.close()
+    mock_pubsub.unsubscribe.assert_awaited_once()

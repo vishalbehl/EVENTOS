@@ -1,1 +1,0 @@
-# search/schemas package

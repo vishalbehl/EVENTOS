@@ -1041,11 +1041,6 @@ export const useUpdateNotificationChannel = (orgId: string) => { const queryClie
 export const useArchiveNotificationChannel = (orgId: string) => { const queryClient = useQueryClient(); return useMutation({ mutationFn: ({ channelId, version, reason }: { channelId: string; version: number; reason: string }) => apiClient.delete(`/platform/organizations/${orgId}/console/notification-channels/${channelId}`, { headers: { "If-Match": String(version) }, data: { reason } }), onSuccess: () => invalidateNotifications(queryClient, orgId) }); };
 export const useVerifyNotificationChannel = (orgId: string) => { const queryClient = useQueryClient(); return useMutation({ mutationFn: ({ channelId, version, reason, caseReference }: { channelId: string; version: number; reason: string; caseReference?: string }) => apiClient.post(`/platform/organizations/${orgId}/console/notification-channels/${channelId}/verify`, { reason, case_reference: caseReference }, { headers: { "If-Match": String(version) } }), onSuccess: () => invalidateNotifications(queryClient, orgId) }); };
 
-type ComplianceControlPayload = { framework: "GDPR" | "SOC2" | "ISO27001" | "HIPAA" | "CUSTOM"; control_key: string; title: string; owner_user_id?: string; applicability: "APPLICABLE" | "NOT_APPLICABLE"; state: "NOT_ASSESSED" | "IN_PROGRESS" | "READY" | "GAP"; readiness_score?: number; review_due_at?: string; reason: string };
-export const useCreateComplianceControl = (orgId: string) => { const queryClient = useQueryClient(); return useMutation({ mutationFn: (payload: ComplianceControlPayload) => apiClient.post(`/platform/organizations/${orgId}/console/compliance/controls`, payload), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "compliance") }) }); };
-export const useUpdateComplianceControl = (orgId: string) => { const queryClient = useQueryClient(); return useMutation({ mutationFn: ({ controlId, version, ...payload }: ComplianceControlPayload & { controlId: string; version: number }) => apiClient.patch(`/platform/organizations/${orgId}/console/compliance/controls/${controlId}`, payload, { headers: { "If-Match": String(version) } }), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "compliance") }) }); };
-export const useComplianceEvidence = (orgId: string, controlId: string) => useQuery({ queryKey: keys.domain(orgId, `compliance:${controlId}:evidence`), queryFn: () => apiClient.get<{ items: Array<Record<string, unknown>> }>(`/platform/organizations/${orgId}/console/compliance/controls/${controlId}/evidence`), enabled: Boolean(orgId && controlId) });
-export const useCreateComplianceEvidence = (orgId: string, controlId: string) => { const queryClient = useQueryClient(); return useMutation({ mutationFn: (payload: { evidence_type: string; storage_reference: string; checksum_sha256: string; classification: "INTERNAL" | "CONFIDENTIAL" | "RESTRICTED"; collected_at: string; expires_at?: string; reviewer_user_id?: string; reason: string }) => apiClient.post(`/platform/organizations/${orgId}/console/compliance/controls/${controlId}/evidence`, payload), onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, `compliance:${controlId}:evidence`) }) }); };
 
 export const useCreateOrganizationApiKey = (orgId: string) => {
   const queryClient = useQueryClient();
@@ -1145,14 +1140,3 @@ export const useCreateConsoleExport = (orgId: string) => {
 
 export const downloadConsoleExport = (orgId: string, exportId: string) => apiClient.get<{ download_url: string; filename: string; expires_in: number }>(`/platform/organizations/${orgId}/console/exports/${exportId}/download`);
 
-export const useGovernanceMutation = (orgId: string) => {
-  const queryClient = useQueryClient();
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: keys.domain(orgId, "compliance") });
-  return {
-    createPrivacy: useMutation({ mutationFn: (payload: Record<string, unknown>) => apiClient.post(`/platform/organizations/${orgId}/console/governance/privacy-requests`, payload), onSuccess: invalidate }),
-    updatePrivacy: useMutation({ mutationFn: ({ id, ...payload }: Record<string, any> & { id: string }) => apiClient.patch(`/platform/organizations/${orgId}/console/governance/privacy-requests/${id}`, payload), onSuccess: invalidate }),
-    upsertRetention: useMutation({ mutationFn: (payload: Record<string, unknown>) => apiClient.put(`/platform/organizations/${orgId}/console/governance/retention-policies`, payload), onSuccess: invalidate }),
-    createHold: useMutation({ mutationFn: (payload: Record<string, unknown>) => apiClient.post(`/platform/organizations/${orgId}/console/governance/legal-holds`, payload), onSuccess: invalidate }),
-    releaseHold: useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => apiClient.post(`/platform/organizations/${orgId}/console/governance/legal-holds/${id}/release`, { reason }), onSuccess: invalidate }),
-  };
-};

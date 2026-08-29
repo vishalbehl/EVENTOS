@@ -11,8 +11,10 @@ from app.database import SoftDeleteMixin
 
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
+    from app.modules.agenda.models.track import AgendaTrack
+    from app.modules.registration.models.participant import Participant
     from app.modules.identity.models.user import User
-    from app.modules.events.models.session_speaker import SessionSpeaker
+    from app.modules.agenda.models.session_person import AgendaSessionPerson
     from app.modules.presentations.models.presentation_file import PresentationFile
     from app.modules.venue.models.srr_checkin import SRRCheckin
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -45,6 +47,23 @@ class Speaker(Base, SoftDeleteMixin):
         UUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    # Optional link to event track
+    track_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agenda.tracks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Optional link to registered participant
+    participant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("registration.participants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="Speaker"
     )
 
     regno: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
@@ -108,14 +127,16 @@ class Speaker(Base, SoftDeleteMixin):
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="speakers")
     user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
+    track: Mapped[Optional["AgendaTrack"]] = relationship("AgendaTrack", foreign_keys=[track_id])
+    participant: Mapped[Optional["Participant"]] = relationship("Participant", foreign_keys=[participant_id])
     profile: Mapped[Optional["SpeakerProfile"]] = relationship(
         "SpeakerProfile",
         back_populates="speaker",
         uselist=False,
         cascade="all, delete-orphan",
     )
-    session_speakers: Mapped[List["SessionSpeaker"]] = relationship(
-        "SessionSpeaker",
+    session_speakers: Mapped[List["AgendaSessionPerson"]] = relationship(
+        "AgendaSessionPerson",
         back_populates="speaker",
         cascade="all, delete-orphan",
     )

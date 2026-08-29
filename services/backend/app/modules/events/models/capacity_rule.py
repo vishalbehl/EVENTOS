@@ -9,8 +9,8 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
-    from app.modules.events.models.session import Session
-    from app.modules.events.models.room import Room
+    from app.modules.agenda.models.session import AgendaSession
+    from app.modules.agenda.models.room import AgendaRoom
 
 
 class CapacityRule(Base):
@@ -18,6 +18,7 @@ class CapacityRule(Base):
     Configures and enforces capacity boundaries at the Event, Session, or Room level.
     """
     __tablename__ = "capacity_rules"
+    __table_args__ = {"schema": "events"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -30,13 +31,13 @@ class CapacityRule(Base):
     )
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.sessions.id", ondelete="CASCADE"),
+        ForeignKey("agenda.sessions.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
     room_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.rooms.id", ondelete="CASCADE"),
+        ForeignKey("agenda.rooms.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -47,8 +48,8 @@ class CapacityRule(Base):
 
     # Relationships
     event: Mapped["Event"] = relationship("Event")
-    session: Mapped[Optional["Session"]] = relationship("Session")
-    room: Mapped[Optional["Room"]] = relationship("Room")
+    session: Mapped[Optional["AgendaSession"]] = relationship("AgendaSession")
+    room: Mapped[Optional["AgendaRoom"]] = relationship("AgendaRoom")
 
     def __repr__(self) -> str:
         return f"<CapacityRule id={self.id} capacity={self.capacity}>"

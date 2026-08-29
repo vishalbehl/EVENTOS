@@ -13,14 +13,26 @@ from app.models.organization import Organization
 from app.sync.schedule_pull import pull_event_queue
 
 
-def _source_root_url(base_url: str, source_type: str) -> str:
+def _strip_source_suffix(base_url: str) -> str:
     url = base_url.rstrip("/")
     for suffix in ("/api/v1/registration-source", "/api/v1/sync"):
         if url.endswith(suffix):
-            return url
+            return url[: -len(suffix)].rstrip("/")
+    return url
+
+
+def _source_root_url(base_url: str, source_type: str = "cloud") -> str:
+    url = _strip_source_suffix(base_url)
     if source_type == "registration_server":
-        return f"{url}/api/v1/sync"
-    return f"{url}/api/v1/registration-source"
+        return f"{url}/api/v1/registration-source"
+    return f"{url}/api/v1/sync"
+
+
+def _source_headers(api_key: str) -> dict[str, str]:
+    return {
+        "X-Fetch-Api-Key": api_key,
+        "X-Device-Key": api_key,
+    }
 
 async def perform_initial_sync(
     db: AsyncSession,
@@ -45,7 +57,7 @@ async def perform_initial_sync(
     evt_url = f"{base_url}/api/v1/events/{event_id}"
     headers = {}
     if api_key:
-        headers["X-Fetch-Api-Key"] = api_key
+        headers.update(_source_headers(api_key))
     elif authorization:
         headers["Authorization"] = authorization
     async with httpx.AsyncClient() as client:
@@ -54,12 +66,8 @@ async def perform_initial_sync(
         target_event = None
         if api_key:
             source_root = _source_root_url(base_url, effective_source_type)
-            if effective_source_type == "registration_server":
-                context_resp = await client.get(f"{source_root}/device/context", headers=headers, timeout=30.0)
-            else:
-                context_resp = await client.get(f"{source_root}/context", headers=headers, timeout=30.0)
-                if context_resp.status_code == 404:
-                    context_resp = await client.get(f"{_source_root_url(base_url, 'registration_server')}/device/context", headers=headers, timeout=30.0)
+            context_url = f"{source_root}/context" if source_root.endswith("/registration-source") else f"{source_root}/device/context"
+            context_resp = await client.get(context_url, headers=headers, timeout=30.0)
             context_resp.raise_for_status()
             context_data = context_resp.json()
             org_data = context_data.get("organization", {})

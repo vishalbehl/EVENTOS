@@ -21,6 +21,8 @@ import {
   ShieldAlert,
   User,
   UserRound,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +32,7 @@ import { fetchVenueNodeBootstrap } from "@/lib/node-workstation";
 import { compileTemplateToPdf } from "@/lib/pdf-compiler";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useTheme } from "@/hooks/useTheme";
 import { toast } from "sonner";
 
 type View = "home" | "qr" | "search" | "profile" | "edit";
@@ -76,6 +79,7 @@ type EventMetadata = {
 export default function SelfCheckInPage() {
   const router = useRouter();
   const { logout } = useAuthStore();
+  const { theme, setTheme } = useTheme();
   const [view, setView] = useState<View>("home");
   const [query, setQuery] = useState("");
   const [participant, setParticipant] = useState<Participant | null>(null);
@@ -345,7 +349,7 @@ export default function SelfCheckInPage() {
         }
       }
 
-      await apiClient.post(`/venue/registration/participants/${printableParticipant.id}/print-badge`, {}).catch(() => {});
+      await apiClient.post(`/venue/registration/participants/${printableParticipant.id}/print-badge`, {}).catch(() => { });
       const templatesRes: any = await apiClient.get("/venue/registration/templates");
       const templates = Array.isArray(templatesRes) ? templatesRes : [];
       const activeTemplate = templates.length > 0 ? templates[0].template_data || templates[0] : null;
@@ -363,10 +367,22 @@ export default function SelfCheckInPage() {
     router.push("/");
   };
 
+  const toggleTheme = () => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  };
+
   return (
-    <main className="relative h-screen overflow-hidden bg-[var(--base)] text-[var(--text)]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_22%,rgba(16,185,129,0.14),transparent_34%),radial-gradient(circle_at_12%_18%,rgba(255,255,255,0.06),transparent_26%)]" />
-      <div className="pointer-events-none absolute inset-x-[-10%] bottom-[12%] h-44 opacity-20 [background:repeating-radial-gradient(ellipse_at_center,rgba(148,163,184,0.35)_0_1px,transparent_1px_11px)] blur-[0.2px] [transform:rotate(-5deg)]" />
+    <main className="relative h-screen overflow-hidden bg-[var(--base)] text-[var(--text)] select-none">
+      {/* Theme-Responsive Kiosk Background Images */}
+      <div className="pointer-events-none absolute inset-0 -z-0">
+        <img
+          key={theme}
+          src={theme === "light" ? "/backgrounds/self-checkin-bg-light.png" : "/backgrounds/self-checkin-bg-dark.png"}
+          alt={theme === "light" ? "Self Check-in Background Light" : "Self Check-in Background Dark"}
+          className="size-full object-cover"
+        />
+        <div className="absolute inset-0 bg-white/20 dark:bg-black/40 backdrop-blur-[0.5px]" />
+      </div>
 
       <header className="relative z-10 flex h-24 items-center justify-between px-7 lg:px-12">
         <div className="flex items-center gap-4">
@@ -377,17 +393,28 @@ export default function SelfCheckInPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className="hidden items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-semibold text-[var(--text)] shadow-2xl backdrop-blur md:flex">
+          <div className="hidden items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--card)]/90 px-5 py-3 text-sm font-semibold text-[var(--text)] shadow-2xl backdrop-blur md:flex">
             <CalendarDays className="size-5 text-[var(--pri)]" />
             <span>{now.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span>
             <span className="h-5 w-px bg-[var(--border)]" />
             <span>{now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
           </div>
+
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)]/90 text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center justify-center shadow-2xl backdrop-blur"
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-indigo-500" />}
+          </button>
+
           <div className="relative">
             <button
               type="button"
               onClick={() => setKioskMenuOpen((open) => !open)}
-              className="rounded-2xl border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-left shadow-2xl backdrop-blur transition hover:bg-[var(--raised)]"
+              className="rounded-2xl border border-[var(--border)] bg-[var(--card)]/90 px-5 py-3 text-left shadow-2xl backdrop-blur transition hover:bg-[var(--raised)]"
             >
               <span className="block text-[10px] font-black uppercase tracking-[0.22em] text-[var(--muted)]">Kiosk</span>
               <span className="block text-sm font-black uppercase tracking-wider text-[var(--text)]">{kioskName}</span>
@@ -463,11 +490,11 @@ export default function SelfCheckInPage() {
         )}
       </section>
 
-      <footer className="absolute bottom-0 left-0 right-0 z-10 flex h-20 items-center justify-between border-t border-[var(--border)] bg-[var(--base)]/90 px-7 backdrop-blur lg:px-12">
+      <footer className="absolute bottom-0 left-0 right-0 z-10 flex h-20 items-center justify-between border-t border-[var(--border)] bg-[var(--base)]/80 px-7 backdrop-blur-md lg:px-12">
         <button
           type="button"
           onClick={() => toast.info("Please go to the nearest onsite support desk.")}
-          className="flex items-center gap-4 rounded-2xl px-4 py-3 text-left transition hover:bg-[var(--raised)]"
+          className="flex items-center gap-4 rounded-2xl px-4 py-3 text-left transition hover:bg-[var(--raised)]/80"
         >
           <Headphones className="size-7 text-[var(--pri)]" />
           <span>
@@ -475,10 +502,6 @@ export default function SelfCheckInPage() {
             <span className="block text-xs font-semibold text-[var(--muted)]">Go to nearest onsite support desk</span>
           </span>
         </button>
-
-        <div className="text-right text-[10px] font-black uppercase tracking-[0.24em] text-[var(--muted)]">
-          Tap kiosk name to logout
-        </div>
       </footer>
     </main>
   );
@@ -546,23 +569,23 @@ function QrView({
   onBack: () => void;
 }) {
   return (
-    <div className="w-full max-w-3xl">
+    <div className="w-full max-w-md mx-auto">
       <BackButton onClick={onBack} />
-      <h1 className="mt-4 text-3xl font-black">Scan QR Code</h1>
+      <h1 className="mt-4 text-3xl font-black text-[var(--text)]">Scan QR Code</h1>
       <p className="mt-2 text-sm font-medium text-[var(--muted)]">Hold the emailed registration QR inside the frame.</p>
-      <div className="mt-5 overflow-hidden rounded-[2rem] border border-[var(--pri)]/45 bg-[var(--card)] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3 text-left">
-          <p className="text-xs font-black uppercase tracking-[0.22em] text-[var(--muted)]">{cameraActive ? "Auto scan active" : "Camera standby"}</p>
-          <select value={selectedDeviceId} onChange={(event) => setSelectedDeviceId(event.target.value)} className="max-w-[260px] rounded-xl border border-[var(--border)] bg-[var(--surf)] px-3 py-2 text-xs font-bold text-[var(--text)]">
+      <div className="mt-4 overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[var(--card)]/90 shadow-2xl backdrop-blur">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3 text-left">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--muted)]">{cameraActive ? "Auto scan active" : "Camera standby"}</p>
+          <select value={selectedDeviceId} onChange={(event) => setSelectedDeviceId(event.target.value)} className="max-w-[200px] rounded-xl border border-[var(--border)] bg-[var(--surf)] px-2.5 py-1 text-[11px] font-bold text-[var(--text)]">
             {videoDevices.length ? videoDevices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>) : <option>No camera detected</option>}
           </select>
         </div>
-        <div className="relative min-h-[320px]">
-          <video ref={videoRef} className="h-[320px] w-full object-cover" playsInline muted />
+        <div className="relative aspect-square w-full bg-black overflow-hidden">
+          <video ref={videoRef} className="size-full object-cover" playsInline muted />
           <canvas ref={canvasRef} className="hidden" />
-          <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black/20">
-            <div className="relative size-52 rounded-[2rem] border-2 border-[var(--pri)] shadow-2xl">
-              <span className="absolute left-0 top-1/2 h-1 w-full -translate-y-1/2 bg-[var(--pri)]" />
+          <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black/25">
+            <div className="relative size-48 rounded-[2rem] border-2 border-[var(--pri)] shadow-2xl">
+              <span className="absolute left-0 top-1/2 h-1 w-full -translate-y-1/2 bg-[var(--pri)] animate-pulse" />
             </div>
           </div>
           {lookupBusy && <BusyOverlay label="Finding participant..." />}
@@ -670,8 +693,8 @@ function ProfileView({ participant, alreadyCheckedIn, printing, onPrint, onEdit 
             {reprintDisabled
               ? "Reprint Limit Reached (Visit Desk)"
               : alreadyCheckedIn
-              ? "Reprint badge"
-              : "Check in & print badge"}
+                ? "Reprint badge"
+                : "Check in & print badge"}
           </Button>
 
           {!editDisabled ? (

@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.events.models.event import Event
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.venue.models.presentation_queue import PresentationQueue
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
 from tests.conftest import activate_event_for_test, auth_headers

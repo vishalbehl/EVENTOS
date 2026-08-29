@@ -22,6 +22,7 @@ def _get_candidate_push_urls(base_url: str, event_id: str) -> list[str]:
             break
     
     return [
+        f"{raw}/api/v1/sync/events/{event_id}/operations:batch",
         f"{raw}/api/v1/registration-source/events/{event_id}/push",
         f"{raw}/api/v1/sync/events/{event_id}/push",
         f"{raw}/api/v1/events/{event_id}/venue-sync/push",
@@ -68,7 +69,10 @@ async def process_outbox(event_id: str):
                 "entity_id": str(r.entity_id),
                 "action": r.action,
                 "payload": r.payload,
-                "created_at": r.created_at.isoformat()
+                "created_at": r.created_at.isoformat(),
+                "source_sequence": int(r.created_at.timestamp() * 1_000_000),
+                "entity_version": int((r.payload or {}).get("entity_version", 1)),
+                "payload_schema_version": int((r.payload or {}).get("payload_schema_version", 1)),
             })
             
         await db.commit()

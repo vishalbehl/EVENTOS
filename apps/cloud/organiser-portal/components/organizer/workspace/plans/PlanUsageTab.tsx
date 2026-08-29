@@ -1,0 +1,5 @@
+"use client";
+import { DataTable, Panel } from "../OrganiserPrimitives";
+import { Unavailable } from "../OrganiserSection";
+import { PlansPage, usePlanData } from "./shared";
+export function PlanUsageTab() { const { current, plan, unrestricted } = usePlanData(); return <PlansPage><Panel title="Current usage" className="p-0">{current.isError ? <Unavailable>Plan usage is unavailable.</Unavailable> : <DataTable columns={["Resource", "Used", "Limit", "Utilisation"]} rows={Object.entries(plan.usage || {}).map(([key, value]: [string, any]) => { const used = Number(value?.used ?? value?.used_mb ?? 0); const maximum = value?.max ?? value?.max_mb ?? null; return [key.replaceAll("_", " "), used.toLocaleString(), unrestricted || maximum == null ? "Unlimited" : Number(maximum).toLocaleString(), maximum && Number(maximum) > 0 ? `${Math.round((used / Number(maximum)) * 100)}%` : unrestricted || maximum == null ? "Unlimited" : "Unavailable"]; })} empty="No usage measurements returned." />}</Panel></PlansPage>; }

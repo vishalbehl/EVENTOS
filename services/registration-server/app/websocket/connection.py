@@ -14,24 +14,31 @@ router = APIRouter(prefix="/ws", tags=["websocket"])
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins="*",
+    cors_allowed_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     logger=False,
     engineio_logger=False,
 )
 
 class ConnectionManager:
-    def __init__(self):
-        # Connect to the local Redis instance
-        self.redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        self.pubsub = self.redis.pubsub()
+    def __init__(self, redis_url: str | None = None):
+        configured_url = settings.REDIS_URL if redis_url is None else redis_url
+        self.redis = redis.from_url(configured_url, decode_responses=True) if configured_url else None
+        self.pubsub = self.redis.pubsub() if self.redis else None
     
     async def publish(self, channel: str, message: dict):
         """Publish a message to Redis so all instances get it"""
-        await self.redis.publish(channel, json.dumps(message))
+        if self.redis:
+            await self.redis.publish(channel, json.dumps(message))
+            return
+        event_name = message.get("event")
+        if event_name:
+            await sio.emit(event_name, message, room=message.get("room"))
 
     async def _redis_listener(self):
         """Listens to Redis Pub/Sub and routes messages to local WebSockets"""
         try:
+            if not self.pubsub:
+                return
             await self.pubsub.subscribe("venue_events")
             async for message in self.pubsub.listen():
                 if message["type"] == "message":

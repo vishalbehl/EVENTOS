@@ -12,8 +12,8 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import get_db, get_optional_user
 from app.modules.events.models.event import Event
 from app.modules.events.models.speaker import Speaker
-from app.modules.events.models.session import Session
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.speakers.schemas.speaker_profile import (
     SpeakerProfileCreate,
@@ -80,7 +80,7 @@ async def check_profile_access(
         # Check role and assignments for organisers and below
         if getattr(current_user, "role") in ["organiser", "session_manager", "technician", "volunteer"]:
             from app.modules.rbac.models.rbac import UserAccessNode
-            from app.modules.events.models.room import Room
+            from app.modules.agenda.models import Room
             from sqlalchemy import and_, or_
             assignment_check = await db.execute(
                 select(UserAccessNode).where(

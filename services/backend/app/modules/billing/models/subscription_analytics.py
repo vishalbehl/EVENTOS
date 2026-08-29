@@ -18,7 +18,7 @@ class SubscriptionAnalytics(Base):
     __tablename__ = "subscription_analytics"
     __table_args__ = (
         UniqueConstraint("period", name="uq_subscription_analytics_period"),
-        {"schema": "billing"},
+        {"schema": "commerce"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

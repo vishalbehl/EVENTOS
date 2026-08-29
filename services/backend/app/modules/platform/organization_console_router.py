@@ -42,15 +42,10 @@ from app.modules.events.services.event_job_control_service import (
 from app.modules.rbac.schemas.event import EventCreate, EventUpdate
 from app.modules.platform.models.organization_console import (
     OrganizationBrandProfile,
-    OrganizationComplianceControl,
-    OrganizationComplianceEvidence,
-    OrganizationLegalHold,
     OrganizationLifecycleJob,
     OrganizationLocation,
     OrganizationSecurityPolicy,
     OrganizationTrustedDevice,
-    OrganizationPrivacyRequest,
-    OrganizationRetentionPolicy,
     EventCommercialContract,
     EntitlementOverrideRequest,
     UsageLedgerEntry,
@@ -70,8 +65,6 @@ from app.modules.platform.models.organization_console import (
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.schemas.organization_console import (
     BrandProfileUpdate,
-    ComplianceControlCreate,
-    ComplianceEvidenceCreate,
     LifecycleJobCreate,
     LifecycleJobOut,
     LifecycleApprovalDecision,
@@ -84,7 +77,6 @@ from app.modules.platform.schemas.organization_console import (
     EventContractCreate,
     OverrideRequestCreate,
     ApprovalDecision,
-    ControlRevocationRequest,
     UsageAdjustmentCreate,
     PrivilegedAccessCreate,
     FinancialAdjustmentCreate,
@@ -95,11 +87,6 @@ from app.modules.platform.schemas.organization_console import (
     EventWorkspaceAction,
     ConsoleExportCreate,
     ConsoleExportOut,
-    PrivacyRequestCreate,
-    PrivacyRequestUpdate,
-    RetentionPolicyWrite,
-    LegalHoldCreate,
-    LegalHoldRelease,
     OrganizationApiKeyCreate,
     IntegrationConnectionCreate,
     IntegrationConnectionUpdate,
@@ -132,9 +119,9 @@ from app.modules.registration.services.confirmation_qr_service import (
 )
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.events.models.speaker import Speaker
-from app.modules.events.models.session import Session
-from app.modules.events.models.room import Room
-from app.modules.events.models.session_speaker import SessionSpeaker
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.communications.models.email_template import EmailTemplate
 from app.modules.communications.models.email_campaign import EmailCampaign
 from app.modules.communications.models.email_log import EmailLog
@@ -2153,7 +2140,7 @@ async def _team_out(db: AsyncSession, team: OrganizationTeam) -> dict:
 async def list_organization_teams(organization_id: uuid.UUID, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
     rows = (await db.scalars(select(OrganizationTeam).where(OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)).order_by(OrganizationTeam.name))).all()
-    return {"items": [await _team_out(db, row) for row in rows], "freshness_at": datetime.now(timezone.utc), "source": "platform.organization_teams"}
+    return {"items": [await _team_out(db, row) for row in rows], "freshness_at": datetime.now(timezone.utc), "source": "organizer_access.organization_teams"}
 
 
 @router.post("/teams", status_code=status.HTTP_201_CREATED)
@@ -2823,7 +2810,7 @@ async def event_domain_workspace(
         speaker_filter = [Speaker.event_id == event_id]
         if not include_archived: speaker_filter.append(Speaker.deleted_at.is_(None))
         rows = (await db.scalars(select(Speaker).where(*speaker_filter).order_by(Speaker.created_at.desc()).limit(100))).all()
-        data = {"items": [{"id": row.id, "first_name": row.first_name if include_sensitive else f"{row.first_name[:1]}***", "last_name": row.last_name if include_sensitive else f"{row.last_name[:1]}***", "email": row.email if include_sensitive else _mask_email(row.email), "phone": row.phone if include_sensitive else _mask_phone(row.phone), "designation": row.designation, "affiliation": row.affiliation, "country": row.country, "upload_status": row.upload_status, "allow_override": row.allow_override, "checked_in_at": row.checked_in_at, "created_at": row.created_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in rows], "has_more": len(rows) == 100}; source = "events.speakers"
+        data = {"items": [{"id": row.id, "first_name": row.first_name if include_sensitive else f"{row.first_name[:1]}***", "last_name": row.last_name if include_sensitive else f"{row.last_name[:1]}***", "email": row.email if include_sensitive else _mask_email(row.email), "phone": row.phone if include_sensitive else _mask_phone(row.phone), "designation": row.designation, "affiliation": row.affiliation, "country": row.country, "upload_status": row.upload_status, "allow_override": row.allow_override, "checked_in_at": row.checked_in_at, "created_at": row.created_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in rows], "has_more": len(rows) == 100}; source = "speakers.speakers"
     elif workspace == "abstracts":
         rows = (await db.execute(
             select(SessionSpeaker, Speaker, Session)

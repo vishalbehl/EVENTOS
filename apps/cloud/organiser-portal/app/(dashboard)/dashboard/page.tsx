@@ -1,240 +1,241 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  Calendar,
-  CheckCircle2,
-  CreditCard,
-  Users,
-  Activity,
-  PlusCircle,
-  FileText,
-  AlertCircle,
-  ArrowRight,
-  TrendingUp,
-  Settings,
-  Bell
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEvents } from "@/hooks/useEvents";
-import { useCurrentPlan } from "@/hooks/useBilling";
-import { useAuthStore } from "@/store/use-auth-store";
-import { Button } from "@/components/ui/button";
-import {
-  EnterpriseChecklist,
-  EnterpriseEmptyState,
-  EnterprisePageIntro,
-  EnterprisePanel,
-  EnterpriseStatCard,
-} from "@/components/organizer/platform/EnterprisePortal";
-import { useOrganizationCapabilities } from "@/lib/capabilities";
 import Link from "next/link";
+import { BarChart3, Calendar, CreditCard, PlusCircle, Settings, ShieldCheck, Users } from "lucide-react";
+import {
+  DataTable,
+  MetricCard,
+  NeedsAttentionPane,
+  OrganiserPage,
+  PageTabs,
+  Panel,
+  QuickActions,
+  ReadinessRing,
+  StatusBadge,
+} from "@/components/organizer/workspace/OrganiserPrimitives";
+import { useOrganiserDashboard } from "@/hooks/useOrganiserDashboard";
+import { useAuthStore } from "@/store/use-auth-store";
 
-export default function PlatformDashboardPage() {
-  const router = useRouter();
+const currency = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
+
+export function DashboardOverviewPage() {
   const { user } = useAuthStore();
-  const eventsQuery = useEvents();
-  const events = eventsQuery.data ?? [];
-  const planQuery = useCurrentPlan();
-  const currentPlan = planQuery.data;
-  const organizationCapabilities = useOrganizationCapabilities();
-  const [createIntent, setCreateIntent] = useState(false);
+  const dashboardQuery = useOrganiserDashboard();
+  const data = dashboardQuery.data;
+  const metrics = data?.metrics;
+  const plan = data?.plan;
+  const readinessAvg = data?.events.length
+    ? Math.round(data.events.reduce((total, event) => total + event.readiness_pct, 0) / data.events.length)
+    : null;
+  const registrationsTrend = (data?.trend || []).map((p) => p.registrations);
+  const revenueTrend = (data?.trend || []).map((p) => p.revenue);
 
-  const activeEvents = useMemo(
-    () => events.filter((event) => event.status !== "archived" && event.status !== "completed").length,
-    [events]
-  );
+  const metricValue = (value: number | undefined, format?: (value: number) => string): string | number => {
+    if (dashboardQuery.isLoading) return "—";
+    if (dashboardQuery.isError || value == null) return "—";
+    return format ? format(value) : value;
+  };
 
-  const subscriptionsCount = planQuery.isError ? "Unavailable" : currentPlan ? "1" : "0";
-  const teamMemberLimit = organizationCapabilities.data?.limits?.max_users;
-  const teamMembers = organizationCapabilities.isError ? "Unavailable" : teamMemberLimit ? String(teamMemberLimit.used) : "Not measured";
-  
-  const mockTotalRegistrations = 0; // TODO: Fetch from API
-  const mockRecentActivity: any[] = []; // TODO: Fetch from API
-  const mockAlerts: any[] = []; // TODO: Fetch from API
+  const displayName = user?.first_name || user?.full_name || "Organiser";
+  const orgName = data?.organization?.name;
 
   return (
-    <div className="space-y-6 pb-8 pt-4">
-
-      {/* Main Action Panel */}
-      <EnterprisePanel className="overflow-hidden p-6 relative border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(255,255,255,0.02)_0%,rgba(255,255,255,0.01)_100%)]">
-        {events.length === 0 ? (
-          <div className="grid gap-6 lg:grid-cols-[220px_1fr] lg:items-center">
-            <div className="flex justify-center lg:justify-start">
-              <div className="relative flex h-36 w-36 items-center justify-center rounded-full bg-[var(--color-surface-3)] border border-[var(--color-border)]">
-                <div className="absolute -bottom-2 left-4 h-10 w-10 rounded-2xl bg-[var(--color-primary-glow)] border border-[var(--color-primary-mid)]/20" />
-                <Calendar className="h-16 w-16 text-[var(--color-primary-mid)]" />
-              </div>
-            </div>
-            <div>
-              <p className="text-[24px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                Initialize your first workspace
-              </p>
-              <p className="mt-3 max-w-xl text-[14px] leading-6 text-[var(--color-text-secondary)]">
-                Create your first event to unlock enterprise registrations, speaker workflows, billing, and high-level operating dashboards.
-              </p>
-              <Button
-                onClick={() => {
-                  setCreateIntent(true);
-                  router.push("/events?create=true");
-                }}
-                className="mt-5 h-11 rounded-xl px-5 text-[12px] font-bold hex-lime-gradient text-[var(--color-text-inverse)] hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_10px_22px_rgba(224,255,0,0.16)] border-0"
-              >
-                Deploy New Event
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[24px] font-bold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                Workspace Operational Status: Active
-              </p>
-              <p className="mt-2 max-w-2xl text-[14px] leading-6 text-[var(--color-text-secondary)]">
-                All systems nominal. Track event velocity, manage subscriptions, and coordinate team access directly from this console.
-              </p>
-            </div>
-            <Button onClick={() => router.push("/events")} className="h-11 rounded-xl px-5 text-[12px] font-semibold hex-lime-gradient text-[var(--color-text-inverse)] border-0">
-              Open Event Workspaces
-            </Button>
-          </div>
-        )}
-      </EnterprisePanel>
-
-      {/* KPI Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <EnterpriseStatCard
+    <OrganiserPage
+      title={`Hi, ${displayName}`}
+      description={`Welcome back. Here's what's happening${orgName ? ` in ${orgName}` : " in your organisation"}.`}
+      tabs={
+        <PageTabs
+          active="Overview"
+          tabs={[
+            { label: "Overview", href: "/dashboard/overview" },
+            { label: "Needs Attention", href: "/dashboard/needs-attention" },
+            { label: "Activity", href: "/dashboard/activity" },
+          ]}
+        />
+      }
+      attention={<NeedsAttentionPane items={data?.needs_attention || []} />}
+    >
+      {/* KPI Metric Cards — CC KpiGrid layout */}
+      <section aria-label="Key performance indicators" className="op-metric-grid">
+        <MetricCard
           label="Active Events"
-          value={eventsQuery.isError ? "Unavailable" : String(events.length)}
-          hint={eventsQuery.isError ? "Event records could not be loaded" : events.length === 0 ? "No events created" : `${activeEvents} active or upcoming`}
+          value={metricValue(metrics?.active_events)}
+          icon={<Calendar className="size-3.5" />}
+          iconColor="brand"
+          href="/events"
+          trend={registrationsTrend}
+          deltaLabel="vs last 7d"
         />
-        <EnterpriseStatCard
-          label="Total Storage"
-          value="Per event"
-          hint="Open an event capability view for authoritative storage usage"
-        />
-        <EnterpriseStatCard
-          label="Active Subscriptions"
-          value={subscriptionsCount}
-          hint={planQuery.isError ? "Subscription source unavailable" : currentPlan ? `${currentPlan.plan.name} Plan Active` : "No active subscriptions"}
-        />
-        <EnterpriseStatCard
+        <MetricCard
           label="Team Members"
-          value={teamMembers}
-          hint={teamMemberLimit ? `${teamMemberLimit.remaining ?? "Unlimited"} remaining in allowance` : "Source: canonical capabilities"}
+          value={metricValue(metrics?.team_members)}
+          icon={<Users className="size-3.5" />}
+          iconColor="info"
+          href="/people-teams/users"
+          trend={registrationsTrend}
+          deltaLabel="vs last 7d"
         />
+        <MetricCard
+          label="Total Registrations"
+          value={metricValue(metrics?.total_registrations, (v) => v.toLocaleString())}
+          icon={<Users className="size-3.5" />}
+          iconColor="success"
+          trend={registrationsTrend}
+          hint={data ? "Live organisation total" : dashboardQuery.isError ? "Unavailable" : "Loading"}
+          deltaLabel="vs last 7d"
+        />
+        <MetricCard
+          label="Total Revenue"
+          value={metricValue(metrics?.total_revenue, (v) => currency.format(v))}
+          icon={<CreditCard className="size-3.5" />}
+          iconColor="warning"
+          trend={revenueTrend}
+          hint={data ? "Captured payments" : dashboardQuery.isError ? "Unavailable" : "Loading"}
+          deltaLabel="vs last 7d"
+        />
+      </section>
+
+      {/* Events Table (Limited Columns) + Readiness */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+        <Panel
+          title="Recent Events"
+          action={
+            <Link
+              href="/events"
+              className="text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            >
+              View all →
+            </Link>
+          }
+          className="p-0"
+        >
+          <DataTable
+            columns={["Event", "Dates", "Status", "Action"]}
+            empty={dashboardQuery.isError ? "Dashboard data is unavailable." : "No events found."}
+            rows={(data?.events || []).slice(0, 5).map((event) => [
+              <div key="event" className="flex items-center gap-2.5">
+                <div className="grid size-7 shrink-0 place-items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface-3)] font-mono text-[10px] font-bold text-[var(--text-primary)]">
+                  {event.short_code?.slice(0, 3) || "EVT"}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-[var(--text-primary)]">{event.name}</p>
+                </div>
+              </div>,
+              <span key="dates" className="text-xs tabular-nums text-[var(--text-secondary)]">
+                {event.dates || "TBD"}
+              </span>,
+              <StatusBadge key="status" status={event.status} />,
+              <Link
+                key="action"
+                href={`/events/${event.id}/dashboard`}
+                className="text-xs font-semibold text-[var(--text-primary)] hover:underline"
+              >
+                Open →
+              </Link>,
+            ])}
+          />
+        </Panel>
+
+        <Panel title="Event Readiness Score">
+          <div className="grid gap-5 md:grid-cols-[140px_1fr] md:items-center">
+            {readinessAvg == null ? (
+              <div className="text-sm font-medium text-[var(--text-secondary)]">Readiness unavailable</div>
+            ) : (
+              <ReadinessRing value={readinessAvg} label={readinessAvg >= 75 ? "On Track" : "Needs Work"} />
+            )}
+            <div>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">
+                Readiness is calculated from configured sessions, speakers, files, and venue rooms.
+              </p>
+              <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
+                Open Needs Attention for the exact setup items that need action.
+              </p>
+              <Link
+                href="/events"
+                className="mt-4 inline-flex items-center rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-4 py-2 text-xs font-semibold text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-surface-hover)]"
+              >
+                View Readiness
+              </Link>
+            </div>
+          </div>
+        </Panel>
       </div>
 
-      {/* Main Content Layout */}
-      <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-        
-        {/* Left Column (Main Feed & Activity) */}
-        <div className="space-y-4">
-          
-          {events.length === 0 && (
-            <EnterpriseChecklist
-              title="Deployment Checklist"
-              items={[
-                {
-                  title: "Choose a subscription",
-                  description: "Pick the right commercial plan for your event portfolio.",
-                  icon: CreditCard,
-                },
-                {
-                  title: "Create your first event",
-                  description: "Set event basics, dates, timezone, and workspace modules.",
-                  icon: Calendar,
-                },
-                {
-                  title: "Invite your team",
-                  description: "Add operations, finance, and support collaborators to the workspace.",
-                  icon: Users,
-                },
-              ]}
-            />
-          )}
+      {/* Quick Actions + Plan */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+        <Panel title="Quick Actions">
+          <QuickActions
+            actions={[
+              { label: "Create Event", href: "/events/new", icon: <PlusCircle className="size-4" /> },
+              { label: "Invite User", href: "/people-teams/invitations", icon: <Users className="size-4" /> },
+              { label: "Assign Role", href: "/access-roles/roles", icon: <ShieldCheck className="size-4" /> },
+              { label: "Review Billing", href: "/billing/overview", icon: <CreditCard className="size-4" /> },
+              { label: "View Analytics", href: "/dashboard/analytics/overview", icon: <BarChart3 className="size-4" /> },
+              { label: "Manage Plan", href: "/plans-entitlements/overview", icon: <Settings className="size-4" /> },
+            ]}
+          />
+        </Panel>
 
-          {/* Activity Log Panel */}
-          <EnterprisePanel className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
-                Recent Organization Activity
-              </h3>
-              <Button variant="ghost" size="sm" className="h-8 text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
-                View All <ArrowRight className="ml-2 h-3 w-3" />
-              </Button>
+        <Panel title="Current Plan">
+          <div className="space-y-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-tertiary)]">Active Plan</p>
+              <p className="mt-1 font-mono text-2xl font-semibold tabular-nums tracking-[-0.03em] text-[var(--text-primary)]">
+                {plan?.name || "—"}
+              </p>
+              <StatusBadge status={plan?.status || "pending"} />
             </div>
-            
-            <div className="space-y-6">
-              {mockRecentActivity.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-8 text-center">
-                  <Activity className="h-8 w-8 text-[var(--color-border)] mb-3" />
-                  <p className="text-[13px] font-medium text-[var(--color-text-secondary)]">No recent activity</p>
-                  <p className="text-[12px] text-[var(--color-text-muted)] mt-1">Activity logs will appear here once connected.</p>
-                </div>
-              )}
-            </div>
-          </EnterprisePanel>
-        </div>
-
-        {/* Right Column (Quick Actions & Alerts) */}
-        <div className="space-y-4">
-          
-          {/* Quick Actions */}
-          <EnterprisePanel className="p-6">
-            <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)] mb-5">
-              Quick Actions
-            </h3>
-            <div className="space-y-3">
-              <Link href="/events?create=true" className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/[0.03] border border-transparent hover:border-[var(--color-border)] transition-colors group">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-primary-mid)]/10 text-[var(--color-primary-mid)] group-hover:bg-[var(--color-primary-mid)]/20 transition-colors">
-                  <PlusCircle className="h-4 w-4" />
-                </div>
-                <div className="flex-1 text-[13px] font-medium text-[var(--color-text-primary)]">Deploy Event</div>
-              </Link>
-              <Link href="/team" className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/[0.03] border border-transparent hover:border-[var(--color-border)] transition-colors group">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-[var(--color-text-primary)] group-hover:bg-white/10 transition-colors">
-                  <Users className="h-4 w-4" />
-                </div>
-                <div className="flex-1 text-[13px] font-medium text-[var(--color-text-primary)]">Invite Team Member</div>
-              </Link>
-              <Link href="/billing" className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/[0.03] border border-transparent hover:border-[var(--color-border)] transition-colors group">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-[var(--color-text-primary)] group-hover:bg-white/10 transition-colors">
-                  <CreditCard className="h-4 w-4" />
-                </div>
-                <div className="flex-1 text-[13px] font-medium text-[var(--color-text-primary)]">Manage Billing</div>
-              </Link>
-            </div>
-          </EnterprisePanel>
-
-          {/* Alerts & Notifications */}
-          <EnterprisePanel className="p-6">
-            <div className="flex items-center gap-2 mb-5">
-              <Bell className="h-4 w-4 text-[var(--color-text-secondary)]" />
-              <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
-                System Alerts
-              </h3>
-            </div>
-            
-            <div className="space-y-3">
-              {mockAlerts.length === 0 && (
-                <p className="text-[13px] text-[var(--color-text-muted)] text-center py-4">No active alerts</p>
-              )}
-            </div>
-          </EnterprisePanel>
-          
-        </div>
+            <UsageBar label="Registrations" used={plan?.registrations_used} max={plan?.registrations_max} unrestricted={plan?.unrestricted} />
+            <UsageBar label="Storage" used={plan?.storage_used_gb} max={plan?.storage_max_gb} suffix="GB" unrestricted={plan?.unrestricted} />
+            <UsageBar label="Events" used={plan?.events_used} max={plan?.events_max} unrestricted={plan?.unrestricted} />
+            <Link
+              href="/plans-entitlements/overview"
+              className="inline-flex items-center rounded-lg bg-[var(--brand-primary)] px-4 py-2 text-xs font-semibold text-[var(--text-inverse)] transition-opacity hover:opacity-90"
+            >
+              View Plan Details
+            </Link>
+          </div>
+        </Panel>
       </div>
+    </OrganiserPage>
+  );
+}
 
-      {createIntent && events.length === 0 ? (
-        <EnterpriseEmptyState
-          icon={CheckCircle2}
-          title="Preparing your event setup"
-          description="The create-event workflow opens from the Events page so we can keep the organizer experience consistent."
-          actionLabel="Continue to Events"
-          actionHref="/events?create=true"
+export default DashboardOverviewPage;
+
+function UsageBar({
+  label,
+  used,
+  max,
+  suffix = "",
+  unrestricted,
+}: {
+  label: string;
+  used?: number | null;
+  max?: number | null;
+  suffix?: string;
+  unrestricted?: boolean;
+}) {
+  const pct = used == null ? 0 : unrestricted || !max ? 100 : Math.min(100, (used / max) * 100);
+  const usedLabel =
+    used == null
+      ? "—"
+      : unrestricted
+      ? `${used}${suffix ? ` ${suffix}` : ""} / Unlimited`
+      : `${used}${suffix ? ` ${suffix}` : ""} / ${max ?? "N/A"}${suffix ? ` ${suffix}` : ""}`;
+
+  return (
+    <div>
+      <div className="mb-1.5 flex justify-between text-[11px] font-medium text-[var(--text-secondary)]">
+        <span>{label}</span>
+        <span>{usedLabel}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-surface-3)]">
+        <div
+          className="h-full rounded-full bg-[var(--brand-primary)] transition-all duration-300"
+          style={{ width: `${pct}%` }}
         />
-      ) : null}
+      </div>
     </div>
   );
 }

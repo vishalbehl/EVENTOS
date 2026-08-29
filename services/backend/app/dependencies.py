@@ -538,8 +538,8 @@ async def get_current_event(
         # Enforce assignments for restricted roles (excluding Admins and Organisers)
         if user.role in ["session_manager", "technician", "volunteer"]:
             from app.modules.rbac.models.rbac import UserAccessNode
-            from app.modules.events.models.room import Room
-            from app.modules.events.models.session import Session
+            from app.modules.agenda.models import Room
+            from app.modules.agenda.models import Session
             from sqlalchemy import and_, or_
             # Check if assigned to the event itself, OR any room/session within this event
             assignment_check = await db.execute(

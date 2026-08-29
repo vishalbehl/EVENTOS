@@ -11,7 +11,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.modules.events.models.event import Event
     from app.modules.registration.models.participant import Participant
-    from app.modules.events.models.session import Session
+    from app.modules.agenda.models.session import AgendaSession
 
 
 class CheckIn(Base):
@@ -19,6 +19,13 @@ class CheckIn(Base):
     Tracking check-in logs for participants in specific event sessions.
     """
     __tablename__ = "attendance"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "participant_id", "session_id",
+            name="uq_attendance_event_participant_session",
+        ),
+        {"schema": "registration"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -37,7 +44,7 @@ class CheckIn(Base):
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.sessions.id", ondelete="CASCADE"),
+        ForeignKey("agenda.sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -56,14 +63,7 @@ class CheckIn(Base):
     # Relationships
     event: Mapped["Event"] = relationship("Event")
     participant: Mapped["Participant"] = relationship("Participant")
-    session: Mapped["Session"] = relationship("Session")
-
-    __table_args__ = (
-        UniqueConstraint(
-            "event_id", "participant_id", "session_id",
-            name="uq_attendance_event_participant_session",
-        ),
-    )
+    session: Mapped["AgendaSession"] = relationship("AgendaSession")
 
     def __repr__(self) -> str:
         return f"<CheckIn id={self.id} participant_id={self.participant_id} session_id={self.session_id}>"
@@ -73,6 +73,13 @@ class AttendanceMutation(Base):
     """Durable replay envelope for organizer attendance mutations."""
 
     __tablename__ = "attendance_mutations"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "operation_type", "idempotency_key",
+            name="uq_attendance_mutations_event_operation_idempotency",
+        ),
+        {"schema": "registration"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -96,11 +103,4 @@ class AttendanceMutation(Base):
     result_created: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "event_id", "operation_type", "idempotency_key",
-            name="uq_attendance_mutations_event_operation_idempotency",
-        ),
     )

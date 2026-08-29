@@ -163,7 +163,7 @@ export default function CampaignList({ campaigns, eventId, onSelect, onDeleted }
                                                   >
                                                     <button
                                                         onClick={(e) => handleSend(e, campaign.id)}
-                                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--pri)] text-white hover:scale-105 active:scale-95 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-[var(--pri)]/20"
+                                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--pri)] text-[var(--primary-contrast)] hover:scale-105 active:scale-95 transition-all text-[9px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-[var(--pri)]/20"
                                                     >
                                                         <Play className="w-3 h-3" />
                                                         Send

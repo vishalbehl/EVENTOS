@@ -188,7 +188,7 @@ export const WEBSITE_RUNTIME_SCRIPT = `
     if (!Number.isFinite(target)) return;
     const diff = target - Date.now();
     if (diff <= 0) {
-      const message = root.getAttribute('data-expired-msg') || 'Started';
+      const message = root.getAttribute('data-expired-message') || root.getAttribute('data-expired-msg') || 'Started';
       setText(root, '[data-role="days"]', message);
       setText(root, '[data-role="hours"], [data-role="minutes"], [data-role="seconds"]', '00');
       return;

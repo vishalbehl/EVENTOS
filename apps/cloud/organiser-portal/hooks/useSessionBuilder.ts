@@ -155,4 +155,28 @@ export function useRemoveSpeakerFromSession(eventId: string) {
   });
 }
 
+export function usePublishSchedule(eventId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (sessionIds?: string[]) => {
+      return apiPost<{ success: boolean; published_count: number; message: string }>(
+        `/events/${eventId}/sessions/publish-schedule`,
+        sessionIds && sessionIds.length > 0 ? { session_ids: sessionIds } : {}
+      );
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["session-builder-snapshot", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["events", eventId] });
+      queryClient.invalidateQueries({ queryKey: ["website-builder-snapshot", eventId] });
+      toast.success(data?.message || "Schedule published successfully! Sessions are now live.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail || "Failed to publish schedule");
+    },
+  });
+}
+
+
 

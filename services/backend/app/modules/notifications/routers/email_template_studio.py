@@ -680,6 +680,29 @@ async def list_organization_templates(
     return [await _response(db, row, editable=enabled, effective_origin=origin, fallback_reason=None if enabled else reason or "NOT_ENTITLED") for row, origin in rows]
 
 
+@organization_router.post("", response_model=TemplateStudioResponse, status_code=status.HTTP_201_CREATED)
+async def create_organization_template(
+    organization_id: uuid.UUID,
+    payload: TemplateFamilyCreate,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    del idempotency_key
+    await _require_org_admin(db, actor, organization_id)
+    enabled, _ = await designer_enabled_for_organization(db, organization_id, actor.id)
+    if not enabled:
+        raise HTTPException(status_code=402, detail={"code": "FEAT_EMAIL_DESIGNER_REQUIRED"})
+    family = await create_family(
+        db, scope_type="ORGANIZATION", organization_id=organization_id, event_id=None,
+        parent=None, name=payload.name, stable_key=payload.stable_key,
+        template_type=payload.template_type, target_type=payload.target_type, actor_user_id=actor.id,
+    )
+    db.add(_audit(actor=actor, family=family, action="ORGANIZATION_EMAIL_TEMPLATE_CREATED", reason="Organisation template draft created"))
+    await db.commit()
+    return await _response(db, family, editable=True)
+
+
 @organization_router.put("/{template_id}/draft", response_model=TemplateStudioResponse)
 async def save_organization_draft(
     organization_id: uuid.UUID,
@@ -953,6 +976,27 @@ async def list_event_studio_templates(
         designer_enabled=enabled,
     )
     return [await _response(db, row, editable=enabled, effective_origin=origin, fallback_reason=None if enabled else reason or "NOT_ENTITLED") for row, origin in rows]
+
+
+@event_router.post("", response_model=TemplateStudioResponse, status_code=status.HTTP_201_CREATED)
+async def create_event_studio_template(
+    event_id: uuid.UUID,
+    payload: TemplateFamilyCreate,
+    event: CurrentEvent,
+    actor: User = Depends(get_current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    del idempotency_key
+    await enforce_event_operation(db, event.organization_id, event_id, "communications.email_designer.manage", user_id=actor.id)
+    family = await create_family(
+        db, scope_type="EVENT", organization_id=event.organization_id, event_id=event_id,
+        parent=None, name=payload.name, stable_key=payload.stable_key,
+        template_type=payload.template_type, target_type=payload.target_type, actor_user_id=actor.id,
+    )
+    db.add(_audit(actor=actor, family=family, action="EVENT_EMAIL_TEMPLATE_CREATED", reason="Event template draft created"))
+    await db.commit()
+    return await _response(db, family, editable=True)
 
 
 @event_router.put("/{template_id}/draft", response_model=TemplateStudioResponse)

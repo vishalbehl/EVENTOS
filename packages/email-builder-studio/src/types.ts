@@ -101,6 +101,7 @@ export type EmailBuilderStudioProps = {
     scopeType: "PLATFORM" | "ORGANIZATION",
     organizationId?: string | null,
   ) => Promise<void>;
+  onRequestCreateNew?: () => void;
   onCreateTemplate?: (template: {
     name: string;
     stableKey: string;
@@ -134,4 +135,5 @@ export type EmailBuilderStudioProps = {
     documentFragment: Record<string, unknown>;
   }) => Promise<void>;
   onArchive?: (template: StudioTemplate) => Promise<void>;
+  onExit?: () => void;
 };

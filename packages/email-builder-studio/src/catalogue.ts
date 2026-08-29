@@ -16,6 +16,7 @@ export const CATALOGUE: CatalogueItem[] = [
   { key: "text", label: "Text", group: "Basic", icon: "text" },
   { key: "heading", label: "Heading", group: "Basic", icon: "heading" },
   { key: "image", label: "Image", group: "Basic", icon: "image" },
+  { key: "icon", label: "Icon", group: "Basic", icon: "sticker" },
   { key: "button", label: "Button", group: "Basic", icon: "button" },
   { key: "divider", label: "Divider", group: "Basic", icon: "divider" },
   { key: "spacer", label: "Spacer", group: "Basic", icon: "spacer" },
@@ -291,6 +292,10 @@ function withRole(
   fragment: FragmentDefinition,
   role: string,
 ): FragmentDefinition {
+  if (!fragment || !Array.isArray(fragment.rootIds)) {
+    console.error("Invalid fragment passed to withRole:", fragment);
+    return fragment;
+  }
   for (const id of fragment.rootIds) {
     const node = fragment.nodes[id];
     node.data = { ...node.data, editorRole: role, editorSchemaVersion: 4 };
@@ -548,6 +553,17 @@ export function createCatalogueFragment(key: string): FragmentDefinition {
     return linear(text("Write the next part of your message."));
   if (key === "heading") return linear(heading("A clear message headline"));
   if (key === "image") return linear(image());
+  if (key === "icon")
+    return withRole(
+      linear(
+        image(
+          "https://placehold.co/48x48/f3f4f6/9ca3af/png?text=ICON",
+          "Icon",
+          48,
+        ),
+      ),
+      "SOCIAL_ICON",
+    );
   if (key === "button")
     return linear(button("Continue", "{{RegistrationUrl}}"));
   if (key === "divider") return linear(divider());
@@ -678,20 +694,13 @@ export function createCatalogueFragment(key: string): FragmentDefinition {
   }
   if (key === "video")
     return withRole(
-      container(
-        [
-          image(
-            "https://placehold.co/600x320/111827/ffffff/png?text=%E2%96%B6+PLAY+VIDEO",
-            "Video preview",
-            552,
-            "{{EventWebsiteUrl}}",
-          ),
-          text("Watch the event preview", {
-            textAlign: "center",
-            fontWeight: "bold",
-          }),
-        ],
-        { backgroundColor: "#111827", borderRadius: 12 },
+      linear(
+        image(
+          "https://placehold.co/600x320/111827/ffffff/png?text=%E2%96%B6+PLAY+VIDEO",
+          "Video preview",
+          552,
+          "{{EventWebsiteUrl}}",
+        ),
       ),
       "VIDEO",
     );

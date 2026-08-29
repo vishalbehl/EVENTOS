@@ -58,6 +58,7 @@ const venueDesktop = {
   loadLocalSnapshot: (snapshot: unknown): Promise<VenueDesktopLocalDatabaseStatus> => ipcRenderer.invoke("venue-desktop:load-local-snapshot", snapshot),
   getRegistrationSetupStatus: (): Promise<{ configured: boolean; marker?: unknown; sharedPostgres?: unknown; validation?: unknown; localDatabase: VenueDesktopLocalDatabaseStatus; uploadedLocalDatabase?: VenueDesktopLocalDatabaseStatus }> => ipcRenderer.invoke("venue-desktop:get-registration-setup-status"),
   setupRegistrationPostgres: (setup: VenueDesktopRegistrationPostgresSetup): Promise<Record<string, unknown>> => ipcRenderer.invoke("venue-desktop:setup-registration-postgres", setup),
+  resetRegistrationDatabase: (): Promise<{ success: boolean; status: { configured: boolean; marker?: unknown; sharedPostgres?: unknown; validation?: unknown; localDatabase: VenueDesktopLocalDatabaseStatus; uploadedLocalDatabase?: VenueDesktopLocalDatabaseStatus } }> => ipcRenderer.invoke("venue-desktop:reset-registration-database"),
 };
 
 contextBridge.exposeInMainWorld("venueDesktop", venueDesktop);

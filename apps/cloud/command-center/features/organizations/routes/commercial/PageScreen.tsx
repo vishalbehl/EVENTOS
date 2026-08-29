@@ -58,7 +58,7 @@ function EntitlementMatrixCell({ orgId, eventId, featureKey }: { orgId: string; 
   if (!capability) return <span className="text-[10px] text-[var(--text-tertiary)]">Not configured</span>;
   const canRequestCommercialChange = capability.enabled || capability.reason_code === "NOT_ENTITLED";
   const status = capability.enabled ? "ENABLED" : capability.reason_code ?? "RESTRICTED";
-  return <div className="flex flex-col items-center gap-1" title={capability.availability_note ?? undefined}><OrgStatusBadge status={status} /><span className="text-[9px] text-[var(--text-tertiary)]">{capability.backend_mode.replaceAll("_", " ")} Â· {capability.sources.length} source{capability.sources.length === 1 ? "" : "s"}</span>{canRequestCommercialChange ? <GovernedActionButton label={`Request ${capability.enabled ? "restriction" : "unlock"}`} title={`Request ${capability.enabled ? "restriction" : "unlock"} for ${featureKey}`} className="text-[9px] font-bold text-[var(--brand-primary)]" onConfirm={({ reason, caseReference }) => requestOverride.mutateAsync({ event_id: eventId, entitlement_key: featureKey, operation: capability.enabled ? "RESTRICT" : "UNLOCK", requested_value: !capability.enabled, reason, case_reference: caseReference }).then(() => undefined)} /> : null}</div>;
+  return <div className="flex flex-col items-center gap-1" title={capability.availability_note ?? undefined}><OrgStatusBadge status={status} /><span className="text-[9px] text-[var(--text-tertiary)]">{capability.backend_mode.replaceAll("_", " ")} {capability.sources.length} source{capability.sources.length === 1 ? "" : "s"}</span>{canRequestCommercialChange ? <GovernedActionButton label={`Request ${capability.enabled ? "restriction" : "unlock"}`} title={`Request ${capability.enabled ? "restriction" : "unlock"} for ${featureKey}`} className="text-[9px] font-bold text-[var(--brand-primary)]" onConfirm={({ reason, caseReference }) => requestOverride.mutateAsync({ event_id: eventId, entitlement_key: featureKey, operation: capability.enabled ? "RESTRICT" : "UNLOCK", requested_value: !capability.enabled, reason, case_reference: caseReference }).then(() => undefined)} /> : null}</div>;
 }
 
 export default function CommercialPageScreen() {
@@ -245,8 +245,8 @@ export default function CommercialPageScreen() {
                 <p className="text-xs font-mono text-[var(--text-secondary)]">
                   {activeSub?.current_period_end
                     ? new Date(
-                        activeSub.current_period_end,
-                      ).toLocaleDateString()
+                      activeSub.current_period_end,
+                    ).toLocaleDateString()
                     : "Unavailable"}
                 </p>
               </div>
@@ -896,7 +896,7 @@ export default function CommercialPageScreen() {
                       const numericValue = Number(editingQuotaValue);
                       parsedValue =
                         editingQuotaValue === "unlimited" ||
-                        !Number.isFinite(numericValue)
+                          !Number.isFinite(numericValue)
                           ? editingQuotaValue
                           : numericValue;
                     }

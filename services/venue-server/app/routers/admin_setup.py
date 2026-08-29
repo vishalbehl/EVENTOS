@@ -12,6 +12,14 @@ from sqlalchemy import func, select
 from app.sync.initial_pull import perform_initial_sync
 from app.models.event import Event
 from app.models.sync_outbox import SyncOutbox
+from app.models.participant import Participant
+from app.models.speaker import Speaker
+from app.models.presentation_file import PresentationFile
+from app.models.session import Session
+from app.models.room import Room
+from app.models.room_device import RoomDevice
+from app.models.venue_capacity_rule import VenueCapacityRule
+from app.models.operational_control import VenueInstallation
 
 router = APIRouter(prefix="/api/v1/venue/admin", tags=["admin_setup"])
 
@@ -21,7 +29,7 @@ class CloudLoginRequest(BaseModel):
 
 
 class FetchSourceRequest(BaseModel):
-    source_type: str = Field(pattern="^(cloud|registration_server|venue_server)$")
+    source_type: str = Field(default="cloud", pattern="^(cloud)$")
     base_url: str = Field(min_length=8, max_length=500)
     api_key: str = Field(min_length=1, max_length=1000)
 
@@ -52,43 +60,55 @@ def _masked_key(value: str) -> str:
     return f"{value[:4]}••••{value[-4:]}"
 
 
+def _strip_source_suffix(base_url: str) -> str:
+    url = base_url.rstrip("/")
+    for suffix in ("/api/v1/registration-source", "/api/v1/sync"):
+        if url.endswith(suffix):
+            return url[: -len(suffix)].rstrip("/")
+    return url
+
+
 def _configured_source() -> dict[str, str]:
     return {
-        "source_type": getattr(settings, "REGISTRATION_FETCH_SOURCE_TYPE", "cloud"),
-        "base_url": settings.CLOUD_API_URL.rstrip("/"),
+        "source_type": "cloud",
+        "base_url": _strip_source_suffix(settings.CLOUD_API_URL),
         "api_key": settings.CLOUD_DEVICE_KEY,
     }
 
 
-def _source_root_url(base_url: str, source_type: str) -> str:
-    url = base_url.rstrip("/")
-    for suffix in ("/api/v1/registration-source", "/api/v1/sync"):
-        if url.endswith(suffix):
-            return url
+def _source_root_url(base_url: str, source_type: str = "cloud") -> str:
+    url = _strip_source_suffix(base_url)
     if source_type == "registration_server":
-        return f"{url}/api/v1/sync"
-    return f"{url}/api/v1/registration-source"
+        return f"{url}/api/v1/registration-source"
+    return f"{url}/api/v1/sync"
 
 
 def _source_context_url(source: dict[str, str]) -> str:
-    root = _source_root_url(source["base_url"], source["source_type"])
-    if root.endswith("/registration-source"):
+    root = _source_root_url(source["base_url"], source.get("source_type", "cloud"))
+    if root.endswith("/api/v1/registration-source"):
         return f"{root}/context"
     return f"{root}/device/context"
 
 
+def _source_headers(api_key: str) -> dict[str, str]:
+    return {
+        "X-Fetch-Api-Key": api_key,
+        "X-Device-Key": api_key,
+    }
+
+
 async def _fetch_source_context(client: httpx.AsyncClient, source: dict[str, str], api_key: str) -> dict:
-    headers = {"X-Fetch-Api-Key": api_key}
-    resp = await client.get(_source_context_url(source), headers=headers)
-    if resp.status_code == 404 and source["source_type"] != "registration_server":
-        resp = await client.get(
-            f"{_source_root_url(source['base_url'], 'registration_server')}/device/context",
-            headers=headers,
-        )
+    headers = _source_headers(api_key)
+    context_url = _source_context_url(source)
+    resp = await client.get(context_url, headers=headers)
+    if resp.status_code == 404 and source.get("source_type") == "cloud":
+        legacy_url = f"{_source_root_url(source['base_url'], 'registration_server')}/context"
+        resp = await client.get(legacy_url, headers=headers)
+        context_url = legacy_url
     if resp.status_code != 200:
         raise HTTPException(
             status_code=resp.status_code,
-            detail=f"Failed to verify fetch API key at {_source_context_url(source)}.",
+            detail=f"Failed to verify fetch API key at {context_url}.",
         )
     return resp.json()
 
@@ -206,6 +226,26 @@ async def get_sync_status(
         await db.execute(select(SyncOutbox.status, func.count(SyncOutbox.id)).group_by(SyncOutbox.status))
     ).all()
     last_synced_at = await db.scalar(select(func.max(SyncOutbox.synced_at)))
+
+    # Whole-venue operations metrics (safeguarded against missing schemas/tables on initial boot)
+    async def safe_count(model, condition=None):
+        try:
+            q = select(func.count(model.id))
+            if condition is not None:
+                q = q.where(condition)
+            return (await db.scalar(q)) or 0
+        except Exception:
+            return 0
+
+    total_participants = await safe_count(Participant)
+    total_speakers = await safe_count(Speaker)
+    total_presentations = await safe_count(PresentationFile)
+    approved_presentations = await safe_count(PresentationFile, PresentationFile.upload_status == "approved")
+    total_sessions = await safe_count(Session)
+    total_rooms = await safe_count(Room)
+    total_devices = await safe_count(RoomDevice)
+    total_capacity_rules = await safe_count(VenueCapacityRule)
+
     return {
         "source": source_state,
         "local": {
@@ -217,6 +257,16 @@ async def get_sync_status(
             } if events else None,
             "outbox": {str(status): count for status, count in outbox_rows},
             "last_push_at": last_synced_at.isoformat() if last_synced_at else None,
+            "venue_modules": {
+                "participants": total_participants,
+                "speakers": total_speakers,
+                "presentations_total": total_presentations,
+                "presentations_approved": approved_presentations,
+                "sessions": total_sessions,
+                "rooms": total_rooms,
+                "devices": total_devices,
+                "capacity_rules": total_capacity_rules,
+            },
         },
     }
 
@@ -334,7 +384,7 @@ async def get_cloud_events(
 class SyncEventRequest(BaseModel):
     event_id: str
     organization_id: str
-    source_type: str | None = Field(default=None, pattern="^(cloud|registration_server|venue_server)$")
+    source_type: str | None = Field(default="cloud", pattern="^(cloud)$")
     source_url: str | None = None
 
 @router.post("/sync-event")
@@ -350,6 +400,12 @@ async def sync_event(
     Triggers the initial pull of the event into the local database.
     """
     try:
+        existing_event_ids = list((await db.execute(select(Event.id))).scalars().all())
+        if existing_event_ids and any(str(existing_id) != payload.event_id for existing_id in existing_event_ids):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This Venue Server is already bound to another event. Archive and reprovision it before fetching a different event.",
+            )
         source = _configured_source()
         api_key = x_fetch_api_key or source["api_key"] or None
         cloud_authorization = None if api_key else (x_cloud_authorization or authorization)
@@ -362,6 +418,12 @@ async def sync_event(
             api_key=api_key,
             source_type=(payload.source_type or source["source_type"]),
         )
+        install = await db.scalar(select(VenueInstallation).order_by(VenueInstallation.created_at.asc()).limit(1))
+        if install:
+            install.provisioned_event_id = __import__("uuid").UUID(payload.event_id)
+            install.source_type = payload.source_type or source["source_type"]
+            install.source_url = payload.source_url or source["base_url"]
+            await db.commit()
         return {"status": "success"}
     except HTTPException:
         raise

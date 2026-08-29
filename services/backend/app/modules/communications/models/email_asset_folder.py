@@ -20,7 +20,7 @@ class EmailAssetFolder(Base, SoftDeleteMixin):
         UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=True, index=True
     )
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("communications.email_asset_folders.id", ondelete="CASCADE"), nullable=True
+        UUID(as_uuid=True), ForeignKey("content.email_asset_folders.id", ondelete="CASCADE"), nullable=True
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(

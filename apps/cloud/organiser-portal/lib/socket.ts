@@ -7,6 +7,7 @@ class SocketService {
   private currentToken: string | null = null;
 
   connect(token: string) {
+    if (!token) return;
     if (this.socket && this.currentToken === token) return;
     
     // If token changed or socket exists, clean up first
@@ -15,14 +16,14 @@ class SocketService {
     }
 
     this.currentToken = token;
-    console.log(`[Socket.IO] Connecting to ${SOCKET_URL} (Standard Path)`);
     
     this.socket = io(SOCKET_URL, {
-      path: '/socket.io',
       auth: { token },
-      reconnectionAttempts: 5,
-      transports: ['polling', 'websocket'],
-      timeout: 20000,
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 15000,
     });
 
     this.socket.on('connect', () => {
@@ -30,22 +31,19 @@ class SocketService {
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('[Socket.IO] Connection error details:', {
-        message: error.message,
-        name: error.name,
-        stack: error.stack,
-        description: (error as any).description,
-        context: (error as any).context,
-      });
+      const isAuthError = /invalid|expired|authentication|access token|refused/i.test(error.message);
       
-      if (error.message === 'xhr poll error' || error.message === 'websocket error') {
-        console.warn('[Socket.IO] Falling back to polling/websocket mixed mode');
+      if (isAuthError) {
+        console.warn('[Socket.IO] Authentication rejected or expired. Disconnecting socket.');
+        this.disconnect();
+      } else {
+        console.warn(`[Socket.IO] Connection issue (${error.message}). Retrying...`);
       }
     });
   }
 
   joinEvent(eventId: string) {
-    if (!this.socket) return;
+    if (!this.socket || !this.socket.connected) return;
     this.socket.emit('join_event_room', { event_id: eventId });
   }
 
@@ -54,6 +52,7 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
     }
+    this.currentToken = null;
   }
 }
 

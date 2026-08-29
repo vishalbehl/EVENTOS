@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/use-auth-store";
 import { OnboardingWizard } from "@/components/organizer/onboarding/OnboardingWizard";
+import { OrganizationCapabilitiesProvider } from "@/lib/capabilities";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -26,15 +27,17 @@ export default function OnboardingPage() {
 
   if (!hydrated || !isAuthenticated || !accessToken || user?.onboarding_completed) {
     return (
-      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-[#e0ff00]" />
+      <div className="flex min-h-screen items-center justify-center bg-[var(--op-page-bg)]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--op-border)] border-t-[var(--op-primary)]" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#050505] text-[#f5f5f5]">
-      <OnboardingWizard />
-    </div>
+    <OrganizationCapabilitiesProvider>
+      <div className="min-h-screen bg-[var(--op-page-bg)] text-[var(--op-text)]">
+        <OnboardingWizard />
+      </div>
+    </OrganizationCapabilitiesProvider>
   );
 }

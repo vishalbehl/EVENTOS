@@ -2,37 +2,32 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { motion } from "framer-motion";
-import { Clock, MapPin, Users, AlertTriangle, GripVertical, MoreVertical, Copy, Trash2, Edit3, CheckCircle2 } from "lucide-react";
+import { Clock, Users, AlertTriangle, GripVertical, CheckCircle2 } from "lucide-react";
 import { cn, formatTimeRangeInTZ } from "@/lib/utils";
 import { BuilderSession, useSessionBuilderStore } from "@/store/useSessionBuilderStore";
 import { useAssignSpeakerToSession } from "@/hooks/useSessionBuilder";
 import { useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 
 interface SessionCardProps {
   session: BuilderSession;
   isDragging?: boolean;
-  onEdit?: (id: string) => void;
-  onDuplicate?: (id: string) => void;
-  onDelete?: (id: string) => void;
 }
 
-const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; solid: string }> = {
-  KEYNOTE: { bg: "bg-amber-500/10", border: "border-amber-500/30", text: "text-amber-400", solid: "#f59e0b" },
-  SYMPOSIUM: { bg: "bg-indigo-500/10", border: "border-indigo-500/30", text: "text-indigo-400", solid: "#6366f1" },
-  WORKSHOP: { bg: "bg-emerald-500/10", border: "border-emerald-500/30", text: "text-emerald-400", solid: "#10b981" },
-  PANEL: { bg: "bg-purple-500/10", border: "border-purple-500/30", text: "text-purple-400", solid: "#8b5cf6" },
-  POSTER: { bg: "bg-pink-500/10", border: "border-pink-500/30", text: "text-pink-400", solid: "#ec4899" },
-  regular: { bg: "bg-blue-500/10", border: "border-blue-500/30", text: "text-blue-400", solid: "#3b82f6" },
+const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  KEYNOTE: { bg: "bg-amber-500/10", border: "border-amber-500/30", text: "text-amber-400" },
+  SYMPOSIUM: { bg: "bg-indigo-500/10", border: "border-indigo-500/30", text: "text-indigo-400" },
+  WORKSHOP: { bg: "bg-emerald-500/10", border: "border-emerald-500/30", text: "text-emerald-400" },
+  PANEL: { bg: "bg-purple-500/10", border: "border-purple-500/30", text: "text-purple-400" },
+  POSTER: { bg: "bg-pink-500/10", border: "border-pink-500/30", text: "text-pink-400" },
+  regular: { bg: "bg-[var(--surface-subtle)]", border: "border-[var(--border-default)]", text: "text-[var(--text-secondary)]" },
 };
 
-export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete }: SessionCardProps) {
+export function SessionCard({ session, isDragging }: SessionCardProps) {
   const conflicts = useSessionBuilderStore((s) => s.conflicts);
   const selectedSessionId = useSessionBuilderStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useSessionBuilderStore((s) => s.setSelectedSessionId);
-  
+
   const { eventId } = useParams();
   const { mutate: assignSpeaker } = useAssignSpeakerToSession(eventId as string);
 
@@ -75,31 +70,36 @@ export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete
         } catch (err) {}
       }}
       className={cn(
-        "group relative rounded-xl border p-4 transition-all duration-200 cursor-pointer select-none",
+        "group relative rounded-lg border p-3 transition-all duration-150 cursor-pointer select-none text-xs",
         typeStyle.bg,
         typeStyle.border,
-        isSelected && "ring-2 ring-[var(--pri)] shadow-lg shadow-[var(--pri)]/20 scale-[1.01]",
-        hasConflict && "border-red-500/60 bg-red-500/10 ring-1 ring-red-500/50",
-        (isDragging || isDndKitDragging) && "opacity-40 shadow-2xl scale-[1.02] border-[var(--pri)] z-50",
-        "hover:border-[var(--pri)]/50 hover:shadow-md"
+        isSelected && "ring-2 ring-[var(--pri)] border-[var(--pri)] shadow-xs",
+        hasConflict && "border-rose-500/50 bg-rose-500/10 ring-1 ring-rose-500/30",
+        (isDragging || isDndKitDragging) && "opacity-50 border-[var(--pri)] z-50",
+        "hover:border-[var(--pri)]/60 hover:shadow-xs"
       )}
       onClick={() => setSelectedSessionId(session.id)}
     >
       {/* Top Bar: Code + Type + Drag Handle */}
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--pri)] bg-[var(--pri)]/10 px-2 py-0.5 rounded-md">
+      <div className="flex items-center justify-between gap-1.5 mb-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--pri)] bg-[var(--pri)]/10 px-1.5 py-0.5 rounded">
             {session.session_code?.toUpperCase()}
           </span>
           <Badge
             variant="outline"
-            className={cn("text-[9px] font-bold uppercase tracking-wider px-2 py-0", typeStyle.border, typeStyle.text)}
+            className={cn("text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0", typeStyle.border, typeStyle.text)}
           >
             {session.session_type}
           </Badge>
+          {!session.is_published && (
+            <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+              Draft
+            </span>
+          )}
           {hasConflict && (
-            <Badge variant="destructive" className="text-[9px] font-bold px-1.5 py-0 flex items-center gap-1 animate-pulse">
-              <AlertTriangle className="h-3 w-3" /> Conflict
+            <Badge variant="destructive" className="text-[9px] font-bold px-1.5 py-0 flex items-center gap-1 bg-rose-500/20 text-rose-400 border border-rose-500/30">
+              <AlertTriangle className="h-2.5 w-2.5" /> Conflict
             </Badge>
           )}
         </div>
@@ -109,63 +109,61 @@ export function SessionCard({ session, isDragging, onEdit, onDuplicate, onDelete
           <button
             {...attributes}
             {...listeners}
-            className="p-1 rounded text-muted hover:text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--text)_10%,transparent)] cursor-grab active:cursor-grabbing"
+            className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-subtle)] cursor-grab active:cursor-grabbing"
             title="Drag to reorder/reschedule"
             onClick={(e) => e.stopPropagation()}
           >
-            <GripVertical className="h-4 w-4" />
+            <GripVertical className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
 
       {/* Title */}
-      <h4 className="font-bold text-[14px] text-[var(--text)] line-clamp-2 leading-tight mb-2 group-hover:text-[var(--pri)] transition-colors">
+      <h4 className="font-semibold text-xs text-[var(--text-primary)] line-clamp-2 leading-snug mb-2 group-hover:text-[var(--pri)] transition-colors">
         {session.name}
       </h4>
 
       {/* Time */}
-      <div className="flex flex-col gap-1 text-[11px] text-muted mb-3 font-medium">
-        <div className="flex items-center gap-1.5 text-[var(--pri)] font-semibold">
-          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>{formatTimeRangeInTZ(session.start_time, session.end_time, timezone)}</span>
-        </div>
+      <div className="flex items-center gap-1.5 text-[var(--pri)] font-medium text-[11px] mb-2">
+        <Clock className="h-3 w-3 flex-shrink-0" />
+        <span>{formatTimeRangeInTZ(session.start_time, session.end_time, timezone)}</span>
       </div>
 
       {/* Speakers & Readiness Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-default/50 text-[11px]">
+      <div className="flex items-center justify-between pt-2 border-t border-[var(--border-subtle)] text-[11px]">
         {/* Speaker Avatars */}
         <div className="flex items-center gap-1">
-          <Users className="h-3.5 w-3.5 text-muted mr-1" />
+          <Users className="h-3 w-3 text-[var(--text-secondary)] mr-0.5" />
           {session.speakers && session.speakers.length > 0 ? (
             <div className="flex -space-x-1.5 overflow-hidden">
               {session.speakers.slice(0, 3).map((spk, idx) => (
                 <div
                   key={spk.id || idx}
-                  className="h-5 w-5 rounded-full bg-[var(--pri)]/30 border border-background flex items-center justify-center text-[9px] font-black text-[var(--text)] uppercase"
+                  className="h-5 w-5 rounded-full bg-[var(--brand-primary-muted)] border border-[var(--card)] flex items-center justify-center text-[9px] font-bold text-[var(--brand-primary)] uppercase"
                   title={spk.full_name}
                 >
                   {spk.full_name.charAt(0)}
                 </div>
               ))}
               {session.speakers.length > 3 && (
-                <div className="h-5 w-5 rounded-full bg-muted/40 border border-background flex items-center justify-center text-[8px] font-bold text-muted">
+                <div className="h-5 w-5 rounded-full bg-[var(--surface-subtle)] border border-[var(--card)] flex items-center justify-center text-[8px] font-semibold text-[var(--text-secondary)]">
                   +{session.speakers.length - 3}
                 </div>
               )}
             </div>
           ) : (
-            <span className="text-muted italic text-[10px]">No speakers</span>
+            <span className="text-[var(--text-tertiary)] italic text-[10px]">No speakers</span>
           )}
         </div>
 
         {/* Readiness % */}
-        <div className="flex items-center gap-1 font-bold text-[10px]">
+        <div className="flex items-center gap-1 font-semibold text-[10px]">
           {(session.readiness_pct || 0) >= 100 ? (
-            <span className="text-[var(--success)] flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3" /> Ready
+            <span className="text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="h-2.5 w-2.5" /> Ready
             </span>
           ) : (
-            <span className="text-[var(--warn)]">
+            <span className="text-amber-400">
               {Math.round(session.readiness_pct || 0)}% ready
             </span>
           )}

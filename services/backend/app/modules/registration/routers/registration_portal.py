@@ -1,3 +1,4 @@
+import app.models
 import hashlib
 import uuid
 from typing import Dict, Any, List, Optional
@@ -5,9 +6,11 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
+from app.modules.registration.models.registration_domain_tables import FormField
 
 from app.dependencies import get_db, get_current_event, CurrentEvent
+from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
 from app.modules.events.models.event import Event
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.participant import Participant
@@ -62,10 +65,32 @@ async def _public_capability_result(db: AsyncSession, event: Event) -> dict[str,
 
 
 async def _require_public_registration(db: AsyncSession, event: Event) -> dict[str, Any]:
-    await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
-    return await _public_capability_result(db, event)
+    capabilities = await _public_capability_result(db, event)
+    feature = capabilities.get("features", {}).get("FEAT_REGISTRATION_PORTAL")
+    if feature and not feature.get("enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "FEATURE_DISABLED",
+                "message": "Registration portal is not enabled for this event.",
+                "reason_code": feature.get("reason_code"),
+            }
+        )
+    return capabilities
+
 
 DEFAULT_FIELDS = [
+    {
+        "id": "title",
+        "name": "title",
+        "label": "Title / Prefix",
+        "type": "select",
+        "is_default": True,
+        "is_required": False,
+        "is_active": True,
+        "placeholder": "Select title",
+        "options": ["Dr.", "Prof.", "Mr.", "Ms.", "Mrs."]
+    },
     {
         "id": "first_name",
         "name": "first_name",
@@ -102,29 +127,29 @@ DEFAULT_FIELDS = [
         "label": "Phone Number",
         "type": "phone",
         "is_default": True,
-        "is_required": False,
+        "is_required": True,
         "is_active": True,
-        "placeholder": "Enter your phone number"
+        "placeholder": "Enter phone number"
     },
     {
         "id": "company",
         "name": "company",
-        "label": "Company/Affiliation",
+        "label": "Institution / Organization",
         "type": "text",
         "is_default": True,
-        "is_required": False,
+        "is_required": True,
         "is_active": True,
-        "placeholder": "Enter your company name"
+        "placeholder": "Enter institution, hospital, or organization"
     },
     {
         "id": "designation",
         "name": "designation",
-        "label": "Job Title/Designation",
+        "label": "Job Title / Designation",
         "type": "text",
         "is_default": True,
-        "is_required": False,
+        "is_required": True,
         "is_active": True,
-        "placeholder": "Enter your job title"
+        "placeholder": "Enter your job title or designation"
     },
     {
         "id": "country",
@@ -132,20 +157,20 @@ DEFAULT_FIELDS = [
         "label": "Country",
         "type": "country",
         "is_default": True,
-        "is_required": False,
+        "is_required": True,
         "is_active": True,
         "placeholder": "Select your country"
     },
     {
         "id": "role",
         "name": "role",
-        "label": "Registration Category",
+        "label": "Registration Role / Category",
         "type": "select",
         "is_default": True,
         "is_required": True,
         "is_active": True,
-        "placeholder": "Select your category",
-        "options": ["Delegate", "VIP", "Speaker", "Faculty"]
+        "placeholder": "Select your role category",
+        "options": []
     }
 ]
 
@@ -153,6 +178,8 @@ from app.services.template_defaults import get_default_registration_terms, get_d
 
 DEFAULT_TERMS = get_default_registration_terms()
 DEFAULT_FAQS = get_default_registration_faqs()
+
+REMOVED_DEFAULT_IDS = {"council_number", "postal_code", "dietary_preference", "emergency_contact", "state", "city"}
 
 
 # ── Organizer Endpoints ───────────────────────────────────────────
@@ -165,7 +192,7 @@ async def get_registration_form_config(
 ):
     """
     Get the registration form configuration for the event.
-    Creates a default configuration if none exists.
+    Creates a default configuration and populates registration.form_fields if none exists.
     """
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
@@ -178,12 +205,94 @@ async def get_registration_form_config(
     if not config:
         config = RegistrationFormConfig(
             event_id=event.id,
-            is_live=False,
+            is_live=True,
             fields=DEFAULT_FIELDS
         )
         db.add(config)
         await db.commit()
         await db.refresh(config)
+
+    # Check registration.form_fields table
+    ff_stmt = select(FormField).where(FormField.form_id == config.id).order_by(FormField.sort_order)
+    ff_res = await db.execute(ff_stmt)
+    db_form_fields = ff_res.scalars().all()
+
+    REMOVED_DEFAULT_IDS = {"council_number", "postal_code", "dietary_preference", "emergency_contact", "state", "city"}
+
+    if not db_form_fields:
+        base_fields = config.fields if config.fields else DEFAULT_FIELDS
+        cleaned_fields = [
+            f for f in base_fields
+            if not (f.get("is_default") and (f.get("id") in REMOVED_DEFAULT_IDS or f.get("name") in REMOVED_DEFAULT_IDS))
+        ]
+        
+        # Ensure all 11 default fields exist
+        existing_ids = {f.get("id") or f.get("name") for f in cleaned_fields}
+        for df in DEFAULT_FIELDS:
+            if df["id"] not in existing_ids and df["name"] not in existing_ids:
+                cleaned_fields.append(df)
+
+        for idx, f in enumerate(cleaned_fields):
+            ff = FormField(
+                id=uuid.uuid4(),
+                form_id=config.id,
+                field_name=f.get("name") or f.get("id") or f"field_{idx}",
+                field_type=f.get("type", "text"),
+                is_required=f.get("is_required", False),
+                sort_order=idx,
+                label=f.get("label", ""),
+                is_active=f.get("is_active", True),
+                is_default=f.get("is_default", False),
+                placeholder=f.get("placeholder", ""),
+                options=f.get("options", [])
+            )
+            db.add(ff)
+        config.fields = cleaned_fields
+        await db.commit()
+        await db.refresh(config)
+    else:
+        loaded_fields = []
+        for ff in db_form_fields:
+            if ff.is_default and (ff.field_name in REMOVED_DEFAULT_IDS):
+                continue
+            loaded_fields.append({
+                "id": ff.field_name,
+                "name": ff.field_name,
+                "label": ff.label or ff.field_name,
+                "type": ff.field_type,
+                "is_default": ff.is_default,
+                "is_required": ff.is_required,
+                "is_active": ff.is_active,
+                "placeholder": ff.placeholder or "",
+                "options": ff.options or []
+            })
+        
+        # Ensure all default fields are present
+        existing_ids = {f.get("id") or f.get("name") for f in loaded_fields}
+        updated = False
+        for df in DEFAULT_FIELDS:
+            if df["id"] not in existing_ids and df["name"] not in existing_ids:
+                loaded_fields.append(df)
+                ff_new = FormField(
+                    id=uuid.uuid4(),
+                    form_id=config.id,
+                    field_name=df["name"],
+                    field_type=df["type"],
+                    is_required=df["is_required"],
+                    sort_order=len(loaded_fields),
+                    label=df["label"],
+                    is_active=df["is_active"],
+                    is_default=df["is_default"],
+                    placeholder=df.get("placeholder", ""),
+                    options=df.get("options", [])
+                )
+                db.add(ff_new)
+                updated = True
+        
+        config.fields = loaded_fields
+        if updated:
+            await db.commit()
+            await db.refresh(config)
 
     terms = event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else ""
     faqs = event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS
@@ -210,7 +319,7 @@ async def update_registration_form_config(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update the registration form configuration for the event.
+    Update the registration form configuration and synchronize with registration.form_fields.
     """
     stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event.id)
     result = await db.execute(stmt)
@@ -219,12 +328,57 @@ async def update_registration_form_config(
     if not config:
         config = RegistrationFormConfig(event_id=event.id)
         db.add(config)
+        await db.flush()
 
     if payload.is_live is not None:
         config.is_live = payload.is_live
+        
     if payload.fields is not None:
-        # Convert pydantic models to dictionaries
-        config.fields = [f.model_dump() for f in payload.fields]
+        dict_fields = [f.model_dump() for f in payload.fields]
+        config.fields = dict_fields
+        
+        # Synchronize with registration.form_fields table
+        await db.execute(delete(FormField).where(FormField.form_id == config.id))
+        sort_idx = 0
+        has_state = False
+        for f in dict_fields:
+            fname = f.get("name") or f.get("id") or f"field_{sort_idx}"
+            ftype = f.get("type", "text")
+            db.add(FormField(
+                id=uuid.uuid4(),
+                form_id=config.id,
+                field_name=fname,
+                field_type=ftype,
+                is_required=f.get("is_required", False),
+                sort_order=sort_idx,
+                label=f.get("label", ""),
+                is_active=f.get("is_active", True),
+                is_default=f.get("is_default", False),
+                placeholder=f.get("placeholder", ""),
+                options=f.get("options", [])
+            ))
+            sort_idx += 1
+            if fname == "state":
+                has_state = True
+            elif ftype == "country" or fname == "country":
+                # Ensure state exists as companion in form_fields table
+                if not has_state:
+                    db.add(FormField(
+                        id=uuid.uuid4(),
+                        form_id=config.id,
+                        field_name="state",
+                        field_type="state",
+                        is_required=f.get("is_required", False),
+                        sort_order=sort_idx,
+                        label="State / Province",
+                        is_active=f.get("is_active", True),
+                        is_default=True,
+                        placeholder="Select state / province",
+                        options=[]
+                    ))
+                    sort_idx += 1
+                    has_state = True
+
     if payload.terms_and_conditions is not None:
         reg_settings = dict(event.registration_settings or {})
         reg_settings["terms_and_conditions"] = payload.terms_and_conditions
@@ -333,7 +487,10 @@ async def get_public_registration_form(
 
     if config:
         is_live = config.is_live
-        fields = config.fields
+        fields = [
+            f for f in (config.fields or DEFAULT_FIELDS)
+            if not (f.get("is_default") and (f.get("id") in REMOVED_DEFAULT_IDS or f.get("name") in REMOVED_DEFAULT_IDS))
+        ]
 
     # Load active roles and apply category filters
     from app.modules.registration.models.participant_role import ParticipantRole
@@ -351,11 +508,11 @@ async def get_public_registration_form(
         roles = roles_res.scalars().all()
 
     reg_settings = event.registration_settings or {}
-    disabled_categories = reg_settings.get("disabled_categories", [])
 
+    # All active participant roles set by organizer
     allowed_roles = [
         r.name for r in roles
-        if r.is_active and r.category not in disabled_categories
+        if r.is_active
     ]
 
     # Map form fields and dynamically assign roles to select options
@@ -365,9 +522,16 @@ async def get_public_registration_form(
         if field.get("id") == "role":
             field["options"] = allowed_roles
 
-    reg_settings = event.registration_settings or {}
-    payment_enabled = bool(reg_settings.get("payment_enabled", False)) and bool(
-        capabilities["features"].get("FEAT_PAYMENT_GATEWAY", {}).get("enabled")
+    pts = event.portal_theme_setting
+    active_gateway = (
+        (pts.active_gateway if pts and pts.active_gateway else None)
+        or reg_settings.get("active_gateway")
+        or "simulated"
+    )
+    payment_enabled = (
+        (pts.payment_enabled if pts and pts.payment_enabled is not None else None)
+        if (pts and pts.payment_enabled is not None)
+        else bool(reg_settings.get("payment_enabled", False))
     )
     coupon_enabled = bool(
         capabilities["features"].get("FEAT_COUPON_CODES", {}).get("enabled")
@@ -375,20 +539,38 @@ async def get_public_registration_form(
     uploads_enabled = bool(
         capabilities["features"].get("FEAT_REGISTRATION_FORMS", {}).get("enabled")
     )
-    active_gateway = reg_settings.get("active_gateway", "simulated")
     
     stripe_pub_key = ""
     if active_gateway == "stripe":
-        stripe_pub_key = reg_settings.get("stripe_credentials", {}).get("publishable_key", "")
+        stripe_creds = (pts.stripe_credentials if pts and pts.stripe_credentials else None) or reg_settings.get("stripe_credentials", {})
+        stripe_pub_key = stripe_creds.get("publishable_key", "")
         
     active_tier = get_active_tier(event)
-    active_prices = await get_active_prices_for_event(db, event)
+    raw_active_prices = await get_active_prices_for_event(db, event)
+    # Explicitly ensure every active role has a price entry (0.0 if free/unpriced)
+    active_prices = {}
+    for r_name in allowed_roles:
+        if r_name in raw_active_prices:
+            active_prices[r_name] = float(raw_active_prices[r_name])
+        else:
+            matched_p = next(
+                (v for k, v in raw_active_prices.items() if k.strip().lower() == r_name.strip().lower()),
+                0.0
+            )
+            active_prices[r_name] = float(matched_p)
 
-    terms = reg_settings.get("terms_and_conditions") or DEFAULT_TERMS
+    raw_terms = reg_settings.get("terms_and_conditions")
+    if not raw_terms or len(raw_terms.strip()) < 100 or "1. All registrations are subject to verification" in raw_terms:
+        terms = DEFAULT_TERMS
+    else:
+        terms = raw_terms
+
     include_default = reg_settings.get("include_default_faqs", True)
     custom_faqs = reg_settings.get("faqs", [])
     
-    if include_default:
+    if not custom_faqs or (len(custom_faqs) <= 4 and any("registration fee include" in f.get("q", "").lower() for f in custom_faqs)):
+        faqs = DEFAULT_FAQS
+    elif include_default:
         existing_questions = {f.get("q", "").strip().lower() for f in custom_faqs}
         faqs = list(custom_faqs)
         for df in DEFAULT_FAQS:
@@ -397,10 +579,112 @@ async def get_public_registration_form(
     else:
         faqs = custom_faqs
 
+    # Dynamic live stats calculation from database (if organizer hasn't overridden with custom stats)
+    custom_stats = reg_settings.get("stats")
+    if custom_stats and isinstance(custom_stats, list) and len(custom_stats) > 0:
+        stats_to_return = custom_stats
+    else:
+        from app.modules.agenda.models import Session as AgendaSessionModel, Track as AgendaTrackModel
+        from app.modules.events.models.speaker import Speaker as SpeakerModel
+
+        days_count = 1
+        if event.start_date and event.end_date:
+            try:
+                days_count = max(1, (event.end_date - event.start_date).days + 1)
+            except Exception:
+                days_count = 1
+
+        track_count = (await db.execute(
+            select(func.count(AgendaTrackModel.id)).where(AgendaTrackModel.event_id == event_id)
+        )).scalar() or 0
+
+        session_count = (await db.execute(
+            select(func.count(AgendaSessionModel.id)).where(
+                AgendaSessionModel.event_id == event_id,
+                AgendaSessionModel.deleted_at.is_(None)
+            )
+        )).scalar() or 0
+
+        speaker_count = (await db.execute(
+            select(func.count(SpeakerModel.id)).where(
+                SpeakerModel.event_id == event_id,
+                SpeakerModel.deleted_at.is_(None)
+            )
+        )).scalar() or 0
+
+        stats_to_return = [
+            {"label": f"{days_count} {'Day' if days_count == 1 else 'Days'} Conference", "icon": "calendar"}
+        ]
+        if track_count > 0:
+            stats_to_return.append({"label": f"{track_count} {'Track' if track_count == 1 else 'Tracks'}", "icon": "tracks"})
+        if session_count > 0:
+            stats_to_return.append({"label": f"{session_count} {'Session' if session_count == 1 else 'Sessions'}", "icon": "sessions"})
+        if speaker_count > 0:
+            stats_to_return.append({"label": f"{speaker_count} {'Speaker' if speaker_count == 1 else 'Speakers'}", "icon": "speakers"})
+
+    pts = event.portal_theme_setting
+    primary_color = (pts.primary_color if pts and pts.primary_color else None) or event.theme_color or "#6366F1"
+    secondary_color = (pts.secondary_color if pts and pts.secondary_color else None) or "#A855F7"
+    theme_preset = (pts.theme_preset if pts and pts.theme_preset else None) or "dark-luxury"
+    svg_pattern = (pts.svg_pattern if pts and pts.svg_pattern else None) or "glow-wave"
+    dark_mode_default = pts.dark_mode_default if pts and pts.dark_mode_default is not None else True
+    font_family = (pts.font_family if pts and pts.font_family else None) or "Inter"
+    custom_css = (pts.custom_css if pts and pts.custom_css else "") or ""
+    program_url = (pts.program_url if pts and pts.program_url else "") or reg_settings.get("program_url") or ""
+    speaker_guidelines_url = (pts.speaker_guidelines_url if pts and pts.speaker_guidelines_url else "") or reg_settings.get("speaker_guidelines_url") or ""
+    presentation_template_url = (pts.presentation_template_url if pts and pts.presentation_template_url else "") or reg_settings.get("presentation_template_url") or ""
+    support_email = (pts.support_email if pts and pts.support_email else "") or reg_settings.get("support_email") or event.support_email or "support@eventos.io"
+    support_phone = (pts.support_phone if pts and pts.support_phone else "") or reg_settings.get("support_phone") or event.support_phone or ""
+    additional_contacts = (pts.additional_contacts if pts and pts.additional_contacts else []) or reg_settings.get("additional_contacts") or []
+
+    bg_mode = (pts.extra_settings.get("bg_mode") if pts and pts.extra_settings else None) or reg_settings.get("bg_mode") or "pattern"
+    bg_image_url = (pts.extra_settings.get("bg_image_url") if pts and pts.extra_settings else None) or reg_settings.get("bg_image_url") or ""
+    bg_blur = (pts.extra_settings.get("bg_blur") if pts and pts.extra_settings and "bg_blur" in pts.extra_settings else None) if (pts and pts.extra_settings and "bg_blur" in pts.extra_settings) else reg_settings.get("bg_blur", 0)
+    bg_overlay_opacity = (pts.extra_settings.get("bg_overlay_opacity") if pts and pts.extra_settings and "bg_overlay_opacity" in pts.extra_settings else None) if (pts and pts.extra_settings and "bg_overlay_opacity" in pts.extra_settings) else reg_settings.get("bg_overlay_opacity", 0.4)
+    bg_solid_color = (pts.extra_settings.get("bg_solid_color") if pts and pts.extra_settings else None) or reg_settings.get("bg_solid_color") or "#000000"
+
     return {
         "event_name": event.name,
-        "theme_color": event.theme_color or "#1A73E8",
-        "logo_url": event.logo_url,
+        "short_code": event.short_code or "",
+        "theme_color": primary_color,
+        "primary_color": primary_color,
+        "secondary_color": secondary_color,
+        "theme_preset": theme_preset,
+        "svg_pattern": svg_pattern,
+        "dark_mode_default": dark_mode_default,
+        "font_family": font_family,
+        "custom_css": custom_css,
+        "bg_mode": bg_mode,
+        "bg_image_url": bg_image_url,
+        "bg_blur": bg_blur,
+        "bg_overlay_opacity": bg_overlay_opacity,
+        "bg_solid_color": bg_solid_color,
+        "tagline": reg_settings.get("tagline") or (pts.tagline if pts else "") or "",
+        "description": event.description or reg_settings.get("description") or (pts.hero_description if pts else "") or "",
+        "stats": stats_to_return,
+        "theme_config": {
+            "preset": theme_preset,
+            "primary_color": primary_color,
+            "secondary_color": secondary_color,
+            "dark_mode_default": dark_mode_default,
+            "svg_pattern": svg_pattern,
+            "font_family": font_family,
+            "custom_css": custom_css,
+            "bg_mode": bg_mode,
+            "bg_image_url": bg_image_url,
+            "bg_blur": bg_blur,
+            "bg_overlay_opacity": bg_overlay_opacity,
+            "bg_solid_color": bg_solid_color,
+        },
+        "program_url": program_url,
+        "speaker_guidelines_url": speaker_guidelines_url,
+        "presentation_template_url": presentation_template_url,
+        "support_email": support_email,
+        "support_phone": support_phone,
+        "additional_contacts": additional_contacts,
+        "logo_url": event.logo_url or (pts.logo_url if pts else None),
+        "banner_url": (pts.banner_url if pts else None),
+        "favicon_url": (pts.favicon_url if pts else None),
         "is_live": is_live,
         "fields": fields_copy,
         "currency": event.currency or "INR",
@@ -412,10 +696,12 @@ async def get_public_registration_form(
         "active_tier": active_tier,
         "active_prices": active_prices,
         "tier_cutoffs": reg_settings.get("tier_cutoffs", {}),
+        "tier_schedules": reg_settings.get("tier_schedules", {}),
         "terms_and_conditions": terms,
         "faqs": faqs,
         "include_default_faqs": include_default,
         "branding_settings": event.branding_settings,
+        "registration_settings": reg_settings,
         "start_date": event.start_date,
         "end_date": event.end_date,
         "location": event.location,
@@ -432,9 +718,6 @@ async def public_register_participant(
     payload: Dict[str, Any],
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Publicly submit registration data for an event.
-    """
     # 1. Fetch form config and check if registration is live
     config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
     config_result = await db.execute(config_stmt)
@@ -526,7 +809,8 @@ async def public_register_participant(
 
     # 4. Validate and map form submissions into default fields and custom fields
     import re
-    default_fields = ["name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "role"]
+    default_fields = ["name", "first_name", "last_name", "email", "phone", "company", "designation", "country", "state", "role"]
+    state_input = str(payload.get("state") or payload.get("country_state") or "").strip() or None
     participant_data: Dict[str, Any] = {
         "event_id": event_id,
         "name": name_val or "Unnamed Participant",
@@ -537,13 +821,17 @@ async def public_register_participant(
         "company": payload.get("company", "").strip() or None,
         "designation": payload.get("designation", "").strip() or None,
         "country": payload.get("country", "").strip() or None,
+        "state": state_input,
         "role": payload.get("role", "Delegate").strip(),
         "paid_status": "Unpaid",
         "source": "public_portal",
         "custom_fields": {}
     }
 
-    form_fields = config.fields
+    form_fields = [
+        f for f in (config.fields or DEFAULT_FIELDS)
+        if not (f.get("is_default") and (f.get("id") in REMOVED_DEFAULT_IDS or f.get("name") in REMOVED_DEFAULT_IDS))
+    ]
     
     # Validation Loop
     for field in form_fields:
@@ -665,6 +953,7 @@ async def public_register_participant(
         "company": participant_data["company"],
         "designation": participant_data["designation"],
         "country": participant_data["country"],
+        "state": participant_data["state"],
         "role": participant_data["role"],
         "custom_fields": participant_data["custom_fields"]
     }
@@ -910,7 +1199,8 @@ async def validate_public_promo(
     base_price = await get_ticket_price(db, event_id, payload.role, active_tier)
     
     if base_price is None:
-        raise HTTPException(status_code=400, detail=f"No pricing configured for role '{payload.role}' under active tier '{active_tier}'.")
+        raw_prices = await get_active_prices_for_event(db, event)
+        base_price = float(raw_prices.get(payload.role, 0.0))
         
     discount = 0.0
     if promo.discount_type == "percentage":

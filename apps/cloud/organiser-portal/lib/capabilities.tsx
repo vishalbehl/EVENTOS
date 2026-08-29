@@ -74,12 +74,24 @@ const PORTAL_ROUTE_BINDINGS: Array<{ route: string; featureKey: string }> = [
   { route: "/events/:eventId/sessions/agenda", featureKey: "FEAT_SESSION_MANAGEMENT" },
   { route: "/events/:eventId/sessions/dashboard", featureKey: "FEAT_SESSION_MANAGEMENT" },
   { route: "/events/:eventId/sessions", featureKey: "FEAT_SESSION_MANAGEMENT" },
+  { route: "/events/:eventId/program/rooms", featureKey: "FEAT_SESSION_MANAGEMENT" },
+  { route: "/events/:eventId/program/builder", featureKey: "FEAT_SESSION_MANAGEMENT" },
+  { route: "/events/:eventId/program/agenda", featureKey: "FEAT_SESSION_MANAGEMENT" },
+  { route: "/events/:eventId/program/dashboard", featureKey: "FEAT_SESSION_MANAGEMENT" },
+  { route: "/events/:eventId/program/tracks", featureKey: "FEAT_SESSION_MANAGEMENT" },
+  { route: "/events/:eventId/program", featureKey: "FEAT_SESSION_MANAGEMENT" },
   { route: "/events/:eventId/communication/emails", featureKey: "FEAT_CAMPAIGN_MGMT" },
   { route: "/events/:eventId/communication/email-designer", featureKey: "FEAT_EMAIL_DESIGNER" },
   { route: "/events/:eventId/communication/announcements", featureKey: "FEAT_ANNOUNCEMENT_CENTER" },
   { route: "/events/:eventId/communication/notifications", featureKey: "FEAT_COMMUNICATION_CENTER" },
   { route: "/events/:eventId/communication/dashboard", featureKey: "FEAT_COMMUNICATION_CENTER" },
   { route: "/events/:eventId/communication", featureKey: "FEAT_COMMUNICATION_CENTER" },
+  { route: "/events/:eventId/communications/emails", featureKey: "FEAT_CAMPAIGN_MGMT" },
+  { route: "/events/:eventId/communications/email-designer", featureKey: "FEAT_EMAIL_DESIGNER" },
+  { route: "/events/:eventId/communications/announcements", featureKey: "FEAT_ANNOUNCEMENT_CENTER" },
+  { route: "/events/:eventId/communications/notifications", featureKey: "FEAT_COMMUNICATION_CENTER" },
+  { route: "/events/:eventId/communications/dashboard", featureKey: "FEAT_COMMUNICATION_CENTER" },
+  { route: "/events/:eventId/communications", featureKey: "FEAT_COMMUNICATION_CENTER" },
   { route: "/events/:eventId/design-studio/badges", featureKey: "FEAT_BADGE_TEMPLATES" },
   { route: "/events/:eventId/design-studio/certificates", featureKey: "FEAT_CERTIFICATE_TEMPLATES" },
   { route: "/events/:eventId/design-studio/emails", featureKey: "FEAT_EMAIL_DESIGNER" },
@@ -88,6 +100,13 @@ const PORTAL_ROUTE_BINDINGS: Array<{ route: string; featureKey: string }> = [
   { route: "/events/:eventId/developer", featureKey: "FEAT_WEBHOOK_ACCESS" },
   { route: "/events/:eventId", featureKey: "FEAT_EVENT_PLANNING" },
 ];
+
+const DEFAULT_CAPABILITY_CONTEXT: CapabilityContextValue = {
+  data: undefined,
+  isLoading: false,
+  isError: false,
+  refetch: () => {},
+};
 
 export function OrganizationCapabilitiesProvider({ children }: { children: ReactNode }) {
   const query = useQuery({
@@ -103,14 +122,13 @@ export function OrganizationCapabilitiesProvider({ children }: { children: React
 
 export function useOrganizationCapabilities() {
   const value = useContext(OrganizationCapabilityContext);
-  if (!value) throw new Error("useOrganizationCapabilities must be used inside OrganizationCapabilitiesProvider");
-  return value;
+  return value ?? DEFAULT_CAPABILITY_CONTEXT;
 }
 
 export function useOrganizationFeatureAccess(featureKey?: string) {
   const { data, isLoading, isError } = useOrganizationCapabilities();
   if (!featureKey) return { enabled: true, loading: false, reason: null, feature: undefined };
-  const feature = data?.features[featureKey];
+  const feature = data?.features?.[featureKey];
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
@@ -147,7 +165,7 @@ export function useOrganizationLimitAccess(limitKey?: string, quantity = 1) {
   if (!limitKey) {
     return { enabled: true, loading: false, reason: null, limit: undefined };
   }
-  const limit = data?.limits[limitKey];
+  const limit = data?.limits?.[limitKey];
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
@@ -230,14 +248,13 @@ export function EventCapabilitiesProvider({ eventId, children }: { eventId?: str
 
 export function useEventCapabilities() {
   const value = useContext(EventCapabilityContext);
-  if (!value) throw new Error("useEventCapabilities must be used inside EventCapabilitiesProvider");
-  return value;
+  return value ?? DEFAULT_CAPABILITY_CONTEXT;
 }
 
 export function useFeatureAccess(featureKey?: string) {
   const { data, isLoading, isError } = useEventCapabilities();
   if (!featureKey) return { enabled: true, loading: false, reason: null, feature: undefined };
-  const feature = data?.features[featureKey];
+  const feature = data?.features?.[featureKey];
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
@@ -410,7 +427,7 @@ export function useLimitAccess(limitKey?: string, quantity = 1) {
   if (!limitKey) {
     return { enabled: true, loading: false, reason: null, limit: undefined };
   }
-  const limit = data?.limits[limitKey];
+  const limit = data?.limits?.[limitKey];
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;

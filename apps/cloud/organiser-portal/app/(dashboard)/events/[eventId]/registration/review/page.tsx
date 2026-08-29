@@ -3,19 +3,44 @@
 import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  CheckCircle, XCircle, Search, RefreshCw, ClipboardList, Clock, 
-  AlertTriangle, CheckSquare, Square, ThumbsUp, ThumbsDown, Info, 
-  MessageSquare, UserCheck, ArrowUpRight, HelpCircle
+import {
+  CheckCircle,
+  XCircle,
+  Search,
+  RefreshCw,
+  ClipboardList,
+  Clock,
+  CheckSquare,
+  Square,
+  ThumbsUp,
+  ThumbsDown,
+  UserCheck,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  X,
+  MapPin,
+  Building,
+  User,
+  Phone,
+  Mail,
+  Box,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
-import { formatApiError } from "@/lib/utils";
+import { formatApiError, cn } from "@/lib/utils";
 import { CapabilityAction, useOperationAccess } from "@/lib/capabilities";
 import { useSessions } from "@/hooks/useSessions";
+import CapacityTab from "@/components/organizer/registration/settings/CapacityTab";
+import {
+  OrganiserPage,
+  Panel,
+  MetricCard,
+  StatusBadge,
+} from "@/components/organizer/workspace/OrganiserPrimitives";
 
 interface ParticipantRegistration {
   id: string;
@@ -30,9 +55,13 @@ interface ParticipantRegistration {
     phone?: string;
     company?: string;
     designation?: string;
+    country?: string;
+    country_state?: string;
+    state?: string;
     role?: string;
     paid_status?: string;
     custom_fields?: Record<string, any>;
+    [key: string]: any;
   };
   submitted_at: string;
   reviewed_by?: string;
@@ -43,19 +72,23 @@ interface ParticipantRegistration {
   approval_source: string;
 }
 
+type TabKey = "submitted" | "waitlisted" | "approved" | "rejected";
+
 export default function ReviewPage() {
   const { eventId } = useParams();
   const reviewAccess = useOperationAccess("registration.approve");
   const checkinAccess = useOperationAccess("registration.checkin");
   const { data: sessions = [] } = useSessions(eventId as string);
   const [checkinSessionId, setCheckinSessionId] = useState("");
-  
+
+  const [viewMode, setViewMode] = useState<"approvals" | "capacity">("approvals");
   const [registrations, setRegistrations] = useState<ParticipantRegistration[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState<"submitted" | "waitlisted" | "approved" | "rejected">("submitted");
+  const [activeTab, setActiveTab] = useState<TabKey>("submitted");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  
+  const [expandedCustomFieldsId, setExpandedCustomFieldsId] = useState<string | null>(null);
+
   // Dialog States
   const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [modalAction, setModalAction] = useState<"approve" | "reject" | "bulk_approve" | "bulk_reject">("approve");
@@ -83,8 +116,17 @@ export default function ReviewPage() {
     }
   }, [eventId]);
 
+  const queueCounts = useMemo(() => {
+    return {
+      submitted: registrations.filter((r) => r.registration_status === "submitted").length,
+      waitlisted: registrations.filter((r) => r.registration_status === "waitlisted").length,
+      approved: registrations.filter((r) => r.registration_status === "approved").length,
+      rejected: registrations.filter((r) => r.registration_status === "rejected").length,
+    };
+  }, [registrations]);
+
   const filteredRegistrations = useMemo(() => {
-    return registrations.filter(reg => {
+    return registrations.filter((reg) => {
       const isStatusMatch = reg.registration_status === activeTab;
       if (!isStatusMatch) return false;
 
@@ -92,9 +134,17 @@ export default function ReviewPage() {
       const fullName = (data.name || `${data.first_name || ""} ${data.last_name || ""}`).toLowerCase();
       const email = (data.email || "").toLowerCase();
       const company = (data.company || "").toLowerCase();
+      const role = (data.role || "").toLowerCase();
+      const country = (data.country || "").toLowerCase();
       const query = searchQuery.toLowerCase();
 
-      return fullName.includes(query) || email.includes(query) || company.includes(query);
+      return (
+        fullName.includes(query) ||
+        email.includes(query) ||
+        company.includes(query) ||
+        role.includes(query) ||
+        country.includes(query)
+      );
     });
   }, [registrations, activeTab, searchQuery]);
 
@@ -112,7 +162,7 @@ export default function ReviewPage() {
     if (selectedIds.size === filteredRegistrations.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredRegistrations.map(r => r.id)));
+      setSelectedIds(new Set(filteredRegistrations.map((r) => r.id)));
     }
   };
 
@@ -140,7 +190,7 @@ export default function ReviewPage() {
     try {
       if (modalAction === "approve" && selectedReg) {
         await apiPatch(`/events/${eventId}/registrations/${selectedReg.id}/approve`, {
-          review_notes: reviewNotes
+          review_notes: reviewNotes,
         });
         toast.success(`Approved ${selectedReg.registration_data.name || "registration"}`);
       } else if (modalAction === "reject" && selectedReg) {
@@ -150,7 +200,7 @@ export default function ReviewPage() {
         }
         await apiPatch(`/events/${eventId}/registrations/${selectedReg.id}/reject`, {
           rejection_reason: rejectionReason,
-          review_notes: reviewNotes
+          review_notes: reviewNotes,
         });
         toast.success(`Rejected ${selectedReg.registration_data.name || "registration"}`);
       } else if (modalAction === "bulk_approve") {
@@ -158,7 +208,7 @@ export default function ReviewPage() {
         for (const id of Array.from(selectedIds)) {
           try {
             await apiPatch(`/events/${eventId}/registrations/${id}/approve`, {
-              review_notes: reviewNotes
+              review_notes: reviewNotes,
             });
             count++;
           } catch (e) {
@@ -176,7 +226,7 @@ export default function ReviewPage() {
           try {
             await apiPatch(`/events/${eventId}/registrations/${id}/reject`, {
               rejection_reason: rejectionReason,
-              review_notes: reviewNotes
+              review_notes: reviewNotes,
             });
             count++;
           } catch (e) {
@@ -217,14 +267,18 @@ export default function ReviewPage() {
 
   const handleCheckin = async (registration: ParticipantRegistration, name: string) => {
     if (!checkinAccess.enabled || !registration.participant_id || !checkinSessionId) {
-      toast.error(!checkinSessionId ? "Select a session before checking in." : "This registration has no linked participant record.");
+      toast.error(
+        !checkinSessionId
+          ? "Select a session before checking in."
+          : "This registration has no linked participant record."
+      );
       return;
     }
     try {
       await apiPost(
         `/events/${eventId}/participants/${registration.participant_id}/checkin`,
         { session_id: checkinSessionId },
-        { headers: { "Idempotency-Key": crypto.randomUUID() } },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } }
       );
       toast.success(`${name || "Participant"} checked in.`);
     } catch (err: any) {
@@ -232,256 +286,433 @@ export default function ReviewPage() {
     }
   };
 
-  const tabs = [
-    { id: "submitted", label: "Review Queue", icon: ClipboardList, color: "text-amber-500", bg: "bg-amber-500/10" },
-    { id: "waitlisted", label: "Waitlist", icon: Clock, color: "text-indigo-400", bg: "bg-indigo-500/10" },
-    { id: "approved", label: "Approved", icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-    { id: "rejected", label: "Rejected", icon: XCircle, color: "text-rose-500", bg: "bg-rose-500/10" }
+  const tabs: { id: TabKey; label: string; icon: any; iconColor: "warning" | "brand" | "success" | "danger" }[] = [
+    { id: "submitted", label: "Review Queue", icon: ClipboardList, iconColor: "warning" },
+    { id: "waitlisted", label: "Waitlist", icon: Clock, iconColor: "brand" },
+    { id: "approved", label: "Approved", icon: CheckCircle, iconColor: "success" },
+    { id: "rejected", label: "Rejected", icon: XCircle, iconColor: "danger" },
   ];
 
   return (
-    <div className="flex-1 flex flex-col space-y-6 min-h-0 text-[var(--text)]">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-black tracking-tight text-[var(--text)] flex items-center gap-3">
-            <ClipboardList className="h-8 w-8 text-[var(--pri)]" />
-            Registration Review
-          </h1>
-          <p className="text-sm text-muted mt-1">
-            Manage incoming online registrations, waitlists, and manual credential allocations.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            aria-label="Check-in session"
-            value={checkinSessionId}
-            onChange={event => setCheckinSessionId(event.target.value)}
-            disabled={checkinAccess.loading || !checkinAccess.enabled}
-            title={checkinAccess.enabled ? "Session used for attendee check-in" : `Unavailable: ${(checkinAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
-            className="h-9 max-w-64 rounded-lg border border-white/10 bg-[var(--surf)] px-3 text-xs disabled:opacity-50"
-          >
-            <option value="">Select check-in session</option>
-            {sessions.map(session => <option key={session.id} value={session.id}>{session.name}</option>)}
-          </select>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={fetchRegistrations}
-            disabled={loading}
-            className="glass-3d flex items-center gap-2"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh Queue
-          </Button>
-        </div>
-      </div>
-
-      {/* Tabs / Queue selection */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {tabs.map((tab) => {
-          const count = registrations.filter(r => r.registration_status === tab.id).length;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => {
-                setActiveTab(tab.id as any);
-                setSelectedIds(new Set());
-              }}
-              className={`relative flex flex-col p-4 rounded-xl border glass-3d text-left transition-all duration-300 group overflow-hidden ${
-                isActive 
-                  ? "border-[var(--pri)] shadow-[0_0_15px_color-mix(in_srgb,var(--pri)_20%,transparent)]" 
-                  : "border-default hover:border-[var(--pri)]/40"
-              }`}
+    <OrganiserPage
+      title="Capacity & Approval"
+      description="Manage attendee review queues, manual admissions, event capacity limits, session seat caps, and waitlist auto-promotion."
+      actions={
+        viewMode === "approvals" ? (
+          <div className="flex flex-wrap items-center gap-2.5">
+            <select
+              aria-label="Check-in session"
+              value={checkinSessionId}
+              onChange={(event) => setCheckinSessionId(event.target.value)}
+              disabled={checkinAccess.loading || !checkinAccess.enabled}
+              title={
+                checkinAccess.enabled
+                  ? "Session used for attendee check-in"
+                  : `Unavailable: ${(checkinAccess.reason || "RESOLUTION_UNAVAILABLE")
+                      .replaceAll("_", " ")
+                      .toLowerCase()}`
+              }
+              className="h-9 max-w-64 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none disabled:opacity-50"
             >
-              <div className="flex items-center justify-between">
-                <div className={`p-2 rounded-lg ${tab.bg}`}>
-                  <tab.icon className={`h-5 w-5 ${tab.color}`} />
-                </div>
-                <span className="text-2xl font-black">{count}</span>
-              </div>
-              <span className="text-sm font-semibold mt-3 text-muted group-hover:text-[var(--text)] transition-colors">
-                {tab.label}
-              </span>
-              {isActive && (
-                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-[var(--pri)]" />
-              )}
-            </button>
-          );
-        })}
+              <option value="">Select check-in session</option>
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchRegistrations}
+              disabled={loading}
+              className="flex items-center gap-1.5 h-9"
+            >
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin text-[var(--pri)]")} />
+              Refresh Queue
+            </Button>
+          </div>
+        ) : null
+      }
+    >
+      {/* Top View Mode Switcher */}
+      <div className="flex gap-1 p-1 rounded-xl bg-[var(--bg-surface-2)] border border-[var(--border-default)] w-fit mb-6">
+        <button
+          type="button"
+          onClick={() => setViewMode("approvals")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            viewMode === "approvals"
+              ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm"
+              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <UserCheck className="h-3.5 w-3.5" />
+          <span>Approval Queue ({queueCounts.submitted + queueCounts.waitlisted})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setViewMode("capacity")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            viewMode === "capacity"
+              ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm"
+              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <Box className="h-3.5 w-3.5" />
+          <span>Capacity &amp; Allocation</span>
+        </button>
       </div>
 
-      {/* Control bar */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-[var(--surf)]/40 p-4 rounded-xl border border-default glass-3d">
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by name, email, company..."
-            className="pl-9 bg-background/50 border-default focus-visible:ring-[var(--pri)]"
-          />
+      {viewMode === "capacity" ? (
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--card)] p-6 shadow-sm">
+          <CapacityTab />
         </div>
-        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
-          {activeTab === "submitted" && selectedIds.size > 0 && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openBulkReviewModal("bulk_approve")}
-                className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 glass-3d flex items-center gap-2"
-              >
-                <ThumbsUp className="h-4 w-4" />
-                Approve Selected ({selectedIds.size})
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openBulkReviewModal("bulk_reject")}
-                className="bg-rose-500/10 text-rose-500 border-rose-500/30 hover:bg-rose-500/20 glass-3d flex items-center gap-2"
-              >
-                <ThumbsDown className="h-4 w-4" />
-                Reject Selected ({selectedIds.size})
-              </Button>
-            </>
-          )}
+      ) : (
+        <div className="space-y-6">
+        {/* Metric Cards */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            onClick={() => {
+              setActiveTab("submitted");
+              setSelectedIds(new Set());
+            }}
+            className="cursor-pointer"
+          >
+            <MetricCard
+              label="Pending Review"
+              value={queueCounts.submitted}
+              hint="Awaiting organizer approval"
+              icon={<ClipboardList className="size-4" />}
+              iconColor="warning"
+            />
+          </div>
+          <div
+            onClick={() => {
+              setActiveTab("waitlisted");
+              setSelectedIds(new Set());
+            }}
+            className="cursor-pointer"
+          >
+            <MetricCard
+              label="Waitlist Queue"
+              value={queueCounts.waitlisted}
+              hint="Pending capacity allocation"
+              icon={<Clock className="size-4" />}
+              iconColor="brand"
+            />
+          </div>
+          <div
+            onClick={() => {
+              setActiveTab("approved");
+              setSelectedIds(new Set());
+            }}
+            className="cursor-pointer"
+          >
+            <MetricCard
+              label="Approved Attendees"
+              value={queueCounts.approved}
+              hint="Active credentials granted"
+              icon={<CheckCircle className="size-4" />}
+              iconColor="success"
+            />
+          </div>
+          <div
+            onClick={() => {
+              setActiveTab("rejected");
+              setSelectedIds(new Set());
+            }}
+            className="cursor-pointer"
+          >
+            <MetricCard
+              label="Rejected Submissions"
+              value={queueCounts.rejected}
+              hint="Declined applications"
+              icon={<XCircle className="size-4" />}
+              iconColor="danger"
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Main Table / Queue view */}
-      <Card className="flex-1 glass-3d overflow-hidden border-default bg-[var(--surf)]/20 rounded-[2rem] flex flex-col min-h-0">
-        {loading ? (
-          <div className="py-20 flex flex-col items-center justify-center text-muted">
-            <RefreshCw className="h-8 w-8 animate-spin text-[var(--pri)] mb-4" />
-            <p className="text-sm font-medium">Fetching registrations...</p>
-          </div>
-        ) : filteredRegistrations.length === 0 ? (
-          <div className="py-20 flex flex-col items-center justify-center text-muted">
-            <ClipboardList className="h-12 w-12 text-muted/40 mb-4" />
-            <p className="text-lg font-bold">Queue is empty</p>
-            <p className="text-sm mt-1">No registrations match the selected filters.</p>
-          </div>
-        ) : (
-          <div className="flex-1 overflow-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-default bg-[var(--surf)]/50 text-xs font-bold uppercase tracking-wider text-muted">
-                  <th className="p-4 w-10">
-                    {activeTab === "submitted" && (
-                      <button 
-                        onClick={handleSelectAllToggle}
-                        className="text-muted hover:text-[var(--pri)]"
-                      >
-                        {selectedIds.size === filteredRegistrations.length ? (
-                          <CheckSquare className="h-4 w-4 text-[var(--pri)]" />
-                        ) : (
-                          <Square className="h-4 w-4" />
-                        )}
-                      </button>
+        {/* Tab & Filter Bar */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-1 gap-1 shadow-sm">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const count = queueCounts[tab.id];
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setSelectedIds(new Set());
+                  }}
+                  className={cn(
+                    "flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition-colors cursor-pointer",
+                    isActive
+                      ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-sm font-bold"
+                      : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  <span>{tab.label}</span>
+                  <span
+                    className={cn(
+                      "ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-mono",
+                      isActive
+                        ? "bg-[var(--primary-contrast)]/20 text-[var(--primary-contrast)]"
+                        : "bg-[var(--bg-surface)] text-[var(--text-tertiary)]"
                     )}
-                  </th>
-                  <th className="p-4">Participant Details</th>
-                  <th className="p-4">Requested Role</th>
-                  <th className="p-4">Submission Meta</th>
-                  {activeTab === "waitlisted" && <th className="p-4">Position</th>}
-                  {activeTab === "rejected" && <th className="p-4">Reason</th>}
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <AnimatePresence mode="popLayout">
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name, email, role..."
+                className="h-8 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 pr-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none"
+              />
+            </div>
+
+            {/* Bulk Actions */}
+            {activeTab === "submitted" && selectedIds.size > 0 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => openBulkReviewModal("bulk_approve")}
+                  className="h-8 bg-[var(--status-success)] text-white hover:opacity-90 flex items-center gap-1 text-xs"
+                >
+                  <ThumbsUp className="size-3.5" />
+                  Approve ({selectedIds.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openBulkReviewModal("bulk_reject")}
+                  className="h-8 border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger)] hover:text-white flex items-center gap-1 text-xs"
+                >
+                  <ThumbsDown className="size-3.5" />
+                  Reject ({selectedIds.size})
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Main Table Panel */}
+        <Panel
+          title={`${tabs.find((t) => t.id === activeTab)?.label} (${filteredRegistrations.length})`}
+          action={
+            <span className="text-xs text-[var(--text-secondary)] font-medium">
+              Showing {filteredRegistrations.length} registrations
+            </span>
+          }
+        >
+          {loading ? (
+            <div className="py-20 flex flex-col items-center justify-center text-[var(--text-tertiary)]">
+              <RefreshCw className="size-8 animate-spin text-[var(--pri)] mb-3" />
+              <p className="text-xs font-medium text-[var(--text-secondary)]">Loading registration queue...</p>
+            </div>
+          ) : filteredRegistrations.length === 0 ? (
+            <div className="py-20 flex flex-col items-center justify-center text-[var(--text-tertiary)]">
+              <ClipboardList className="size-10 mb-2 opacity-30" />
+              <p className="text-sm font-semibold text-[var(--text-primary)]">No registrations in this queue</p>
+              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                {searchQuery ? "No entries match your search query." : "All registrations in this category are up to date."}
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                    <th className="py-3 px-4 w-10">
+                      {activeTab === "submitted" && (
+                        <button
+                          type="button"
+                          onClick={handleSelectAllToggle}
+                          className="cursor-pointer text-[var(--text-secondary)] hover:text-[var(--pri)]"
+                        >
+                          {selectedIds.size === filteredRegistrations.length && filteredRegistrations.length > 0 ? (
+                            <CheckSquare className="size-4 text-[var(--pri)]" />
+                          ) : (
+                            <Square className="size-4" />
+                          )}
+                        </button>
+                      )}
+                    </th>
+                    <th className="py-3 px-4">Participant Profile</th>
+                    <th className="py-3 px-4">Role Category</th>
+                    <th className="py-3 px-4">Submission Details</th>
+                    {activeTab === "waitlisted" && <th className="py-3 px-4">Waitlist Priority</th>}
+                    {activeTab === "rejected" && <th className="py-3 px-4">Rejection Reason</th>}
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
                   {filteredRegistrations.map((reg) => {
                     const data = reg.registration_data || {};
-                    const fullName = data.name || `${data.first_name || ""} ${data.last_name || ""}`;
+                    const fullName = data.name || `${data.first_name || ""} ${data.last_name || ""}`.trim() || "Anonymous";
                     const isSelected = selectedIds.has(reg.id);
+                    const stateVal = data.state || data.country_state;
+                    const hasCustomFields = data.custom_fields && Object.keys(data.custom_fields).length > 0;
+                    const isCustomExpanded = expandedCustomFieldsId === reg.id;
 
                     return (
-                      <motion.tr
+                      <tr
                         key={reg.id}
-                        layout
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className={`border-b border-default transition-colors hover:bg-[var(--surf)]/40 ${
-                          isSelected ? "bg-[var(--pri)]/5" : ""
-                        }`}
+                        className={cn(
+                          "hover:bg-[var(--bg-surface-hover)] transition-colors",
+                          isSelected && "bg-[var(--bg-surface-2)]"
+                        )}
                       >
-                        {/* Checkbox */}
-                        <td className="p-4">
+                        {/* Selection checkbox */}
+                        <td className="py-3 px-4">
                           {activeTab === "submitted" && (
                             <button
+                              type="button"
                               onClick={() => handleSelectToggle(reg.id)}
-                              className="text-muted hover:text-[var(--pri)]"
+                              className="cursor-pointer text-[var(--text-secondary)] hover:text-[var(--pri)]"
                             >
                               {isSelected ? (
-                                <CheckSquare className="h-4 w-4 text-[var(--pri)]" />
+                                <CheckSquare className="size-4 text-[var(--pri)]" />
                               ) : (
-                                <Square className="h-4 w-4" />
+                                <Square className="size-4" />
                               )}
                             </button>
                           )}
                         </td>
 
-                        {/* Participant Details */}
-                        <td className="p-4">
-                          <div className="flex flex-col">
-                            <span className="font-semibold text-base">{fullName}</span>
-                            <span className="text-xs text-muted mt-0.5">{data.email}</span>
-                            {data.company && (
-                              <span className="text-xs text-[var(--pri)] mt-1 font-medium bg-[var(--pri)]/5 px-2 py-0.5 rounded-full w-fit">
-                                {data.company} {data.designation ? `• ${data.designation}` : ""}
+                        {/* Profile Details */}
+                        <td className="py-3 px-4">
+                          <div className="space-y-1">
+                            <p className="font-semibold text-xs text-[var(--text-primary)] flex items-center gap-1.5">
+                              <span>{fullName}</span>
+                              {data.title && (
+                                <span className="text-[10px] font-normal text-[var(--text-tertiary)]">
+                                  ({data.title})
+                                </span>
+                              )}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--text-secondary)]">
+                              <span className="flex items-center gap-1">
+                                <Mail className="size-3 text-[var(--text-tertiary)]" />
+                                {data.email || "No email"}
                               </span>
-                            )}
+                              {data.phone && (
+                                <span className="flex items-center gap-1">
+                                  <Phone className="size-3 text-[var(--text-tertiary)]" />
+                                  {data.phone}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                              {data.company && (
+                                <span className="inline-flex items-center gap-1 rounded bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]">
+                                  <Building className="size-2.5" />
+                                  {data.company} {data.designation ? `• ${data.designation}` : ""}
+                                </span>
+                              )}
+                              {data.country && (
+                                <span className="inline-flex items-center gap-1 rounded bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]">
+                                  <MapPin className="size-2.5 text-[var(--pri)]" />
+                                  {data.country}{stateVal ? `, ${stateVal}` : ""}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
 
-                        {/* Requested Role */}
-                        <td className="p-4">
-                          <span className="text-sm font-semibold uppercase px-2 py-1 rounded bg-[var(--surf)] border border-default">
+                        {/* Role Category */}
+                        <td className="py-3 px-4">
+                          <span className="inline-flex items-center rounded border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-primary)]">
                             {data.role || "Delegate"}
                           </span>
                         </td>
 
-                        {/* Metadata */}
-                        <td className="p-4">
-                          <div className="flex flex-col text-xs text-muted space-y-1">
-                            <span>Source: <strong className="text-[var(--text)]">{reg.approval_source}</strong></span>
-                            <span>Date: {new Date(reg.submitted_at).toLocaleString()}</span>
+                        {/* Submission Metadata & Custom Fields */}
+                        <td className="py-3 px-4">
+                          <div className="space-y-1 text-[11px] text-[var(--text-secondary)]">
+                            <p>
+                              Source: <strong className="text-[var(--text-primary)]">{reg.approval_source || "portal"}</strong>
+                            </p>
+                            <p className="text-[10px] text-[var(--text-tertiary)]">
+                              {new Date(reg.submitted_at).toLocaleString("en-US", {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                              })}
+                            </p>
+                            {hasCustomFields && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedCustomFieldsId(isCustomExpanded ? null : reg.id)}
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-[var(--pri)] hover:underline mt-1 cursor-pointer"
+                              >
+                                <FileText className="size-3" />
+                                {Object.keys(data.custom_fields || {}).length} Custom Answers
+                                {isCustomExpanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                              </button>
+                            )}
+                            {isCustomExpanded && data.custom_fields && (
+                              <div className="mt-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] p-2.5 text-[10px] space-y-1.5">
+                                {Object.entries(data.custom_fields).map(([k, v]) => (
+                                  <div key={k} className="flex flex-col">
+                                    <span className="font-semibold text-[var(--text-tertiary)] uppercase tracking-wider text-[9px]">
+                                      {k.replaceAll("_", " ")}
+                                    </span>
+                                    <span className="text-[var(--text-primary)] font-medium">
+                                      {typeof v === "boolean" ? (v ? "Yes" : "No") : String(v || "—")}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </td>
 
                         {/* Waitlist Position */}
                         {activeTab === "waitlisted" && (
-                          <td className="p-4">
-                            <div className="flex items-center gap-1">
-                              <span className="text-lg font-black text-indigo-400">
-                                #{reg.waitlist_position || "-"}
-                              </span>
-                            </div>
+                          <td className="py-3 px-4">
+                            <span className="font-mono text-sm font-bold text-[var(--pri)]">
+                              #{reg.waitlist_position || "1"}
+                            </span>
                           </td>
                         )}
 
-                        {/* Rejection Reason */}
+                        {/* Rejection Details */}
                         {activeTab === "rejected" && (
-                          <td className="p-4 max-w-xs">
-                            <div className="flex flex-col text-xs text-rose-400">
-                              <span className="font-semibold">{reg.rejection_reason || "No reason specified"}</span>
-                              {reg.review_notes && <span className="text-muted mt-1 italic">Notes: "{reg.review_notes}"</span>}
+                          <td className="py-3 px-4 max-w-xs">
+                            <div className="text-[11px] text-[var(--status-danger)]">
+                              <p className="font-semibold">{reg.rejection_reason || "No reason specified"}</p>
+                              {reg.review_notes && (
+                                <p className="text-[10px] text-[var(--text-tertiary)] italic mt-0.5">
+                                  Notes: "{reg.review_notes}"
+                                </p>
+                              )}
                             </div>
                           </td>
                         )}
 
-                        {/* Actions */}
-                        <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                        {/* Action Buttons */}
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
                             {reg.registration_status === "submitted" && (
                               <>
                                 <Button
-                                  variant="outline"
                                   size="sm"
                                   onClick={() => openReviewModal(reg, "approve")}
-                                  className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 glass-3d"
+                                  className="h-7 px-2.5 text-xs bg-[var(--status-success)] text-white hover:opacity-90 font-semibold"
                                 >
                                   Approve
                                 </Button>
@@ -489,7 +720,7 @@ export default function ReviewPage() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => openReviewModal(reg, "reject")}
-                                  className="text-rose-500 border-rose-500/30 hover:bg-rose-500/10 glass-3d"
+                                  className="h-7 px-2.5 text-xs border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger)] hover:text-white"
                                 >
                                   Reject
                                 </Button>
@@ -498,8 +729,7 @@ export default function ReviewPage() {
                                   size="sm"
                                   onClick={() => handleWaitlist(reg.id, fullName)}
                                   disabled={reviewAccess.loading || !reviewAccess.enabled}
-                                  title={!reviewAccess.enabled ? `Unavailable: ${(reviewAccess.reason || "capability unavailable").replaceAll("_", " ").toLowerCase()}` : undefined}
-                                  className="text-indigo-400 hover:bg-indigo-500/10"
+                                  className="h-7 px-2 text-xs text-[var(--text-secondary)] hover:text-[var(--pri)]"
                                 >
                                   Waitlist
                                 </Button>
@@ -509,21 +739,19 @@ export default function ReviewPage() {
                             {reg.registration_status === "waitlisted" && (
                               <>
                                 <Button
-                                  variant="outline"
                                   size="sm"
                                   onClick={() => handlePromote(reg.id, fullName)}
                                   disabled={reviewAccess.loading || !reviewAccess.enabled}
-                                  title={!reviewAccess.enabled ? `Unavailable: ${(reviewAccess.reason || "capability unavailable").replaceAll("_", " ").toLowerCase()}` : undefined}
-                                  className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 glass-3d flex items-center gap-1"
+                                  className="h-7 px-2.5 text-xs bg-[var(--status-success)] text-white hover:opacity-90 flex items-center gap-1 font-semibold"
                                 >
-                                  <ArrowUpRight className="h-4 w-4" />
+                                  <ArrowUpRight className="size-3" />
                                   Promote
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => openReviewModal(reg, "reject")}
-                                  className="text-rose-500 border-rose-500/30 hover:bg-rose-500/10 glass-3d"
+                                  className="h-7 px-2.5 text-xs border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger)] hover:text-white"
                                 >
                                   Reject
                                 </Button>
@@ -531,92 +759,110 @@ export default function ReviewPage() {
                             )}
 
                             {reg.registration_status === "approved" && (
-                              <>
-                                <div className="flex items-center gap-1 text-emerald-400 text-xs font-bold uppercase">
-                                  <UserCheck className="h-4 w-4" /> Approved
-                                </div>
+                              <div className="flex items-center gap-2">
+                                <StatusBadge status="paid" />
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => void handleCheckin(reg, fullName)}
-                                  disabled={checkinAccess.loading || !checkinAccess.enabled || !checkinSessionId || !reg.participant_id}
-                                  title={checkinAccess.enabled ? "Check in to selected session" : `Unavailable: ${(checkinAccess.reason || "RESOLUTION_UNAVAILABLE").replaceAll("_", " ").toLowerCase()}`}
+                                  disabled={
+                                    checkinAccess.loading ||
+                                    !checkinAccess.enabled ||
+                                    !checkinSessionId ||
+                                    !reg.participant_id
+                                  }
+                                  className="h-7 px-2.5 text-xs"
                                 >
                                   Check in
                                 </Button>
-                              </>
+                              </div>
                             )}
 
                             {reg.registration_status === "rejected" && (
-                              <div className="flex items-center gap-1 text-rose-500 text-xs font-bold uppercase">
-                                <XCircle className="h-4 w-4" /> Rejected
-                              </div>
+                              <StatusBadge status="failed" />
                             )}
                           </div>
                         </td>
-                      </motion.tr>
+                      </tr>
                     );
                   })}
-                </AnimatePresence>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+      )}
 
-      {/* Review Dialog Modal */}
+      {/* Review Modal Dialog */}
       {notesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="w-full max-w-md bg-[var(--surf)] border border-default p-6 rounded-2xl glass-3d space-y-6 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold flex items-center gap-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
+              <h2 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
                 {modalAction.includes("approve") ? (
-                  <ThumbsUp className="h-5 w-5 text-emerald-400" />
+                  <ThumbsUp className="size-4 text-[var(--status-success)]" />
                 ) : (
-                  <ThumbsDown className="h-5 w-5 text-rose-500" />
+                  <ThumbsDown className="size-4 text-[var(--status-danger)]" />
                 )}
-                {modalAction === "approve" && "Approve Registration"}
-                {modalAction === "reject" && "Reject Registration"}
-                {modalAction === "bulk_approve" && `Bulk Approve (${selectedIds.size})`}
-                {modalAction === "bulk_reject" && `Bulk Reject (${selectedIds.size})`}
+                {modalAction === "approve" && "Approve Attendee Registration"}
+                {modalAction === "reject" && "Reject Attendee Registration"}
+                {modalAction === "bulk_approve" && `Bulk Approve (${selectedIds.size} Registrations)`}
+                {modalAction === "bulk_reject" && `Bulk Reject (${selectedIds.size} Registrations)`}
               </h2>
-              <button 
+              <button
+                type="button"
                 onClick={() => setNotesModalOpen(false)}
-                className="text-muted hover:text-white"
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
               >
-                <XCircle className="h-5 w-5" />
+                <X className="size-4" />
               </button>
             </div>
 
             {selectedReg && (
-              <div className="bg-background/40 p-3 rounded-lg border border-default text-xs space-y-1">
-                <div>Participant: <strong>{selectedReg.registration_data.name}</strong></div>
-                <div>Email: <span className="text-muted">{selectedReg.registration_data.email}</span></div>
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] p-3 text-xs space-y-1">
+                <p className="font-semibold text-[var(--text-primary)]">
+                  {selectedReg.registration_data.name || `${selectedReg.registration_data.first_name || ""} ${selectedReg.registration_data.last_name || ""}`}
+                </p>
+                <p className="text-[var(--text-secondary)]">{selectedReg.registration_data.email}</p>
+                {selectedReg.registration_data.role && (
+                  <span className="inline-block mt-1 text-[10px] font-bold uppercase rounded bg-[var(--bg-surface)] px-1.5 py-0.5 border border-[var(--border-subtle)] text-[var(--text-primary)]">
+                    Role: {selectedReg.registration_data.role}
+                  </span>
+                )}
               </div>
             )}
 
             <div className="space-y-4">
               {modalAction.includes("reject") && (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-rose-400 uppercase tracking-wider">
+                  <label className="text-[11px] font-bold text-[var(--status-danger)] uppercase tracking-wider">
                     Rejection Reason *
                   </label>
+                  <select
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    className="w-full h-8 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2.5 text-xs text-[var(--text-primary)] focus:border-[var(--status-danger)] focus:outline-none mb-1.5"
+                  >
+                    <option value="">-- Choose preset reason or type below --</option>
+                    <option value="Event capacity has reached its limit">Event capacity has reached its limit</option>
+                    <option value="Duplicate attendee submission">Duplicate attendee submission</option>
+                    <option value="Invalid or unverified organization credentials">Invalid or unverified organization credentials</option>
+                    <option value="Registration details incomplete">Registration details incomplete</option>
+                    <option value="Not meeting category eligibility criteria">Not meeting category eligibility criteria</option>
+                  </select>
                   <Input
                     value={rejectionReason}
                     onChange={(e) => setRejectionReason(e.target.value)}
                     placeholder="e.g. Invalid credential documents, duplicate submission"
-                    className="bg-background/50 border-default focus-visible:ring-rose-500"
+                    className="h-8 text-xs bg-[var(--bg-surface-2)] border-[var(--border-default)] focus-visible:ring-[var(--status-danger)]"
                     required
                   />
                 </div>
               )}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-muted uppercase tracking-wider">
+                <label className="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
                   Internal Review Notes (Optional)
                 </label>
                 <textarea
@@ -624,35 +870,38 @@ export default function ReviewPage() {
                   onChange={(e) => setReviewNotes(e.target.value)}
                   placeholder="Add internal notes visible only to organizers..."
                   rows={3}
-                  className="w-full rounded-md bg-background/50 border border-default p-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--pri)]"
+                  className="w-full rounded-lg bg-[var(--bg-surface-2)] border border-[var(--border-default)] p-2.5 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--pri)]"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border-subtle)]">
               <Button
                 variant="outline"
+                size="sm"
                 onClick={() => setNotesModalOpen(false)}
-                className="glass-3d"
+                className="h-8 text-xs"
               >
                 Cancel
               </Button>
               <CapabilityAction operation="registration.approve">
                 <Button
+                  size="sm"
                   onClick={submitReview}
-                  className={
+                  className={cn(
+                    "h-8 text-xs font-bold text-white",
                     modalAction.includes("approve")
-                      ? "bg-emerald-500 hover:bg-emerald-600 text-white font-bold"
-                      : "bg-rose-600 hover:bg-rose-700 text-white font-bold"
-                  }
+                      ? "bg-[var(--status-success)] hover:opacity-90"
+                      : "bg-[var(--status-danger)] hover:opacity-90"
+                  )}
                 >
                   Confirm Action
                 </Button>
               </CapabilityAction>
             </div>
-          </motion.div>
+          </div>
         </div>
       )}
-    </div>
+    </OrganiserPage>
   );
 }

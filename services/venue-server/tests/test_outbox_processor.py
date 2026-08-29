@@ -2,8 +2,16 @@ import pytest
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
-from app.sync.outbox_processor import process_outbox
+from app.sync.outbox_processor import _get_candidate_push_urls, process_outbox
 from app.models.sync_outbox import SyncOutbox
+
+
+def test_outbox_prefers_venue_sync_push_before_registration_alias():
+    urls = _get_candidate_push_urls("https://command.example.com", "EVT123")
+
+    assert urls[0] == "https://command.example.com/api/v1/sync/events/EVT123/push"
+    assert urls[1] == "https://command.example.com/api/v1/events/EVT123/venue-sync/push"
+    assert urls[2] == "https://command.example.com/api/v1/registration-source/events/EVT123/push"
 
 @pytest.mark.asyncio
 async def test_process_outbox_success(mocker):

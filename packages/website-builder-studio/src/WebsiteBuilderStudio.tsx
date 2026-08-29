@@ -37,6 +37,7 @@ import { registerComponentTypes } from './core/components/typeRegistry';
 import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { TemplateLibraryPanel } from './components/TemplateLibraryPanel';
 import type { WebsiteComponentAsset } from './component-assets';
+import { renderUndrawSvg } from './core/assetLibrary';
 import { mockEventSnapshot } from './core/eventMockData';
 import { buildWebsiteDocumentFromProject, checksumWebsiteDocument, ensureWebsiteDocument, validateWebsiteDocument, projectDataFromWebsiteDocument } from './core/documentModel';
 import { createGrapesCanvasAdapter, type GrapesCanvasAdapter } from './core/GrapesCanvasAdapter';
@@ -238,6 +239,10 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
   const renameDocumentPage = useWebsiteDocumentStore(state => state.renamePage);
   const selectDocumentInstance = useWebsiteDocumentStore(state => state.selectInstance);
   const upsertDocumentAsset = useWebsiteDocumentStore(state => state.upsertAsset);
+  const insertDroppedItemRef = useRef<{
+    handleAsset?: (asset: WebsiteAsset, options?: { targetComponent?: any }) => void;
+    handleTemplate?: (asset: WebsiteComponentAsset, options?: { targetComponent?: any }) => void;
+  }>({});
 
   const initialProjectKey = `${initialData?.id || 'new'}:${initialData?.updatedAt || initialData?.document?.checksum || ''}`;
   const recoveryProjectId = `${mode}:${eventId || initialData?.id || 'new-website'}`;
@@ -745,9 +750,105 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
       }, true);
     };
 
+    function findComponentFromElement(editorInstance: Editor | null, el: HTMLElement | null): any {
+      if (!editorInstance || !el) return null;
+      const wrapper = editorInstance.getWrapper();
+      if (!wrapper) return null;
+
+      let curr: HTMLElement | null = el;
+      while (curr && curr !== curr.ownerDocument?.body && curr !== curr.ownerDocument?.documentElement) {
+        if ((curr as any)?._gjs) return (curr as any)._gjs;
+        if ((curr as any)?.__gjs_model) return (curr as any).__gjs_model;
+
+        const instanceId = curr.getAttribute?.('data-wb-instance-id');
+        if (instanceId) {
+          try {
+            const matches = wrapper.find(`[data-wb-instance-id="${CSS.escape(instanceId)}"]`);
+            if (matches && matches[0]) return matches[0];
+          } catch {}
+        }
+
+        if (curr.id) {
+          try {
+            const matches = wrapper.find(`#${CSS.escape(curr.id)}`);
+            if (matches && matches[0]) return matches[0];
+          } catch {}
+        }
+
+        const gjsType = curr.getAttribute?.('data-gjs-type');
+        if (gjsType && gjsType !== 'default') {
+          try {
+            const matches = wrapper.find(`[data-gjs-type="${CSS.escape(gjsType)}"]`);
+            const match = matches?.find((m: any) => m.getEl?.() === curr);
+            if (match) return match;
+          } catch {}
+        }
+
+        curr = curr.parentElement;
+      }
+
+      return editorInstance.getSelected() || wrapper;
+    }
+
+    const attachCanvasDropListeners = () => {
+      const frameDoc = editor.Canvas.getFrameEl()?.contentDocument;
+      if (!frameDoc || (frameDoc as any).__wb_drop_attached__) return;
+      (frameDoc as any).__wb_drop_attached__ = true;
+
+      const handleDragOver = (e: DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+
+        const targetEl = frameDoc.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+        if (targetEl) {
+          const comp = findComponentFromElement(editor, targetEl);
+          if (comp && comp !== editor.getSelected() && comp !== editor.getWrapper()) {
+            editor.select(comp);
+          }
+        }
+      };
+
+      const handleDrop = async (e: DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const rawData = e.dataTransfer?.getData('application/x-eventos-builder-drag');
+        let item: { type: 'template' | 'asset'; data: any; rawItem?: any } | null = null;
+        if (rawData) {
+          try { item = JSON.parse(rawData); } catch {}
+        }
+        if (!item && (window as any).__wb_dragged_item__) {
+          item = (window as any).__wb_dragged_item__;
+        }
+        (window as any).__wb_dragged_item__ = null;
+        if (!item) return;
+
+        const targetEl = frameDoc.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+        const targetComponent = findComponentFromElement(editor, targetEl);
+
+        if (item.type === 'template') {
+          insertDroppedItemRef.current.handleTemplate?.(item.data, { targetComponent });
+        } else if (item.type === 'asset') {
+          if (item.data.type === 'svg' && !item.data.svg && item.rawItem) {
+            try {
+              item.data.svg = await renderUndrawSvg(item.rawItem, resolvedTheme.primary || '#6c63ff');
+            } catch {}
+          }
+          insertDroppedItemRef.current.handleAsset?.(item.data, { targetComponent });
+        }
+      };
+
+      frameDoc.addEventListener('dragover', handleDragOver, true);
+      frameDoc.addEventListener('drop', handleDrop, true);
+      frameDoc.defaultView?.addEventListener('dragover', handleDragOver, true);
+      frameDoc.defaultView?.addEventListener('drop', handleDrop, true);
+    };
+
     editor.on('load', () => {
       setEditorReady(true);
       guardCanvasLinks();
+      attachCanvasDropListeners();
 
       // Dynamic Style Sectors based on selected component
       editor.on('component:selected', (model) => {
@@ -755,7 +856,10 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
         // PropertyStudio (React) handles this now via component schemas.
       });
     });
-    editor.on('canvas:frame:load', guardCanvasLinks);
+    editor.on('canvas:frame:load', () => {
+      guardCanvasLinks();
+      attachCanvasDropListeners();
+    });
 
     return () => {
       editor.off('canvas:frame:load', guardCanvasLinks);
@@ -824,9 +928,10 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
 
     const canonicalDocument = snapshotCanvasToDocument() || useWebsiteDocumentStore.getState().document;
     if (!canonicalDocument) return;
-    const document = finalizeStudioDocument(canonicalDocument, assets, resolvedTheme);
+    const effectiveTheme = canonicalDocument.tokens?.theme || resolvedTheme;
+    const document = finalizeStudioDocument(canonicalDocument, assets, effectiveTheme);
     const previewTitle = initialData?.name || document.site.siteName || 'Website preview';
-    const pageDocuments = buildPreviewPageDocuments(document, resolvedTheme, previewTitle);
+    const pageDocuments = buildPreviewPageDocuments(document, effectiveTheme, previewTitle);
     const activePage = document.pages.find(page => page.id === useWebsiteDocumentStore.getState().activePageId)
       || document.pages.find(page => page.isHomePage)
       || document.pages[0];
@@ -1093,10 +1198,24 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
       clearTimers();
       try {
         setIsSaving(true);
-        await onSave(buildProjectDataWithAssets());
+        const data = buildProjectDataWithAssets();
+        useWebsiteDocumentStore.getState().saveLocalRecovery('wb_local_recovery_draft');
+        await onSave(data);
+        useWebsiteDocumentStore.getState().markClean();
       } catch (error) {
         dirtyRef.current = true;
-        console.error('[website-builder] Autosave failed:', error);
+        useWebsiteDocumentStore.getState().saveLocalRecovery('wb_local_recovery_draft');
+        const isAuthError = Boolean(
+          (error as { status?: number })?.status === 401 ||
+          (error as { code?: string })?.code === 'HTTP_401' ||
+          String((error as Error)?.message || '').includes('Token is invalid') ||
+          String((error as Error)?.message || '').includes('expired')
+        );
+        if (isAuthError) {
+          console.warn('[website-builder] Autosave deferred: session token expired. Work is saved in local recovery.');
+        } else {
+          console.error('[website-builder] Autosave failed:', error);
+        }
       } finally {
         autosaveInFlightRef.current = false;
         setIsSaving(false);
@@ -1105,10 +1224,26 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
 
     const markDirty = () => {
       dirtyRef.current = true;
+      try {
+        useWebsiteDocumentStore.getState().saveLocalRecovery('wb_local_recovery_draft');
+      } catch {}
+
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(runAutosave, 2000);
-      if (!maxTimer) maxTimer = setTimeout(runAutosave, 30000);
+      debounceTimer = setTimeout(runAutosave, 8000);
+      if (!maxTimer) maxTimer = setTimeout(runAutosave, 60000);
     };
+
+    const handleBeforeUnload = () => {
+      if (dirtyRef.current) {
+        try {
+          snapshotCanvasToDocument();
+          useWebsiteDocumentStore.getState().saveLocalRecovery('wb_local_recovery_draft');
+        } catch {}
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
 
     const events = [
       'component:add',
@@ -1121,10 +1256,12 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
     events.forEach(eventName => editor.on(eventName, markDirty));
 
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
       events.forEach(eventName => editor.off(eventName, markDirty));
       clearTimers();
     };
-  }, [buildProjectDataWithAssets, editorReady, onSave]);
+  }, [buildProjectDataWithAssets, editorReady, onSave, snapshotCanvasToDocument]);
 
   useEffect(() => {
     if (!editorReady || !editorRef.current) return;
@@ -1224,7 +1361,7 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
     return savedAsset;
   }, [onPersistAsset, readOnly, upsertDocumentAsset]);
 
-  const handleAssetInsert = useCallback((asset: WebsiteAsset) => {
+  const handleAssetInsert = useCallback((asset: WebsiteAsset, options?: { targetComponent?: any }) => {
     if (readOnly) return;
     setAssets(prev => prev.some(a => a.id === asset.id) ? prev : [asset, ...prev]);
     upsertDocumentAsset(asset);
@@ -1234,18 +1371,49 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
       select(asset);
       return;
     }
-    if (!editorRef.current) return;
+    const editor = editorRef.current;
+    if (!editor) return;
 
+    let payload = '';
     if (asset.svg) {
-      editorRef.current.addComponents(`<div data-component-type="svg-asset" data-asset-id="${escapeHtmlAttribute(asset.id)}" data-asset-title="${escapeHtmlAttribute(asset.title)}" style="width: 100%; max-width: 640px; min-height: 220px; margin: 24px auto; display: block; box-sizing: border-box;">${asset.svg}</div>`);
+      payload = `<div data-component-type="svg-asset" data-asset-id="${escapeHtmlAttribute(asset.id)}" data-asset-title="${escapeHtmlAttribute(asset.title)}" style="width: 100%; max-width: 640px; min-height: 220px; margin: 24px auto; display: block; box-sizing: border-box;">${asset.svg}</div>`;
     } else if (asset.type === 'icon' && asset.url) {
-      editorRef.current.addComponents(`<span data-gjs-type="icon-block" data-component-type="icon-asset" data-asset-id="${escapeHtmlAttribute(asset.id)}" data-icon="${escapeHtmlAttribute(asset.title)}" role="img" aria-label="${escapeHtmlAttribute(asset.title)}" style="display:inline-flex;width:48px;height:48px;align-items:center;justify-content:center;color:var(--pri,var(--primary));"><span aria-hidden="true" style="display:block;width:32px;height:32px;background:currentColor;-webkit-mask:url('${escapeHtmlAttribute(asset.url)}') center / contain no-repeat;mask:url('${escapeHtmlAttribute(asset.url)}') center / contain no-repeat;"></span></span>`);
+      payload = `<span data-gjs-type="icon-block" data-component-type="icon-asset" data-asset-id="${escapeHtmlAttribute(asset.id)}" data-icon="${escapeHtmlAttribute(asset.title)}" role="img" aria-label="${escapeHtmlAttribute(asset.title)}" style="display:inline-flex;width:48px;height:48px;align-items:center;justify-content:center;color:var(--pri,var(--primary));"><span aria-hidden="true" style="display:block;width:32px;height:32px;background:currentColor;-webkit-mask:url('${escapeHtmlAttribute(asset.url)}') center / contain no-repeat;mask:url('${escapeHtmlAttribute(asset.url)}') center / contain no-repeat;"></span></span>`;
     } else if (asset.url) {
-      editorRef.current.addComponents(`<img data-gjs-type="image" data-asset-id="${escapeHtmlAttribute(asset.id)}" src="${escapeHtmlAttribute(asset.url)}" alt="${escapeHtmlAttribute(asset.title)}" loading="lazy" style="width: 100%; max-width: 720px; height: auto; display: block; border-radius: 16px; object-fit: cover;" />`);
+      payload = `<img data-gjs-type="image" data-asset-id="${escapeHtmlAttribute(asset.id)}" src="${escapeHtmlAttribute(asset.url)}" alt="${escapeHtmlAttribute(asset.title)}" loading="lazy" style="width: 100%; max-width: 720px; height: auto; display: block; border-radius: 16px; object-fit: cover;" />`;
     }
-  }, [readOnly, upsertDocumentAsset]);
 
-  const handleComponentAssetInsert = useCallback((asset: WebsiteComponentAsset) => {
+    if (!payload) return;
+
+    const target = options?.targetComponent || editor.getSelected();
+    if (target && typeof target.get === 'function') {
+      const tagName = (target.get('tagName') || '').toLowerCase();
+      const isContainer =
+        target.is('wrapper') ||
+        target.is('container') ||
+        target.is('section') ||
+        target.is('row') ||
+        target.is('column') ||
+        target.is('grid') ||
+        ['div', 'section', 'main', 'article', 'aside', 'header', 'footer', 'form'].includes(tagName);
+
+      if (isContainer) {
+        target.append(payload);
+      } else {
+        const parent = target.parent() || editor.getWrapper();
+        const index = target.index();
+        parent.components().add(payload, { at: typeof index === 'number' ? index + 1 : undefined });
+      }
+    } else {
+      editor.addComponents(payload);
+    }
+
+    window.setTimeout(() => {
+      snapshotCanvasToDocument();
+    }, 0);
+  }, [readOnly, snapshotCanvasToDocument, upsertDocumentAsset]);
+
+  const handleComponentAssetInsert = useCallback((asset: WebsiteComponentAsset, options?: { targetComponent?: any }) => {
     if (readOnly) return;
     const editor = editorRef.current;
     if (!editor) return;
@@ -1291,11 +1459,37 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
     }
 
     const payload = asset.json?.components?.length ? asset.json.components : asset.html;
-    editor.addComponents(payload as never);
+    const target = options?.targetComponent || editor.getSelected();
+    if (target && typeof target.get === 'function') {
+      const tagName = (target.get('tagName') || '').toLowerCase();
+      const isContainer =
+        target.is('wrapper') ||
+        target.is('container') ||
+        target.is('section') ||
+        target.is('row') ||
+        target.is('column') ||
+        target.is('grid') ||
+        ['div', 'section', 'main', 'article', 'aside', 'header', 'footer', 'form'].includes(tagName);
+
+      if (isContainer) {
+        target.append(payload as never);
+      } else {
+        const parent = target.parent() || editor.getWrapper();
+        const index = target.index();
+        parent.components().add(payload as never, { at: typeof index === 'number' ? index + 1 : undefined });
+      }
+    } else {
+      editor.addComponents(payload as never);
+    }
     window.setTimeout(() => {
       snapshotCanvasToDocument();
     }, 0);
   }, [readOnly, renderActiveDocumentPage, replaceDocument, snapshotCanvasToDocument]);
+
+  useEffect(() => {
+    insertDroppedItemRef.current.handleAsset = handleAssetInsert;
+    insertDroppedItemRef.current.handleTemplate = handleComponentAssetInsert;
+  }, [handleAssetInsert, handleComponentAssetInsert]);
 
   // ── Sidebar Tab Config ───────────────────────────────────────────────────
   const tabs: { id: SidebarTab; icon: React.ReactNode; label: string; show: boolean }[] = [
@@ -1437,7 +1631,7 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
 
             {activeTab === 'templates' && (
               <div>
-                <p style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--muted-foreground)', margin: '0 0 12px 0' }}>
+                <p style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--muted)', margin: '0 0 12px 0' }}>
                   Template Library
                 </p>
                 <TemplateLibraryPanel onInsert={handleComponentAssetInsert} />
@@ -1465,7 +1659,7 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
             {/* ── IMPORT TAB ─────────────────────────────────────────────── */}
             {activeTab === 'import' && (
               <div>
-                <p style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--muted-foreground)', margin: '0 0 12px 0' }}>
+                <p style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--muted)', margin: '0 0 12px 0' }}>
                   Event Data Binding
                 </p>
                 <ImportDataPanel
@@ -1483,21 +1677,48 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
 
             {activeTab === 'assets' && (
               <div>
-                <p style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--muted-foreground)', margin: '0 0 12px 0' }}>
+                <p style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--muted)', margin: '0 0 12px 0' }}>
                   Asset Library
                 </p>
                 <AssetLibraryPanel assets={assets} onAssetInsert={handleAssetInsert} onAssetSave={handleAssetSave} onSearchImages={onSearchImages} onUploadAsset={onUploadAsset} />
               </div>
             )}
-
-
-
-
           </div>
         </aside>
 
         {/* Center Canvas */}
-        <main className="gjs-studio-canvas-container">
+        <main
+          className="gjs-studio-canvas-container"
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const rawData = e.dataTransfer?.getData('application/x-eventos-builder-drag');
+            let item: { type: 'template' | 'asset'; data: any; rawItem?: any } | null = null;
+            if (rawData) {
+              try { item = JSON.parse(rawData); } catch {}
+            }
+            if (!item && (window as any).__wb_dragged_item__) {
+              item = (window as any).__wb_dragged_item__;
+            }
+            (window as any).__wb_dragged_item__ = null;
+            if (!item) return;
+
+            if (item.type === 'template') {
+              insertDroppedItemRef.current.handleTemplate?.(item.data);
+            } else if (item.type === 'asset') {
+              if (item.data.type === 'svg' && !item.data.svg && item.rawItem) {
+                try {
+                  item.data.svg = await renderUndrawSvg(item.rawItem, resolvedTheme.primary || '#6c63ff');
+                } catch {}
+              }
+              insertDroppedItemRef.current.handleAsset?.(item.data);
+            }
+          }}
+        >
           <div ref={containerRef} id="gjs-canvas" />
         </main>
 
@@ -1516,45 +1737,17 @@ export const WebsiteBuilderStudio: React.FC<WebsiteBuilderStudioProps> = ({
             </button>
           </aside>
         ) : hasSelectedComponent ? (
-        <aside className="gjs-studio-inspector flex flex-col h-full bg-card border-l border-white/5 relative z-10 w-[300px] flex-shrink-0">
-          {/* Inspector Header + Tabs */}
-          <div className="flex-shrink-0 border-b border-white/5">
-            <div className="px-4 py-2.5 flex items-center justify-between bg-background/50">
-              <h3 className="text-[11px] font-bold tracking-widest uppercase text-muted-foreground">Inspector</h3>
-              <button
-                type="button"
-                className="gjs-panel-tool"
-                title="Collapse inspector"
-                aria-label="Collapse inspector"
-                onClick={() => setRightInspectorCollapsed(true)}
-              >
-                <PanelRightClose size={15} />
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5 border-t border-white/5 bg-background/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-primary">
-              <Settings2 className="w-3 h-3" />
-              Settings
-            </div>
-          </div>
-
-          {/* Inspector Body */}
-          <div className="flex-1 min-h-0 relative overflow-hidden">
-            {/* CONTENT tab — custom React PropertyStudio */}
-            <div
-              className="absolute inset-0 overflow-y-auto"
-            >
-              <PropertyStudio
-                editor={editorRef.current}
-                pages={multiPage.pages}
-                eventStatus={dataNotice ? 'mock' : eventImport.status}
-                onFetchEventData={handleFetchEventData}
-                onCollapseInspector={() => setRightInspectorCollapsed(true)}
-                readOnly={readOnly}
-                device={device}
-              />
-            </div>
-          </div>
-        </aside>
+          <aside className="gjs-studio-inspector">
+            <PropertyStudio
+              editor={editorRef.current}
+              pages={multiPage.pages}
+              eventStatus={dataNotice ? 'mock' : eventImport.status}
+              onFetchEventData={handleFetchEventData}
+              onCollapseInspector={() => setRightInspectorCollapsed(true)}
+              readOnly={readOnly}
+              device={device}
+            />
+          </aside>
         ) : null}
       </div>
 

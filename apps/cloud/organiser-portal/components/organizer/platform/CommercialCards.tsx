@@ -12,7 +12,7 @@ type CommercialPlan = {
   tagline?: string;
   description?: string;
   priceLabel: string;
-  colorHex: string;
+  colorHex?: string;
   isPopular?: boolean;
   subscribersLabel?: string;
   isActive?: boolean;
@@ -82,36 +82,24 @@ export function CommercialPlanCard({
       : null;
 
   const buttonClassName = cn(
-    "flex-1 h-11 rounded-xl text-[12px] font-semibold gap-2",
+    "h-11 flex-1 gap-2 rounded-lg text-[12px] font-semibold",
     actionVariant === "current" &&
-      "border-[rgba(194,245,66,0.3)] bg-[rgba(194,245,66,0.08)] text-[#C2F542] hover:bg-[rgba(194,245,66,0.12)] cursor-default",
+      "cursor-default border-[color-mix(in_srgb,var(--op-success)_30%,var(--op-border))] bg-[color-mix(in_srgb,var(--op-success)_8%,var(--op-panel-bg))] text-[var(--op-success)]",
     actionVariant === "upgrade" &&
-      "bg-[#C2F542] text-black hover:bg-[#d4f75a]",
+      "bg-[var(--op-primary)] text-white hover:opacity-90",
     actionVariant === "downgrade" &&
-      "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+      "border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-muted)] hover:border-[var(--op-primary)]"
   );
 
   return (
     <article
       className={cn(
-        "relative flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border bg-[var(--bg-surface)] transition-all duration-200 hover:-translate-y-1",
-        plan.isPopular && "ring-1 ring-[var(--pri)]/30 dark:ring-[var(--pri)]/20",
-        isCurrentPlan && "ring-2 ring-[rgba(194,245,66,0.35)]"
+        "relative flex min-h-[480px] flex-col overflow-hidden rounded-lg border bg-[var(--op-panel-bg)]",
+        plan.isPopular && "border-[var(--op-primary)]",
+        isCurrentPlan && "border-[var(--op-success)]"
       )}
-      style={{
-        borderColor: isCurrentPlan ? "rgba(194,245,66,0.3)" : `${plan.colorHex}55`,
-        boxShadow: isCurrentPlan
-          ? "0 18px 55px -32px rgba(194,245,66,0.25)"
-          : `0 18px 55px -32px ${plan.colorHex}`,
-      }}
+      style={{ borderColor: isCurrentPlan ? "var(--op-success)" : undefined }}
     >
-      {/* Gradient shimmer top */}
-      <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[var(--pri)]/5 to-transparent" />
-
-      {isCurrentPlan && (
-        <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-[#C2F542] to-transparent" />
-      )}
-
       <div className="relative flex flex-1 flex-col p-6">
         {/* Popular badge */}
         {plan.isPopular && !isCurrentPlan ? (
@@ -122,13 +110,13 @@ export function CommercialPlanCard({
 
         {/* Active badge */}
         {isCurrentPlan ? (
-          <span className="absolute right-5 top-5 rounded-full border border-[rgba(194,245,66,0.3)] bg-[rgba(194,245,66,0.1)] px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-[#C2F542]">
+          <span className="absolute right-5 top-5 rounded-full border border-[var(--op-success)] bg-[color-mix(in_srgb,var(--op-success)_10%,var(--op-panel-bg))] px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-[var(--op-success)]">
             Current Plan
           </span>
         ) : null}
 
         {/* Icon */}
-        <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-2)] text-[var(--text-primary)]">
+        <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)] text-[var(--op-primary)]">
           <Icon className="h-5 w-5" />
         </div>
 
@@ -169,7 +157,7 @@ export function CommercialPlanCard({
             <Button
               onClick={onSecondaryAction}
               variant="outline"
-              className="flex-1 h-11 rounded-xl border-[var(--border-default)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] text-[12px] font-semibold"
+              className="h-11 flex-1 rounded-lg border-[var(--op-border)] bg-transparent text-[12px] font-semibold text-[var(--op-text)] hover:bg-[var(--op-panel-soft)]"
             >
               {secondaryLabel}
             </Button>
@@ -198,31 +186,30 @@ export function CommercialAddonCard({
   return (
     <article
       className={cn(
-        "group flex h-full flex-col overflow-hidden rounded-[28px] border transition-all duration-200 hover:-translate-y-1",
+        "group flex h-full flex-col overflow-hidden rounded-lg border",
         selected
-          ? "border-[rgba(194,245,66,0.4)] bg-[var(--bg-surface)] ring-1 ring-[rgba(194,245,66,0.2)]"
-          : "border-[var(--border-default)] bg-[var(--bg-surface)]"
+          ? "border-[var(--op-success)] bg-[var(--op-panel-bg)]"
+          : "border-[var(--op-border)] bg-[var(--op-panel-bg)]"
       )}
     >
-      <div className="relative h-52 overflow-hidden bg-black">
+      <div className="relative h-52 overflow-hidden border-b border-[var(--op-border)] bg-[var(--op-panel-soft)]">
         {addon.imageUrl ? (
           <img src={addon.imageUrl} alt={addon.name} className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-800 to-neutral-950 border-b border-[var(--pri)]/10">
-            {isVenue ? <MapPin className="h-8 w-8 text-white/70" /> : <Layers3 className="h-8 w-8 text-white/70" />}
+          <div className="flex h-full w-full items-center justify-center bg-[var(--op-panel-soft)]">
+            {isVenue ? <MapPin className="h-8 w-8 text-[var(--op-muted)]" /> : <Layers3 className="h-8 w-8 text-[var(--op-muted)]" />}
           </div>
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 px-4 pb-4 pt-12 text-white">
+        <div className="absolute inset-x-0 bottom-0 border-t border-[var(--op-border)] bg-[var(--op-panel-bg)] px-4 py-3 text-[var(--op-text)]">
           <div className="flex items-center justify-between gap-3">
-            <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]">
+            <span className="rounded-full border border-[var(--op-border)] bg-[var(--op-panel-soft)] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]">
               {isVenue ? "Venue package" : "Plan extension"}
             </span>
             <span
               className={cn(
                 "rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em]",
-                addon.isActive === false ? "bg-white/10 text-white/55" : "bg-white text-black"
+                addon.isActive === false ? "bg-[var(--op-panel-soft)] text-[var(--op-muted)]" : "bg-[var(--op-success)] text-black"
               )}
             >
               {addon.isActive === false ? "Draft" : "Active"}
@@ -253,7 +240,7 @@ export function CommercialAddonCard({
               ) : null}
             </div>
           </div>
-          {selected && <Check className="h-4 w-4 text-[#C2F542]" />}
+          {selected && <Check className="h-4 w-4 text-[var(--op-success)]" />}
         </div>
 
         {addon.targetsLabel ? (
@@ -269,10 +256,10 @@ export function CommercialAddonCard({
             onClick={onAction}
             variant={selected ? "default" : "outline"}
             className={cn(
-              "flex-1 h-10 rounded-xl text-xs font-semibold gap-1.5",
+              "h-10 flex-1 gap-1.5 rounded-lg text-xs font-semibold",
               selected
-                ? "bg-[rgba(194,245,66,0.15)] border-[rgba(194,245,66,0.3)] text-[#C2F542] hover:bg-[rgba(194,245,66,0.22)]"
-                : "border-[var(--border-default)]"
+                ? "border-[var(--op-success)] bg-[color-mix(in_srgb,var(--op-success)_10%,var(--op-panel-bg))] text-[var(--op-success)]"
+                : "border-[var(--op-border)]"
             )}
           >
             {selected ? (
@@ -287,7 +274,7 @@ export function CommercialAddonCard({
             <Button
               onClick={onDetails}
               variant="outline"
-              className="flex-1 h-10 rounded-xl border-[var(--border-default)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] text-xs font-semibold"
+              className="h-10 flex-1 rounded-lg border-[var(--op-border)] bg-transparent text-xs font-semibold text-[var(--op-text)] hover:bg-[var(--op-panel-soft)]"
             >
               Details
             </Button>
@@ -310,38 +297,37 @@ export function TemplateRecommendationCard({
   onDetails?: () => void;
 }) {
   return (
-    <article className="overflow-hidden rounded-[28px] border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
-      <div className="relative h-48 overflow-hidden bg-gradient-to-br from-zinc-800 to-neutral-950 border-b border-[var(--pri)]/10">
+    <article className="overflow-hidden rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-bg)]">
+      <div className="relative h-48 overflow-hidden border-b border-[var(--op-border)] bg-[var(--op-panel-soft)]">
         {template.imageUrl ? (
           <img src={template.imageUrl} alt={template.name} className="h-full w-full object-cover" />
         ) : null}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-        <div className="absolute bottom-4 left-4 right-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">
+        <div className="absolute inset-x-0 bottom-0 border-t border-[var(--op-border)] bg-[var(--op-panel-bg)] p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--op-muted)]">
             {template.categoryLabel}
           </p>
-          <h3 className="mt-2 text-[20px] font-semibold tracking-[-0.03em] text-white">{template.name}</h3>
+          <h3 className="mt-2 text-[20px] font-semibold text-[var(--op-text)]">{template.name}</h3>
         </div>
       </div>
       <div className="p-5">
         <p className="text-[13px] leading-6 text-[var(--text-secondary)]">
           {template.description || "Operational template sized from your current venue answers."}
         </p>
-        <div className="mt-4 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-4 py-3">
+        <div className="mt-4 rounded-lg border border-[var(--op-border)] bg-[var(--op-panel-soft)] px-4 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
             Coverage
           </p>
           <p className="mt-2 text-[13px] font-semibold text-[var(--text-primary)]">{template.coverageLabel}</p>
         </div>
         <div className="mt-5 flex gap-2">
-          <Button onClick={onAction} variant="outline" className="flex-1 h-10 rounded-xl text-xs font-semibold">
+          <Button onClick={onAction} variant="outline" className="h-10 flex-1 rounded-lg text-xs font-semibold">
             {ctaLabel}
           </Button>
           {onDetails ? (
             <Button
               onClick={onDetails}
               variant="outline"
-              className="flex-1 h-10 rounded-xl border-[var(--border-default)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] text-xs font-semibold"
+              className="h-10 flex-1 rounded-lg border-[var(--op-border)] bg-transparent text-xs font-semibold text-[var(--op-text)] hover:bg-[var(--op-panel-soft)]"
             >
               Details
             </Button>

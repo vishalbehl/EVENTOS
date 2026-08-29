@@ -67,14 +67,34 @@ export type OrgMember = {
   accepted_at?: string | null;
   invited_at?: string | null;
   is_active: boolean;
+  is_2fa_enabled?: boolean;
+  last_login_at?: string | null;
+  event_ids?: string[];
 };
 
+export function slugify(value: string) {
+  return value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 50);
+}
+
+export function usageTone(value: number, max: number) {
+  const pct = max ? (value / max) * 100 : 0;
+  if (pct > 90) return "bg-[var(--dan)]";
+  if (pct >= 70) return "bg-amber-500";
+  return "bg-emerald-500";
+}
+
 export const orgApi = {
-  checkSlug: (slug: string) => apiClient.get<{ available: boolean }>(`/auth/check-slug?slug=${encodeURIComponent(slug)}`),
+  checkSlug: (slug: string) => apiClient.get<{ available: boolean }>(`/auth/check-slug?slug=${encodeURIComponent(slugify(slug))}`),
   signup: (data: Record<string, unknown>) => apiClient.post<any>("/auth/signup", data),
   acceptInvite: (data: Record<string, unknown>) => apiClient.post<any>("/auth/accept-invite", data),
   me: () => apiClient.get<OrgMe>("/organisations/me"),
-  updateMe: (data: Partial<Organization>) => apiClient.put<{ organization: Organization }>("/organisations/me", data),
+  updateMe: (data: Partial<Organization>) => {
+    const payload = { ...data };
+    if (typeof payload.slug === "string") {
+      payload.slug = slugify(payload.slug);
+    }
+    return apiClient.put<{ organization: Organization }>("/organisations/me", payload);
+  },
   members: () => apiClient.get<OrgMember[]>("/organisations/me/members"),
   invite: (email: string, org_role: OrgRole) => apiClient.post<{ message: string; invite_token?: string }>(
     "/organisations/me/members/invite",
@@ -99,6 +119,8 @@ export const orgApi = {
     apiClient.post<any>("/organisations/me/commercial-access-requests", data, {
       headers: { "Idempotency-Key": crypto.randomUUID() },
     }),
+  commercialAccessRequests: () =>
+    apiClient.get<any>("/organisations/me/commercial-access-requests"),
 };
 
 export const countries = [
@@ -117,14 +139,3 @@ export const timezones = [
   "America/New_York",
   "America/Los_Angeles",
 ];
-
-export function slugify(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 50);
-}
-
-export function usageTone(value: number, max: number) {
-  const pct = max ? (value / max) * 100 : 0;
-  if (pct > 90) return "bg-[var(--dan)]";
-  if (pct >= 70) return "bg-amber-500";
-  return "bg-emerald-500";
-}

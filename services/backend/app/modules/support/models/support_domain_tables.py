@@ -14,7 +14,7 @@ class TicketAttachment(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("support.support_tickets.id", ondelete="CASCADE"), index=True)
-    asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("files.assets.id", ondelete="RESTRICT"), nullable=True, unique=True)
+    asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("content.assets.id", ondelete="RESTRICT"), nullable=True, unique=True)
     uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), nullable=True)
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

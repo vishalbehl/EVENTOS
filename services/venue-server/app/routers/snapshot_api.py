@@ -17,7 +17,7 @@ async def get_session_snapshot(session_id: str, is_auth: DeviceAuth, db: AsyncSe
     Returns the 'Preloaded Execution State' for a given session.
     The Room App calls this endpoint to pull a completely frozen representation
     of the session, speakers, and file paths. 
-    It will then save this JSON to its local disk (e.g. C:\EventCache\snapshot.json).
+    It will then save this JSON to its local disk (e.g. C:/EventCache/snapshot.json).
     """
     stmt = (
         select(Session)

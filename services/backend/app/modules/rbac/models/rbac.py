@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from app.modules.events.models.event import Event
 
 class Role(Base):
-    __tablename__ = "roles"
+    __tablename__ = "user_roles"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -42,8 +42,8 @@ class RolePermission(Base):
     __tablename__ = "role_permissions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("rbac.roles.id", ondelete="CASCADE"))
-    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("rbac.permissions.id", ondelete="CASCADE"))
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.user_roles.id", ondelete="CASCADE"))
+    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.permissions.id", ondelete="CASCADE"))
     
     role: Mapped["Role"] = relationship("Role", back_populates="permissions")
     permission: Mapped["Permission"] = relationship("Permission")
@@ -53,7 +53,7 @@ class UserRoleAssignment(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
-    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("rbac.roles.id", ondelete="CASCADE"), index=True)
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.user_roles.id", ondelete="CASCADE"), index=True)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=True)
     event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="CASCADE"), nullable=True)
     
@@ -78,7 +78,7 @@ class ScopedPermission(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
-    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("rbac.permissions.id", ondelete="CASCADE"))
+    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.permissions.id", ondelete="CASCADE"))
     scope_type: Mapped[str] = mapped_column(String(50)) # e.g. 'ORGANIZATION', 'EVENT', 'SESSION'
     scope_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     is_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -120,8 +120,8 @@ class RoleInheritanceMap(Base):
     __tablename__ = "role_inheritance_maps"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    parent_role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("rbac.roles.id", ondelete="CASCADE"))
-    child_role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("rbac.roles.id", ondelete="CASCADE"))
+    parent_role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.user_roles.id", ondelete="CASCADE"))
+    child_role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizer_access.user_roles.id", ondelete="CASCADE"))
 
     parent_role: Mapped["Role"] = relationship("Role", foreign_keys=[parent_role_id], back_populates="inheritance")
     child_role: Mapped["Role"] = relationship("Role", foreign_keys=[child_role_id])

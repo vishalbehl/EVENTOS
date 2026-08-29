@@ -167,6 +167,7 @@ async def get_payment_config(event: CurrentEvent):
     )
 
 
+
 # ── POST /config — write gateway settings ─────────────────────────────────
 
 @router.post(
@@ -183,18 +184,20 @@ async def update_payment_config(
 
     if payload.payment_enabled is not None:
         settings["payment_enabled"] = payload.payment_enabled
+        if event.portal_theme_setting:
+            event.portal_theme_setting.payment_enabled = payload.payment_enabled
 
     if payload.active_gateway is not None:
-        if payload.active_gateway not in ("stripe", "razorpay", "simulated"):
-            raise HTTPException(status_code=400, detail="Invalid gateway.")
+        valid_gateways = ("stripe", "razorpay", "simulated", "phonepe", "offline")
+        if payload.active_gateway not in valid_gateways:
+            raise HTTPException(status_code=400, detail=f"Invalid gateway. Must be one of {valid_gateways}")
         settings["active_gateway"] = payload.active_gateway
+        if event.portal_theme_setting:
+            event.portal_theme_setting.active_gateway = payload.active_gateway
 
     if payload.stripe_credentials is not None:
         existing_stripe = dict(settings.get("stripe_credentials") or {})
 
-        # Encrypt the secret key before persisting.
-        # If the organizer submitted the masked placeholder (starts with "••••••••"),
-        # keep the existing encrypted value unchanged.
         raw_secret = payload.stripe_credentials.secret_key
         if raw_secret and not raw_secret.startswith("••••••••"):
             from app.core.encryption import encrypt as new_encrypt
@@ -209,11 +212,12 @@ async def update_payment_config(
                 },
             )
 
-        # Publishable key is not secret — store plaintext.
         if payload.stripe_credentials.publishable_key:
             existing_stripe["publishable_key"] = payload.stripe_credentials.publishable_key
 
         settings["stripe_credentials"] = existing_stripe
+        if event.portal_theme_setting:
+            event.portal_theme_setting.stripe_credentials = existing_stripe
 
     if payload.razorpay_credentials is not None:
         existing_razorpay = dict(settings.get("razorpay_credentials") or {})

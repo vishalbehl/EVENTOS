@@ -10,7 +10,6 @@ from app.routers import auth, admin_setup, workstations
 from app.routers import admin_dashboard, admin_badges, admin_logs, network_discovery
 from app.routers import registration_api, scanning_api
 from app.routers.node_sync import admin_router as node_admin_router, node_router
-from app.routers.source_sync import router as source_sync_router
 from app.websocket.connection import router as websocket_router, start_redis_listener
 
 
@@ -20,7 +19,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"PostgreSQL URL: {settings.DATABASE_URL.replace('postgres:postgres', '***:***')}")
     
     # Start Redis WebSocket Listener
-    redis_task = asyncio.create_task(start_redis_listener())
+    redis_task = asyncio.create_task(start_redis_listener()) if settings.REDIS_URL else None
     
     # Start background sync scheduler if active event exists & seed default rules
     app.state.scheduler = None
@@ -31,10 +30,8 @@ async def lifespan(app: FastAPI):
         from app.models.participant import Participant
         from app.models.venue_capacity_rule import VenueCapacityRule
         from app.routers.auth import ensure_bootstrap_admin
-        from app.schema_bootstrap import ensure_registration_shared_schema
         
         async with AsyncSessionLocal() as db:
-            await ensure_registration_shared_schema()
             await ensure_bootstrap_admin(db)
 
             # 1. Fetch all distinct roles dynamically from participants table
@@ -89,13 +86,14 @@ async def lifespan(app: FastAPI):
         logger.info("Stopping background sync scheduler")
         app.state.scheduler.stop()
         
-    redis_task.cancel()
-    try:
-        await redis_task
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        pass
+    if redis_task:
+        redis_task.cancel()
+        try:
+            await redis_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     try:
         from app.websocket.connection import manager
@@ -114,10 +112,10 @@ app_fastapi = FastAPI(
 
 app_fastapi.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Open to all on local LAN
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Venue-Key", "X-Fetch-Api-Key", "X-Device-Key", "X-Correlation-Id"],
 )
 
 import socketio
@@ -132,7 +130,6 @@ app_fastapi.include_router(admin_logs.router)
 app_fastapi.include_router(network_discovery.router)
 app_fastapi.include_router(node_admin_router)
 app_fastapi.include_router(node_router)
-app_fastapi.include_router(source_sync_router)
 app_fastapi.include_router(registration_api.router)
 app_fastapi.include_router(scanning_api.router)
 app_fastapi.include_router(websocket_router)

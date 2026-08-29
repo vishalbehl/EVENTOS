@@ -22,15 +22,11 @@ from app.modules.platform.models.health import OrganizationHealth
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.organization_console import (
     OrganizationBrandProfile,
-    OrganizationComplianceControl,
     OrganizationInsightSnapshot,
-    OrganizationLegalHold,
     OrganizationLifecycleJob,
     OrganizationLocation,
     OrganizationNotificationChannelConfig,
     OrganizationNotificationRule,
-    OrganizationPrivacyRequest,
-    OrganizationRetentionPolicy,
     OrganizationSecurityPolicy,
     OrganizationTrustedDevice,
 )
@@ -48,7 +44,7 @@ from app.modules.rbac.models.organization_member import OrganizationMember
 class OrganizationConsoleService:
     DOMAIN_KEYS = {
         "members", "security", "branding", "billing", "locations", "integrations",
-        "api-webhooks", "notifications", "storage", "compliance", "audit",
+        "api-webhooks", "notifications", "storage", "audit",
         "activity", "insights", "advanced", "operations",
     }
 
@@ -75,7 +71,7 @@ class OrganizationConsoleService:
             .limit(1)
         )
         member_count = int(await self.db.scalar(select(func.count(OrganizationMember.id)).where(OrganizationMember.organization_id == organization_id)) or 0)
-        team_count = int((await self.db.execute(text("SELECT COUNT(*) FROM platform.teams WHERE organization_id = :org_id AND deleted_at IS NULL"), {"org_id": organization_id})).scalar() or 0)
+        team_count = int((await self.db.execute(text("SELECT COUNT(*) FROM command_center_access.teams WHERE organization_id = :org_id AND deleted_at IS NULL"), {"org_id": organization_id})).scalar() or 0)
         event_count = int(await self.db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id, Event.deleted_at.is_(None))) or 0)
         active_event_count = int(await self.db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id, Event.deleted_at.is_(None), Event.status == "active")) or 0)
         active_user_count = int(await self.db.scalar(select(func.count(User.id)).where(User.organization_id == organization_id, User.deleted_at.is_(None), User.is_active.is_(True))) or 0)
@@ -84,18 +80,15 @@ class OrganizationConsoleService:
         connection_count = int((await self.db.execute(text("SELECT COUNT(*) FROM integrations.connections WHERE organization_id = :org_id AND is_active = true"), {"org_id": organization_id})).scalar() or 0)
         api_key_count = int((await self.db.execute(text("SELECT COUNT(*) FROM developer.developer_api_keys WHERE organization_id = :org_id AND is_active = true"), {"org_id": organization_id})).scalar() or 0)
         open_security_events = int(await self.db.scalar(select(func.count(SecurityEvent.id)).where(SecurityEvent.organization_id == organization_id, SecurityEvent.risk_level.in_(["HIGH", "CRITICAL"]))) or 0)
-        compliance_rows = (await self.db.execute(select(OrganizationComplianceControl).where(OrganizationComplianceControl.organization_id == organization_id))).scalars().all()
-        ready_controls = sum(1 for row in compliance_rows if row.state == "READY")
-
         freshness = usage.last_calculated_at if usage else None
         storage_bytes = int(usage.storage_used_bytes if usage else 0)
         registrations = int(usage.total_registrations_count if usage else 0)
         metrics = [
             ConsoleMetric(key="events", label="Events", value=event_count, source="events.events", freshness_at=now),
             ConsoleMetric(key="active_events", label="Active events", value=active_event_count, source="events.events", freshness_at=now),
-            ConsoleMetric(key="members", label="Members", value=member_count, source="rbac.organization_members", freshness_at=now),
+            ConsoleMetric(key="members", label="Members", value=member_count, source="organizer_access.organization_members", freshness_at=now),
             ConsoleMetric(key="active_users", label="Active users", value=active_user_count, source="identity.users", freshness_at=now),
-            ConsoleMetric(key="teams", label="Teams", value=team_count, source="platform.teams", freshness_at=now),
+            ConsoleMetric(key="teams", label="Teams", value=team_count, source="command_center_access.teams", freshness_at=now),
             ConsoleMetric(key="locations", label="Locations", value=location_count, source="platform.organization_locations", freshness_at=now),
             ConsoleMetric(key="storage", label="Storage used", value=storage_bytes, unit="bytes", source="analytics.organization_usage", freshness_at=freshness, available=usage is not None),
             ConsoleMetric(key="registrations", label="Registrations", value=registrations, source="analytics.organization_usage", freshness_at=freshness, available=usage is not None),
@@ -108,7 +101,6 @@ class OrganizationConsoleService:
             HealthFactor(key="security", label="Security", score=mfa_score, status=self._factor_status(mfa_score), evidence=f"{mfa_user_count} of {active_user_count} active users have MFA" if active_user_count else "No active users to measure"),
             HealthFactor(key="user_activity", label="User activity", score=100 if active_user_count else None, status="HEALTHY" if active_user_count else "NOT_MEASURED", evidence=f"{active_user_count} active users" if active_user_count else "No active user records"),
             HealthFactor(key="integrations", label="Integrations", score=100 if connection_count else None, status="HEALTHY" if connection_count else "NOT_MEASURED", evidence=f"{connection_count} active connections" if connection_count else "No integration connections configured"),
-            HealthFactor(key="compliance", label="Compliance readiness", score=round((ready_controls / len(compliance_rows)) * 100) if compliance_rows else None, status=self._factor_status(round((ready_controls / len(compliance_rows)) * 100) if compliance_rows else None), evidence=f"{ready_controls} of {len(compliance_rows)} controls ready" if compliance_rows else "No controls assessed"),
             HealthFactor(key="backups", label="Backups", score=None, status="NOT_MEASURED", evidence="No authoritative backup execution provider is configured"),
         ]
         measured = [factor.score for factor in factors if factor.score is not None]
@@ -135,7 +127,6 @@ class OrganizationConsoleService:
             "api-webhooks": DomainAvailability(available=True, configured=api_key_count > 0, freshness_at=now),
             "notifications": DomainAvailability(available=True, configured=await self._exists(OrganizationNotificationChannelConfig, organization_id), freshness_at=now),
             "storage": DomainAvailability(available=usage is not None, configured=usage is not None, reason=None if usage else "Usage aggregation has not produced an organization snapshot.", freshness_at=freshness),
-            "compliance": DomainAvailability(available=True, configured=bool(compliance_rows), freshness_at=now),
             "audit": DomainAvailability(available=True, configured=True, freshness_at=now),
             "activity": DomainAvailability(available=True, configured=True, freshness_at=now),
             "insights": DomainAvailability(available=True, configured=True, freshness_at=now),
@@ -182,21 +173,13 @@ class OrganizationConsoleService:
                 "delivery_batches": [self._model_dict(row, exclude={"content_ciphertext", "idempotency_key", "request_hash"}) for row in delivery_batches],
             }
             available.configured = bool(channels)
-        elif domain == "compliance":
-            controls = (await self.db.execute(select(OrganizationComplianceControl).where(OrganizationComplianceControl.organization_id == organization_id).order_by(OrganizationComplianceControl.framework, OrganizationComplianceControl.control_key))).scalars().all()
-            privacy = (await self.db.execute(select(OrganizationPrivacyRequest).where(OrganizationPrivacyRequest.organization_id == organization_id).order_by(OrganizationPrivacyRequest.created_at.desc()).limit(100))).scalars().all()
-            policies = (await self.db.execute(select(OrganizationRetentionPolicy).where(OrganizationRetentionPolicy.organization_id == organization_id))).scalars().all()
-            holds = (await self.db.execute(select(OrganizationLegalHold).where(OrganizationLegalHold.organization_id == organization_id).order_by(OrganizationLegalHold.created_at.desc()))).scalars().all()
-            data = {"controls": [self._model_dict(row) for row in controls], "privacy_requests": [self._model_dict(row, exclude={"subject_reference_hash"}) for row in privacy], "retention_policies": [self._model_dict(row) for row in policies], "legal_holds": [self._model_dict(row) for row in holds], "certification_claim": False}
-            available.configured = bool(controls or policies)
         elif domain == "insights":
             summary = await self.summary(organization_id)
             snapshots = (await self.db.execute(select(OrganizationInsightSnapshot).where(OrganizationInsightSnapshot.organization_id == organization_id).order_by(OrganizationInsightSnapshot.created_at.desc()).limit(20))).scalars().all()
             data = {"current": {"source_mode": "DETERMINISTIC", "summary": summary.executive_summary, "generated_at": summary.generated_at, "health_factors": [factor.model_dump() for factor in summary.health_factors]}, "history": [self._model_dict(row) for row in snapshots], "ai_enrichment": {"available": False, "reason": "No approved AI enrichment provider is configured for this organization."}}
         elif domain == "advanced":
             jobs = (await self.db.execute(select(OrganizationLifecycleJob).where(OrganizationLifecycleJob.organization_id == organization_id).order_by(OrganizationLifecycleJob.created_at.desc()).limit(100))).scalars().all()
-            active_hold = await self.db.scalar(select(func.count(OrganizationLegalHold.id)).where(OrganizationLegalHold.organization_id == organization_id, OrganizationLegalHold.status == "ACTIVE"))
-            data = {"jobs": [self._model_dict(row) for row in jobs], "deletion_blocked": bool(active_hold), "deletion_block_reason": "An active legal hold prevents deletion." if active_hold else None}
+            data = {"jobs": [self._model_dict(row) for row in jobs], "deletion_blocked": False, "deletion_block_reason": None}
         elif domain == "operations":
             jobs = (await self.db.execute(text("""
                 SELECT j.id::text, j.event_id::text, e.name event_name, 'IMPORT' job_type, j.status, j.filename label, j.created_at, j.completed_at, CASE WHEN lower(j.status)='failed' THEN j.error_summary ELSE NULL END error_detail, NULL::integer retry_count
@@ -220,14 +203,14 @@ class OrganizationConsoleService:
 
     async def _legacy_domain_snapshot(self, organization_id: uuid.UUID, domain: str, now: datetime):
         if domain == "members":
-            rows = (await self.db.execute(text("""SELECT m.id, m.user_id, COALESCE(u.email, m.invite_email) email, u.first_name, u.last_name, u.role, m.is_active, COALESCE(u.is_2fa_enabled, false) is_2fa_enabled, u.last_login_at, m.org_role, m.accepted_at, m.invited_at, COALESCE((SELECT jsonb_agg(a.event_id::text ORDER BY a.event_id::text) FROM rbac.user_event_assignments a JOIN events.events e ON e.id=a.event_id WHERE a.user_id=m.user_id AND e.organization_id=m.organization_id), '[]'::jsonb) event_ids FROM rbac.organization_members m LEFT JOIN identity.users u ON u.id=m.user_id WHERE m.organization_id=:org_id ORDER BY m.invited_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
+            rows = (await self.db.execute(text("""SELECT m.id, m.user_id, COALESCE(u.email, m.invite_email) email, u.first_name, u.last_name, u.role, m.is_active, COALESCE(u.is_2fa_enabled, false) is_2fa_enabled, u.last_login_at, m.org_role, m.accepted_at, m.invited_at, COALESCE((SELECT jsonb_agg(a.event_id::text ORDER BY a.event_id::text) FROM access.user_event_assignments a JOIN events.events e ON e.id=a.event_id WHERE a.user_id=m.user_id AND e.organization_id=m.organization_id), '[]'::jsonb) event_ids FROM organizer_access.organization_members m LEFT JOIN identity.users u ON u.id=m.user_id WHERE m.organization_id=:org_id ORDER BY m.invited_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
             return {"items": [dict(row) for row in rows], "total": len(rows)}, DomainAvailability(available=True, configured=bool(rows), freshness_at=now)
         if domain == "billing":
-            rows = (await self.db.execute(text("SELECT id, status, plan_id, trial_ends_at, current_period_end, cancel_at_period_end, created_at FROM billing.organization_subscriptions WHERE organization_id=:org_id ORDER BY created_at DESC"), {"org_id": organization_id})).mappings().all()
-            invoices = (await self.db.execute(text("SELECT COUNT(*) count, COALESCE(SUM(amount),0) total FROM billing.invoices WHERE organization_id=:org_id"), {"org_id": organization_id})).mappings().one()
-            invoice_rows = (await self.db.execute(text("""SELECT i.id, i.event_id, i.invoice_number, i.amount, i.gst_amount, i.total_amount_inr, i.currency, i.status, i.due_date, i.paid_at, i.issued_at, i.version, COALESCE((SELECT jsonb_agg(jsonb_build_object('id', li.id, 'description', li.description, 'amount', li.amount, 'quantity', li.quantity) ORDER BY li.id) FROM billing.invoice_items li WHERE li.invoice_id=i.id), '[]'::jsonb) items FROM billing.invoices i WHERE i.organization_id=:org_id ORDER BY i.issued_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
-            payments = (await self.db.execute(text("""SELECT id, invoice_id, subscription_id, plan_name, amount, refunded_amount, currency, status, provider, provider_transaction_id, reconciliation_status, reconciled_at, created_at, version FROM billing.subscription_transactions WHERE organization_id=:org_id ORDER BY created_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
-            methods = (await self.db.execute(text("""SELECT id, provider, card_brand, card_last4, is_default, created_at FROM billing.payment_methods WHERE organization_id=:org_id ORDER BY is_default DESC, created_at DESC LIMIT 25"""), {"org_id": organization_id})).mappings().all()
+            rows = (await self.db.execute(text("SELECT id, status, plan_id, trial_ends_at, current_period_end, cancel_at_period_end, created_at FROM commerce.organization_subscriptions WHERE organization_id=:org_id ORDER BY created_at DESC"), {"org_id": organization_id})).mappings().all()
+            invoices = (await self.db.execute(text("SELECT COUNT(*) count, COALESCE(SUM(amount),0) total FROM commerce.invoices WHERE organization_id=:org_id"), {"org_id": organization_id})).mappings().one()
+            invoice_rows = (await self.db.execute(text("""SELECT i.id, i.event_id, i.invoice_number, i.amount, i.gst_amount, i.total_amount_inr, i.currency, i.status, i.due_date, i.paid_at, i.issued_at, i.version, COALESCE((SELECT jsonb_agg(jsonb_build_object('id', li.id, 'description', li.description, 'amount', li.amount, 'quantity', li.quantity) ORDER BY li.id) FROM commerce.invoice_items li WHERE li.invoice_id=i.id), '[]'::jsonb) items FROM commerce.invoices i WHERE i.organization_id=:org_id ORDER BY i.issued_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
+            payments = (await self.db.execute(text("""SELECT id, invoice_id, subscription_id, plan_name, amount, refunded_amount, currency, status, provider, provider_transaction_id, reconciliation_status, reconciled_at, created_at, version FROM commerce.subscription_transactions WHERE organization_id=:org_id ORDER BY created_at DESC LIMIT 100"""), {"org_id": organization_id})).mappings().all()
+            methods = (await self.db.execute(text("""SELECT id, provider, card_brand, card_last4, is_default, created_at FROM commerce.payment_methods WHERE organization_id=:org_id ORDER BY is_default DESC, created_at DESC LIMIT 25"""), {"org_id": organization_id})).mappings().all()
             freshness = max([row["issued_at"] for row in invoice_rows if row["issued_at"]] + [row["created_at"] for row in payments if row["created_at"]] + [now])
             return {"subscriptions": [dict(row) for row in rows], "invoices": {**dict(invoices), "items": [dict(row) for row in invoice_rows]}, "payments": [dict(row) for row in payments], "payment_methods": [dict(row) for row in methods], "global_policy_owner": "Revenue Console"}, DomainAvailability(available=True, configured=bool(rows or invoice_rows or payments), freshness_at=freshness)
         if domain == "integrations":

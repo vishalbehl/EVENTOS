@@ -22,9 +22,9 @@ def _get_candidate_push_urls(base_url: str, event_id: str) -> list[str]:
             break
     
     return [
-        f"{raw}/api/v1/registration-source/events/{event_id}/push",
         f"{raw}/api/v1/sync/events/{event_id}/push",
         f"{raw}/api/v1/events/{event_id}/venue-sync/push",
+        f"{raw}/api/v1/registration-source/events/{event_id}/push",
     ]
 
 

@@ -45,8 +45,15 @@ class SRRStation(Base):
     # Number shown to speaker and on technician grid (1, 2, 3 ...)
     station_number: Mapped[int] = mapped_column(Integer, nullable=False)
     device_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    device_role: Mapped[str] = mapped_column(String(40), nullable=False, default="workstation")
+    mac_address: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(
         INET, nullable=True   # PostgreSQL INET type for IP validation
+    )
+    enrollment_token_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    enrollment_token_prefix: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    enrollment_token_revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     # idle | occupied | uploading | previewing | completed | error | locked

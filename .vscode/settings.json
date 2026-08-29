@@ -1,6 +1,13 @@
 {
-  "python.defaultInterpreterPath": "d:\\DEV\\conf-platform\\services\\backend\\.venv\\Scripts\\python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}\\services\\backend\\.venv\\Scripts\\python.exe",
   "python.analysis.extraPaths": [
-    "d:\\DEV\\conf-platform\\services\\backend"
+    "${workspaceFolder}\\services\\backend",
+    "${workspaceFolder}\\services\\venue-server",
+    "${workspaceFolder}\\services\\registration-server"
+  ],
+  "python.autoComplete.extraPaths": [
+    "${workspaceFolder}\\services\\backend",
+    "${workspaceFolder}\\services\\venue-server",
+    "${workspaceFolder}\\services\\registration-server"
   ]
 }

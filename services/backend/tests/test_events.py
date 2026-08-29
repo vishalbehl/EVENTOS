@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
 from app.modules.platform.models.organization import Organization
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
 

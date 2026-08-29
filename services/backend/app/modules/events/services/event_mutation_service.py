@@ -55,36 +55,23 @@ class EventMutationService:
             created_by=actor_user_id,
             **payload.model_dump_for_db(),
         )
-        from app.modules.registration.models.registration_theme_setting import (
-            RegistrationThemeSetting,
+        from app.modules.registration.models.portal_theme_setting import (
+            PortalThemeSetting,
         )
         from app.modules.registration.routers.registration_portal import (
             DEFAULT_FAQS,
             DEFAULT_TERMS,
         )
-        from app.modules.speakers.models.speaker_theme_setting import (
-            DEFAULT_SPEAKER_FAQS,
-            DEFAULT_SPEAKER_TERMS,
-            SpeakerThemeSetting,
-        )
 
-        # Event's settings-property setters materialize these relationships
-        # from the submitted payload. Seed content onto those rows instead of
-        # replacing them, otherwise mode and branding choices are lost.
-        if event.registration_theme_setting is None:
-            event.registration_theme_setting = RegistrationThemeSetting()
-        if event.speaker_theme_setting is None:
-            event.speaker_theme_setting = SpeakerThemeSetting()
-        if not event.registration_theme_setting.terms_and_conditions:
-            event.registration_theme_setting.terms_and_conditions = DEFAULT_TERMS
-        if not event.registration_theme_setting.faqs:
-            event.registration_theme_setting.faqs = DEFAULT_FAQS
-        if not event.speaker_theme_setting.terms_and_conditions:
-            event.speaker_theme_setting.terms_and_conditions = DEFAULT_SPEAKER_TERMS
-        if not event.speaker_theme_setting.faqs:
-            event.speaker_theme_setting.faqs = DEFAULT_SPEAKER_FAQS
+        if event.portal_theme_setting is None:
+            event.portal_theme_setting = PortalThemeSetting()
+        if not event.portal_theme_setting.terms_and_conditions:
+            event.portal_theme_setting.terms_and_conditions = DEFAULT_TERMS
+        if not event.portal_theme_setting.faqs:
+            event.portal_theme_setting.faqs = DEFAULT_FAQS
         db.add(event)
         await db.flush()
+
 
         from app.modules.registration.routers.participant_roles import (
             seed_default_roles,

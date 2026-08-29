@@ -10,31 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
-class JobControlRequest(Base):
-    __tablename__ = "job_control_requests"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "operation_type", "idempotency_key", name="uq_job_control_idempotency"),
-        Index("ix_job_control_source", "source_type", "source_job_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True, index=True)
-    source_type: Mapped[str] = mapped_column(String(80), nullable=False)
-    source_job_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    successor_job_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    operation_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
-    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING", index=True)
-    requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
-    failure_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
-    failure_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
 class VenueCredentialOperation(Base):
     __tablename__ = "venue_credential_operations"
     __table_args__ = (UniqueConstraint("organization_id", "operation_type", "idempotency_key", name="uq_venue_credential_idempotency"),)

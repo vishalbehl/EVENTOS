@@ -61,7 +61,6 @@ class NodeReplica:
             """
         )
         self.connection.commit()
-        self.ensure_default_admin()
 
     @staticmethod
     def _password_hash(password: str, salt: str | None = None) -> str:
@@ -106,7 +105,7 @@ class NodeReplica:
             "updated_at": row["updated_at"],
         }
 
-    def ensure_default_admin(self, username: str = "admin", password: str = "admin123", email: str = "admin@eventos.local") -> dict[str, Any]:
+    def ensure_default_admin(self, username: str, password: str, email: str) -> dict[str, Any]:
         """Create the first local admin account in an empty workstation DB.
 
         This is intentionally scoped to the embedded SQLite replica so a fresh

@@ -30,7 +30,7 @@ export default function TrafficDirectorPage() {
       <div className="relative z-10 flex flex-col items-center gap-4">
         <Loader2 className="h-10 w-10 text-[var(--pri)] animate-spin" />
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-muted">
-          Establishing Secure Handshake...
+          Loading Organiser Portal...
         </p>
       </div>
     </div>

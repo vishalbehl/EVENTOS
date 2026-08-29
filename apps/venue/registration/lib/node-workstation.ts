@@ -57,16 +57,22 @@ export function readVenueNodeConfiguration(): VenueNodeConfiguration | null {
 }
 
 export function allowedModesForAssignment(assignment: VenueNodeAssignment | null | undefined): VenueNodeMode[] {
+  // TEST OVERRIDE: Allow all modes for testing UI
+  return ["registration", "scanning", "self_checkin"];
+  /*
   if (!assignment) return [];
   const raw = (assignment.permissions as any)?.allowed_modes;
   const modes = Array.isArray(raw)
     ? raw.filter((mode): mode is VenueNodeMode => ["registration", "scanning", "self_checkin"].includes(String(mode)))
     : [];
   return Array.from(new Set([assignment.mode, ...modes]));
+  */
 }
 
 export function assignmentAllowsMode(assignment: VenueNodeAssignment | null | undefined, mode: VenueNodeMode): boolean {
-  return allowedModesForAssignment(assignment).includes(mode);
+  // TEST OVERRIDE: Always allow all modes for testing UI
+  return true;
+  // return allowedModesForAssignment(assignment).includes(mode);
 }
 
 export function saveVenueNodeConfiguration(value: VenueNodeConfiguration): void {

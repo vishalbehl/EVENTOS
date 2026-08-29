@@ -1,0 +1,10 @@
+"use client";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { apiClient, apiGet } from "@/lib/api-client";
+import { DataTable, Panel, StatusBadge } from "../OrganiserPrimitives";
+import { BillingPage, money } from "./shared";
+export function BillingReceiptsTab(){const[page,setPage]=useState(1);const[pageSize,setPageSize]=useState(10);const query=useQuery({queryKey:["billing-receipts",page,pageSize],queryFn:()=>apiGet<any>(`/organiser/billing/receipts?page=${page}&page_size=${pageSize}`)});const download=async(row:any)=>{try{const blob=await apiClient.get<Blob>(`/organiser/billing/invoices/${row.id}/download`,{responseType:"blob"});const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=`receipt-${row.receipt_number||row.id}.csv`;anchor.click();URL.revokeObjectURL(url);toast.success("Receipt downloaded.");}catch(error:any){toast.error(error?.message||"Receipt download failed.");}};return <BillingPage><Panel title="Receipts" className="p-0"><DataTable columns={["Receipt","Invoice","Payment provenance","Paid","Status","Amount","Download"]} total={query.data?.total||0} page={page} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={setPageSize} rows={(query.data?.items||[]).map((row:any)=>[row.receipt_number||row.id,row.invoice_number||"Unavailable",row.payment_reference||"Unavailable",row.paid_at?new Date(row.paid_at).toLocaleDateString():"Unavailable",<StatusBadge key={row.id} status={row.status||"Issued"}/>,money(row.amount==null?null:Number(row.amount),row.currency||"INR"),<Button key={`${row.id}-download`} size="icon" variant="outline" title="Download receipt" onClick={()=>void download(row)}><Download className="h-3.5 w-3.5"/></Button>])} empty={query.isLoading?"Loading receipts...":query.isError?"Receipts are unavailable.":"No receipts have been issued."}/></Panel></BillingPage>}

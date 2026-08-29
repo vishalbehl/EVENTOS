@@ -14,7 +14,7 @@ function attributesOf(instance: ComponentInstance): Record<string, unknown> {
   return {};
 }
 
-function isManual(instance: ComponentInstance) {
+export function isInstanceManual(instance: ComponentInstance): boolean {
   const attributes = attributesOf(instance);
   return attributes['data-source'] === 'manual'
     || instance.bindings.some(binding => binding.source === 'manual' || binding.isOverridden);
@@ -84,7 +84,7 @@ export function applyEventSnapshotToDocument(
   const socialLinks = Object.entries(snapshot.socialLinks || {}).map(([platform, url]) => ({ platform, url }));
 
   Object.values(next.instances).forEach(instance => {
-    if (isManual(instance)) return;
+    if (isInstanceManual(instance)) return;
     switch (instance.componentType) {
       case 'hero':
         applyFields(instance, snapshot, {
@@ -181,4 +181,43 @@ export function applyEventSnapshotToDocument(
   next.updatedAt = new Date().toISOString();
   delete next.checksum;
   return next;
+}
+
+/** Freezes live event data bindings of an instance into plain static props */
+export function disconnectInstanceFromEvent(document: WebsiteDocument, instanceId: string): WebsiteDocument {
+  const next = cloneDocument(document);
+  const instance = next.instances[instanceId];
+  if (!instance) return next;
+  const attributes = { ...attributesOf(instance), 'data-source': 'manual' };
+  instance.props = { ...instance.props, attributes };
+  instance.bindings = instance.bindings.map(binding => ({
+    ...binding,
+    source: 'manual',
+    isOverridden: true,
+  }));
+  next.updatedAt = new Date().toISOString();
+  delete next.checksum;
+  return next;
+}
+
+/** Reconnects an instance to the live event snapshot */
+export function reconnectInstanceToEvent(
+  document: WebsiteDocument,
+  instanceId: string,
+  snapshot: EventDataSnapshot,
+  source: DataBinding['source'] = 'snapshot',
+): WebsiteDocument {
+  const next = cloneDocument(document);
+  const instance = next.instances[instanceId];
+  if (!instance) return next;
+  const attributes = { ...attributesOf(instance), 'data-source': source };
+  instance.props = { ...instance.props, attributes };
+  instance.bindings = instance.bindings.map(binding => ({
+    ...binding,
+    source,
+    isOverridden: false,
+    snapshotId: snapshot.snapshotId,
+    lastSyncedAt: snapshot.snapshotCreatedAt,
+  }));
+  return applyEventSnapshotToDocument(next, snapshot, source);
 }

@@ -378,3 +378,46 @@ async def sync_event(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to sync event: {repr(e)}")
+
+
+@router.post("/reset-database")
+async def reset_database(
+    db: AsyncSession = Depends(get_database),
+    _=Depends(require_admin)
+):
+    """
+    Clears local database event state and resets sync queues for the registration software.
+    """
+    try:
+        from sqlalchemy import text
+        # Truncate or clean tables in dependency order
+        for table in [
+            "venue.sync_outbox",
+            "venue.srr_activity_logs",
+            "venue.srr_checkins",
+            "venue.srr_stations",
+            "venue.room_devices",
+            "venue.venue_capacity_rules",
+            "venue.badge_print_jobs",
+            "participants.badge_prints",
+            "participants.participant_registrations",
+            "participants.companions",
+            "participants.participants",
+            "presentations.presentation_files",
+            "presentations.session_speakers",
+            "presentations.speakers",
+            "events.sessions",
+            "events.rooms",
+            "events.events",
+            "organizations.organisations",
+        ]:
+            try:
+                await db.execute(text(f"TRUNCATE TABLE {table} CASCADE;"))
+            except Exception:
+                pass
+        await db.commit()
+        return {"status": "success", "message": "Database state reset successfully."}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to reset database: {e}")
+

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.events.models.event import Event
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Session
 from app.modules.identity.models.user import User
 from app.modules.registration.models.check_in import AttendanceMutation, CheckIn
 from app.modules.registration.models.participant import Participant

@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.modules.events.models.event import Event
-from app.modules.events.models.room import Room
-from app.modules.events.models.session import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import Session
 from app.modules.identity.models.user import User
 from app.modules.rbac.models.rbac import UserAccessNode
 from app.modules.rbac.models.user_assignment import UserEventAssignment

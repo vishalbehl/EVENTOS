@@ -7,20 +7,12 @@ from sqlalchemy.dialects.postgresql import INET, MACADDR, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, synonym
 
 from app.database import Base
-
-
-class RegistrationVenueOrganization(Base):
-    __tablename__ = "organizations"
-    __table_args__ = {"schema": "identity", "extend_existing": True}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+from app.modules.platform.models.organization import Organization as RegistrationVenueOrganization
 
 
 class RegistrationVenueUser(Base):
     __tablename__ = "venue_users"
-    __table_args__ = {"schema": "identity"}
+    __table_args__ = {"schema": "venue"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -61,19 +53,7 @@ class RegistrationCompanion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
-class RegistrationParticipantRole(Base):
-    __tablename__ = "participant_roles"
-    __table_args__ = {"schema": "registration", "extend_existing": True}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    category: Mapped[str] = mapped_column(String(100), nullable=False, default="General")
-    name: Mapped[str] = mapped_column(String(150), nullable=False)
-    role_code: Mapped[str] = mapped_column(String(10), nullable=False, default="REG")
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+from app.modules.registration.models.participant_role import ParticipantRole as RegistrationParticipantRole
 
 
 class RegistrationParticipantRegistration(Base):
@@ -150,45 +130,11 @@ class VenueCheckInGate(Base):
     station_capacity = synonym("gate_capacity")
 
 
-class VenueExecutionBadge(Base):
-    __tablename__ = "badges"
-    __table_args__ = {"schema": "venue"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    participant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    badge_code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
-    qr_token: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    barcode: Mapped[str] = mapped_column(String(100), nullable=False)
-    nfc_uid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
-    template_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="created")
-    issued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-
-class VenueExecutionBadgeHistory(Base):
-    __tablename__ = "badge_history"
-    __table_args__ = {"schema": "venue"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    badge_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    action: Mapped[str] = mapped_column(String(50), nullable=False)
-    performed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    action_metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
-
-
-class VenueExecutionBadgePrintJob(Base):
-    __tablename__ = "badge_print_jobs"
-    __table_args__ = {"schema": "venue"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    badge_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    printer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued")
-    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
-    printed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+from app.modules.registration.models.badge_models import (
+    Badge as VenueExecutionBadge,
+    BadgeHistory as VenueExecutionBadgeHistory,
+    BadgePrintJob as VenueExecutionBadgePrintJob,
+)
 
 
 class VenueScanEvent(Base):

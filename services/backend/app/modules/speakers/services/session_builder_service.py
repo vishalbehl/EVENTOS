@@ -13,10 +13,10 @@ from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.events.models.session import Session
-from app.modules.events.models.room import Room
-from app.modules.events.models.session_speaker import SessionSpeaker
-from app.modules.events.models.events_domain_tables import Track
+from app.modules.agenda.models import Session
+from app.modules.agenda.models import Room
+from app.modules.agenda.models import SessionPerson as SessionSpeaker
+from app.modules.agenda.models import Track
 from app.modules.events.models.event import Event
 from app.modules.events.models.speaker import Speaker
 from app.modules.speakers.schemas.session_builder import (
@@ -287,6 +287,7 @@ async def get_builder_snapshot_data(
         select(Session)
         .options(
             selectinload(Session.room),
+            selectinload(Session.track),
             selectinload(Session.event),
             selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker),
         )

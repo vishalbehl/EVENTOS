@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="EventOS Venue Server" Manufacturer="Eventos" Version="$(var.Version)" UpgradeCode="8F8C4B1A-3C0E-4E6A-9E68-7E1D6A7A8E91">
+    <SummaryInformation Description="Offline-first EventOS Venue Server appliance" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Venue Server is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Eventos\VenueServer" />
+    </StandardDirectory>
+    <Feature Id="MainFeature" Title="EventOS Venue Server" Level="1">
+      <ComponentGroupRef Id="PayloadComponents" />
+    </Feature>
+  </Package>
+</Wix>

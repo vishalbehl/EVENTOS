@@ -28,7 +28,7 @@ class EmailAsset(Base, SoftDeleteMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True)
     folder_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("communications.email_asset_folders.id", ondelete="SET NULL"),
+        ForeignKey("content.email_asset_folders.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

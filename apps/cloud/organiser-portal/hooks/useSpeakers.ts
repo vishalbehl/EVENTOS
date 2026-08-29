@@ -16,6 +16,12 @@ export interface SpeakerSummary {
   talks_count: number;
   speaker_code?: string;
   qr_code_url?: string;
+  track_id?: string;
+  track_name?: string;
+  track_color?: string;
+  participant_id?: string;
+  role?: string;
+  roles?: string[];
   email_logs?: Array<{
     id: string;
     subject: string;
@@ -26,8 +32,25 @@ export interface SpeakerSummary {
   next_talk_end?: string;
   files_uploaded?: number;
   files_approved?: number;
+  files_pending?: number;
   files_total?: number;
   profile_completeness?: number;
+}
+
+export interface TrackItem {
+  id: string;
+  name: string;
+  code?: string;
+  display_color?: string;
+  sort_order: number;
+}
+
+export function useTracks(eventId: string) {
+  return useQuery({
+    queryKey: ["tracks", eventId],
+    queryFn: () => apiGet<TrackItem[]>(`/events/${eventId}/tracks`),
+    enabled: !!eventId && eventId !== "undefined" && eventId !== "[eventId]",
+  });
 }
 
 export interface SpeakerTalk {

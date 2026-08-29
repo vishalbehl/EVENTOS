@@ -146,6 +146,25 @@ async def test_billing_plan_supports_multiple_active_subscriptions(client, db, o
 
 
 @pytest.mark.asyncio
+async def test_billing_plan_returns_internal_unlimited_without_subscription(
+    client, db, organization, organizer
+):
+    organization.slug = "eventos"
+    organization.is_internal_unrestricted = True
+    await db.commit()
+
+    res = await client.get("/billing/plan", headers=auth_headers(organizer))
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == "INTERNAL_UNLIMITED"
+    assert payload["plan"]["name"] == "Eventos Internal"
+    assert payload["usage"]["events"]["max"] is None
+    assert payload["availability"] == "AVAILABLE"
+    assert payload["source"] == "INTERNAL_UNRESTRICTED_ORGANIZATION"
+
+
+@pytest.mark.asyncio
 async def test_public_signup_issues_demo_subscription_and_grant(client, db):
     demo_plan = SubscriptionPlan(
         name=settings.PUBLIC_DEMO_PLAN_NAME,

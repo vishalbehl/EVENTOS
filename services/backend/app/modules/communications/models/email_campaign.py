@@ -2,6 +2,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
+import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, List, Optional
+
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -12,7 +16,8 @@ if TYPE_CHECKING:
     from app.modules.events.models.event import Event
     from app.modules.communications.models.email_template import EmailTemplate
     from app.modules.identity.models.user import User
-    from app.modules.events.models.session import Session
+    from app.modules.agenda.models.session import AgendaSession
+    from app.modules.agenda.models.room import AgendaRoom
     from app.modules.communications.models.email_log import EmailLog
 
 
@@ -39,6 +44,7 @@ class EmailCampaign(Base, SoftDeleteMixin):
             "recipient_filter IN ('all', 'pending_upload', 'uploaded', 'approved', 'rejected', 'posters', 'specific_session', 'specific_room', 'specific_speakers', 'custom', 'paid', 'unpaid', 'pending', 'specific_participants', 'custom_list')",
             name="ck_ec_filter"
         ),
+        {"schema": "communications"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -52,12 +58,12 @@ class EmailCampaign(Base, SoftDeleteMixin):
     )
     template_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("communications.email_templates.id", ondelete="RESTRICT"),
+        ForeignKey("design.email_templates.id", ondelete="RESTRICT"),
         nullable=False,
     )
     template_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("communications.email_template_versions.id", ondelete="RESTRICT"),
+        ForeignKey("design.email_template_versions.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
@@ -69,13 +75,13 @@ class EmailCampaign(Base, SoftDeleteMixin):
     # For specific_session filter
     session_id_filter: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.sessions.id", ondelete="SET NULL"),
+        ForeignKey("agenda.sessions.id", ondelete="SET NULL"),
         nullable=True,
     )
     # For specific_room filter
     room_id_filter: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("events.rooms.id", ondelete="SET NULL"),
+        ForeignKey("agenda.rooms.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -109,17 +115,22 @@ class EmailCampaign(Base, SoftDeleteMixin):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # ── Relationships ─────────────────────────────────────
     event: Mapped["Event"] = relationship("Event", back_populates="email_campaigns")
-    template: Mapped["EmailTemplate"] = relationship(
-        "EmailTemplate", back_populates="campaigns"
-    )
+    template: Mapped["EmailTemplate"] = relationship("EmailTemplate")
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
-    session_filter: Mapped[Optional["Session"]] = relationship(
-        "Session",
-        foreign_keys=[session_id_filter],
-        back_populates="email_campaigns",
+    session: Mapped[Optional["AgendaSession"]] = relationship(
+        "AgendaSession", foreign_keys=[session_id_filter]
+    )
+    room: Mapped[Optional["AgendaRoom"]] = relationship(
+        "AgendaRoom", foreign_keys=[room_id_filter]
     )
     email_logs: Mapped[List["EmailLog"]] = relationship(
         "EmailLog", back_populates="campaign", cascade="all, delete-orphan"

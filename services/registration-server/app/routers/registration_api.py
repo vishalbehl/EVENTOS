@@ -546,7 +546,7 @@ async def get_registration_summary(db: AsyncSession = Depends(get_database)):
             _ps_col.label("status"),
             func.count(Participant.id).label("cnt")
         )
-        .group_by(Participant.paid_status)
+        .group_by(_ps_col)
         .order_by(func.count(Participant.id).desc())
     )).all()
     payment_breakdown = [{"status": r.status, "count": r.cnt} for r in payment_status_rows]
@@ -1156,11 +1156,8 @@ async def create_onsite_participant(
         )
         admin_user = user_res.scalar_one_or_none()
         is_valid = False
-        if admin_user:
-            if verify_password(admin_password, admin_user.password_hash) or admin_password in ["admin", "admin123"]:
-                is_valid = True
-        elif admin_username.lower() in ["admin", "administrator"] and admin_password in ["admin", "admin123"]:
-            is_valid = True
+        if admin_user and admin_user.role in ("admin", "super_admin"):
+            is_valid = verify_password(admin_password, admin_user.password_hash)
 
         if not is_valid:
             raise HTTPException(
@@ -1333,10 +1330,8 @@ async def checkin_participant(
                     admin_user = (await db.execute(
                         select(VenueUser).where(VenueUser.username == payload.admin_username, VenueUser.is_active == True)
                     )).scalar_one_or_none()
-                    if admin_user and (verify_password(payload.admin_password, admin_user.password_hash) or payload.admin_password in ["admin", "admin123"]) and admin_user.role in ("admin", "super_admin"):
+                    if admin_user and verify_password(payload.admin_password, admin_user.password_hash) and admin_user.role in ("admin", "super_admin"):
                         is_overridden = True
-                elif payload.admin_username and payload.admin_username.lower() in ["admin", "administrator"] and payload.admin_password in ["admin", "admin123"]:
-                    is_overridden = True
 
                 if not is_overridden:
                     raise HTTPException(
@@ -1415,10 +1410,8 @@ async def checkin_participant(
             admin_user = (await db.execute(
                 select(VenueUser).where(VenueUser.username == payload.admin_username, VenueUser.is_active == True)
             )).scalar_one_or_none()
-            if admin_user and (verify_password(payload.admin_password, admin_user.password_hash) or payload.admin_password in ["admin", "admin123"]) and admin_user.role in ("admin", "super_admin"):
+            if admin_user and verify_password(payload.admin_password, admin_user.password_hash) and admin_user.role in ("admin", "super_admin"):
                 is_overridden = True
-        elif payload.admin_username and payload.admin_username.lower() in ["admin", "administrator"] and payload.admin_password in ["admin", "admin123"]:
-            is_overridden = True
 
         if not is_overridden:
             raise HTTPException(
@@ -2936,11 +2929,8 @@ async def reset_participant_kit(
     admin_user = user_res.scalar_one_or_none()
 
     is_valid = False
-    if admin_user:
-        if verify_password(admin_password, admin_user.password_hash) or admin_password in ["admin", "admin123"]:
-            is_valid = True
-    elif admin_username.lower() in ["admin", "administrator"] and admin_password in ["admin", "admin123"]:
-        is_valid = True
+    if admin_user and admin_user.role in ("admin", "super_admin"):
+        is_valid = verify_password(admin_password, admin_user.password_hash)
 
     if not is_valid:
         raise HTTPException(status_code=401, detail="Invalid Admin Username or Password. Kit reset unauthorized.")
@@ -3008,11 +2998,8 @@ async def reset_participant_checkin(
     )).scalar_one_or_none()
 
     is_valid = False
-    if admin_user:
-        if verify_password(admin_password, admin_user.password_hash) or admin_password in ["admin", "admin123"]:
-            is_valid = True
-    elif admin_username.lower() in ["admin", "administrator"] and admin_password in ["admin", "admin123"]:
-        is_valid = True
+    if admin_user and admin_user.role in ("admin", "super_admin"):
+        is_valid = verify_password(admin_password, admin_user.password_hash)
 
     if not is_valid:
         raise HTTPException(status_code=401, detail="Invalid Admin Username or Password. Check-in reset unauthorized.")

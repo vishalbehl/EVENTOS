@@ -399,7 +399,7 @@ export default function FileMonitoringPage() {
                 className={cn(
                   "px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300",
                   view === t.id
-                    ? "bg-[var(--pri)] text-white shadow-lg shadow-[var(--pri)]/20"
+                    ? "bg-[var(--pri)] text-[var(--primary-contrast)] shadow-lg shadow-[var(--pri)]/20"
                     : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-white/5"
                 )}
               >
@@ -1020,7 +1020,7 @@ export default function FileMonitoringPage() {
                 </div>
                 <Button 
                   onClick={() => setView("validation")}
-                  className="w-full sm:w-auto px-8 py-2.5 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-[10px] font-black uppercase tracking-wider shadow-lg shadow-[var(--pri)]/20"
+                  className="w-full sm:w-auto px-8 py-2.5 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-[var(--primary-contrast)] text-[10px] font-black uppercase tracking-wider shadow-lg shadow-[var(--pri)]/20"
                 >
                   Upload & Continue
                 </Button>

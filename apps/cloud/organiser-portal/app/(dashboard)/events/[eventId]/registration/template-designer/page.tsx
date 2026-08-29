@@ -2213,7 +2213,7 @@ export default function PrintDesigner() {
 
           <div className="h-5 w-px bg-zinc-800" />
 
-          <Button onClick={handlePrint} disabled={loading} className="h-8 px-4 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white font-black uppercase tracking-widest text-[9px] rounded-full border-0 shadow-lg shadow-[var(--pri)]/20 hover-lift-3d transition-all">
+          <Button onClick={handlePrint} disabled={loading} className="h-8 px-4 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] font-black uppercase tracking-widest text-[9px] rounded-full border-0 shadow-lg shadow-[var(--pri)]/20 hover-lift-3d transition-all">
             <Printer className="h-3.5 w-3.5 mr-1.5" />
             {loading ? "Generating..." : "Print Preview"}
           </Button>
@@ -2306,7 +2306,7 @@ export default function PrintDesigner() {
                         operation={template.template_type === "certificate" ? "certificates.templates.manage" : "badges.templates.manage"}
                         limitKey={currentTemplateId === "new" ? templateLimitKey : undefined}
                       >
-                        <Button onClick={handleSaveTemplate} className="w-full h-9 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl shadow-lg border-0">
+                        <Button onClick={handleSaveTemplate} className="w-full h-9 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] justify-start px-4 text-xs font-black uppercase tracking-wider rounded-xl shadow-lg border-0">
                           <Save className="h-3.5 w-3.5 mr-2" /> Save Design
                         </Button>
                       </CapabilityAction>
@@ -2750,7 +2750,7 @@ export default function PrintDesigner() {
                         key={align}
                         onClick={() => setFieldProperty(selectedField.id, "align", align)}
                         title={`${align.charAt(0).toUpperCase() + align.slice(1)} Align`}
-                        className={`h-7 w-7 flex items-center justify-center border-r border-zinc-850 last:border-0 ${(selectedField.align || (selectedField.type === "text" ? "left" : "center")) === align ? "bg-[var(--pri)] text-white" : "text-zinc-400 hover:bg-zinc-800"
+                        className={`h-7 w-7 flex items-center justify-center border-r border-zinc-850 last:border-0 ${(selectedField.align || (selectedField.type === "text" ? "left" : "center")) === align ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-zinc-400 hover:bg-zinc-800"
                           }`}
                       >
                         <Icon className="h-3 w-3" />
@@ -2804,13 +2804,13 @@ export default function PrintDesigner() {
                     />
 
                     <div className="flex border border-zinc-800 rounded-lg overflow-hidden bg-zinc-950 shrink-0">
-                      <button onClick={() => setFieldProperty(selectedField.id, "bold", !selectedField.bold)} className={`h-7 w-7 flex items-center justify-center border-r border-zinc-850 ${selectedField.bold ? "bg-[var(--pri)] text-white" : "text-zinc-400 hover:bg-zinc-800"}`}>
+                      <button onClick={() => setFieldProperty(selectedField.id, "bold", !selectedField.bold)} className={`h-7 w-7 flex items-center justify-center border-r border-zinc-850 ${selectedField.bold ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-zinc-400 hover:bg-zinc-800"}`}>
                         <Bold className="h-3 w-3" />
                       </button>
-                      <button onClick={() => setFieldProperty(selectedField.id, "italic", !selectedField.italic)} className={`h-7 w-7 flex items-center justify-center border-r border-zinc-850 ${selectedField.italic ? "bg-[var(--pri)] text-white" : "text-zinc-400 hover:bg-zinc-800"}`}>
+                      <button onClick={() => setFieldProperty(selectedField.id, "italic", !selectedField.italic)} className={`h-7 w-7 flex items-center justify-center border-r border-zinc-850 ${selectedField.italic ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-zinc-400 hover:bg-zinc-800"}`}>
                         <Italic className="h-3 w-3" />
                       </button>
-                      <button onClick={() => setFieldProperty(selectedField.id, "underline", !selectedField.underline)} className={`h-7 w-7 flex items-center justify-center ${selectedField.underline ? "bg-[var(--pri)] text-white" : "text-zinc-400 hover:bg-zinc-800"}`}>
+                      <button onClick={() => setFieldProperty(selectedField.id, "underline", !selectedField.underline)} className={`h-7 w-7 flex items-center justify-center ${selectedField.underline ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-zinc-400 hover:bg-zinc-800"}`}>
                         <Underline className="h-3 w-3" />
                       </button>
                     </div>
@@ -2942,7 +2942,7 @@ export default function PrintDesigner() {
                       setEditingFieldId(selectedField.id);
                       setImageEditorOpen(true);
                     }}
-                    className="h-7 px-2.5 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0"
+                    className="h-7 px-2.5 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0"
                   >
                     <Crop className="h-3.5 w-3.5" /> Crop & Edit Image
                   </Button>
@@ -3665,7 +3665,7 @@ export default function PrintDesigner() {
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Pages List</span>
             <Button
               onClick={() => dispatch({ type: "ADD_PAGE", payload: { page: getDefaultPage() } })}
-              className="h-6 w-6 p-0 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white rounded-full"
+              className="h-6 w-6 p-0 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] rounded-full"
             >
               <Plus className="h-3 w-3" />
             </Button>
@@ -3750,10 +3750,10 @@ export default function PrintDesigner() {
           </div>
 
           <div className="flex border border-zinc-850 rounded-lg overflow-hidden bg-zinc-950">
-            <button onClick={() => handleOrientationChange("portrait")} className={`h-7 px-3 text-[10px] font-black uppercase tracking-wider border-r border-zinc-850 ${template.orientation === "portrait" ? "bg-[var(--pri)] text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
+            <button onClick={() => handleOrientationChange("portrait")} className={`h-7 px-3 text-[10px] font-black uppercase tracking-wider border-r border-zinc-850 ${template.orientation === "portrait" ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-zinc-500 hover:text-zinc-300"}`}>
               Portrait
             </button>
-            <button onClick={() => handleOrientationChange("landscape")} className={`h-7 px-3 text-[10px] font-black uppercase tracking-wider ${template.orientation === "landscape" ? "bg-[var(--pri)] text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
+            <button onClick={() => handleOrientationChange("landscape")} className={`h-7 px-3 text-[10px] font-black uppercase tracking-wider ${template.orientation === "landscape" ? "bg-[var(--pri)] text-[var(--primary-contrast)]" : "text-zinc-500 hover:text-zinc-300"}`}>
               Landscape
             </button>
           </div>
@@ -4082,7 +4082,7 @@ export default function PrintDesigner() {
                 </Button>
                 <Button
                   onClick={handleCropSubmit}
-                  className="h-9 px-5 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-white font-bold uppercase tracking-wider text-[10px] rounded-full shadow-lg shadow-[var(--pri)]/10 border-0"
+                  className="h-9 px-5 bg-[var(--pri)] hover:bg-[var(--pri)]/80 text-[var(--primary-contrast)] font-bold uppercase tracking-wider text-[10px] rounded-full shadow-lg shadow-[var(--pri)]/10 border-0"
                 >
                   Apply & Insert Image
                 </Button>
