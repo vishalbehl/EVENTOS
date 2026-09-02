@@ -4,6 +4,10 @@ dist/
 build/
 out/
 coverage/
+release/
+win-unpacked/
+**/release/
+**/win-unpacked/
 apps/venue/registration/electron-dist/
 __pycache__/
 .pytest_cache/
