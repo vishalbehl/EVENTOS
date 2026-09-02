@@ -27,6 +27,8 @@ from app.modules.registration.schemas.badge import (
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.registration.application.queries import BadgeQueryService
+from app.schemas.cursor_pagination import CursorPage
 
 router = APIRouter(
     prefix="/events/{event_id}/badges",
@@ -326,6 +328,7 @@ async def regenerate_qr(
 async def list_badge_history(
     event: CurrentEvent,
     badge_id: Optional[uuid.UUID] = Query(None, description="Filter history by badge ID"),
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -336,10 +339,27 @@ async def list_badge_history(
     )
     if badge_id:
         q = q.where(BadgeHistory.badge_id == badge_id)
-    q = q.order_by(BadgeHistory.created_at.desc())
+    q = q.order_by(BadgeHistory.created_at.desc(), BadgeHistory.id.desc()).limit(limit)
 
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+@router.get("/history/page", response_model=CursorPage[BadgeHistoryResponse])
+async def list_badge_history_page(
+    event: CurrentEvent,
+    badge_id: Optional[uuid.UUID] = Query(None, description="Filter history by badge ID"),
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+) -> CursorPage[BadgeHistoryResponse]:
+    return await BadgeQueryService(db).history_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        badge_id=badge_id,
+        page_size=page_size,
+        cursor=cursor,
+    )
 
 
 @router.post("/{id}/print", response_model=BadgePrintJobResponse, status_code=status.HTTP_201_CREATED)
@@ -391,17 +411,34 @@ async def print_badge_job(
 @router.get("/print-jobs", response_model=List[BadgePrintJobResponse])
 async def list_badge_print_jobs(
     event: CurrentEvent,
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
     """
     List print jobs queued or completed for this event.
     """
     q = select(BadgePrintJob).join(Badge).join(Participant).where(
-        Participant.event_id == event.id
-    ).order_by(BadgePrintJob.queued_at.desc())
+        Participant.event_id == event.id,
+        Participant.deleted_at.is_(None),
+    ).order_by(BadgePrintJob.queued_at.desc(), BadgePrintJob.id.desc()).limit(limit)
 
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+@router.get("/print-jobs/page", response_model=CursorPage[BadgePrintJobResponse])
+async def list_badge_print_jobs_page(
+    event: CurrentEvent,
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+) -> CursorPage[BadgePrintJobResponse]:
+    return await BadgeQueryService(db).print_jobs_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+    )
 
 
 @router.patch("/print-jobs/{job_id}", response_model=BadgePrintJobResponse)
@@ -435,14 +472,31 @@ async def update_print_job_status(
 @router.get("", response_model=List[BadgeResponse])
 async def list_badges(
     event: CurrentEvent,
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
     """
     List all badges generated for this event.
     """
     q = select(Badge).join(Participant).where(
-        Participant.event_id == event.id
-    )
+        Participant.event_id == event.id,
+        Participant.deleted_at.is_(None),
+    ).order_by(Badge.created_at.desc(), Badge.id.desc()).limit(limit)
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+@router.get("/page", response_model=CursorPage[BadgeResponse])
+async def list_badges_page(
+    event: CurrentEvent,
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+) -> CursorPage[BadgeResponse]:
+    return await BadgeQueryService(db).list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+    )
 

@@ -239,7 +239,7 @@ export function SessionQuickEditPanel({ eventId }: SessionQuickEditPanelProps) {
                     <option value="">No Room (Unallocated)</option>
                     {rooms.map((r) => (
                       <option key={r.id} value={r.id}>
-                        {r.name} {r.capacity ? `(${r.capacity} seats)` : ""}
+                        {r.name} {r.code ? `(${r.code})` : ""}
                       </option>
                     ))}
                   </select>

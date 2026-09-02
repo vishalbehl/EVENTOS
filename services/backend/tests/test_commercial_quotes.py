@@ -5,6 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
@@ -363,7 +364,10 @@ async def test_approved_quote_converts_to_immutable_proposal_and_durable_documen
     )
     assert download.status_code == 200, download.text
     assert download.json()["expires_in"] <= 300
-    assert "organization_id=" in download.json()["download_url"]
+    if settings.STORAGE_MODE == "local":
+        assert "organization_id=" in download.json()["download_url"]
+    else:
+        assert "X-Amz-Signature=" in download.json()["download_url"]
 
     share_key = f"proposal-share-{uuid.uuid4()}"
     share_payload = {

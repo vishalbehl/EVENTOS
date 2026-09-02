@@ -12,6 +12,8 @@ from app.tasks.tenant_job_scope import (
     parse_required_organization_id,
     tenant_job_session,
 )
+from app.core.async_runner import run_async as stable_run_async
+from app.core.task_policy import is_retryable, policy_for
 
 
 def _load_workflow_models():
@@ -56,29 +58,83 @@ def _run_async(coro):
             raise exc_list[0]
         return res_list[0]
     else:
-        return asyncio.run(coro)
+        return stable_run_async(coro)
 
 # ── Celery Tasks ───────────────────────────────────────────────
 
-@celery_app.task(name="app.tasks.workflow_jobs.check_expired_approvals")
-def check_expired_approvals(organization_id_str: str | None = None) -> None:
+_WORKFLOW_POLICY = policy_for("notifications")
+
+
+def _retry_transient(task, exc: BaseException) -> None:
+    if not is_retryable(exc):
+        raise exc
+    attempt = int(getattr(task.request, "retries", 0) or 0)
+    if attempt < _WORKFLOW_POLICY.max_retries:
+        raise task.retry(
+            exc=exc,
+            countdown=min(
+                300,
+                _WORKFLOW_POLICY.retry_delay(attempt, apply_jitter=True),
+            ),
+            max_retries=_WORKFLOW_POLICY.max_retries,
+        )
+    raise exc
+
+@celery_app.task(
+    name="app.tasks.workflow_jobs.check_expired_approvals",
+    bind=True,
+    max_retries=_WORKFLOW_POLICY.max_retries,
+    soft_time_limit=_WORKFLOW_POLICY.soft_timeout_seconds,
+    time_limit=_WORKFLOW_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_WORKFLOW_POLICY.queue,
+)
+def check_expired_approvals(self, organization_id_str: str | None = None) -> None:
     logger.info("[Celery] Starting check_expired_approvals job")
     org_id = parse_required_organization_id(organization_id_str)
-    _run_async(_check_expired_approvals_async(org_id))
+    try:
+        _run_async(_check_expired_approvals_async(org_id))
+    except Exception as exc:
+        logger.exception("[Celery] check_expired_approvals failed error_type={}", type(exc).__name__)
+        _retry_transient(self, exc)
     logger.info("[Celery] Finished check_expired_approvals job")
 
-@celery_app.task(name="app.tasks.workflow_jobs.check_escalations")
-def check_escalations(organization_id_str: str | None = None) -> None:
+@celery_app.task(
+    name="app.tasks.workflow_jobs.check_escalations",
+    bind=True,
+    max_retries=_WORKFLOW_POLICY.max_retries,
+    soft_time_limit=_WORKFLOW_POLICY.soft_timeout_seconds,
+    time_limit=_WORKFLOW_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_WORKFLOW_POLICY.queue,
+)
+def check_escalations(self, organization_id_str: str | None = None) -> None:
     logger.info("[Celery] Starting check_escalations job")
     org_id = parse_required_organization_id(organization_id_str)
-    _run_async(_check_escalations_async(org_id))
+    try:
+        _run_async(_check_escalations_async(org_id))
+    except Exception as exc:
+        logger.exception("[Celery] check_escalations failed error_type={}", type(exc).__name__)
+        _retry_transient(self, exc)
     logger.info("[Celery] Finished check_escalations job")
 
-@celery_app.task(name="app.tasks.workflow_jobs.send_reminders")
-def send_reminders(organization_id_str: str | None = None) -> None:
+@celery_app.task(
+    name="app.tasks.workflow_jobs.send_reminders",
+    bind=True,
+    max_retries=_WORKFLOW_POLICY.max_retries,
+    soft_time_limit=_WORKFLOW_POLICY.soft_timeout_seconds,
+    time_limit=_WORKFLOW_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_WORKFLOW_POLICY.queue,
+)
+def send_reminders(self, organization_id_str: str | None = None) -> None:
     logger.info("[Celery] Starting send_reminders job")
     org_id = parse_required_organization_id(organization_id_str)
-    _run_async(_send_reminders_async(org_id))
+    try:
+        _run_async(_send_reminders_async(org_id))
+    except Exception as exc:
+        logger.exception("[Celery] send_reminders failed error_type={}", type(exc).__name__)
+        _retry_transient(self, exc)
     logger.info("[Celery] Finished send_reminders job")
 
 

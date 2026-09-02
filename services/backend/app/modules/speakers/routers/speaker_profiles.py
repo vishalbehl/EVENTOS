@@ -1,3 +1,4 @@
+import asyncio
 import io
 import re
 import uuid
@@ -14,7 +15,6 @@ from app.modules.events.models.event import Event
 from app.modules.events.models.speaker import Speaker
 from app.modules.agenda.models import Session
 from app.modules.agenda.models import SessionPerson as SessionSpeaker
-from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.speakers.schemas.speaker_profile import (
     SpeakerProfileCreate,
     SpeakerProfileUpdate,
@@ -23,6 +23,8 @@ from app.modules.speakers.schemas.speaker_profile import (
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import enforce_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.speakers.application.commands import SpeakerCommandService
+from app.modules.speakers.application.queries import SpeakerQueryService
 
 # Create the router with events prefix
 router = APIRouter(prefix="/events/{event_id}/speakers/{speaker_id}/profile", tags=["speaker_profiles"])
@@ -144,13 +146,11 @@ async def get_speaker_profile(
     """
     Returns SpeakerProfileResponse or 404 if no profile yet.
     """
-    result = await db.execute(
-        select(SpeakerProfile).where(
-            SpeakerProfile.speaker_id == speaker_id,
-            SpeakerProfile.event_id == event_id
-        )
+    profile = await SpeakerQueryService(db).get_profile_for_event(
+        organization_id=None,
+        event_id=event_id,
+        speaker_id=speaker_id,
     )
-    profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -164,6 +164,7 @@ async def upsert_speaker_profile(
     event_id: uuid.UUID,
     speaker_id: uuid.UUID,
     payload: SpeakerProfileUpdate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
     db: AsyncSession = Depends(get_db),
     access_type: str = Depends(check_profile_access),
 ) -> SpeakerProfileResponse:
@@ -171,43 +172,19 @@ async def upsert_speaker_profile(
     Creates or updates the speaker profile.
     Sets last_updated_by='organiser' if called by organiser JWT, 'speaker' if called by portal token.
     """
-    # 1. Fetch the speaker to get organization_id
-    speaker_res = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id, Speaker.event_id == event_id).options(selectinload(Speaker.event))
-    )
-    speaker = speaker_res.scalar_one_or_none()
-    if not speaker:
+    # Resolve event context once; the command owns profile persistence.
+    event = await db.get(Event, event_id)
+    if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
-
-    # 2. Get profile if exists
-    result = await db.execute(
-        select(SpeakerProfile).where(
-            SpeakerProfile.speaker_id == speaker_id,
-            SpeakerProfile.event_id == event_id
-        )
+    return await SpeakerCommandService.upsert_profile(
+        db,
+        event=event,
+        speaker_id=speaker_id,
+        payload=payload,
+        access_type=access_type,
+        actor_user_id=None,
+        idempotency_key=idempotency_key,
     )
-    profile = result.scalar_one_or_none()
-
-    update_dict = payload.model_dump(exclude_unset=True)
-    update_dict["last_updated_by"] = access_type
-
-    if not profile:
-        # Create
-        profile = SpeakerProfile(
-            speaker_id=speaker_id,
-            event_id=event_id,
-            organization_id=speaker.event.organization_id,
-            **update_dict
-        )
-        db.add(profile)
-    else:
-        # Update
-        for field, value in update_dict.items():
-            setattr(profile, field, value)
-
-    await db.commit()
-    await db.refresh(profile)
-    return profile
 
 
 def extract_text_from_file(filename: str, content: bytes) -> str:
@@ -340,11 +317,12 @@ async def parse_cv(
     bucket = settings.S3_BUCKET_ASSETS
 
     try:
-        upload_service.upload_bytes(
+        await asyncio.to_thread(
+            upload_service.upload_bytes,
             bucket=bucket,
             storage_path=storage_path,
             data=content,
-            content_type=file.content_type
+            content_type=file.content_type,
         )
         if settings.STORAGE_MODE == "local":
             url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
@@ -538,11 +516,12 @@ async def parse_profile_template(
     bucket = settings.S3_BUCKET_ASSETS
 
     try:
-        upload_service.upload_bytes(
+        await asyncio.to_thread(
+            upload_service.upload_bytes,
             bucket=bucket,
             storage_path=storage_path,
             data=content,
-            content_type=file.content_type
+            content_type=file.content_type,
         )
         if settings.STORAGE_MODE == "local":
             url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{storage_path}"

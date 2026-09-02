@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import uuid
+import asyncio
 import math
-from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status, UploadFile, File, Form as FastAPIForm
@@ -25,9 +25,12 @@ from app.modules.identity.models.user import User
 from app.modules.rbac.schemas.event import EventCreate, EventUpdate, EventResponse, EventSummary
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import enforce_event_operation
+from app.core.concurrency import require_if_match
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
-from app.modules.audit.models.audit_log import AuditLog
 from app.modules.events.services.event_mutation_service import EventMutationService
+from app.modules.events.application.commands import EventCommandService
+from app.modules.events.application.queries import EventQueryService
+from app.schemas.cursor_pagination import CursorPage
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -77,6 +80,7 @@ async def list_events(
     db: AsyncSession = Depends(get_db),
 ) -> List[EventSummary]:
     """List events scoped to the authenticated user's organisation."""
+    allowed_event_ids = None
     if current_user.role in ('super_admin', 'system_admin', 'admin', 'organiser', 'organizer'):
         target_org_id = organization_id or current_user.organization_id
             
@@ -85,7 +89,6 @@ async def list_events(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
             )
-        q = select(Event).where(Event.organization_id == target_org_id).execution_options(skip_tenant_filter=True)
     else:
         # Restricted roles: only see assigned events
         from app.modules.rbac.models.rbac import UserAccessNode
@@ -125,24 +128,28 @@ async def list_events(
             UserEventAssignment.user_id == current_user.id
         )
 
-        q = select(Event).where(
-            Event.organization_id == current_user.organization_id,
-            or_(
-                Event.id.in_(assigned_event_ids),
-                Event.id.in_(room_event_ids),
-                Event.id.in_(session_event_ids),
-                Event.id.in_(legacy_event_ids)
-            )
+        allowed_event_ids = assigned_event_ids.union(
+            room_event_ids,
+            session_event_ids,
+            legacy_event_ids,
+        )
+        target_org_id = current_user.organization_id
+
+    if not target_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
         )
 
-    if status_filter:
-        q = q.where(Event.status == status_filter)
-    if search:
-        q = q.where(Event.name.ilike(f"%{search}%"))
-    
-    q = q.order_by(Event.start_date.desc()).offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(q)
-    return [EventSummary.model_validate(e) for e in result.scalars().all()]
+    events = await EventQueryService(db).list_offset(
+        organization_id=target_org_id,
+        page=page,
+        page_size=page_size,
+        status=status_filter,
+        search=search,
+        allowed_event_ids=allowed_event_ids,
+    )
+    return [EventSummary.model_validate(event) for event in events]
 
 
 @router.post("", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
@@ -161,7 +168,7 @@ async def create_event(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"},
         )
-    event = await EventMutationService.create(
+    event = await EventCommandService.create(
         db,
         organization_id=current_user.organization_id,
         actor_user_id=current_user.id,
@@ -169,9 +176,57 @@ async def create_event(
         idempotency_key=idempotency_key,
         source="organizer_portal",
     )
-    await db.commit()
-    await db.refresh(event)
     return EventResponse.model_validate(event)
+
+
+@router.get("/page", response_model=CursorPage[EventSummary])
+async def list_events_page(
+    organization_id: Optional[uuid.UUID] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status", pattern="^(draft|active|completed|archived)$"),
+    search: Optional[str] = Query(None, max_length=100),
+    page_size: int = Query(20, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CursorPage[EventSummary]:
+    """Stable event pagination for large organizations; legacy ``GET /events`` remains unchanged."""
+    privileged = current_user.role in ("super_admin", "system_admin", "admin", "organiser", "organizer")
+    target_org_id = organization_id if privileged and organization_id else current_user.organization_id
+    if not target_org_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "ORGANIZATION_CONTEXT_REQUIRED"})
+
+    allowed_event_ids = None
+    if not privileged:
+        from app.modules.agenda.models import Room, Session
+        from app.modules.rbac.models.rbac import UserAccessNode
+        from app.modules.rbac.models.user_assignment import UserEventAssignment
+
+        assigned_event_ids = select(UserAccessNode.node_id).where(
+            UserAccessNode.user_id == current_user.id,
+            UserAccessNode.node_type == "EVENT",
+        )
+        room_event_ids = select(Room.event_id).where(
+            Room.id.in_(select(UserAccessNode.node_id).where(UserAccessNode.user_id == current_user.id, UserAccessNode.node_type == "ROOM"))
+        )
+        session_event_ids = select(Session.event_id).where(
+            Session.id.in_(select(UserAccessNode.node_id).where(UserAccessNode.user_id == current_user.id, UserAccessNode.node_type == "SESSION"))
+        )
+        legacy_event_ids = select(UserEventAssignment.event_id).where(UserEventAssignment.user_id == current_user.id)
+        allowed_event_ids = assigned_event_ids.union(room_event_ids, session_event_ids, legacy_event_ids)
+
+    page = await EventQueryService(db).list_page(
+        organization_id=target_org_id,
+        page_size=page_size,
+        cursor=cursor,
+        status=status_filter,
+        search=search,
+        allowed_event_ids=allowed_event_ids,
+    )
+    return CursorPage(
+        items=[EventSummary.model_validate(event) for event in page.items],
+        next_cursor=page.next_cursor,
+        has_next=page.has_next,
+    )
 
 
 @router.get("/{event_id}", response_model=EventResponse)
@@ -200,17 +255,19 @@ async def update_event(
     event: CurrentEvent,
     current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> EventResponse:
-    await EventMutationService.update(
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    updated, _, _ = await EventCommandService.update(
         db,
         event=event,
         payload=payload,
         actor_user_id=current_user.id,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
     )
-
-    await db.commit()
-    await db.refresh(event)
-    return EventResponse.model_validate(event)
+    return EventResponse.model_validate(updated)
 
 
 @router.delete("/{event_id}", response_model=MessageResponse)
@@ -229,51 +286,16 @@ async def delete_event(
         "events.planning.manage",
         user_id=current_user.id,
     )
-    if event.deleted_at is not None:
+    archived = await EventCommandService.archive(
+        db,
+        event=event,
+        actor_user_id=current_user.id,
+        actor_role=current_user.platform_role or current_user.role,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    if archived.deleted_at is None:
         return MessageResponse(message="Event is already archived for recovery.")
-
-    from app.modules.billing.models.event_activation import EventActivation
-    from app.modules.billing.services.activation_service import ActivationService
-
-    activation = await db.scalar(
-        select(EventActivation).where(
-            EventActivation.event_id == event.id,
-            EventActivation.organization_id == event.organization_id,
-            EventActivation.status.in_(ActivationService.LIVE_STATUSES),
-        )
-    )
-    if activation:
-        await ActivationService.deactivate_event(
-            db,
-            organization_id=event.organization_id,
-            event_id=event.id,
-            idempotency_key=f"soft-delete:{idempotency_key}",
-            actor_id=current_user.id,
-        )
-
-    previous_status = event.status
-    event.status = "archived"
-    event.deleted_at = datetime.now(timezone.utc)
-    event.deleted_by = current_user.id
-    db.add(
-        AuditLog(
-            organization_id=event.organization_id,
-            actor_user_id=current_user.id,
-            actor_role=current_user.platform_role or current_user.role,
-            action_type="EVENT_SOFT_DELETED",
-            resource_type="event",
-            resource_id=event.id,
-            old_state={"status": previous_status, "deleted_at": None},
-            new_state={
-                "status": event.status,
-                "deleted_at": event.deleted_at.isoformat(),
-                "idempotency_key": idempotency_key,
-                "reason": reason,
-            },
-            is_sensitive=True,
-        )
-    )
-    await db.commit()
     return MessageResponse(
         message="Event archived. It remains recoverable until its retention window expires."
     )
@@ -284,6 +306,9 @@ async def publish_event(
     event: CurrentEvent,
     current_user: OrganizerOrAbove,
     db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(
+        None, alias="Idempotency-Key", min_length=16, max_length=160
+    ),
 ) -> EventResponse:
     """Transition event from draft → active."""
     await enforce_event_operation(
@@ -293,10 +318,13 @@ async def publish_event(
     if event.status != "draft":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Event is '{event.status}', not 'draft'.")
-    event.status = "active"
-    await db.commit()
-    await db.refresh(event)
-    return EventResponse.model_validate(event)
+    published = await EventCommandService.publish(
+        db,
+        event=event,
+        actor_user_id=current_user.id,
+        idempotency_key=idempotency_key,
+    )
+    return EventResponse.model_validate(published)
 
 
 
@@ -384,11 +412,15 @@ async def upload_branding_image(
     event_slug = _clean(event.short_code or str(event.id))
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
     filename = f"{uuid.uuid4().hex[:8]}.{ext}"
-    storage_path = f"{event_slug}/branding/{field}/{filename}"
+    # Branding objects use the same verified tenant namespace as every other
+    # S3-compatible object. The event short code is descriptive only; it must
+    # never replace the organization boundary in the object key.
+    storage_path = f"{event.organization_id}/{event_slug}/branding/{field}/{filename}"
     bucket = "event_branding"
 
     try:
-        _upload_service.upload_bytes(
+        await asyncio.to_thread(
+            _upload_service.upload_bytes,
             bucket=bucket,
             storage_path=storage_path,
             data=contents,
@@ -402,7 +434,8 @@ async def upload_branding_image(
     if _app_settings.STORAGE_MODE == "local":
         url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
     else:
-        url = _upload_service.create_presigned_download(
+        url = await asyncio.to_thread(
+            _upload_service.create_presigned_download,
             bucket=bucket,
             storage_path=storage_path,
             expiry_seconds=31_536_000,
@@ -480,7 +513,8 @@ async def upload_speaker_branding_image(
     bucket = "event_branding"
 
     try:
-        _upload_service.upload_bytes(
+        await asyncio.to_thread(
+            _upload_service.upload_bytes,
             bucket=bucket,
             storage_path=storage_path,
             data=contents,
@@ -494,7 +528,8 @@ async def upload_speaker_branding_image(
     if _app_settings.STORAGE_MODE == "local":
         url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
     else:
-        url = _upload_service.create_presigned_download(
+        url = await asyncio.to_thread(
+            _upload_service.create_presigned_download,
             bucket=bucket,
             storage_path=storage_path,
             expiry_seconds=31_536_000,
@@ -603,7 +638,8 @@ async def upload_venue_image(
     bucket = "event_branding"
 
     try:
-        _upload_service.upload_bytes(
+        await asyncio.to_thread(
+            _upload_service.upload_bytes,
             bucket=bucket,
             storage_path=storage_path,
             data=contents,
@@ -617,7 +653,8 @@ async def upload_venue_image(
     if _app_settings.STORAGE_MODE == "local":
         url = f"{_app_settings.API_BASE_URL}{_app_settings.api_v1_prefix}/storage/{bucket}/{storage_path}"
     else:
-        url = _upload_service.create_presigned_download(
+        url = await asyncio.to_thread(
+            _upload_service.create_presigned_download,
             bucket=bucket,
             storage_path=storage_path,
             expiry_seconds=31_536_000,

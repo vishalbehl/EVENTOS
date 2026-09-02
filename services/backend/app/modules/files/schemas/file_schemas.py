@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 class AssetTagOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -46,6 +46,12 @@ class AssetOut(BaseModel):
     tags: List[str] = []
     permissions: List[AssetPermissionOut] = []
     virus_scans: List[VirusScanOut] = []
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tag_names(cls, value):
+        """Serialize ORM tag records as the public list-of-names contract."""
+        return [getattr(tag, "tag", tag) for tag in (value or [])]
 
 class UploadSessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

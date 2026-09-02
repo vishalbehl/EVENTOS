@@ -9,6 +9,7 @@ const venueDesktop = {
   getAppInfo: () => ipcRenderer.invoke("app:info"),
   checkServerHealth: (url: string) => ipcRenderer.invoke("server:health", url),
   setupVenueDatabases: (setup: any) => ipcRenderer.invoke("venue:setup-databases", setup),
+  getVenueSetupStatus: () => ipcRenderer.invoke("venue:get-setup-status"),
   importLocalDatabase: () => ipcRenderer.invoke("venue:import-local-database"),
   resetVenueDatabase: () => ipcRenderer.invoke("venue:reset-venue-database"),
 };

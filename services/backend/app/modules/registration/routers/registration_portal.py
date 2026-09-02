@@ -1,18 +1,24 @@
 import app.models
+import asyncio
 import hashlib
 import uuid
+from types import SimpleNamespace
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import JSON, select, func
 from app.modules.registration.models.registration_domain_tables import FormField
 
-from app.dependencies import get_db, get_current_event, CurrentEvent
+from app.dependencies import get_db, get_current_event, get_current_user, CurrentEvent
+from app.modules.identity.models.user import User
 from app.modules.registration.models.registration_theme_setting import RegistrationThemeSetting
 from app.modules.events.models.event import Event
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
+from app.modules.registration.models.participant_role import ParticipantRole
+from app.modules.registration.models.ticket_type import TicketType
+from app.modules.registration.application.commands import RegistrationFormCommandService
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
 from app.modules.events.models.capacity_rule import CapacityRule
@@ -40,6 +46,15 @@ from app.modules.platform.services.metering_service import MeteringService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.platform.models.organization_console import UsageReservation
+from app.modules.platform.models.organization_console import CapabilityRevision
+from app.modules.billing.services.capability_cache_service import CapabilityCacheService, GLOBAL_SCOPE_ID
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.core.upload_service import UploadService
+from loguru import logger
+from app.modules.analytics.services.projection_dispatch import (
+    enqueue_event_registration_projection_refresh,
+    enqueue_event_payment_projection_refresh,
+)
 
 router = APIRouter(tags=["registration_portal"])
 
@@ -49,31 +64,62 @@ PUBLIC_REGISTRATION_CAPABILITIES = (
     "FEAT_PAYMENT_GATEWAY", "FEAT_QR_CONFIRMATION",
 )
 PUBLIC_REGISTRATION_LIMITS = ("max_registrations", "max_ticket_categories")
+_PUBLIC_CAPABILITY_TASKS: dict[str, asyncio.Task] = {}
 
 
-async def _public_capability_result(db: AsyncSession, event: Event) -> dict[str, Any]:
+async def _public_capability_result(
+    db: AsyncSession,
+    event: Event,
+    *,
+    revision_token: str | None = None,
+) -> dict[str, Any]:
     """Resolve public registration access without exposing commercial lineage."""
-    try:
+    task_key = f"{event.organization_id}:{event.id}:{settings.environment.upper()}"
+
+    async def resolve() -> dict[str, Any]:
         return await CapabilityService.resolve_event(
-            db, event.organization_id, event.id, environment=settings.environment.upper()
+            db,
+            event.organization_id,
+            event.id,
+            event=event,
+            revision_token=revision_token,
+            environment=settings.environment.upper(),
+            include_usage=False,
         )
+
+    try:
+        task = _PUBLIC_CAPABILITY_TASKS.get(task_key)
+        if task is None or task.done():
+            task = asyncio.create_task(resolve())
+            _PUBLIC_CAPABILITY_TASKS[task_key] = task
+        return await asyncio.shield(task)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "RESOLUTION_UNAVAILABLE"},
         ) from exc
+    finally:
+        task = _PUBLIC_CAPABILITY_TASKS.get(task_key)
+        if task is not None and task.done():
+            _PUBLIC_CAPABILITY_TASKS.pop(task_key, None)
 
 
-async def _require_public_registration(db: AsyncSession, event: Event) -> dict[str, Any]:
-    capabilities = await _public_capability_result(db, event)
+async def _require_public_registration(
+    db: AsyncSession,
+    event: Event,
+    *,
+    revision_token: str | None = None,
+) -> dict[str, Any]:
+    capabilities = await _public_capability_result(db, event, revision_token=revision_token)
     feature = capabilities.get("features", {}).get("FEAT_REGISTRATION_PORTAL")
     if feature and not feature.get("enabled", True):
+        reason_code = feature.get("reason_code")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
-                "code": "FEATURE_DISABLED",
+                "code": "CONTRACT_REQUIRED" if reason_code == "CONTRACT_REQUIRED" else "FEATURE_DISABLED",
                 "message": "Registration portal is not enabled for this event.",
-                "reason_code": feature.get("reason_code"),
+                "reason_code": reason_code,
             }
         )
     return capabilities
@@ -192,25 +238,35 @@ async def get_registration_form_config(
 ):
     """
     Get the registration form configuration for the event.
-    Creates a default configuration and populates registration.form_fields if none exists.
+    Defaults are projected in memory; GET never creates or commits records.
     """
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
 
     stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event.id)
+
+    stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event.id)
     result = await db.execute(stmt)
     config = result.scalar_one_or_none()
 
-    if not config:
-        config = RegistrationFormConfig(
-            event_id=event.id,
-            is_live=True,
-            fields=DEFAULT_FIELDS
-        )
-        db.add(config)
-        await db.commit()
-        await db.refresh(config)
+    if config is None:
+        # Keep the existing response shape without creating a database row.
+        # The deterministic ID is only a projection identifier; the setup POST
+        # creates the authoritative configuration record.
+        return {
+            "id": uuid.uuid5(uuid.NAMESPACE_URL, f"eventos:registration-form:{event.id}"),
+            "event_id": event.id,
+            "template_id": None,
+            "category_id": None,
+            "is_live": True,
+            "fields": [dict(field) for field in DEFAULT_FIELDS],
+            "settings": {},
+            "version": 1,
+            "terms_and_conditions": event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else "",
+            "faqs": event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS,
+            "include_default_faqs": event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True,
+        }
 
     # Check registration.form_fields table
     ff_stmt = select(FormField).where(FormField.form_id == config.id).order_by(FormField.sort_order)
@@ -232,24 +288,7 @@ async def get_registration_form_config(
             if df["id"] not in existing_ids and df["name"] not in existing_ids:
                 cleaned_fields.append(df)
 
-        for idx, f in enumerate(cleaned_fields):
-            ff = FormField(
-                id=uuid.uuid4(),
-                form_id=config.id,
-                field_name=f.get("name") or f.get("id") or f"field_{idx}",
-                field_type=f.get("type", "text"),
-                is_required=f.get("is_required", False),
-                sort_order=idx,
-                label=f.get("label", ""),
-                is_active=f.get("is_active", True),
-                is_default=f.get("is_default", False),
-                placeholder=f.get("placeholder", ""),
-                options=f.get("options", [])
-            )
-            db.add(ff)
-        config.fields = cleaned_fields
-        await db.commit()
-        await db.refresh(config)
+        response_fields = cleaned_fields
     else:
         loaded_fields = []
         for ff in db_form_fields:
@@ -269,39 +308,26 @@ async def get_registration_form_config(
         
         # Ensure all default fields are present
         existing_ids = {f.get("id") or f.get("name") for f in loaded_fields}
-        updated = False
         for df in DEFAULT_FIELDS:
             if df["id"] not in existing_ids and df["name"] not in existing_ids:
                 loaded_fields.append(df)
-                ff_new = FormField(
-                    id=uuid.uuid4(),
-                    form_id=config.id,
-                    field_name=df["name"],
-                    field_type=df["type"],
-                    is_required=df["is_required"],
-                    sort_order=len(loaded_fields),
-                    label=df["label"],
-                    is_active=df["is_active"],
-                    is_default=df["is_default"],
-                    placeholder=df.get("placeholder", ""),
-                    options=df.get("options", [])
-                )
-                db.add(ff_new)
-                updated = True
+                # Missing normalized fields are repaired by the setup command,
+                # never as a side effect of this GET projection.
         
-        config.fields = loaded_fields
-        if updated:
-            await db.commit()
-            await db.refresh(config)
+        response_fields = loaded_fields
 
     terms = event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else ""
     faqs = event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS
     include_default = event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True
     return {
         "id": config.id,
-        "event_id": config.event_id,
+        "event_id": event.id,
+        "template_id": config.template_id,
+        "category_id": config.category_id,
         "is_live": config.is_live,
-        "fields": config.fields,
+        "fields": config.fields if (config.fields and len(config.fields) > 0) else response_fields,
+        "settings": config.settings or {},
+        "version": config.version,
         "terms_and_conditions": terms,
         "faqs": faqs,
         "include_default_faqs": include_default
@@ -316,100 +342,39 @@ async def get_registration_form_config(
 async def update_registration_form_config(
     payload: RegistrationFormConfigUpdate,
     event: CurrentEvent,
-    db: AsyncSession = Depends(get_db)
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Update the registration form configuration and synchronize with registration.form_fields.
     """
-    stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event.id)
-    result = await db.execute(stmt)
-    config = result.scalar_one_or_none()
-
-    if not config:
-        config = RegistrationFormConfig(event_id=event.id)
-        db.add(config)
-        await db.flush()
-
-    if payload.is_live is not None:
-        config.is_live = payload.is_live
-        
-    if payload.fields is not None:
-        dict_fields = [f.model_dump() for f in payload.fields]
-        config.fields = dict_fields
-        
-        # Synchronize with registration.form_fields table
-        await db.execute(delete(FormField).where(FormField.form_id == config.id))
-        sort_idx = 0
-        has_state = False
-        for f in dict_fields:
-            fname = f.get("name") or f.get("id") or f"field_{sort_idx}"
-            ftype = f.get("type", "text")
-            db.add(FormField(
-                id=uuid.uuid4(),
-                form_id=config.id,
-                field_name=fname,
-                field_type=ftype,
-                is_required=f.get("is_required", False),
-                sort_order=sort_idx,
-                label=f.get("label", ""),
-                is_active=f.get("is_active", True),
-                is_default=f.get("is_default", False),
-                placeholder=f.get("placeholder", ""),
-                options=f.get("options", [])
-            ))
-            sort_idx += 1
-            if fname == "state":
-                has_state = True
-            elif ftype == "country" or fname == "country":
-                # Ensure state exists as companion in form_fields table
-                if not has_state:
-                    db.add(FormField(
-                        id=uuid.uuid4(),
-                        form_id=config.id,
-                        field_name="state",
-                        field_type="state",
-                        is_required=f.get("is_required", False),
-                        sort_order=sort_idx,
-                        label="State / Province",
-                        is_active=f.get("is_active", True),
-                        is_default=True,
-                        placeholder="Select state / province",
-                        options=[]
-                    ))
-                    sort_idx += 1
-                    has_state = True
-
-    if payload.terms_and_conditions is not None:
-        reg_settings = dict(event.registration_settings or {})
-        reg_settings["terms_and_conditions"] = payload.terms_and_conditions
-        event.registration_settings = reg_settings
-    if payload.faqs is not None:
-        reg_settings = dict(event.registration_settings or {})
-        reg_settings["faqs"] = [faq.model_dump() for faq in payload.faqs]
-        event.registration_settings = reg_settings
-    if payload.include_default_faqs is not None:
-        reg_settings = dict(event.registration_settings or {})
-        reg_settings["include_default_faqs"] = payload.include_default_faqs
-        event.registration_settings = reg_settings
-
-    await db.commit()
-    await db.refresh(config)
-    
+    config = await RegistrationFormCommandService.update(
+        db,
+        event=event,
+        payload=payload,
+        if_match=if_match if isinstance(if_match, str) else None,
+        actor_user_id=current_user.id if isinstance(current_user, User) else None,
+        idempotency_key=idempotency_key if isinstance(idempotency_key, str) else None,
+    )
     terms = event.registration_settings.get("terms_and_conditions", "") if event.registration_settings else ""
     faqs = event.registration_settings.get("faqs", DEFAULT_FAQS) if event.registration_settings else DEFAULT_FAQS
     include_default = event.registration_settings.get("include_default_faqs", True) if event.registration_settings else True
     return {
         "id": config.id,
-        "event_id": config.event_id,
+        "event_id": event.id,
+        "template_id": config.template_id,
+        "category_id": config.category_id,
         "is_live": config.is_live,
         "fields": config.fields,
+        "settings": config.settings or {},
+        "version": config.version,
         "terms_and_conditions": terms,
         "faqs": faqs,
-        "include_default_faqs": include_default
+        "include_default_faqs": include_default,
     }
 
-
-# ── Public Registration Portal Endpoints ─────────────────────────
 
 @router.get("/portal/registration/{event_id}/capabilities")
 async def public_registration_capabilities(
@@ -459,29 +424,201 @@ async def get_public_registration_form(
     response: Response,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Retrieve event details and form config for public registration.
-    """
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-
-    # Load event
-    event_stmt = select(Event).where(Event.id == event_id)
-    event_result = await db.execute(event_stmt)
-    event = event_result.scalar_one_or_none()
-
-    if not event:
+    response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=30"
+    # Resolve only the verified tenant identity before checking the payload
+    # cache. The full projection below contains four aggregate subqueries and
+    # must not run on warm reads.
+    identity_result = await db.execute(
+        select(
+            Event.id,
+            Event.organization_id,
+            Event.status,
+            Event.is_maintenance,
+            Event.is_read_only,
+            select(CapabilityRevision.revision).where(
+                CapabilityRevision.scope_type == "GLOBAL",
+                CapabilityRevision.scope_id == GLOBAL_SCOPE_ID,
+            ).scalar_subquery(),
+            select(CapabilityRevision.revision).where(
+                CapabilityRevision.scope_type == "ORGANIZATION",
+                CapabilityRevision.scope_id == Event.organization_id,
+            ).scalar_subquery(),
+            select(CapabilityRevision.revision).where(
+                CapabilityRevision.scope_type == "EVENT",
+                CapabilityRevision.scope_id == Event.id,
+            ).scalar_subquery(),
+        ).where(Event.id == event_id)
+    )
+    identity_row = identity_result.one_or_none()
+    if not identity_row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found."
         )
-    capabilities = await _require_public_registration(db, event)
-    # Load form config
-    config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
-    config_result = await db.execute(config_stmt)
-    config = config_result.scalar_one_or_none()
+    event_identity = SimpleNamespace(
+        id=identity_row[0],
+        organization_id=identity_row[1],
+        status=identity_row[2],
+        is_maintenance=identity_row[3],
+        is_read_only=identity_row[4],
+    )
+    capability_revision = CapabilityCacheService.revision_token_from_values(
+        event_identity.organization_id,
+        event_identity.id,
+        global_revision=int(identity_row[5] or 0),
+        organization_revision=int(identity_row[6] or 0),
+        event_revision=int(identity_row[7] or 0),
+    )
+    capabilities = await _require_public_registration(
+        db,
+        event_identity,
+        revision_token=capability_revision,
+    )  # type: ignore[arg-type]
+    from app.core.cache import cache_service, get_json
+    from app.core.cache_keys import TenantCacheKey
+    capability_revision = str(capabilities.get("resolution_version") or capability_revision)
+    form_cache_key = TenantCacheKey.event(
+        event_id,
+        "registration-form-v1",
+        capability_revision,
+        organization_id=event_identity.organization_id,
+    )
+    cached_form = await get_json(form_cache_key)
+    if isinstance(cached_form, dict):
+        return cached_form
 
+    # The projection below is intentionally read-only but can fan out across
+    # roles, pricing, agenda, and speakers. Serialize cold misses per
+    # tenant/event so a traffic burst does not multiply that work.
+    form_lock_name = f"lock:{form_cache_key}"
+    form_lock_token, lock_backend_available = await cache_service.acquire_lock_status(
+        form_lock_name,
+        ttl_seconds=max(15, settings.REDIS_LOCK_TTL_SECONDS),
+    )
+    if lock_backend_available and form_lock_token is None:
+        for _ in range(30):
+            await asyncio.sleep(0.2)
+            cached_form = await get_json(form_cache_key)
+            if isinstance(cached_form, dict):
+                return cached_form
+
+    # Load event, form configuration, roles, and display-only counts in one
+    # bounded projection. Scalar aggregates avoid multiplying the event row.
+    role_rows = (
+        select(
+            ParticipantRole.name.label("name"),
+            ParticipantRole.is_active.label("is_active"),
+        )
+        .where(ParticipantRole.event_id == event_id)
+        .order_by(ParticipantRole.sort_order, ParticipantRole.name)
+        .subquery()
+    )
+    roles_projection = (
+        select(
+            func.coalesce(
+                func.json_agg(
+                    func.json_build_object(
+                        "name", role_rows.c.name,
+                        "is_active", role_rows.c.is_active,
+                    )
+                ),
+                func.cast("[]", JSON),
+            )
+        )
+        .select_from(role_rows)
+        .scalar_subquery()
+    )
+    from app.modules.agenda.models import (
+        Session as AgendaSessionModel,
+        Track as AgendaTrackModel,
+        Room as AgendaRoomModel,
+    )
+    from app.modules.events.models.speaker import Speaker as SpeakerModel
+    stats_projection = (
+        select(func.count(AgendaTrackModel.id))
+        .where(AgendaTrackModel.event_id == event_id)
+        .scalar_subquery(),
+        select(func.count(AgendaRoomModel.id))
+        .where(
+            AgendaRoomModel.event_id == event_id,
+            AgendaRoomModel.is_active.is_(True),
+        )
+        .scalar_subquery(),
+        select(func.count(AgendaSessionModel.id))
+        .where(
+            AgendaSessionModel.event_id == event_id,
+            AgendaSessionModel.deleted_at.is_(None),
+        )
+        .scalar_subquery(),
+        select(func.count(SpeakerModel.id))
+        .where(
+            SpeakerModel.event_id == event_id,
+            SpeakerModel.deleted_at.is_(None),
+        )
+        .scalar_subquery(),
+    )
+    # Price rows are small, bounded configuration data. Include them in the
+    # event projection so the cold form path does not perform a separate
+    # pricing round trip; the active tier is selected after the event loads.
+    ticket_rows = (
+        select(
+            TicketType.role_name.label("role_name"),
+            TicketType.tier_name.label("tier_name"),
+            TicketType.price.label("price"),
+        )
+        .where(TicketType.event_id == event_id)
+        .subquery()
+    )
+    pricing_projection = (
+        select(
+            func.coalesce(
+                func.json_agg(
+                    func.json_build_object(
+                        "role_name", ticket_rows.c.role_name,
+                        "tier_name", ticket_rows.c.tier_name,
+                        "price", ticket_rows.c.price,
+                    )
+                ),
+                func.cast("[]", JSON),
+            )
+        )
+        .select_from(ticket_rows)
+        .scalar_subquery()
+    )
+    event_stmt = (
+        select(
+            Event,
+            RegistrationFormConfig,
+            RegistrationThemeSetting,
+            roles_projection.label("roles_json"),
+            stats_projection[0].label("track_count"),
+            stats_projection[1].label("room_count"),
+            stats_projection[2].label("session_count"),
+            stats_projection[3].label("speaker_count"),
+            pricing_projection.label("pricing_json"),
+        )
+        .outerjoin(RegistrationFormConfig, RegistrationFormConfig.event_id == Event.id)
+        .outerjoin(RegistrationThemeSetting, RegistrationThemeSetting.event_id == Event.id)
+        .where(Event.id == event_id)
+    )
+    event_result = await db.execute(event_stmt)
+    event_row = event_result.one_or_none()
+    event = event_row[0] if event_row else None
+    config = event_row[1] if event_row else None
+    pts = event_row[2] if event_row else None
+    roles_projection_value = event_row[3] if event_row else []
+    stats_projection_value = event_row[4:8] if event_row else (0, 0, 0, 0)
+    pricing_projection_value = event_row[8] if event_row else []
+
+    if not event:
+        if form_lock_token is not None:
+            await cache_service.release_lock(form_lock_name, form_lock_token)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found."
+        )
+    from app.core.cache import set_json
+    from app.core.cache_policy import CacheTTL, ttl
     is_live = False
     fields = DEFAULT_FIELDS
 
@@ -492,27 +629,30 @@ async def get_public_registration_form(
             if not (f.get("is_default") and (f.get("id") in REMOVED_DEFAULT_IDS or f.get("name") in REMOVED_DEFAULT_IDS))
         ]
 
-    # Load active roles and apply category filters
-    from app.modules.registration.models.participant_role import ParticipantRole
-    roles_stmt = select(ParticipantRole).where(
-        ParticipantRole.event_id == event_id
-    ).order_by(ParticipantRole.sort_order, ParticipantRole.name)
-    roles_res = await db.execute(roles_stmt)
-    roles = roles_res.scalars().all()
-
-    # Auto-seed if empty
-    if not roles:
-        from app.modules.registration.routers.participant_roles import seed_default_roles
-        await seed_default_roles(event_id, db)
-        roles_res = await db.execute(roles_stmt)
-        roles = roles_res.scalars().all()
+    # Load active roles and apply category filters. Public reads must not mutate
+    # setup state; default role seeding belongs in organizer/admin setup flows.
+    from app.core.cache import get_json, set_json
+    from app.core.cache_keys import TenantCacheKey
+    from app.core.cache_policy import CacheTTL, ttl
+    roles_cache_key = TenantCacheKey.event_roles(event_id, event.organization_id)
+    cached_roles = await get_json(roles_cache_key)
+    if isinstance(cached_roles, list):
+        roles = [dict(item) for item in cached_roles]
+    else:
+        roles = roles_projection_value if isinstance(roles_projection_value, list) else []
+        await set_json(
+            roles_cache_key,
+            roles,
+            ttl(CacheTTL.ROLES),
+        )
 
     reg_settings = event.registration_settings or {}
 
     # All active participant roles set by organizer
     allowed_roles = [
-        r.name for r in roles
-        if r.is_active
+        (r.get("name") if isinstance(r, dict) else r.name)
+        for r in roles
+        if (r.get("is_active") if isinstance(r, dict) else r.is_active)
     ]
 
     # Map form fields and dynamically assign roles to select options
@@ -522,7 +662,6 @@ async def get_public_registration_form(
         if field.get("id") == "role":
             field["options"] = allowed_roles
 
-    pts = event.portal_theme_setting
     active_gateway = (
         (pts.active_gateway if pts and pts.active_gateway else None)
         or reg_settings.get("active_gateway")
@@ -546,7 +685,14 @@ async def get_public_registration_form(
         stripe_pub_key = stripe_creds.get("publishable_key", "")
         
     active_tier = get_active_tier(event)
-    raw_active_prices = await get_active_prices_for_event(db, event)
+    # Filter the projected price rows in memory. This preserves the exact
+    # active-tier semantics while avoiding a second database statement.
+    raw_active_prices = {
+        str(row.get("role_name")): float(row.get("price") or 0)
+        for row in (pricing_projection_value if isinstance(pricing_projection_value, list) else [])
+        if str(row.get("tier_name", "")).strip().lower() == active_tier.strip().lower()
+        and row.get("role_name")
+    } if allowed_roles else {}
     # Explicitly ensure every active role has a price entry (0.0 if free/unpriced)
     active_prices = {}
     for r_name in allowed_roles:
@@ -584,9 +730,6 @@ async def get_public_registration_form(
     if custom_stats and isinstance(custom_stats, list) and len(custom_stats) > 0:
         stats_to_return = custom_stats
     else:
-        from app.modules.agenda.models import Session as AgendaSessionModel, Track as AgendaTrackModel
-        from app.modules.events.models.speaker import Speaker as SpeakerModel
-
         days_count = 1
         if event.start_date and event.end_date:
             try:
@@ -594,35 +737,23 @@ async def get_public_registration_form(
             except Exception:
                 days_count = 1
 
-        track_count = (await db.execute(
-            select(func.count(AgendaTrackModel.id)).where(AgendaTrackModel.event_id == event_id)
-        )).scalar() or 0
+        track_count, room_count, session_count, speaker_count = [
+            value or 0 for value in (stats_projection_value or (0, 0, 0, 0))
+        ]
 
-        session_count = (await db.execute(
-            select(func.count(AgendaSessionModel.id)).where(
-                AgendaSessionModel.event_id == event_id,
-                AgendaSessionModel.deleted_at.is_(None)
-            )
-        )).scalar() or 0
-
-        speaker_count = (await db.execute(
-            select(func.count(SpeakerModel.id)).where(
-                SpeakerModel.event_id == event_id,
-                SpeakerModel.deleted_at.is_(None)
-            )
-        )).scalar() or 0
+        hall_track_label = (
+            f"{track_count} {'Track' if track_count == 1 else 'Tracks'}"
+            if track_count > 0
+            else (f"{room_count} {'Room' if room_count == 1 else 'Rooms'}" if room_count > 0 else "0 Rooms / Tracks")
+        )
 
         stats_to_return = [
-            {"label": f"{days_count} {'Day' if days_count == 1 else 'Days'} Conference", "icon": "calendar"}
+            {"label": f"{days_count} {'Day' if days_count == 1 else 'Days'} Conference", "icon": "calendar"},
+            {"label": hall_track_label, "icon": "tracks"},
+            {"label": f"{session_count} {'Session' if session_count == 1 else 'Sessions'}", "icon": "sessions"},
+            {"label": f"{speaker_count} {'Speaker' if speaker_count == 1 else 'Speakers'}", "icon": "speakers"},
         ]
-        if track_count > 0:
-            stats_to_return.append({"label": f"{track_count} {'Track' if track_count == 1 else 'Tracks'}", "icon": "tracks"})
-        if session_count > 0:
-            stats_to_return.append({"label": f"{session_count} {'Session' if session_count == 1 else 'Sessions'}", "icon": "sessions"})
-        if speaker_count > 0:
-            stats_to_return.append({"label": f"{speaker_count} {'Speaker' if speaker_count == 1 else 'Speakers'}", "icon": "speakers"})
 
-    pts = event.portal_theme_setting
     primary_color = (pts.primary_color if pts and pts.primary_color else None) or event.theme_color or "#6366F1"
     secondary_color = (pts.secondary_color if pts and pts.secondary_color else None) or "#A855F7"
     theme_preset = (pts.theme_preset if pts and pts.theme_preset else None) or "dark-luxury"
@@ -643,7 +774,7 @@ async def get_public_registration_form(
     bg_overlay_opacity = (pts.extra_settings.get("bg_overlay_opacity") if pts and pts.extra_settings and "bg_overlay_opacity" in pts.extra_settings else None) if (pts and pts.extra_settings and "bg_overlay_opacity" in pts.extra_settings) else reg_settings.get("bg_overlay_opacity", 0.4)
     bg_solid_color = (pts.extra_settings.get("bg_solid_color") if pts and pts.extra_settings else None) or reg_settings.get("bg_solid_color") or "#000000"
 
-    return {
+    payload = {
         "event_name": event.name,
         "short_code": event.short_code or "",
         "theme_color": primary_color,
@@ -687,6 +818,7 @@ async def get_public_registration_form(
         "favicon_url": (pts.favicon_url if pts else None),
         "is_live": is_live,
         "fields": fields_copy,
+        "settings": (config.settings if config and config.settings else {}),
         "currency": event.currency or "INR",
         "payment_enabled": payment_enabled,
         "coupon_enabled": coupon_enabled,
@@ -710,13 +842,18 @@ async def get_public_registration_form(
         "country": event.country,
         "organizer_name": event.organizer_name
     }
+    await set_json(form_cache_key, payload, ttl(CacheTTL.PUBLIC_FORM))
+    if form_lock_token is not None:
+        await cache_service.release_lock(form_lock_name, form_lock_token)
+    return payload
 
 
 @router.post("/portal/registration/{event_id}/register")
 async def public_register_participant(
     event_id: uuid.UUID,
     payload: Dict[str, Any],
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     # 1. Fetch form config and check if registration is live
     config_stmt = select(RegistrationFormConfig).where(RegistrationFormConfig.event_id == event_id)
@@ -739,6 +876,39 @@ async def public_register_participant(
             detail="Event not found."
         )
     await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
+
+    idem = None
+    # Direct service-level tests may call this function without FastAPI
+    # dependency resolution, in which case the Header marker is not a string.
+    if isinstance(idempotency_key, str) and idempotency_key:
+        idem = await begin_idempotent(
+            db,
+            organization_id=event.organization_id,
+            actor_id=None,
+            operation="registration.public_submit",
+            key=idempotency_key,
+            payload={"event_id": str(event_id), "payload": payload},
+            ttl_seconds=7 * 24 * 60 * 60,
+        )
+        replay = replay_response(idem)
+        if replay is not None:
+            return replay[1]
+
+    async def finish(result: dict[str, Any], resource_id=None) -> dict[str, Any]:
+        if idem is not None:
+            await complete_idempotent(
+                db,
+                idem,
+                response_status=status.HTTP_201_CREATED,
+                response_body=result,
+                resource_id=resource_id,
+            )
+        await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
+        return result
 
     # 3. Check email presence and verify duplicate / merging logic
     email_val = payload.get("email", "").strip()
@@ -764,13 +934,13 @@ async def public_register_participant(
             confirm_merge=confirm_merge
         )
         if merged_participant:
-            return {
+            return await finish({
                 "status": "approved",
                 "message": "Profiles successfully merged! Your registration is verified.",
                 "regno": merged_participant.regno or "",
                 "name": merged_participant.name,
                 "role": merged_participant.role
-            }
+            }, merged_participant.id)
 
     # 3.5 Validate the role/category belongs to active roles and is not in disabled categories
     from app.modules.registration.models.participant_role import ParticipantRole
@@ -779,12 +949,6 @@ async def public_register_participant(
     )
     roles_res = await db.execute(roles_stmt)
     roles = roles_res.scalars().all()
-
-    if not roles:
-        from app.modules.registration.routers.participant_roles import seed_default_roles
-        await seed_default_roles(event_id, db)
-        roles_res = await db.execute(roles_stmt)
-        roles = roles_res.scalars().all()
 
     reg_settings = event.registration_settings or {}
     disabled_categories = reg_settings.get("disabled_categories", [])
@@ -968,11 +1132,8 @@ async def public_register_participant(
     db.add(reg)
     await db.flush()
     await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="registration_submissions", quantity=1, unit="count", source="registration.portal.register", idempotency_key=f"registration-submit:{reg.id}", metadata={"registration_id": str(reg.id), "status": status_str})
-    await db.commit()
-    await db.refresh(reg)
-
     if status_str == "waitlisted":
-        return {
+        result = {
             "status": "waitlisted",
             "message": "The event is at capacity. You have been added to the waitlist.",
             "regno": "",
@@ -981,13 +1142,14 @@ async def public_register_participant(
             "waitlist_position": reg.waitlist_position
         }
     else:
-        return {
+        result = {
             "status": "submitted",
             "message": "Registration submitted successfully! Your registration is pending review.",
             "regno": "",
             "name": reg.registration_data.get("name"),
             "role": reg.registration_data.get("role")
         }
+    return await finish(result, reg.id)
 
 
 @router.post("/portal/registration/{event_id}/upload")
@@ -1004,14 +1166,31 @@ async def public_registration_upload(
     Public upload endpoint for files/images in custom fields.
     Returns direct URL.
     """
-    # 1. Read bytes
+    # 1. Hash the bounded multipart stream without materializing it in RAM.
+    # Starlette keeps UploadFile data in its spooled temporary file; the
+    # storage service consumes that seekable object below.
+    digest = hashlib.sha256()
+    streamed_size = 0
+    max_inline_bytes = settings.INLINE_UPLOAD_MAX_MB * 1024 * 1024
     try:
-        contents = await file.read()
+        while chunk := await file.read(1024 * 1024):
+            streamed_size += len(chunk)
+            if streamed_size > max_inline_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail={
+                        "code": "DIRECT_UPLOAD_REQUIRED",
+                        "message": f"Files larger than {settings.INLINE_UPLOAD_MAX_MB} MB must use a direct upload session.",
+                    },
+                )
+            digest.update(chunk)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Could not read upload file: {str(e)}"
-        )
+            detail="Could not read upload file."
+        ) from e
 
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
@@ -1031,7 +1210,8 @@ async def public_registration_upload(
                 (regno or "").encode(),
                 (username or "").encode(),
                 (file.filename or "").encode(),
-                contents,
+                str(streamed_size).encode(),
+                digest.hexdigest().encode(),
             ]
         )
     ).hexdigest()
@@ -1055,7 +1235,7 @@ async def public_registration_upload(
             "filename": metadata["filename"],
         }
 
-    # 2. Query event to get event name
+    # 2. Build a deterministic, tenant-scoped object key.
     import re
 
     def sanitize_path_part(text: str, is_file: bool = False) -> str:
@@ -1065,7 +1245,6 @@ async def public_registration_upload(
         cleaned = re.sub(pattern, '_', text.strip())
         return cleaned.strip('_')
 
-    event_name_clean = sanitize_path_part(event.name) if event else str(event_id)
     field_folder = sanitize_path_part(field_name).lower() if field_name else "general"
 
     r_part = sanitize_path_part(regno).upper() if regno else ""
@@ -1082,11 +1261,15 @@ async def public_registration_upload(
 
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     stored_filename = f"{base_filename}.{ext}"
-    storage_path = f"{event_name_clean}/registration_upload/{field_folder}/{stored_filename}"
+    storage_path = (
+        f"tenant/{event.organization_id}/event/{event.id}/registration_upload/"
+        f"{field_folder}/{stored_filename}"
+    )
     if settings.STORAGE_MODE == "local":
         url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/registration_uploads/{storage_path}"
     else:
-        url = upload_service.create_presigned_download(
+        url = await asyncio.to_thread(
+            upload_service.create_presigned_download,
             bucket="registration_uploads",
             storage_path=storage_path,
             expiry_seconds=31536000,
@@ -1097,7 +1280,7 @@ async def public_registration_upload(
         organization_id=event.organization_id,
         event_id=event.id,
         limit_key="storage_quota_mb",
-        quantity=max(1, (len(contents) + 1024 * 1024 - 1) // (1024 * 1024)),
+        quantity=max(1, (streamed_size + 1024 * 1024 - 1) // (1024 * 1024)),
         unit="megabyte",
         idempotency_key=reservation_key,
         metadata={
@@ -1105,27 +1288,59 @@ async def public_registration_upload(
             "storage_path": storage_path,
             "filename": file.filename,
             "url": url,
-            "consumption_quantity": len(contents),
+            "consumption_quantity": streamed_size,
             "consumption_unit": "bytes",
         },
     )
 
-    # 3. Upload bytes to S3 or local bucket 'registration_uploads'
+    # 3. Upload the seekable spooled object without copying it into memory.
     bucket = "registration_uploads"
     try:
-        upload_service.upload_bytes(
-            bucket=bucket,
-            storage_path=storage_path,
-            data=contents,
-            content_type=file.content_type or "application/octet-stream"
+        def upload_staged_file() -> None:
+            file.file.seek(0)
+            upload_service.upload_fileobj(
+                bucket=bucket,
+                storage_path=storage_path,
+                fileobj=file.file,
+                content_type=file.content_type or "application/octet-stream",
+                verified_organization_id=event.organization_id,
+            )
+
+        await asyncio.to_thread(
+            upload_staged_file,
         )
-    except Exception as e:
+    except Exception as exc:
         await UsageReservationService.release(db, reservation.id)
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Storage upload failed: {str(e)}"
-        )
+            detail="Storage upload failed.",
+        ) from exc
+
+    durable_upload = await UploadService.create(
+        db,
+        organization_id=event.organization_id,
+        created_by=None,
+        event_id=event.id,
+        object_key=storage_path,
+        storage_bucket=bucket,
+        original_filename=file.filename or stored_filename,
+        mime_type=file.content_type or "application/octet-stream",
+        size_bytes=streamed_size,
+        checksum=digest.hexdigest(),
+    )
+    await UploadService.transition(
+        db,
+        durable_upload.id,
+        "uploading",
+        organization_id=event.organization_id,
+    )
+    await UploadService.transition(
+        db,
+        durable_upload.id,
+        "uploaded",
+        organization_id=event.organization_id,
+    )
 
     # 4. Construct accessibility URL
     await UsageReservationService.consume(
@@ -1134,6 +1349,19 @@ async def public_registration_upload(
         source="registration.portal.upload",
     )
     await db.commit()
+
+    # Processing is durable and idempotent; queue it only after the object and
+    # metadata transaction is committed so a worker cannot observe partial state.
+    try:
+        from app.tasks.upload_jobs import process_durable_upload
+        process_durable_upload.delay(
+            str(durable_upload.id),
+            str(event.organization_id),
+        )
+    except Exception as exc:
+        # The durable row remains ``uploaded`` so reconciliation can retry it;
+        # queue availability must not make a completed object upload fail.
+        logger.warning("Registration upload processing dispatch failed: {}", type(exc).__name__)
 
     return {
         "status": "success",
@@ -1281,6 +1509,11 @@ async def public_checkout_payment(
             confirm_merge=confirm_merge
         )
         if merged_participant:
+            await db.commit()
+            enqueue_event_registration_projection_refresh(
+                organization_id=event.organization_id,
+                event_id=event.id,
+            )
             return {
                 "checkout_required": False,
                 "status": "approved",
@@ -1405,6 +1638,10 @@ async def public_checkout_payment(
     # If waitlisted or free checkout
     if status_str == "waitlisted":
         await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
         return {
             "checkout_required": False,
             "status": "waitlisted",
@@ -1439,6 +1676,14 @@ async def public_checkout_payment(
                 
             await helper_approve_registration(db, reg, reviewer_id, "Auto-approved (Free)")
             await db.commit()
+            enqueue_event_registration_projection_refresh(
+                organization_id=event.organization_id,
+                event_id=event.id,
+            )
+            enqueue_event_payment_projection_refresh(
+                organization_id=event.organization_id,
+                event_id=event.id,
+            )
             
             # Fetch participant regno
             await db.refresh(reg)
@@ -1456,6 +1701,10 @@ async def public_checkout_payment(
             }
         else:
             await db.commit()
+            enqueue_event_registration_projection_refresh(
+                organization_id=event.organization_id,
+                event_id=event.id,
+            )
             return {
                 "checkout_required": False,
                 "status": "submitted",
@@ -1495,6 +1744,14 @@ async def public_checkout_payment(
         
     tx.gateway_order_id = checkout_details.get("gateway_order_id")
     await db.commit()
+    enqueue_event_registration_projection_refresh(
+        organization_id=event.organization_id,
+        event_id=event.id,
+    )
+    enqueue_event_payment_projection_refresh(
+        organization_id=event.organization_id,
+        event_id=event.id,
+    )
     
     return {
         "checkout_required": True,
@@ -1574,6 +1831,14 @@ async def verify_public_payment(
                 "payment_error": str(e)
             }
         await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
+        enqueue_event_payment_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
         raise HTTPException(status_code=400, detail=f"Payment verification failed: {str(e)}")
         
     if not verification.get("success"):
@@ -1589,6 +1854,14 @@ async def verify_public_payment(
                 "payment_details": verification.get("details", {})
             }
         await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
+        enqueue_event_payment_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
         raise HTTPException(status_code=400, detail="Payment has not been completed.")
         
     tx.status = "completed"
@@ -1656,6 +1929,14 @@ async def verify_public_payment(
         message_result = "Payment verified successfully! Registration is pending review."
         
     await db.commit()
+    enqueue_event_registration_projection_refresh(
+        organization_id=event.organization_id,
+        event_id=event.id,
+    )
+    enqueue_event_payment_projection_refresh(
+        organization_id=event.organization_id,
+        event_id=event.id,
+    )
     
     return {
         "status": status_result,

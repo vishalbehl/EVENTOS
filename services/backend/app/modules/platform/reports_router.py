@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -12,9 +13,11 @@ from app.core.tenant_context import TenantContextGuard
 from app.dependencies import get_db
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.commercial.quote_service import request_fingerprint
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
+from app.modules.platform.application.governed_mutation_commands import GovernedMutationCommandService
 from app.modules.platform.report_schemas import (
     CommercialExportCreate,
     CommercialExportDownload,
@@ -52,6 +55,7 @@ async def create_commercial_export(
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
     db: AsyncSession = Depends(get_db),
 ) -> CommercialExportOut:
+    command = GovernedMutationCommandService(db)
     export_type = f"{COMMERCIAL_EXPORT_PREFIX}{payload.report_type.value}"
     file_format = REPORT_FORMATS[payload.report_type]
     fingerprint = request_fingerprint(payload.model_dump(mode="json"))
@@ -107,7 +111,7 @@ async def create_commercial_export(
             change_diff={"reason": payload.reason},
             is_sensitive=True,
         ))
-        await db.commit()
+        await command.commit(organization_id=payload.organization_id)
 
         try:
             celery_app.send_task(
@@ -132,7 +136,7 @@ async def create_commercial_export(
                 new_state={"report_type": payload.report_type.value, "status": "FAILED"},
                 is_sensitive=True,
             ))
-            await db.commit()
+            await command.commit(organization_id=payload.organization_id)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "EXPORT_DISPATCH_FAILED", "export_id": str(export.id)},
@@ -205,24 +209,23 @@ async def download_commercial_export(
 
         report_type = export.export_type.removeprefix(COMMERCIAL_EXPORT_PREFIX)
         filename = f"{report_type}.{export.file_format}"
-        download_url = create_presigned_download(
+        download_url = await asyncio.to_thread(
+            create_presigned_download,
             bucket=settings.S3_BUCKET_EXPORTS,
             storage_path=export.storage_key,
             filename=filename,
             expiry_seconds=min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),
         )
-        export.downloaded_at = now
-        db.add(AuditLog(
+        await AuditService.write_log(AuditContext(
             organization_id=organization_id,
             actor_user_id=current_user.id,
             resource_type="data_export",
             resource_id=export.id,
             action_type="COMMERCIAL_EXPORT_DOWNLOADED",
             actor_role=getattr(current_user, "platform_role", None) or current_user.role,
-            new_state={"report_type": report_type, "downloaded_at": now.isoformat()},
+            new_state={"report_type": report_type, "downloaded_at": now.isoformat(), "access_mode": "READ_ONLY"},
             is_sensitive=True,
         ))
-        await db.commit()
         return CommercialExportDownload(
             download_url=download_url,
             filename=filename,

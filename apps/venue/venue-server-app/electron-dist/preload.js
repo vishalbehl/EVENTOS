@@ -10,6 +10,7 @@ const venueDesktop = {
     getAppInfo: () => electron_1.ipcRenderer.invoke("app:info"),
     checkServerHealth: (url) => electron_1.ipcRenderer.invoke("server:health", url),
     setupVenueDatabases: (setup) => electron_1.ipcRenderer.invoke("venue:setup-databases", setup),
+    getVenueSetupStatus: () => electron_1.ipcRenderer.invoke("venue:get-setup-status"),
     importLocalDatabase: () => electron_1.ipcRenderer.invoke("venue:import-local-database"),
     resetVenueDatabase: () => electron_1.ipcRenderer.invoke("venue:reset-venue-database"),
 };

@@ -80,12 +80,12 @@ export function AgendaOverview({
   const [activeMenuDayId, setActiveMenuDayId] = useState<string | null>(null);
 
   const kpis = [
-    { label: "Days", value: days.length, icon: Calendar, color: "#3b82f6" },
-    { label: "Rooms", value: roomsCount, icon: Building2, color: "#10b981" },
-    { label: "Sessions", value: sessionsCount, icon: Layers, color: "#8b5cf6" },
-    { label: "Tracks", value: tracksCount, icon: Tag, color: "#f59e0b" },
-    { label: "Speakers", value: speakersCount, icon: Users, color: "#06b6d4" },
-    { label: "Documents", value: documentsCount, icon: FileText, color: "#ec4899" },
+    { label: "Days", value: days?.length || 0, icon: Calendar, color: "#3b82f6" },
+    { label: "Rooms", value: roomsCount || 0, icon: Building2, color: "#10b981" },
+    { label: "Sessions", value: sessionsCount || 0, icon: Layers, color: "#8b5cf6" },
+    { label: "Tracks", value: tracksCount || 0, icon: Tag, color: "#f59e0b" },
+    { label: "Speakers", value: speakersCount || 0, icon: Users, color: "#06b6d4" },
+    { label: "Documents", value: documentsCount || 0, icon: FileText, color: "#ec4899" },
   ];
 
   return (

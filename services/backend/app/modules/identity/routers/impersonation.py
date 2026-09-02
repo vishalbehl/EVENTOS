@@ -38,7 +38,7 @@ async def exchange_impersonation_handoff(payload: ImpersonationHandoffExchange, 
     log.session_token_hash = None
     log.session_expires_at = now + timedelta(minutes=15)
     token = create_access_token(target_user, impersonator_id=log.super_admin_id, impersonation_session_id=log.id, expires_minutes=15)
-    from app.redis import redis_client
+    from app.redis import coordination_client as redis_client
     try:
         await redis_client.set(f"impersonation:session:{log.id}", str(log.super_admin_id), ex=900)
     except Exception as exc:
@@ -55,7 +55,7 @@ async def end_own_impersonation_handoff(token_data: TokenDep, db: AsyncSession =
     log = await db.scalar(select(ImpersonationLog).where(ImpersonationLog.id == token_data.impersonation_session_id, ImpersonationLog.super_admin_id == token_data.impersonator_id).with_for_update())
     if not log: raise HTTPException(status_code=404, detail="Impersonation session not found")
     if log.terminated_at is None: log.terminated_at = datetime.now(timezone.utc)
-    from app.redis import redis_client
+    from app.redis import coordination_client as redis_client
     await redis_client.delete(f"impersonation:session:{log.id}")
     await db.commit()
     return {"status": "ended", "session_id": log.id, "ended_at": log.terminated_at}
@@ -186,7 +186,7 @@ async def superadmin_end_impersonation_session(
     if log.terminated_at is not None:
         raise HTTPException(status_code=400, detail="Session already ended.")
     log.terminated_at = datetime.now(timezone.utc)
-    from app.redis import redis_client
+    from app.redis import coordination_client as redis_client
     await redis_client.delete(f"impersonation:session:{log.id}")
     await db.commit()
     return {"status": "success", "session_id": str(session_id),

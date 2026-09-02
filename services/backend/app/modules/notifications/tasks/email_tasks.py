@@ -23,13 +23,26 @@ from app.database import tenant_org_id
 from app.core.dependencies.feature_gate import enforce_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.platform.models.organization_console import UsageReservation
+from app.core.async_runner import run_async as stable_run_async
+from app.core.task_policy import is_retryable, policy_for
 
 def _run_async(coro):
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    return asyncio.run(coro)
+    return stable_run_async(coro)
 
-@celery_app.task(name="app.tasks.process_email_campaign", bind=True, max_retries=3)
+_NOTIFICATIONS_POLICY = policy_for("notifications")
+
+
+@celery_app.task(
+    name="app.tasks.process_email_campaign",
+    bind=True,
+    max_retries=_NOTIFICATIONS_POLICY.max_retries,
+    soft_time_limit=_NOTIFICATIONS_POLICY.soft_timeout_seconds,
+    time_limit=_NOTIFICATIONS_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_NOTIFICATIONS_POLICY.queue,
+)
 def process_email_campaign(
     self, campaign_id_str: str, organization_id_str: str, reservation_id_str: str | None = None
 ) -> None:
@@ -46,9 +59,27 @@ def process_email_campaign(
         _run_async(_process_email_campaign_async(campaign_id, organization_id, reservation_id))
     except Exception as exc:
         logger.exception(f"[Celery] Error processing campaign {campaign_id}: {exc}")
-        if self.request.retries >= self.max_retries:
-            _run_async(_fail_campaign_async(campaign_id, organization_id, str(exc), reservation_id))
-        raise self.retry(exc=exc, countdown=60)
+        attempt = int(getattr(self.request, "retries", 0) or 0)
+        if not is_retryable(exc) or attempt >= _NOTIFICATIONS_POLICY.max_retries:
+            # Persist only a type-level diagnostic. Exception strings can
+            # contain recipient data or provider credentials.
+            _run_async(
+                _fail_campaign_async(
+                    campaign_id,
+                    organization_id,
+                    f"{type(exc).__name__}: campaign processing failed",
+                    reservation_id,
+                )
+            )
+            return
+        raise self.retry(
+            exc=exc,
+            countdown=min(
+                300,
+                _NOTIFICATIONS_POLICY.retry_delay(attempt, apply_jitter=True),
+            ),
+            max_retries=_NOTIFICATIONS_POLICY.max_retries,
+        )
 
 
 async def _fail_campaign_async(campaign_id: uuid.UUID, organization_id: uuid.UUID, failure: str, reservation_id: uuid.UUID | None = None) -> None:
@@ -151,8 +182,8 @@ async def _process_email_campaign_with_session(
                 query = query.where(Speaker.upload_status == "pending")
                 query = query.join(SessionSpeaker, SessionSpeaker.speaker_id == Speaker.id).where(
                     or_(
-                        SessionSpeaker.speaker_type.in_(UPLOAD_REQUIRED_CODES),
-                        SessionSpeaker.speaker_type.is_(None)
+                        SessionSpeaker.role.in_(UPLOAD_REQUIRED_CODES),
+                        SessionSpeaker.role.is_(None)
                     )
                 ).distinct()
             elif campaign.recipient_filter == "uploaded":
@@ -275,17 +306,6 @@ async def _process_email_campaign_with_session(
             # Render and send batch
             for recipient in batch:
                 if campaign.target_type == "participant":
-                    # Idempotency check: Skip if already sent for this campaign + email
-                    log_check = await db.execute(
-                        select(EmailLog).where(
-                            EmailLog.campaign_id == campaign.id,
-                            EmailLog.to_email == recipient.email,
-                            EmailLog.status == "sent"
-                        )
-                    )
-                    if log_check.scalar_one_or_none():
-                        continue
-
                     # Build variables
                     variables = email_service.build_participant_variables(recipient, campaign.event)
                     
@@ -300,6 +320,17 @@ async def _process_email_campaign_with_session(
                         variables=variables
                     )
 
+                    log_id = await email_service.claim_campaign_recipient(
+                        db,
+                        campaign_id=campaign.id,
+                        event_id=campaign.event_id,
+                        to_email=recipient.email,
+                        subject=subject,
+                        participant_id=recipient.id,
+                    )
+                    if log_id is None:
+                        continue
+
                     # 3. Send (which handles pixel injection and the final SMTP MIME assembly)
                     msg_id = await email_service.send_email(
                         to_email=recipient.email,
@@ -309,6 +340,7 @@ async def _process_email_campaign_with_session(
                         participant_id=recipient.id,
                         campaign_id=campaign.id,
                         event_id=campaign.event_id,
+                        log_id=log_id,
                         db=db
                     )
                 else:
@@ -339,17 +371,6 @@ async def _process_email_campaign_with_session(
                     from sqlalchemy.orm.attributes import set_committed_value
                     set_committed_value(speaker, "presentation_files", res_files.scalars().all())
 
-                    # Idempotency check: Skip if already sent for this campaign + email
-                    log_check = await db.execute(
-                        select(EmailLog).where(
-                            EmailLog.campaign_id == campaign.id,
-                            EmailLog.to_email == speaker.email,
-                            EmailLog.status == "sent"
-                        )
-                    )
-                    if log_check.scalar_one_or_none():
-                        continue
-
                     # Build variables
                     variables = email_service.build_speaker_variables(
                         speaker, session, campaign.event, session_speakers=session_speakers, posters=posters
@@ -379,6 +400,17 @@ async def _process_email_campaign_with_session(
                         variables=variables
                     )
 
+                    log_id = await email_service.claim_campaign_recipient(
+                        db,
+                        campaign_id=campaign.id,
+                        event_id=campaign.event_id,
+                        to_email=speaker.email,
+                        subject=subject,
+                        speaker_id=speaker.id,
+                    )
+                    if log_id is None:
+                        continue
+
                     # 3. Send
                     msg_id = await email_service.send_email(
                         to_email=speaker.email,
@@ -388,6 +420,7 @@ async def _process_email_campaign_with_session(
                         speaker_id=speaker.id,
                         campaign_id=campaign.id,
                         event_id=campaign.event_id,
+                        log_id=log_id,
                         db=db
                     )
                 

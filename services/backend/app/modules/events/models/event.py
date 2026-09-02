@@ -44,6 +44,14 @@ class Event(Base, SoftDeleteMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    # Optimistic concurrency token for shared event-settings edits.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("platform.organizations.id", ondelete="CASCADE"),
@@ -226,7 +234,11 @@ class Event(Base, SoftDeleteMixin):
                 }
             }
         base = {
-            "enabled": self.speaker_theme_setting.enabled,
+            # The unified settings row also stores registration.enabled;
+            # never use that column as the speaker-mode fallback.
+            "enabled": (self.speaker_theme_setting.extra_settings or {}).get(
+                "speaker_enabled", True
+            ),
             "window_required": self.speaker_theme_setting.window_required,
             "profile_settings": self.speaker_theme_setting.profile_settings or {
                 "enabled_methods": {"form": True, "template": True, "cv": True},
@@ -281,6 +293,8 @@ class Event(Base, SoftDeleteMixin):
             elif k not in ("id", "event_id", "created_at", "updated_at"):
                 extra[k] = v
         self.speaker_theme_setting.extra_settings = extra
+        if "enabled" in value:
+            self.speaker_theme_setting.extra_settings["speaker_enabled"] = bool(value["enabled"])
 
     @property
     def registration_settings(self) -> dict:
@@ -340,7 +354,7 @@ class Event(Base, SoftDeleteMixin):
 
         # Dedicated database columns strictly take precedence over extra_settings
         base.update({
-            "enabled": pts.enabled,
+            "enabled": (pts.extra_settings or {}).get("registration_enabled", pts.enabled),
             "registration_allowed": pts.registration_allowed,
             "participants_list_allowed": pts.participants_list_allowed,
             "payment_enabled": pts.payment_enabled,
@@ -437,6 +451,8 @@ class Event(Base, SoftDeleteMixin):
             elif k != "theme_config" and k not in ("id", "event_id", "created_at", "updated_at"):
                 extra[k] = v
         pts.extra_settings = extra
+        if "enabled" in value:
+            pts.extra_settings["registration_enabled"] = bool(value["enabled"])
 
     @property
     def branding_settings(self) -> dict:

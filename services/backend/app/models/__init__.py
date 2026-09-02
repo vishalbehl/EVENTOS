@@ -5,6 +5,15 @@
 # =============================================================
 
 from app.modules.platform.models.organization import Organization
+from app.modules.platform.models.idempotency import IdempotencyRecord
+from app.modules.operations_control.models import JobControlRequest
+from app.modules.operations_planning.models import (
+    Project, Milestone, ProjectTask, ProjectTemplate, ProjectTemplateTask,
+    EventTimeline, TimelineMilestone, ProjectVendor, ProjectBlocker,
+)
+from app.modules.resource_management.models import *
+from app.modules.deployment_management.models import *
+from app.modules.files.models.file import DurableUpload
 from app.modules.platform.models.system_setting import SystemSetting
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.models.health import OrganizationHealth
@@ -102,6 +111,17 @@ from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.events.models.speaker import Speaker
 from app.modules.events.models.speaker_profile import SpeakerProfile
 from app.modules.events.models.events_domain_tables import EventSetting, EventAsset
+from app.modules.abstracts.models import (
+    AbstractAssignment,
+    AbstractAttachment,
+    AbstractAuthor,
+    AbstractCall,
+    AbstractDecision,
+    AbstractForm,
+    AbstractReview,
+    AbstractReviewer,
+    AbstractSubmission,
+)
 
 from app.modules.agenda.models import (
     MasterAgenda, AgendaDay, AgendaRoomType, AgendaRoom,
@@ -128,6 +148,8 @@ from app.modules.registration.models.participant_registration import Participant
 from app.modules.registration.models.ticket_type import TicketType
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
+from app.modules.registration.models.form_category import FormCategory
+from app.modules.registration.models.form_template import FormTemplate
 from app.modules.registration.models.registration_form_config import RegistrationFormConfig
 from app.modules.registration.models.badge_models import Badge, BadgeHistory, BadgePrintJob, BadgeScan
 from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
@@ -188,6 +210,10 @@ from app.modules.analytics.models.usage import OrganizationUsage, UsageEvent, Us
 from app.modules.analytics.models.analytics_domain_tables import (
     DashboardMetric, FeatureUsage, ApplicationUsage, ApiUsageMetric, EventMetric, AdoptionMetric
 )
+from app.modules.analytics.models.event_registration_summary import EventRegistrationSummary
+from app.modules.analytics.models.event_attendance_summary import EventAttendanceSummary
+from app.modules.analytics.models.event_payment_summary import EventPaymentSummary
+from app.modules.analytics.models.event_speaker_summary import EventSpeakerSummary
 UsageMetric = OrganizationUsage
 
 from app.modules.audit.models.audit_log import AuditLog
@@ -225,6 +251,13 @@ from app.modules.sponsors.models.sponsor import (
 
 
 # commercial models
+from app.modules.inventory.models import HardwareCategory, HardwareItem, HardwareStock
+from app.modules.procurement.models import Vendor, VendorService
+from app.modules.technology_services.models import (
+    RequirementFormField, RequirementFormTemplate, RequirementResponse,
+    RequirementTemplate, RequestAssignment, ServiceLevel, ServiceRequest,
+    ServiceRequestItem, ServiceSlaBreach, ServiceSlaPolicy, ServiceSlaTarget,
+)
 from app.modules.commercial.models import (
     ServiceCategory, Service, ServiceFeature, ServicePackage,
     PackageService, StaffRole, CommercialQuote, CommercialQuoteLineItem,

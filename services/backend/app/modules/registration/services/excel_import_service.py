@@ -579,7 +579,6 @@ async def _get_or_create_room(
             event_id=event_id, 
             name=name, 
             room_type="poster" if is_poster else "presentation",
-            screen_count=1 if is_poster else 1
         )
         db.add(room)
         await db.flush()

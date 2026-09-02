@@ -39,6 +39,7 @@ from app.modules.platform.schemas.organization_console import (
     OrganizationDomainSnapshot,
 )
 from app.modules.rbac.models.organization_member import OrganizationMember
+from app.modules.platform.application.queries import OrganizationConsoleQueryService
 
 
 class OrganizationConsoleService:
@@ -70,23 +71,26 @@ class OrganizationConsoleService:
             .order_by(OrganizationSubscription.created_at.desc())
             .limit(1)
         )
-        member_count = int(await self.db.scalar(select(func.count(OrganizationMember.id)).where(OrganizationMember.organization_id == organization_id)) or 0)
+        counts = await OrganizationConsoleQueryService(self.db).counts(organization_id=organization_id)
+        member_count = counts.member_count
         team_count = int((await self.db.execute(text("SELECT COUNT(*) FROM command_center_access.teams WHERE organization_id = :org_id AND deleted_at IS NULL"), {"org_id": organization_id})).scalar() or 0)
-        event_count = int(await self.db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id, Event.deleted_at.is_(None))) or 0)
-        active_event_count = int(await self.db.scalar(select(func.count(Event.id)).where(Event.organization_id == organization_id, Event.deleted_at.is_(None), Event.status == "active")) or 0)
-        active_user_count = int(await self.db.scalar(select(func.count(User.id)).where(User.organization_id == organization_id, User.deleted_at.is_(None), User.is_active.is_(True))) or 0)
-        mfa_user_count = int(await self.db.scalar(select(func.count(User.id)).where(User.organization_id == organization_id, User.deleted_at.is_(None), User.is_active.is_(True), User.is_2fa_enabled.is_(True))) or 0)
-        location_count = int(await self.db.scalar(select(func.count(OrganizationLocation.id)).where(OrganizationLocation.organization_id == organization_id, OrganizationLocation.status == "ACTIVE")) or 0)
+        event_count = counts.event_count
+        active_event_count = counts.active_event_count
+        active_user_count = counts.active_user_count
+        mfa_user_count = counts.mfa_user_count
+        location_count = counts.location_count
         connection_count = int((await self.db.execute(text("SELECT COUNT(*) FROM integrations.connections WHERE organization_id = :org_id AND is_active = true"), {"org_id": organization_id})).scalar() or 0)
         api_key_count = int((await self.db.execute(text("SELECT COUNT(*) FROM developer.developer_api_keys WHERE organization_id = :org_id AND is_active = true"), {"org_id": organization_id})).scalar() or 0)
-        open_security_events = int(await self.db.scalar(select(func.count(SecurityEvent.id)).where(SecurityEvent.organization_id == organization_id, SecurityEvent.risk_level.in_(["HIGH", "CRITICAL"]))) or 0)
+        open_security_events = counts.open_security_events
         freshness = usage.last_calculated_at if usage else None
         storage_bytes = int(usage.storage_used_bytes if usage else 0)
         registrations = int(usage.total_registrations_count if usage else 0)
         metrics = [
             ConsoleMetric(key="events", label="Events", value=event_count, source="events.events", freshness_at=now),
             ConsoleMetric(key="active_events", label="Active events", value=active_event_count, source="events.events", freshness_at=now),
-            ConsoleMetric(key="members", label="Members", value=member_count, source="organizer_access.organization_members", freshness_at=now),
+            # Keep the public source identifier stable for existing console consumers;
+            # the authoritative model is OrganizationMember in the migrated access schema.
+            ConsoleMetric(key="members", label="Members", value=member_count, source="rbac.organization_members", freshness_at=now),
             ConsoleMetric(key="active_users", label="Active users", value=active_user_count, source="identity.users", freshness_at=now),
             ConsoleMetric(key="teams", label="Teams", value=team_count, source="command_center_access.teams", freshness_at=now),
             ConsoleMetric(key="locations", label="Locations", value=location_count, source="platform.organization_locations", freshness_at=now),
@@ -228,7 +232,7 @@ class OrganizationConsoleService:
             usage = await self.db.get(OrganizationUsage, organization_id)
             return {"storage_bytes": int(usage.storage_used_bytes) if usage else None, "calculated_at": usage.last_calculated_at if usage else None, "backups": {"available": False, "reason": "No authoritative backup execution provider is configured."}}, DomainAvailability(available=usage is not None, configured=usage is not None, reason=None if usage else "Usage aggregation has not produced a snapshot.", freshness_at=usage.last_calculated_at if usage else None)
         if domain in {"audit", "activity"}:
-            rows = (await self.db.execute(text("SELECT id, actor_user_id, resource_type, resource_id, action_type, occurred_at, is_sensitive FROM audit.logs WHERE organization_id=:org_id ORDER BY occurred_at DESC LIMIT 100"), {"org_id": organization_id})).mappings().all()
+            rows = (await self.db.execute(text("SELECT id, actor_user_id, resource_type, resource_id, action_type, occurred_at, is_sensitive FROM command_center_audit.logs WHERE organization_id=:org_id ORDER BY occurred_at DESC LIMIT 100"), {"org_id": organization_id})).mappings().all()
             return {"items": [dict(row) for row in rows], "total": len(rows), "next_cursor": None}, DomainAvailability(available=True, configured=True, freshness_at=rows[0]["occurred_at"] if rows else now)
         raise HTTPException(status_code=404, detail="Organization console domain not found")
 

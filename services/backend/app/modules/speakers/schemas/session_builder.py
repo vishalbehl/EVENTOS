@@ -71,6 +71,7 @@ class TrackResponse(BaseModel):
     description: Optional[str] = None
     display_color: Optional[str] = None
     sort_order: int = 0
+    version: int = 1
 
 
 class SessionBuilderDetail(BaseModel):
@@ -158,14 +159,9 @@ class RoomBuilderResponse(BaseModel):
     id: uuid.UUID
     event_id: uuid.UUID
     name: str
-    capacity: Optional[int] = None
-    screen_count: int = 1
     room_type: str
     room_coordinator: Optional[str] = None
-    av_technician: Optional[str] = None
-    location_notes: Optional[str] = None
     is_active: bool = True
-    sort_order: int = 0
     sessions_count: int = 0
 
 
@@ -224,4 +220,3 @@ class PublishScheduleResponse(BaseModel):
     success: bool = True
     published_count: int
     message: str = "Schedule published successfully"
-

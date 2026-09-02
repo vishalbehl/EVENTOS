@@ -2,6 +2,7 @@ import sys  # reload trigger - DB restarted
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from app.config import settings
 
 # Compatibility patch for passlib and modern bcrypt versions
 try:
@@ -14,7 +15,6 @@ except ImportError:
     pass
 
 if sys.platform == 'win32':
-    from app.config import settings
     if settings.environment != "testing":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -29,7 +29,7 @@ from app.middleware.audit_middleware import AuditMiddleware
 from app.middleware.auth_middleware import AuthMiddleware
 from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from app.middleware.rate_limiter import RateLimiterMiddleware
-from app.services.init_service import ensure_admin_user
+from app.services.init_service import ensure_admin_user, ensure_agenda_rooms_schema, ensure_agenda_types_defaults
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,6 +43,8 @@ async def lifespan(app: FastAPI):
             async with AsyncSessionLocal() as security_session:
                 await enforce_runtime_database_security(security_session)
         await ensure_admin_user()
+        await ensure_agenda_rooms_schema()
+        await ensure_agenda_types_defaults()
 
         # Keep catalogue data aligned with the immutable code-owned
         # route/operation manifest. An active unknown key could otherwise be
@@ -110,6 +112,16 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if scheduler.running:
         scheduler.shutdown(wait=False)
+    try:
+        from app.redis import close_redis
+        from app.database import async_engine
+
+        await close_redis()
+        await async_engine.dispose()
+    except Exception as exc:
+        # Shutdown cleanup must be observable but must not mask the original
+        # process shutdown or task failure.
+        logger.warning("Async resource cleanup failed: {}", type(exc).__name__)
 
 app = FastAPI(
     title="Conference Platform API",
@@ -124,7 +136,8 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from loguru import logger
 from app.core.dependencies.feature_gate import EntitlementRequiredException
 
@@ -211,6 +224,10 @@ app.add_middleware(
 from app.config import settings
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ── Mount Socket.IO at /socket.io ─────────────────────────────

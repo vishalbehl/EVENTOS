@@ -15,6 +15,11 @@ from app.tasks.platform_commercial_tasks import (
     update_exchange_rates,
     calculate_forecasts,
 )
+from app.tasks.upload_jobs import process_durable_upload, process_import_upload
+from app.tasks.analytics_projection_tasks import refresh_event_registration_summary_task
+from app.tasks.attendance_projection_tasks import refresh_event_attendance_summary_task
+from app.tasks.payment_projection_tasks import refresh_event_payment_summary_task
+from app.tasks.speaker_projection_tasks import refresh_event_speaker_summary_task
 
 
 

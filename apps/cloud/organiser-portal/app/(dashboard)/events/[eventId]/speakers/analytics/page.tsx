@@ -122,10 +122,22 @@ export default function AnalyticsPage() {
     );
   }
 
-  if (!data) return null;
-
-  const overview = data.overview ?? {};
-  const funnel = data.upload_funnel ?? {};
+  const overview = data?.overview ?? {
+    total_speakers: data?.total_speakers ?? mainStats?.total_speakers ?? 0,
+    total_sessions: data?.total_sessions ?? mainStats?.total_sessions ?? 0,
+    files_uploaded: data?.files_uploaded ?? 0,
+    files_approved: data?.files_approved ?? 0,
+    files_pending: data?.files_pending ?? 0,
+    files_rejected: data?.files_rejected ?? 0,
+    sessions_ready: data?.sessions_ready ?? 0,
+  };
+  const funnel = data?.upload_funnel ?? {
+    invited: overview.total_speakers ?? 0,
+    uploaded: overview.files_uploaded ?? 0,
+    approved: overview.files_approved ?? 0,
+    upload_rate_pct: data?.upload_rate_pct ?? 0,
+    approval_rate_pct: data?.approval_rate_pct ?? 0,
+  };
 
   return (
     <TooltipProvider>

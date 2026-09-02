@@ -47,6 +47,7 @@ export const COMMAND_CENTER_DESTINATIONS: CommandCenterDestination[] = [
   { label: "Integrations", href: "/developer-platform/integrations", group: "Developer platform", keywords: ["providers", "connections"], icon: Terminal },
   { label: "Email templates", href: "/applications/templates/email", group: "Templates", keywords: ["email", "designer", "studio", "waypoint", "defaults"], icon: Mail },
   { label: "Website templates", href: "/applications/templates/website", group: "Templates", keywords: ["website", "landing", "builder", "grapesjs", "templates"], icon: Globe },
+  { label: "Form templates", href: "/applications/templates/form", group: "Templates", keywords: ["form", "builder", "questionnaire", "registration", "survey", "abstract", "templates"], icon: ClipboardList },
   { label: "Support tickets", href: "/support-center/tickets", group: "Support", keywords: ["sla", "customers"], icon: ClipboardList },
   { label: "Announcements", href: "/support-center/announcements", group: "Support", keywords: ["maintenance", "broadcast"], icon: Bell },
   { label: "Platform settings", href: "/platform-settings/general", group: "Settings", keywords: ["configuration"], icon: Settings },

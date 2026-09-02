@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.communications.models.announcement import Announcement
@@ -188,8 +189,11 @@ async def test_announcements_signed_url(
     assert resp.status_code == 200
     data = resp.json()
     assert "url" in data
-    # For local storage mode, should return a local API storage url
-    assert "storage" in data["url"]
+    if settings.STORAGE_MODE == "local":
+        assert "storage" in data["url"]
+    else:
+        # S3-compatible staging/production uses a direct, signed object URL.
+        assert "X-Amz-Signature=" in data["url"]
     assert "test.pdf" in data["url"]
 
     unauthorized_path = (

@@ -60,6 +60,15 @@ TABLE_SCHEMAS = {
     "adoption_metrics": "analytics",
 
     # events
+    "abstract_assignments": "events",
+    "abstract_attachments": "events",
+    "abstract_authors": "events",
+    "abstract_calls": "events",
+    "abstract_decisions": "events",
+    "abstract_forms": "events",
+    "abstract_reviewers": "events",
+    "abstract_reviews": "events",
+    "abstract_submissions": "events",
     "agenda_items": "events",
     "agendas": "events",
 
@@ -286,7 +295,10 @@ TABLE_SCHEMAS = {
     "financial_audit_trail": "commerce",
 
     # registration
+    "form_categories": "registration",
     "form_fields": "registration",
+    "form_submissions": "registration",
+    "form_templates": "registration",
 
     # communications
     "global_announcements": "communications",
@@ -697,7 +709,7 @@ TABLE_SCHEMAS = {
     # commerce
     "subscription_analytics": "commerce",
     "subscription_plans": "commerce",
-    "subscription_transactions": "commerce",
+    "subscription_transactions": "billing",
 
     # support
     "support_agents": "support",
@@ -893,14 +905,38 @@ class Base(DeclarativeBase, metaclass=SchemaDeclarativeMeta):
 
 # ── Tenant Context & Query Scoping ──────────────────────────
 import contextvars
+import time
 import uuid
+from collections import deque
 from typing import Optional
 from sqlalchemy import event
 from sqlalchemy.orm import Session, with_loader_criteria
+from loguru import logger
+from app.core.prometheus_metrics import (
+    observe_pool_checkin,
+    observe_pool_checkout,
+    set_pool_capacity,
+)
 
 tenant_org_id: contextvars.ContextVar[Optional[uuid.UUID]] = contextvars.ContextVar(
     "tenant_org_id", default=None
 )
+request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "db_request_id", default=None
+)
+request_path: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "db_request_path", default=None
+)
+# SQLAlchemy's async dialect executes these sync engine callbacks in a
+# greenlet. Mutable containers preserve updates when the greenlet receives a
+# copied ContextVar context, while each request still gets its own container.
+db_query_count: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar(
+    "db_query_count", default=None
+)
+db_query_duration_ms: contextvars.ContextVar[list[float] | None] = contextvars.ContextVar(
+    "db_query_duration_ms", default=None
+)
+slow_query_samples: deque[dict[str, object]] = deque(maxlen=100)
 
 _tenant_model_cache: tuple[type, ...] = ()
 _tenant_mapper_count = -1
@@ -920,25 +956,101 @@ def _tenant_models() -> tuple[type, ...]:
 @event.listens_for(Session, "do_orm_execute")
 def _do_orm_execute(execute_state):
     org_id = tenant_org_id.get()
+    if not org_id:
+        return
+
     skip = execute_state.execution_options.get("skip_tenant_filter", False)
     stmt_skip = execute_state.statement._execution_options.get("skip_tenant_filter", False) if hasattr(execute_state.statement, '_execution_options') else False
     
     # Check if either the execution_options or the statement's execution options have it
     effective_skip = skip or stmt_skip
-    
-    from loguru import logger
-    logger.info(f"do_orm_execute: org_id={org_id}, skip={skip}, stmt_skip={stmt_skip}, effective_skip={effective_skip}")
-    
-    if org_id and not effective_skip:
-        for model in _tenant_models():
-            execute_state.statement = execute_state.statement.options(
-                with_loader_criteria(
-                    model,
-                    model.organization_id == org_id,
-                    include_aliases=True,
-                    propagate_to_loaders=True,
-                )
+
+    if effective_skip:
+        if settings.TENANT_FILTER_DIAGNOSTICS:
+            logger.debug("tenant_filter_skipped org_id={}", org_id)
+        return
+
+    if settings.TENANT_FILTER_DIAGNOSTICS:
+        logger.debug("tenant_filter_applied org_id={}", org_id)
+
+    for model in _tenant_models():
+        execute_state.statement = execute_state.statement.options(
+            with_loader_criteria(
+                model,
+                model.organization_id == org_id,
+                include_aliases=True,
+                propagate_to_loaders=True,
             )
+        )
+
+
+def reset_db_request_metrics() -> tuple[contextvars.Token[list[int] | None], contextvars.Token[list[float] | None]]:
+    return db_query_count.set([0]), db_query_duration_ms.set([0.0])
+
+
+def get_db_request_metrics() -> tuple[int, float]:
+    count = db_query_count.get()
+    duration = db_query_duration_ms.get()
+    return (count[0] if count else 0), (duration[0] if duration else 0.0)
+
+
+def restore_db_request_metrics(tokens: tuple[contextvars.Token[list[int] | None], contextvars.Token[list[float] | None]]) -> None:
+    count_token, duration_token = tokens
+    db_query_count.reset(count_token)
+    db_query_duration_ms.reset(duration_token)
+
+
+def _sanitize_sql(statement: object) -> str:
+    """Return only a statement shape; never emit SQL values or full SQL text."""
+    sql = " ".join(str(statement).split()).upper()
+    operation = sql.split(" ", 1)[0] if sql else "UNKNOWN"
+    return operation if operation in {"SELECT", "INSERT", "UPDATE", "DELETE", "CALL", "WITH"} else "OTHER"
+
+
+def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    context._query_started_at = time.perf_counter()
+
+
+def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    started_at = getattr(context, "_query_started_at", None)
+    if started_at is None:
+        return
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    count = db_query_count.get()
+    duration = db_query_duration_ms.get()
+    if count is not None:
+        count[0] += 1
+    if duration is not None:
+        duration[0] += elapsed_ms
+    if elapsed_ms >= settings.DB_SLOW_QUERY_MS:
+        slow_query_samples.append({
+            "operation": _sanitize_sql(statement),
+            "duration_ms": round(elapsed_ms, 1),
+            "request_id": request_id.get(),
+            "path": request_path.get(),
+            "occurred_at": time.time(),
+        })
+        logger.warning(
+            "slow_sql_query duration_ms={:.1f} operation={}",
+            elapsed_ms,
+            _sanitize_sql(statement),
+        )
+
+
+def get_slow_query_samples() -> list[dict[str, object]]:
+    """Return a bounded, sanitized snapshot for operations diagnostics."""
+    return list(slow_query_samples)
+
+
+def _pool_metric_callbacks(engine_name: str):
+    """Create non-throwing pool callbacks with a stable low-cardinality label."""
+    def checkout(_dbapi_connection, _connection_record, _connection_proxy):
+        observe_pool_checkout(engine_name)
+
+    def checkin(_dbapi_connection, _connection_record):
+        observe_pool_checkin(engine_name)
+
+    return checkout, checkin
 
 @event.listens_for(Session, "after_begin")
 def _after_begin(session, transaction, connection):
@@ -965,9 +1077,17 @@ async_engine = create_async_engine(
     _async_db_url,
     echo=settings.debug,
     pool_pre_ping=True,         # validate connection before checkout
-    pool_size=10,
-    max_overflow=20,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_timeout=settings.DB_POOL_TIMEOUT_SECONDS,
 )
+
+event.listen(async_engine.sync_engine, "before_cursor_execute", _before_cursor_execute)
+event.listen(async_engine.sync_engine, "after_cursor_execute", _after_cursor_execute)
+_async_pool_checkout, _async_pool_checkin = _pool_metric_callbacks("async")
+event.listen(async_engine.sync_engine, "checkout", _async_pool_checkout)
+event.listen(async_engine.sync_engine, "checkin", _async_pool_checkin)
+set_pool_capacity("async", settings.DB_POOL_SIZE, settings.DB_MAX_OVERFLOW)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=async_engine,
@@ -992,6 +1112,13 @@ engine = create_engine(
     future=True,
     pool_pre_ping=True,
 )
+
+event.listen(engine, "before_cursor_execute", _before_cursor_execute)
+event.listen(engine, "after_cursor_execute", _after_cursor_execute)
+_sync_pool_checkout, _sync_pool_checkin = _pool_metric_callbacks("sync")
+event.listen(engine, "checkout", _sync_pool_checkout)
+event.listen(engine, "checkin", _sync_pool_checkin)
+set_pool_capacity("sync", getattr(engine.pool, "size", lambda: 0)(), getattr(engine.pool, "_max_overflow", 0))
 
 SessionLocal = sessionmaker(
     bind=engine,

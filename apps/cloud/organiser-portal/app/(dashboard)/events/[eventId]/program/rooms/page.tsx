@@ -56,7 +56,8 @@ export default function RoomAllocationsPage() {
         (r) =>
           !searchTerm ||
           r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          r.location_notes?.toLowerCase().includes(searchTerm.toLowerCase())
+          r.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          r.room_type?.toLowerCase().includes(searchTerm.toLowerCase())
       )
       .map((config) => {
         const analytics = roomsAnalytics?.find((a) => a.room_id === config.id);
@@ -77,9 +78,9 @@ export default function RoomAllocationsPage() {
       color: "text-[var(--pri)]",
     },
     {
-      label: "Total Capacity",
-      val: rooms.reduce((acc, r) => acc + (r.capacity || 0), 0).toLocaleString(),
-      icon: Users,
+      label: "Total Rooms",
+      val: rooms.length.toString(),
+      icon: LayoutGrid,
       color: "text-emerald-500",
     },
     {
@@ -240,25 +241,24 @@ export default function RoomAllocationsPage() {
                         {room.name}
                       </h3>
                       <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">
-                        {event?.venue_name ? `${event.venue_name}, ` : ""}
-                        {room.location_notes || "Main Venue"}
+                        {room.room_coordinator ? `Coord: ${room.room_coordinator}` : (event?.venue_name || "Main Venue")}
                       </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 p-2.5 rounded-md bg-[var(--bg-surface-2)] border border-[var(--border-subtle)]">
                       <div>
                         <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
-                          Capacity
+                          Code
                         </span>
-                        <span className="text-xs font-bold text-[var(--text-primary)]">
-                          {room.capacity || 0} Pax
+                        <span className="text-xs font-bold text-[var(--text-primary)] font-mono">
+                          {room.code || "—"}
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] block">
                           Type
                         </span>
-                        <span className="text-xs font-bold text-[var(--text-primary)] uppercase">
+                        <span className="text-xs font-bold text-[var(--text-primary)] uppercase truncate block">
                           {room.room_type || "Room"}
                         </span>
                       </div>

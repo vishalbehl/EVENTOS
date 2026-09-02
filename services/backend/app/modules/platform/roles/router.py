@@ -1,12 +1,12 @@
 # app/modules/platform/roles/router.py
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import StepUpAuth, OrganizerOrAbove
 from app.core.tenant_context import TenantContextGuard
-from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.platform.support_access import PlatformSupportScopeDependency
 from app.modules.identity.models.user import User
 from app.modules.platform.roles.schemas import (
@@ -16,40 +16,13 @@ from app.modules.platform.roles.schemas import (
 )
 from app.modules.platform.roles.service import RoleService
 from app.modules.platform.roles.dependencies import get_role_service
+from app.modules.platform.roles.application.queries import RoleQueryService, AssignmentQueryService
 from app.schemas.common import MessageResponse
+from app.schemas.cursor_pagination import CursorPage
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 router = APIRouter(prefix="/platform/roles", tags=["roles"])
 admin_router = APIRouter(prefix="/superadmin/access", tags=["superadmin-access"])
-
-
-async def _role_response(service: RoleService, role) -> RoleResponse:
-    from sqlalchemy import func, select
-    from app.modules.platform.permissions.models import PlatformRolePermission
-    from app.modules.platform.roles.models import UserAssignment
-
-    permission_count = await service.db.scalar(
-        select(func.count(PlatformRolePermission.id)).where(PlatformRolePermission.role_id == role.id)
-    ) or 0
-    user_count = await service.db.scalar(
-        select(func.count(UserAssignment.id)).where(
-            UserAssignment.role_id == role.id,
-            UserAssignment.deleted_at.is_(None),
-        )
-    ) or 0
-    return RoleResponse(
-        id=role.id,
-        organization_id=role.organization_id,
-        department_id=role.department_id,
-        name=role.name,
-        code=role.code,
-        description=role.description,
-        access_level=role.access_level,
-        created_at=role.created_at,
-        updated_at=role.updated_at,
-        department_name=role.department.name if role.department else "Global",
-        permissions_count=permission_count,
-        users_count=user_count,
-    )
 
 
 @admin_router.get("/roles", response_model=List[RoleResponse])
@@ -61,23 +34,29 @@ async def admin_list_roles(
     service: RoleService = Depends(get_role_service),
 ):
     async with TenantContextGuard.scoped(service.db, support_scope.organization_id):
-        roles, _ = await service.list_roles(
-            org_id=support_scope.organization_id,
-            skip=skip,
+        rows, _ = await RoleQueryService(service.db).list_with_counts(
+            organization_id=support_scope.organization_id,
+            offset=skip,
             limit=limit,
             search=search,
         )
-        response = [await _role_response(service, role) for role in roles]
-        service.db.add(AuditLog(
-            organization_id=support_scope.organization_id,
-            actor_user_id=support_scope.actor.id,
-            resource_type="platform_roles",
-            resource_id=support_scope.organization_id,
-            action_type="PLATFORM_SUPPORT_DATA_READ",
-            new_state={"reason": support_scope.reason, "result_count": len(response)},
-            is_sensitive=True,
-        ))
-        await service.db.commit()
+        response = [RoleResponse(**row) for row in rows]
+        await AuditService.write_log(
+            AuditContext(
+                request_id=support_scope.request_id,
+                correlation_id=support_scope.correlation_id,
+                organization_id=support_scope.organization_id,
+                actor_user_id=support_scope.actor.id,
+                actor_role=support_scope.actor.platform_role or support_scope.actor.role,
+                actor_ip=support_scope.actor_ip,
+                actor_user_agent=support_scope.actor_user_agent,
+                resource_type="platform_roles",
+                resource_id=support_scope.organization_id,
+                action_type="PLATFORM_SUPPORT_DATA_READ",
+                new_state={"reason": support_scope.reason, "result_count": len(response)},
+                is_sensitive=True,
+            )
+        )
         return response
 
 
@@ -104,6 +83,7 @@ async def admin_update_role(
     payload: AdminRoleUpdate,
     support_scope: PlatformSupportScopeDependency,
     step_up: StepUpAuth,
+    expected_version: Optional[int] = Header(None, alias="If-Match", ge=1),
     service: RoleService = Depends(get_role_service),
 ):
     del step_up
@@ -115,6 +95,7 @@ async def admin_update_role(
             support_scope.actor.id,
             reason=payload.reason,
             expected_updated_at=payload.expected_updated_at,
+            expected_version=expected_version,
         )
 
 
@@ -158,43 +139,34 @@ async def list_roles(
         sort_order=sort_order
     )
     
-    # Enrich response with counters
-    res = []
-    from sqlalchemy import select, func
-    from app.modules.platform.permissions.models import PlatformRolePermission
-    from app.modules.platform.roles.models import UserAssignment
-    
-    for role in items:
-        # Get count of permissions
-        perm_count_stmt = select(func.count(PlatformRolePermission.id)).where(
-            PlatformRolePermission.role_id == role.id
-        )
-        # Get count of assigned users
-        user_count_stmt = select(func.count(UserAssignment.id)).where(
-            UserAssignment.role_id == role.id,
-            UserAssignment.deleted_at == None
-        )
-        
-        p_count = (await service.db.execute(perm_count_stmt)).scalar_one()
-        u_count = (await service.db.execute(user_count_stmt)).scalar_one()
-        
-        res.append(
-            RoleResponse(
-                id=role.id,
-                organization_id=role.organization_id,
-                department_id=role.department_id,
-                name=role.name,
-                code=role.code,
-                description=role.description,
-                access_level=role.access_level,
-                created_at=role.created_at,
-                updated_at=role.updated_at,
-                department_name=role.department.name if role.department else "Global",
-                permissions_count=p_count,
-                users_count=u_count
-            )
-        )
-    return res
+    rows, _ = await RoleQueryService(service.db).list_with_counts(
+        organization_id=current_user.organization_id,
+        department_id=department_id,
+        offset=skip,
+        limit=limit,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return [RoleResponse(**row) for row in rows]
+
+
+@router.get("/cursor", response_model=CursorPage[RoleResponse])
+async def cursor_roles(
+    current_user: OrganizerOrAbove,
+    department_id: Optional[uuid.UUID] = Query(None),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    service: RoleService = Depends(get_role_service),
+):
+    return await service.repository.cursor_page(
+        current_user.organization_id,
+        cursor=cursor,
+        limit=limit,
+        department_id=department_id,
+        search=search,
+    )
 
 
 @router.get("/export")
@@ -216,13 +188,35 @@ async def export_roles(
 async def create_role(
     payload: RoleCreate,
     current_user: OrganizerOrAbove,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     service: RoleService = Depends(get_role_service)
 ):
-    return await service.create_role(
+    idem = None
+    if idempotency_key:
+        idem = await begin_idempotent(
+            service.db,
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            operation="platform.role.create",
+            key=idempotency_key,
+            payload=payload.model_dump(mode="json"),
+        )
+        replay = replay_response(idem)
+        if replay:
+            return replay[1]
+    role = await service.create_role(
         org_id=current_user.organization_id,
         payload=payload,
         creator_id=current_user.id
     )
+    if idem:
+        body = RoleSummary.model_validate(role).model_dump(mode="json")
+        await complete_idempotent(
+            service.db, idem, response_status=status.HTTP_201_CREATED,
+            response_body=body, resource_id=role.id
+        )
+        await service.db.commit()
+    return role
 
 
 @router.get("/{id}", response_model=RoleResponse)
@@ -231,39 +225,12 @@ async def get_role(
     current_user: OrganizerOrAbove,
     service: RoleService = Depends(get_role_service)
 ):
-    role = await service.get_role(current_user.organization_id, id)
-    
-    from sqlalchemy import select, func
-    from app.modules.platform.permissions.models import PlatformRolePermission
-    from app.modules.platform.roles.models import UserAssignment
-    
-    # Get count of permissions
-    perm_count_stmt = select(func.count(PlatformRolePermission.id)).where(
-        PlatformRolePermission.role_id == role.id
+    row = await RoleQueryService(service.db).get_with_counts(
+        current_user.organization_id, id
     )
-    # Get count of assigned users
-    user_count_stmt = select(func.count(UserAssignment.id)).where(
-        UserAssignment.role_id == role.id,
-        UserAssignment.deleted_at == None
-    )
-    
-    p_count = (await service.db.execute(perm_count_stmt)).scalar_one()
-    u_count = (await service.db.execute(user_count_stmt)).scalar_one()
-    
-    return RoleResponse(
-        id=role.id,
-        organization_id=role.organization_id,
-        department_id=role.department_id,
-        name=role.name,
-        code=role.code,
-        description=role.description,
-        access_level=role.access_level,
-        created_at=role.created_at,
-        updated_at=role.updated_at,
-        department_name=role.department.name if role.department else "Global",
-        permissions_count=p_count,
-        users_count=u_count
-    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found.")
+    return RoleResponse(**row)
 
 
 @router.patch("/{id}", response_model=RoleSummary)
@@ -271,13 +238,15 @@ async def update_role(
     id: uuid.UUID,
     payload: RoleUpdate,
     current_user: OrganizerOrAbove,
+    expected_version: Optional[int] = Header(None, alias="If-Match", ge=1),
     service: RoleService = Depends(get_role_service)
 ):
     return await service.update_role(
         org_id=current_user.organization_id,
         id=id,
         payload=payload,
-        updater_id=current_user.id
+        updater_id=current_user.id,
+        expected_version=expected_version,
     )
 
 
@@ -320,35 +289,16 @@ async def list_assignments(
     limit: int = Query(20, ge=1, le=100),
     service: RoleService = Depends(get_role_service)
 ):
-    items, total = await service.list_assignments(
-        org_id=current_user.organization_id,
+    rows, _ = await AssignmentQueryService(service.db).list_page(
+        organization_id=current_user.organization_id,
         user_id=user_id,
         department_id=department_id,
         team_id=team_id,
         role_id=role_id,
-        skip=skip,
-        limit=limit
+        offset=skip,
+        limit=limit,
     )
-    
-    res = []
-    for asgn in items:
-        res.append(
-            UserAssignmentResponse(
-                id=asgn.id,
-                organization_id=asgn.organization_id,
-                user_id=asgn.user_id,
-                department_id=asgn.department_id,
-                team_id=asgn.team_id,
-                role_id=asgn.role_id,
-                created_at=asgn.created_at,
-                user_name=f"{asgn.user.first_name} {asgn.user.last_name}" if asgn.user else "",
-                user_email=asgn.user.email if asgn.user else "",
-                department_name=asgn.department.name if asgn.department else "",
-                team_name=asgn.team.name if asgn.team else "None",
-                role_name=asgn.role.name if asgn.role else ""
-            )
-        )
-    return res
+    return [UserAssignmentResponse(**row) for row in rows]
 
 
 @assignments_router.post("", response_model=UserAssignmentResponse, status_code=status.HTTP_201_CREATED)

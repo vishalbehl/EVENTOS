@@ -379,6 +379,8 @@ locals {
     { name = "S3_PRESIGNED_EXPIRY_SECONDS", value = "300" },
     { name = "MAX_FILE_SIZE_MB", value = "25" },
     { name = "REDIS_URL", value = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/0?ssl_cert_reqs=required" },
+    { name = "REDIS_CACHE_URL", value = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/2?ssl_cert_reqs=required" },
+    { name = "REDIS_LOCK_URL", value = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/3?ssl_cert_reqs=required" },
     { name = "CELERY_BROKER_URL", value = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/0?ssl_cert_reqs=required" },
     { name = "CELERY_RESULT_BACKEND", value = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/1?ssl_cert_reqs=required" },
     { name = "REQUIRE_RLS_SAFE_RUNTIME_ROLE", value = "true" },
@@ -484,7 +486,7 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "UPLOAD_PORTAL_BASE_URL", value = var.speaker_portal_url }
       ])
       secrets     = local.runtime_secrets
-      command     = ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=default,files,videos,imports,search", "--concurrency=1"]
+      command     = ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=${lower(var.log_level)}", "--queues=critical,default,files,videos,imports,notifications,reports,reconciliation,search", "--concurrency=1"]
       stopTimeout = 120
       logConfiguration = {
         logDriver = "awslogs"

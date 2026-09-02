@@ -17,15 +17,14 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
+import { useRoomTypes } from "@/hooks/useRoomTypes";
+
 export interface RoomItem {
   id: string;
   name: string;
   code?: string;
-  capacity?: number;
-  screen_count?: number;
   room_type?: string;
   room_coordinator?: string;
-  location_notes?: string;
   is_active?: boolean;
 }
 
@@ -48,17 +47,6 @@ interface RoomTrackSetupProps {
   onBack: () => void;
 }
 
-const ROOM_TYPES = [
-  { value: "presentation", label: "Presentation Hall" },
-  { value: "workshop", label: "Workshop Room" },
-  { value: "poster", label: "Poster Session" },
-  { value: "plenary", label: "Plenary Hall" },
-  { value: "open_area", label: "Open Area / Foyer" },
-  { value: "dining", label: "Dining Area" },
-  { value: "registration", label: "Registration Desk" },
-  { value: "virtual", label: "Virtual / No Physical Room" },
-];
-
 export function RoomTrackSetup({
   rooms,
   tracks,
@@ -69,6 +57,7 @@ export function RoomTrackSetup({
   onBack,
 }: RoomTrackSetupProps) {
   const [activeTab, setActiveTab] = useState<"rooms" | "tracks">("rooms");
+  const { data: roomTypes = [], isLoading: loadingTypes } = useRoomTypes();
 
   // Selected Room State
   const [selectedRoomId, setSelectedRoomId] = useState<string>(rooms[0]?.id || "new");
@@ -76,11 +65,8 @@ export function RoomTrackSetup({
     id: "new",
     name: "",
     code: "",
-    capacity: 100,
-    screen_count: 1,
-    room_type: "presentation",
+    room_type: roomTypes[0]?.code || "MAIN_HALL",
     room_coordinator: "",
-    location_notes: "",
     is_active: true,
   };
   const [roomForm, setRoomForm] = useState<RoomItem>({ ...activeRoom });
@@ -108,11 +94,8 @@ export function RoomTrackSetup({
       id: newId,
       name: "",
       code: "",
-      capacity: 100,
-      screen_count: 1,
-      room_type: "presentation",
+      room_type: roomTypes[0]?.code || "MAIN_HALL",
       room_coordinator: "",
-      location_notes: "",
       is_active: true,
     };
     setSelectedRoomId(newId);
@@ -250,7 +233,7 @@ export function RoomTrackSetup({
               ) : (
                 rooms.map((room) => {
                   const isSelected = room.id === selectedRoomId;
-                  const roomTypeObj = ROOM_TYPES.find((t) => t.value === room.room_type);
+                  const roomTypeObj = roomTypes.find((t) => (t.code === room.room_type || t.name === room.room_type));
                   return (
                     <div
                       key={room.id}
@@ -271,7 +254,7 @@ export function RoomTrackSetup({
                             {room.name || "Untitled Room"}
                           </h4>
                           <p className="text-[11px] text-[var(--text-secondary)] truncate">
-                            {roomTypeObj?.label || "Presentation Hall"} • Capacity: {room.capacity ?? 100}
+                            {roomTypeObj?.name || room.room_type || "Main Hall"} {room.code ? `• ${room.code}` : ""}
                           </p>
                           {room.room_coordinator && (
                             <p className="text-[10px] text-[var(--text-tertiary)] truncate">
@@ -324,98 +307,61 @@ export function RoomTrackSetup({
               </div>
             </div>
 
-            {/* Room Type & Capacity */}
+            {/* Room Code & Room Type */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="space-y-1">
                 <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
-                  Room Type
+                  Room Code
+                </label>
+                <div className="relative">
+                  <Tag className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                  <input
+                    value={roomForm.code || ""}
+                    onChange={(e) => setRoomForm({ ...roomForm, code: e.target.value.toUpperCase() })}
+                    placeholder="e.g. RM-01"
+                    className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 pr-3 text-xs font-mono font-bold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
+                  Room Type *
                 </label>
                 <select
-                  value={roomForm.room_type || "presentation"}
+                  value={roomForm.room_type || "MAIN_HALL"}
                   onChange={(e) => setRoomForm({ ...roomForm, room_type: e.target.value })}
                   className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none cursor-pointer"
                 >
-                  {ROOM_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
+                  {loadingTypes ? (
+                    <option value="MAIN_HALL">Loading room types...</option>
+                  ) : (
+                    roomTypes.map((t) => (
+                      <option key={t.id || t.code} value={t.code || t.name}>
+                        {t.name}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
-                  Max Capacity *
-                </label>
-                <div className="relative">
-                  <Users className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    value={roomForm.capacity ?? 100}
-                    onChange={(e) =>
-                      setRoomForm({ ...roomForm, capacity: parseInt(e.target.value) || 0 })
-                    }
-                    className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 pr-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                  />
-                </div>
-              </div>
             </div>
 
-            {/* Screens Count & Room Coordinator */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
-                  Screen Count *
-                </label>
-                <div className="relative">
-                  <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    value={roomForm.screen_count ?? 1}
-                    onChange={(e) =>
-                      setRoomForm({ ...roomForm, screen_count: parseInt(e.target.value) || 1 })
-                    }
-                    className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 pr-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
-                  Room Coordinator
-                </label>
-                <div className="relative">
-                  <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
-                  <input
-                    value={roomForm.room_coordinator || ""}
-                    onChange={(e) =>
-                      setRoomForm({ ...roomForm, room_coordinator: e.target.value })
-                    }
-                    placeholder="Onsite room coordinator / lead"
-                    className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 pr-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Location Notes */}
+            {/* Room Coordinator */}
             <div className="space-y-1">
               <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
-                Location Notes
+                Room Coordinator / Lead
               </label>
-              <textarea
-                rows={3}
-                value={roomForm.location_notes || ""}
-                onChange={(e) =>
-                  setRoomForm({ ...roomForm, location_notes: e.target.value })
-                }
-                placeholder="e.g. Level 2, North Wing, beside main auditorium"
-                className="w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--pri)] focus:outline-none resize-none"
-              />
+              <div className="relative">
+                <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                <input
+                  value={roomForm.room_coordinator || ""}
+                  onChange={(e) =>
+                    setRoomForm({ ...roomForm, room_coordinator: e.target.value })
+                  }
+                  placeholder="Onsite room coordinator / lead"
+                  className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 pr-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
+                />
+              </div>
             </div>
 
             {/* Actions */}

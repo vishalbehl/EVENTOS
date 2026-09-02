@@ -1,9 +1,11 @@
 import asyncio
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from loguru import logger
-from sqlalchemy import select, func, and_
+from typing import AsyncIterator
+from sqlalchemy import select, func, and_, tuple_
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 
@@ -15,6 +17,26 @@ from app.tasks.tenant_job_scope import (
     parse_required_organization_id,
     tenant_job_session,
 )
+from app.core.async_runner import run_async as stable_run_async
+from app.core.task_policy import is_retryable, policy_for
+
+_REPORTS_POLICY = policy_for("reports")
+
+
+def _retry_reports(task, exc: BaseException) -> None:
+    if not is_retryable(exc):
+        raise exc
+    attempt = int(getattr(task.request, "retries", 0) or 0)
+    if attempt < _REPORTS_POLICY.max_retries:
+        raise task.retry(
+            exc=exc,
+            countdown=min(
+                300,
+                _REPORTS_POLICY.retry_delay(attempt, apply_jitter=True),
+            ),
+            max_retries=_REPORTS_POLICY.max_retries,
+        )
+    raise exc
 
 def _run_async(coro):
     """Run an async coroutine from a sync Celery task."""
@@ -50,10 +72,12 @@ def _run_async(coro):
             raise exc_list[0]
         return res_list[0]
     else:
-        return asyncio.run(coro)
+        return stable_run_async(coro)
 
 
-async def get_task_db_session() -> AsyncSession:
+@asynccontextmanager
+async def task_db_session() -> AsyncIterator[AsyncSession]:
+    """Create and dispose a short-lived engine for this isolated task run."""
     task_engine = create_async_engine(
         settings.async_database_url,
         echo=settings.debug,
@@ -66,29 +90,43 @@ async def get_task_db_session() -> AsyncSession:
         autoflush=False,
         autocommit=False,
     )
-    return TaskSessionLocal()
+    try:
+        async with TaskSessionLocal() as session:
+            yield session
+    finally:
+        await task_engine.dispose()
 
 
-@celery_app.task(name="app.tasks.platform_commercial.update_exchange_rates")
-def update_exchange_rates() -> str:
+@celery_app.task(
+    name="app.tasks.platform_commercial.update_exchange_rates",
+    bind=True,
+    max_retries=_REPORTS_POLICY.max_retries,
+    soft_time_limit=_REPORTS_POLICY.soft_timeout_seconds,
+    time_limit=_REPORTS_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_REPORTS_POLICY.queue,
+)
+def update_exchange_rates(self) -> str:
     """Mock-sync/scrape exchange rates from USD to standard global currencies."""
     async def _update():
-        async with await get_task_db_session() as db:
+        async with task_db_session() as db:
             rates = [
                 {"from": "USD", "to": "EUR", "rate": 0.92},
                 {"from": "USD", "to": "GBP", "rate": 0.79},
                 {"from": "USD", "to": "INR", "rate": 83.50},
                 {"from": "USD", "to": "CAD", "rate": 1.36},
             ]
-            for r in rates:
-                # Upsert currency rate
-                stmt = select(CurrencyRate).where(
-                    and_(
-                        CurrencyRate.from_currency == r["from"],
-                        CurrencyRate.to_currency == r["to"]
-                    )
+            pairs = [(rate["from"], rate["to"]) for rate in rates]
+            existing_rows = list((await db.scalars(
+                select(CurrencyRate).where(
+                    tuple_(CurrencyRate.from_currency, CurrencyRate.to_currency).in_(pairs)
                 )
-                existing = (await db.execute(stmt)).scalar_one_or_none()
+            )).all())
+            existing_by_pair = {
+                (row.from_currency, row.to_currency): row for row in existing_rows
+            }
+            for r in rates:
+                existing = existing_by_pair.get((r["from"], r["to"]))
                 if existing:
                     existing.exchange_rate = r["rate"]
                     existing.updated_at = datetime.now(timezone.utc)
@@ -104,11 +142,22 @@ def update_exchange_rates() -> str:
             await db.commit()
             return f"Synchronized {len(rates)} exchange rates."
 
-    return _run_async(_update())
+    try:
+        return _run_async(_update())
+    except Exception as exc:
+        _retry_reports(self, exc)
 
 
-@celery_app.task(name="app.tasks.platform_commercial.calculate_forecasts")
-def calculate_forecasts(organization_id_str: str | None = None) -> str:
+@celery_app.task(
+    name="app.tasks.platform_commercial.calculate_forecasts",
+    bind=True,
+    max_retries=_REPORTS_POLICY.max_retries,
+    soft_time_limit=_REPORTS_POLICY.soft_timeout_seconds,
+    time_limit=_REPORTS_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_REPORTS_POLICY.queue,
+)
+def calculate_forecasts(self, organization_id_str: str | None = None) -> str:
     """Calculates/syncs forecast values for one organization."""
     org_id = parse_required_organization_id(organization_id_str)
 
@@ -147,6 +196,9 @@ def calculate_forecasts(organization_id_str: str | None = None) -> str:
             await db.commit()
             return f"Processed monthly revenue forecast for organization {org_id}."
 
-    return _run_async(_forecast())
+    try:
+        return _run_async(_forecast())
+    except Exception as exc:
+        _retry_reports(self, exc)
 
 

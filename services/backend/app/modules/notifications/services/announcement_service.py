@@ -25,7 +25,10 @@ async def list_active_entitled_announcements(
     """
     try:
         capabilities = await CapabilityService.resolve_event(
-            db, organization_id, event_id
+            db,
+            organization_id,
+            event_id,
+            include_usage=False,
         )
     except Exception:
         return []

@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -40,10 +39,10 @@ from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.venue.models.srr_checkin import SRRCheckin
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
-from app.redis import redis_client
-import json
 from app.modules.speakers.constants.speaker_types import UPLOAD_REQUIRED_CODES
 from app.core.cache_keys import TenantCacheKey
+from app.core.cache import cache_service
+from app.core.cache_policy import CacheTTL, ttl
 
 
 # ── Top-level snapshot ────────────────────────────────────────
@@ -64,14 +63,9 @@ async def build_analytics_snapshot(
     cache_key = TenantCacheKey.event(event_id, "analytics", "snapshot")
     
     if use_cache:
-        try:
-            # Short timeout to prevent hanging the whole request if Redis is slow
-            cached = await asyncio.wait_for(redis_client.get(cache_key), timeout=2.0)
-            if cached:
-                logger.debug(f"Analytics cache hit for event {event_id}")
-                return json.loads(cached)
-        except Exception as e:
-            logger.warning(f"Analytics cache read failed (type={type(e).__name__}): {e}")
+        cached = await cache_service.get_json(cache_key)
+        if cached is not None:
+            return cached
 
     logger.info(f"Building fresh analytics snapshot for event {event_id}")
 
@@ -110,13 +104,7 @@ async def build_analytics_snapshot(
     }
 
     if use_cache:
-        try:
-            await asyncio.wait_for(
-                redis_client.setex(cache_key, 10, json.dumps(snapshot)),
-                timeout=2.0
-            )
-        except Exception as e:
-            logger.warning(f"Analytics cache write failed (type={type(e).__name__}): {e}")
+        await cache_service.set_json(cache_key, snapshot, ttl(CacheTTL.DASHBOARD))
     
     return snapshot
 
@@ -321,7 +309,7 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
     all_sessions = set()
 
     ss_q = await db.execute(
-        select(SessionSpeaker.session_id, SessionSpeaker.id, SessionSpeaker.speaker_type)
+        select(SessionSpeaker.session_id, SessionSpeaker.id, SessionSpeaker.role)
         .join(Session, Session.id == SessionSpeaker.session_id)
         .where(Session.event_id == event_id)
     )
@@ -331,9 +319,9 @@ async def _get_session_coverage(db: AsyncSession, event_id: uuid.UUID) -> dict:
         session_slots.setdefault(row.session_id, []).append(row.id)
         all_sessions.add(row.session_id)
         
-        # New logic: only count session_speaker rows without files where speaker_type is NULL or in UPLOAD_REQUIRED_CODES
+        # Count session_speaker rows without files where role is NULL, Speaker, or in UPLOAD_REQUIRED_CODES
         if row.id not in has_file:
-            if row.speaker_type is None or row.speaker_type in UPLOAD_REQUIRED_CODES:
+            if row.role is None or row.role in UPLOAD_REQUIRED_CODES or row.role in ["Speaker", "KEY", "INV", "ORL", "Oral Presenter", "Keynote Speaker", "Invited Speaker"]:
                 pending_talks_count += 1
 
     complete = partial = missing = 0
@@ -488,12 +476,9 @@ async def get_event_email_analytics(db: AsyncSession, event_id: uuid.UUID, targe
     cache_key = TenantCacheKey.event(event_id, "analytics", "emails", target_type)
     
     if use_cache:
-        try:
-            cached = await asyncio.wait_for(redis_client.get(cache_key), timeout=2.0)
-            if cached:
-                return json.loads(cached)
-        except Exception as e:
-            logger.warning(f"Email analytics cache read failed (type={type(e).__name__}): {e}")
+        cached = await cache_service.get_json(cache_key)
+        if cached is not None:
+            return cached
 
     # Fetch all campaigns for this event and target type
     res = await db.execute(
@@ -553,13 +538,7 @@ async def get_event_email_analytics(db: AsyncSession, event_id: uuid.UUID, targe
     }
 
     if use_cache:
-        try:
-            await asyncio.wait_for(
-                redis_client.setex(cache_key, 10, json.dumps(analytics)),
-                timeout=2.0
-            )
-        except Exception as e:
-            logger.warning(f"Email analytics cache write failed (type={type(e).__name__}): {e}")
+        await cache_service.set_json(cache_key, analytics, ttl(CacheTTL.DASHBOARD))
 
     return analytics
 
@@ -633,52 +612,53 @@ async def get_room_readiness(db: AsyncSession, event_id: uuid.UUID) -> list[dict
     Returns list of rooms with session count, files expected, files ready.
     """
     rooms_q = await db.execute(
-        select(Room).where(Room.event_id == event_id, Room.is_active.is_(True))
+        select(Room.id, Room.name)
+        .where(Room.event_id == event_id, Room.is_active.is_(True))
     )
-    rooms = rooms_q.scalars().all()
+    rooms = rooms_q.all()
+    if not rooms:
+        return []
+
+    room_ids = [room.id for room in rooms]
+    session_counts_q = await db.execute(
+        select(Session.room_id, func.count(Session.id).label("count"))
+        .where(Session.event_id == event_id, Session.room_id.in_(room_ids))
+        .group_by(Session.room_id)
+    )
+    session_counts = {row.room_id: row.count for row in session_counts_q.all()}
+
+    slot_counts_q = await db.execute(
+        select(Session.room_id, func.count(SessionSpeaker.id).label("count"))
+        .select_from(SessionSpeaker)
+        .join(Session, Session.id == SessionSpeaker.session_id)
+        .where(Session.event_id == event_id, Session.room_id.in_(room_ids))
+        .group_by(Session.room_id)
+    )
+    slot_counts = {row.room_id: row.count for row in slot_counts_q.all()}
+
+    ready_counts_q = await db.execute(
+        select(Session.room_id, func.count(PresentationFile.id).label("count"))
+        .select_from(PresentationFile)
+        .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
+        .join(Session, Session.id == SessionSpeaker.session_id)
+        .where(
+            Session.event_id == event_id,
+            Session.room_id.in_(room_ids),
+            PresentationFile.is_current_version.is_(True),
+            PresentationFile.upload_status.in_(["valid", "approved", "pending_validation", "processing", "uploaded"]),
+        )
+        .group_by(Session.room_id)
+    )
+    ready_counts = {row.room_id: row.count for row in ready_counts_q.all()}
 
     result = []
     for room in rooms:
-        # Sessions in this room
-        sessions_q = await db.execute(
-            select(func.count()).where(
-                Session.event_id == event_id,
-                Session.room_id == room.id,
-            )
-        )
-        session_count = sessions_q.scalar() or 0
-
-        # Speaker slots in this room's sessions
-        slots_q = await db.execute(
-            select(func.count())
-            .select_from(SessionSpeaker)
-            .join(Session, Session.id == SessionSpeaker.session_id)
-            .where(
-                Session.event_id == event_id,
-                Session.room_id == room.id,
-            )
-        )
-        slots = slots_q.scalar() or 0
-
-        # Files ready (valid/approved, current version) for this room
-        files_q = await db.execute(
-            select(func.count())
-            .select_from(PresentationFile)
-            .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
-            .join(Session, Session.id == SessionSpeaker.session_id)
-            .where(
-                Session.event_id == event_id,
-                Session.room_id == room.id,
-                PresentationFile.is_current_version.is_(True),
-                PresentationFile.upload_status.in_(["valid", "approved", "pending_validation", "processing", "uploaded"]),
-            )
-        )
-        files_ready = files_q.scalar() or 0
-
+        slots = slot_counts.get(room.id, 0)
+        files_ready = ready_counts.get(room.id, 0)
         result.append({
             "room_id": str(room.id),
             "room_name": room.name,
-            "session_count": session_count,
+            "session_count": session_counts.get(room.id, 0),
             "speaker_slots": slots,
             "files_ready": files_ready,
             "readiness_pct": round(files_ready / slots * 100, 1) if slots > 0 else 0.0,
@@ -764,38 +744,50 @@ async def get_per_room_breakdown(db: AsyncSession, event_id: uuid.UUID) -> list[
     from sqlalchemy import func, case, select
 
     rooms_q = await db.execute(
-        select(Room).where(Room.event_id == event_id, Room.is_active.is_(True))
+        select(Room.id, Room.name)
+        .where(Room.event_id == event_id, Room.is_active.is_(True))
     )
-    rooms = rooms_q.scalars().all()
+    rooms = rooms_q.all()
+    if not rooms:
+        return []
+
+    room_ids = [room.id for room in rooms]
+    slot_counts_q = await db.execute(
+        select(Session.room_id, func.count(SessionSpeaker.id).label("count"))
+        .select_from(SessionSpeaker)
+        .join(Session, Session.id == SessionSpeaker.session_id)
+        .where(Session.event_id == event_id, Session.room_id.in_(room_ids))
+        .group_by(Session.room_id)
+    )
+    slot_counts = {row.room_id: row.count for row in slot_counts_q.all()}
+
+    session_counts_q = await db.execute(
+        select(Session.room_id, func.count(Session.id).label("count"))
+        .where(Session.event_id == event_id, Session.room_id.in_(room_ids))
+        .group_by(Session.room_id)
+    )
+    session_counts = {row.room_id: row.count for row in session_counts_q.all()}
+
+    files_q = await db.execute(
+        select(Session.room_id, PresentationFile.upload_status, func.count(PresentationFile.id).label("cnt"))
+        .select_from(PresentationFile)
+        .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
+        .join(Session, Session.id == SessionSpeaker.session_id)
+        .where(
+            Session.event_id == event_id,
+            Session.room_id.in_(room_ids),
+            PresentationFile.is_current_version.is_(True),
+        )
+        .group_by(Session.room_id, PresentationFile.upload_status)
+    )
+    status_counts: dict[uuid.UUID, dict[str | None, int]] = {}
+    for row in files_q.all():
+        status_counts.setdefault(row.room_id, {})[row.upload_status] = row.cnt
 
     results = []
     for room in rooms:
-        # Slots
-        slots_q = await db.execute(
-            select(func.count())
-            .select_from(SessionSpeaker)
-            .join(Session, Session.id == SessionSpeaker.session_id)
-            .where(Session.event_id == event_id, Session.room_id == room.id)
-        )
-        slots = slots_q.scalar() or 0
-
-        # File status counts
-        files_q = await db.execute(
-            select(
-                PresentationFile.upload_status,
-                func.count(PresentationFile.id).label("cnt")
-            )
-            .select_from(PresentationFile)
-            .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
-            .join(Session, Session.id == SessionSpeaker.session_id)
-            .where(
-                Session.event_id == event_id,
-                Session.room_id == room.id,
-                PresentationFile.is_current_version.is_(True),
-            )
-            .group_by(PresentationFile.upload_status)
-        )
-        by_status = {row.upload_status: row.cnt for row in files_q.all()}
+        slots = slot_counts.get(room.id, 0)
+        by_status = status_counts.get(room.id, {})
 
         uploaded_statuses = {"uploaded", "processing", "pending_validation", "valid", "approved", "rejected"}
         validated_statuses = {"valid", "approved", "pending_validation"}
@@ -804,16 +796,10 @@ async def get_per_room_breakdown(db: AsyncSession, event_id: uuid.UUID) -> list[
         validated = sum(by_status.get(s, 0) for s in validated_statuses)
         approved = by_status.get("approved", 0)
 
-        # Session count for this room
-        session_count_q = await db.execute(
-            select(func.count()).where(Session.event_id == event_id, Session.room_id == room.id)
-        )
-        session_count = session_count_q.scalar() or 0
-
         results.append({
             "room_id": str(room.id),
             "room_name": room.name,
-            "session_count": session_count,
+            "session_count": session_counts.get(room.id, 0),
             "speaker_slots": slots,
             "uploaded_count": uploaded,
             "validated_count": validated,
@@ -1179,9 +1165,20 @@ async def build_main_event_dashboard_data(
         maintenance=device_maintenance
     )
 
-    # 5. Role-Based Revenue Calculation
+    # 5. Role-Based & Transaction Revenue Calculation
     total_revenue = 0.0
     if current_user.role in ["super_admin", "admin", "organiser"]:
+        from app.modules.registration.models.payment_transaction import PaymentTransaction
+
+        # Sum completed gateway payment transactions
+        tx_q = await db.execute(
+            select(func.coalesce(func.sum(PaymentTransaction.amount), 0.0)).where(
+                PaymentTransaction.event_id == event_id,
+                PaymentTransaction.status.in_(["completed", "captured", "success", "paid"])
+            )
+        )
+        tx_revenue = float(tx_q.scalar() or 0.0)
+
         # Fetch pricing matrix
         ticket_types_q = await db.execute(
             select(TicketType).where(TicketType.event_id == event_id)
@@ -1206,8 +1203,13 @@ async def build_main_event_dashboard_data(
         )
         paid_participants = paid_parts_q.scalars().all()
 
+        calculated_participant_revenue = 0.0
         for p in paid_participants:
+            # Free / Complimentary roles are zero cost
             p_role = p.role.lower().strip() if p.role else "delegate"
+            if "free" in p_role or "complimentary" in p_role or getattr(p, "is_free", False):
+                continue
+
             tier_name = ""
             if p.custom_fields:
                 for key in ["tier_name", "tier", "ticket_tier", "ticket_type"]:
@@ -1226,12 +1228,13 @@ async def build_main_event_dashboard_data(
                 price = pricing_map.get((p_role, tier_name))
             if price is None:
                 price = default_role_pricing.get(p_role, 0.0)
-            total_revenue += price
+            calculated_participant_revenue += (price or 0.0)
+
+        total_revenue = max(tx_revenue, calculated_participant_revenue)
 
     # 6. Event Readiness Percentage
     coverage = await _get_session_coverage(db, event_id)
     event_readiness_pct = coverage.get("coverage_pct", 0.0)
-
     # 7. Analytics Widgets Data
     # A. Registration growth (cumulative registrations over the last 14 days)
     reg_growth_q = await db.execute(
@@ -1359,7 +1362,7 @@ async def build_main_event_dashboard_data(
             PresentationFile,
             Speaker.first_name,
             Speaker.last_name,
-            Session.name.label("session_name")
+            Session.title.label("session_name")
         )
         .join(Speaker, Speaker.id == PresentationFile.speaker_id)
         .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)
@@ -1391,7 +1394,7 @@ async def build_main_event_dashboard_data(
         select(
             CheckIn,
             Participant.name,
-            Session.name.label("session_name")
+            Session.title.label("session_name")
         )
         .join(Participant, Participant.id == CheckIn.participant_id)
         .join(Session, Session.id == CheckIn.session_id)
@@ -1426,7 +1429,7 @@ async def build_main_event_dashboard_data(
             PresentationFile,
             Speaker.first_name,
             Speaker.last_name,
-            Session.name.label("session_name")
+            Session.title.label("session_name")
         )
         .join(Speaker, Speaker.id == PresentationFile.speaker_id)
         .join(SessionSpeaker, SessionSpeaker.id == PresentationFile.session_speaker_id)

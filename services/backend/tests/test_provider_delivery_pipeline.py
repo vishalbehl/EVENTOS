@@ -207,6 +207,8 @@ async def test_sms_delivery_is_tenant_scoped_idempotent_reserved_and_metered(
     assert all(row.recipient_ciphertext.startswith("v1:") for row in stored)
     assert all("+919876" not in row.recipient_ciphertext for row in stored)
     assert {row.status for row in stored} == {"ACCEPTED", "FAILED"}
+    assert all(row.processing_owner is None for row in stored)
+    assert all(row.processing_started_at is None for row in stored)
 
     usage = await db.scalar(
         select(UsageLedgerEntry).where(

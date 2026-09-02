@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, Boolean
+from sqlalchemy import DateTime, ForeignKey, String, Text, Boolean, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -79,6 +79,25 @@ class EmailLog(Base):
     )
     participant: Mapped[Optional["Participant"]] = relationship(
         "Participant"
+    )
+
+    __table_args__ = (
+        # System-triggered emails have a NULL campaign_id and are intentionally
+        # outside campaign-recipient idempotency.
+        Index(
+            "uq_email_logs_campaign_recipient",
+            "campaign_id",
+            "to_email",
+            unique=True,
+            postgresql_where=text("campaign_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_email_logs_event_sent_id",
+            "event_id",
+            "sent_at",
+            "id",
+        ),
+        {"schema": "communications"},
     )
 
 

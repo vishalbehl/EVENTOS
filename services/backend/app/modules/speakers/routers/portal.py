@@ -1,6 +1,7 @@
 from __future__ import annotations
 from loguru import logger
 
+import asyncio
 import uuid
 import hashlib
 from datetime import datetime, timezone
@@ -36,6 +37,9 @@ from app.modules.billing.services.usage_reservation_service import UsageReservat
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.platform.models.organization_console import UsageReservation
 from app.core.tenant_context import TenantContextGuard
+from app.core.upload_service import UploadService
+from app.modules.files.models.file import DurableUpload
+from app.modules.speakers.application.queries import SpeakerQueryService
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -180,7 +184,7 @@ async def get_speaker_portal_config(
     Get public branding and configuration for the speaker portal.
     Speaker-specific branding (speaker_settings.branding) overrides global branding_settings.
     """
-    event = await db.get(Event, event_id)
+    event = await SpeakerQueryService(db).get_portal_config_event(event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -237,7 +241,7 @@ async def get_speaker_portal_config(
     )
 
 
-def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
+async def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
     session = ss.session
     current_file = ss.current_file
     upload_status = current_file.upload_status if current_file else "pending"
@@ -250,16 +254,18 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
     if current_file:
         filename = current_file.original_filename
         try:
-            download_url = upload_service.create_presigned_download(
-                bucket=settings.S3_BUCKET_PRESENTATIONS,
-                storage_path=current_file.storage_path,
-                filename=current_file.original_filename
-            )
-            preview_url = upload_service.create_presigned_download(
+            download_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
                 bucket=settings.S3_BUCKET_PRESENTATIONS,
                 storage_path=current_file.storage_path,
                 filename=current_file.original_filename,
-                inline=True
+            )
+            preview_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
+                bucket=settings.S3_BUCKET_PRESENTATIONS,
+                storage_path=current_file.storage_path,
+                filename=current_file.original_filename,
+                inline=True,
             )
         except Exception as e:
             logger.error(f"Failed to generate presigned URLs for talk file {current_file.id}: {e}")
@@ -273,9 +279,10 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
 
         if thumb_path:
             try:
-                thumbnail_url = upload_service.create_presigned_download(
+                thumbnail_url = await asyncio.to_thread(
+                    upload_service.create_presigned_download,
                     bucket=settings.S3_BUCKET_THUMBNAILS,
-                    storage_path=thumb_path
+                    storage_path=thumb_path,
                 )
             except Exception as e:
                 logger.error(f"Failed to generate presigned download URL for thumbnail: {e}")
@@ -325,31 +332,34 @@ def _build_portal_talk(ss: SessionSpeaker, event: Event) -> PortalTalk:
     )
 
 
-def _build_portal_poster(p: Poster, event: Event) -> PortalPoster:
+async def _build_portal_poster(p: Poster, event: Event) -> PortalPoster:
     download_url = None
     preview_url = None
     thumbnail_url = None
     if p.storage_path:
         try:
-            download_url = upload_service.create_presigned_download(
-                bucket=settings.S3_BUCKET_POSTERS,
-                storage_path=p.storage_path,
-                filename=p.original_filename
-            )
-            preview_url = upload_service.create_presigned_download(
+            download_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
                 bucket=settings.S3_BUCKET_POSTERS,
                 storage_path=p.storage_path,
                 filename=p.original_filename,
-                inline=True
+            )
+            preview_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
+                bucket=settings.S3_BUCKET_POSTERS,
+                storage_path=p.storage_path,
+                filename=p.original_filename,
+                inline=True,
             )
         except Exception as e:
             logger.error(f"Failed to generate presigned URLs for poster file {p.id}: {e}")
 
     if p.thumbnail_url:
         try:
-            thumbnail_url = upload_service.create_presigned_download(
+            thumbnail_url = await asyncio.to_thread(
+                upload_service.create_presigned_download,
                 bucket=settings.S3_BUCKET_THUMBNAILS,
-                storage_path=p.thumbnail_url
+                storage_path=p.thumbnail_url,
             )
         except Exception as e:
             logger.error(f"Failed to generate presigned download URL for poster thumbnail {p.id}: {e}")
@@ -434,11 +444,11 @@ async def speaker_portal_auth(
         
     talks = []
     for ss in speaker.session_speakers:
-        talks.append(_build_portal_talk(ss, event))
+        talks.append(await _build_portal_talk(ss, event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(_build_portal_poster(p, event))
+        posters.append(await _build_portal_poster(p, event))
 
     # Fetch active announcements only when the event owns the capability.
     from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
@@ -916,7 +926,13 @@ async def portal_request_upload_url(
     if replay_file is not None:
         if replay_file.speaker_id != speaker.id or replay_file.event_id != event.id:
             raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        upload_info = upload_service.create_presigned_upload(bucket=settings.S3_BUCKET_PRESENTATIONS, storage_path=replay_file.storage_path, content_type=replay_file.mime_type, max_size_bytes=replay_file.file_size_bytes)
+        upload_info = await asyncio.to_thread(
+            upload_service.create_presigned_upload,
+            bucket=settings.S3_BUCKET_PRESENTATIONS,
+            storage_path=replay_file.storage_path,
+            content_type=replay_file.mime_type,
+            max_size_bytes=replay_file.file_size_bytes,
+        )
         return PresignedUploadResponse(upload_url=upload_info["url"], file_id=replay_file.id, expires_in=settings.S3_PRESIGNED_EXPIRY_SECONDS, max_file_size_bytes=max_bytes)
 
     # Determine version number and handle renaming
@@ -1008,6 +1024,19 @@ async def portal_request_upload_url(
         recording_rights=payload.recording_rights,
     )
     db.add(pf)
+    durable_upload = await UploadService.create(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        created_by=speaker.id,
+        object_key=storage_path,
+        original_filename=payload.filename,
+        mime_type=payload.mime_type,
+        size_bytes=payload.file_size_bytes,
+    )
+    await UploadService.transition(
+        db, durable_upload.id, "uploading", organization_id=event.organization_id
+    )
     
     # Log upload request
     from app.modules.venue.models.venue_activity_log import VenueActivityLog
@@ -1028,7 +1057,8 @@ async def portal_request_upload_url(
     await db.commit()
     await db.refresh(pf)
 
-    upload_info = upload_service.create_presigned_upload(
+    upload_info = await asyncio.to_thread(
+        upload_service.create_presigned_upload,
         bucket=settings.S3_BUCKET_PRESENTATIONS,
         storage_path=storage_path,
         content_type=payload.mime_type,
@@ -1085,6 +1115,20 @@ async def portal_confirm_upload(
     if not pf:
         raise HTTPException(status_code=404, detail="File not found.")
 
+    durable_upload = await db.scalar(
+        select(DurableUpload).where(
+            DurableUpload.organization_id == speaker.event.organization_id,
+            DurableUpload.object_key == pf.storage_path,
+        )
+    )
+    if durable_upload is not None and durable_upload.status == "uploading":
+        await UploadService.transition(
+            db, durable_upload.id, "uploaded", organization_id=speaker.event.organization_id
+        )
+        await UploadService.transition(
+            db, durable_upload.id, "verifying", organization_id=speaker.event.organization_id
+        )
+
     # Mark as current version for this slot
     prev_result = await db.execute(
         select(PresentationFile).where(
@@ -1131,6 +1175,13 @@ async def portal_confirm_upload(
     # Trigger background validation
     from app.modules.presentations.tasks.file_tasks import validate_presentation
     validate_presentation.delay(str(pf.id), str(speaker.event.organization_id))
+
+    if durable_upload is not None:
+        from app.tasks.upload_jobs import process_durable_upload
+        process_durable_upload.delay(
+            str(durable_upload.id),
+            str(speaker.event.organization_id),
+        )
     
     await broadcast_file_event(pf.event_id, EventType.FILE_UPLOADED, {"file_id": str(pf.id)})
     
@@ -1211,7 +1262,8 @@ async def portal_poster_upload_url(
                 status_code=409,
                 detail={"code": "IDEMPOTENCY_ALREADY_CONSUMED"},
             )
-        upload_info = upload_service.create_presigned_upload(
+        upload_info = await asyncio.to_thread(
+            upload_service.create_presigned_upload,
             bucket=settings.S3_BUCKET_POSTERS,
             storage_path=metadata["storage_path"],
             content_type=payload.mime_type or "application/pdf",
@@ -1314,7 +1366,8 @@ async def portal_poster_upload_url(
     
     await db.commit()
 
-    upload_info = upload_service.create_presigned_upload(
+    upload_info = await asyncio.to_thread(
+        upload_service.create_presigned_upload,
         bucket=settings.S3_BUCKET_POSTERS,
         storage_path=storage_path,
         content_type=payload.mime_type or "application/pdf",
@@ -1893,11 +1946,12 @@ async def upload_profile_template(
         photo_path = f"{speaker.event.organization_id}/{speaker.event_id}/speakers/{speaker.id}/profile_photo.png"
         bucket = settings.S3_BUCKET_ASSETS
         try:
-            upload_service.upload_bytes(
+            await asyncio.to_thread(
+                upload_service.upload_bytes,
                 bucket=bucket,
                 storage_path=photo_path,
                 data=photo_bytes,
-                content_type="image/png"
+                content_type="image/png",
             )
             if settings.STORAGE_MODE == "local":
                 speaker.photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
@@ -1921,11 +1975,11 @@ async def upload_profile_template(
     # Reconstruct the auth response structure
     talks = []
     for ss in speaker.session_speakers:
-        talks.append(_build_portal_talk(ss, speaker.event))
+        talks.append(await _build_portal_talk(ss, speaker.event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(_build_portal_poster(p, speaker.event))
+        posters.append(await _build_portal_poster(p, speaker.event))
 
     # Fetch active announcements only when the event owns the capability.
     from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
@@ -2051,11 +2105,12 @@ async def upload_profile_photo(
     bucket = settings.S3_BUCKET_ASSETS
     try:
         async with TenantContextGuard.scoped(db, speaker.event.organization_id):
-            upload_service.upload_bytes(
+            await asyncio.to_thread(
+                upload_service.upload_bytes,
                 bucket=bucket,
                 storage_path=photo_path,
                 data=contents,
-                content_type=file.content_type or "image/png"
+                content_type=file.content_type or "image/png",
             )
             if settings.STORAGE_MODE == "local":
                 photo_url = f"{settings.API_BASE_URL}{settings.api_v1_prefix}/storage/{bucket}/{photo_path}"
@@ -2145,11 +2200,11 @@ async def update_speaker_profile(
     # Reconstruct the auth response structure
     talks = []
     for ss in speaker.session_speakers:
-        talks.append(_build_portal_talk(ss, speaker.event))
+        talks.append(await _build_portal_talk(ss, speaker.event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(_build_portal_poster(p, speaker.event))
+        posters.append(await _build_portal_poster(p, speaker.event))
 
     from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
     active_anns = await list_active_entitled_announcements(
@@ -2266,7 +2321,7 @@ async def portal_save_talk_external_link(
     ss.notes = body.url.strip()
     await db.commit()
     await db.refresh(ss)
-    return _build_portal_talk(ss, speaker.event)
+    return await _build_portal_talk(ss, speaker.event)
 
 
 @router.get("/speakers/me", response_model=SpeakerPortalAuthResponse)
@@ -2327,11 +2382,11 @@ async def get_current_speaker_profile(
 
     talks = []
     for ss in speaker.session_speakers:
-        talks.append(_build_portal_talk(ss, speaker.event))
+        talks.append(await _build_portal_talk(ss, speaker.event))
 
     posters = []
     for p in speaker.posters:
-        posters.append(_build_portal_poster(p, speaker.event))
+        posters.append(await _build_portal_poster(p, speaker.event))
 
     from app.modules.notifications.services.announcement_service import list_active_entitled_announcements
     active_anns = await list_active_entitled_announcements(

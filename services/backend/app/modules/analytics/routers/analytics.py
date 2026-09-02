@@ -1,6 +1,7 @@
 # backend/app/routers/analytics.py
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -12,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.tenant_context import TenantContextGuard
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
-from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.identity.models.user import User
 from app.modules.presentations.services.upload_service import create_presigned_download
@@ -33,6 +33,18 @@ from app.modules.analytics.services.analytics_service import (
 from app.worker import celery_app
 from app.core.dependencies.feature_gate import enforce_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.analytics.application.queries import (
+    EventRegistrationSummaryProjection,
+    EventRegistrationSummaryQueryService,
+    EventAttendanceSummaryProjection,
+    EventAttendanceSummaryQueryService,
+    EventPaymentSummaryProjection,
+    EventPaymentSummaryQueryService,
+    EventSpeakerSummaryProjection,
+    EventSpeakerSummaryQueryService,
+)
+from app.modules.analytics.application.commands import AnalyticsExportCommandService
+from app.modules.analytics.application.queries import AnalyticsExportQueryService
 
 router = APIRouter(prefix="/events/{event_id}/analytics", tags=["analytics"])
 global_router = APIRouter(prefix="/analytics", tags=["global_analytics"])
@@ -98,6 +110,95 @@ async def dashboard(
         ],
         room_heatmap=snapshot.get("room_heatmap", [])
     )
+
+
+@router.get("/registration-summary", response_model=EventRegistrationSummaryProjection)
+async def registration_summary_projection(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EventRegistrationSummaryProjection:
+    """Read the maintained registration projection without rebuilding it on demand."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.analytics.view",
+        user_id=current_user.id,
+    )
+    summary = await EventRegistrationSummaryQueryService(db).get_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ANALYTICS_PROJECTION_UNAVAILABLE", "message": "The event registration summary is not available yet."},
+        )
+    return summary
+
+
+@router.get("/attendance-summary", response_model=EventAttendanceSummaryProjection)
+async def attendance_summary_projection(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EventAttendanceSummaryProjection:
+    """Read the maintained attendance projection without rebuilding on demand."""
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id
+    )
+    summary = await EventAttendanceSummaryQueryService(db).get_for_event(
+        organization_id=event.organization_id, event_id=event.id
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ANALYTICS_PROJECTION_UNAVAILABLE", "message": "The event attendance summary is not available yet."},
+        )
+    return summary
+
+
+@router.get("/payment-summary", response_model=EventPaymentSummaryProjection)
+async def payment_summary_projection(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EventPaymentSummaryProjection:
+    """Read the maintained payment projection without rebuilding on demand."""
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id
+    )
+    summary = await EventPaymentSummaryQueryService(db).get_for_event(
+        organization_id=event.organization_id, event_id=event.id
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ANALYTICS_PROJECTION_UNAVAILABLE", "message": "The event payment summary is not available yet."},
+        )
+    return summary
+
+
+@router.get("/speaker-summary", response_model=EventSpeakerSummaryProjection)
+async def speaker_summary_projection(
+    event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EventSpeakerSummaryProjection:
+    """Read the maintained speaker projection without rebuilding it on demand."""
+    await enforce_event_operation(
+        db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id
+    )
+    summary = await EventSpeakerSummaryQueryService(db).get_for_event(
+        organization_id=event.organization_id, event_id=event.id
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ANALYTICS_PROJECTION_UNAVAILABLE", "message": "The event speaker summary is not available yet."},
+        )
+    return summary
 
 
 @router.get("/funnel", response_model=UploadFunnelStats)
@@ -244,67 +345,13 @@ async def request_analytics_export(
         "exports.create",
         user_id=current_user.id,
     )
-    reservation = await UsageReservationService.reserve(
+    return await AnalyticsExportCommandService.request(
         db,
-        organization_id=event.organization_id,
-        event_id=event.id,
-        limit_key="max_exports_per_event",
-        quantity=1,
-        unit="export",
-        idempotency_key=f"analytics-export:{idempotency_key}",
-        metadata={"format": format, "domain": "analytics"},
-    )
-    await TenantContextGuard.apply(db, event.organization_id)
-    export = DataExport(
-        organization_id=event.organization_id,
-        event_id=event.id,
-        requested_by=current_user.id,
-        status="QUEUED",
-        export_type="event_summary",
+        event=event,
+        actor=current_user,
+        idempotency_key=idempotency_key,
         file_format=format,
-        request_metadata={"source": "analytics", "event_name": event.name},
     )
-    db.add(export)
-    await db.flush()
-    await AuditService.write_log_sync(
-        AuditContext(
-            action_type="EXPORT_REQUESTED",
-            resource_type="data_export",
-            resource_id=export.id,
-            actor_user_id=current_user.id,
-            organization_id=event.organization_id,
-            actor_role=getattr(current_user, "role", None),
-            new_state={
-                "event_id": str(event.id),
-                "export_type": export.export_type,
-                "file_format": export.file_format,
-                "status": export.status,
-            },
-        ),
-        db,
-    )
-    await UsageReservationService.consume(
-        db,
-        reservation.id,
-        source="organizer_portal.analytics.export",
-        actor_user_id=current_user.id,
-    )
-    await db.commit()
-    celery_app.send_task(
-        "workers.tasks.report_tasks.generate_event_summary_report",
-        kwargs={
-            "event_id": str(event.id),
-            "organization_id": str(event.organization_id),
-            "requested_by_user_id": str(current_user.id),
-            "export_id": str(export.id),
-        },
-    )
-    return {
-        "export_id": str(export.id),
-        "status": export.status,
-        "event_id": str(event.id),
-        "format": export.file_format,
-    }
 
 
 @router.get("/exports/{export_id}")
@@ -318,14 +365,11 @@ async def get_analytics_export(
         db, event.organization_id, event.id, "exports.create", user_id=current_user.id
     )
     await TenantContextGuard.apply(db, event.organization_id)
-    result = await db.execute(
-        select(DataExport).where(
-            DataExport.id == export_id,
-            DataExport.organization_id == event.organization_id,
-            DataExport.event_id == event.id,
-        )
+    export = await AnalyticsExportQueryService(db).get_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        export_id=export_id,
     )
-    export = result.scalar_one_or_none()
     if export is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found.")
     return {
@@ -352,14 +396,11 @@ async def download_analytics_export(
         db, event.organization_id, event.id, "exports.create", user_id=current_user.id
     )
     await TenantContextGuard.apply(db, event.organization_id)
-    result = await db.execute(
-        select(DataExport).where(
-            DataExport.id == export_id,
-            DataExport.organization_id == event.organization_id,
-            DataExport.event_id == event.id,
-        )
+    export = await AnalyticsExportQueryService(db).get_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        export_id=export_id,
     )
-    export = result.scalar_one_or_none()
     if export is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found.")
     if export.status != "COMPLETED" or not export.storage_key:
@@ -372,27 +413,24 @@ async def download_analytics_export(
         raise HTTPException(status_code=status.HTTP_410_GONE, detail={"code": "EXPORT_EXPIRED"})
 
     filename = f"{event.name.replace(' ', '_')[:40]}_analytics.{export.file_format}"
-    download_url = create_presigned_download(
+    download_url = await asyncio.to_thread(
+        create_presigned_download,
         bucket=settings.S3_BUCKET_EXPORTS,
         storage_path=export.storage_key,
         filename=filename,
         expiry_seconds=min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),
     )
-    export.downloaded_at = now
-    await AuditService.write_log_sync(
-        AuditContext(
-            action_type="EXPORT_DOWNLOADED",
-            resource_type="data_export",
-            resource_id=export.id,
-            actor_user_id=current_user.id,
-            organization_id=event.organization_id,
-            actor_role=getattr(current_user, "role", None),
-            old_state={"status": export.status},
-            new_state={"downloaded_at": now.isoformat()},
-        ),
-        db,
-    )
-    await db.commit()
+    await AuditService.write_log(AuditContext(
+        action_type="EXPORT_DOWNLOADED",
+        resource_type="data_export",
+        resource_id=export.id,
+        actor_user_id=current_user.id,
+        organization_id=event.organization_id,
+        actor_role=getattr(current_user, "role", None),
+        old_state={"status": export.status},
+        new_state={"downloaded_at": now.isoformat()},
+        is_sensitive=True,
+    ))
     return {
         "download_url": download_url,
         "expires_in": min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),

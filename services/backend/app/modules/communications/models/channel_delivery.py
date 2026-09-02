@@ -139,6 +139,12 @@ class CommunicationDelivery(Base):
     error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # A short lease prevents two workers from delivering the same recipient at
+    # the same time while still allowing a crashed worker's claim to recover.
+    processing_owner: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )

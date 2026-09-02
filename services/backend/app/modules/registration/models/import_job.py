@@ -26,6 +26,7 @@ class ImportJob(Base):
         uploaded → validating → validated → importing → completed | failed
     """
     __tablename__ = "import_jobs"
+    __table_args__ = {"schema": "registration"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -45,6 +46,13 @@ class ImportJob(Base):
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     # Path to the stored Excel file in S3/R2
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    durable_upload_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("content.durable_uploads.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
 
     # schedule | eposter
     job_type: Mapped[str] = mapped_column(

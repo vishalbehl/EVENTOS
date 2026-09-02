@@ -24,6 +24,19 @@ from app.modules.agenda.services.conflict_service import ConflictService
 
 class AgendaService:
     @staticmethod
+    async def get_default_agenda(
+        db: AsyncSession, event: Event
+    ) -> Optional[Agenda]:
+        """Read the event agenda without creating or committing anything."""
+        result = await db.execute(
+            select(Agenda)
+            .where(Agenda.event_id == event.id)
+            .order_by(Agenda.created_at)
+            .limit(1)
+        )
+        return result.scalars().first()
+
+    @staticmethod
     async def get_or_create_default_agenda(
         db: AsyncSession, event: Event
     ) -> Agenda:
@@ -40,8 +53,8 @@ class AgendaService:
                 timezone=event.timezone or "UTC"
             )
             db.add(agenda)
-            await db.commit()
-            await db.refresh(agenda)
+            # The application command owns the transaction boundary.
+            await db.flush()
         return agenda
 
     @staticmethod

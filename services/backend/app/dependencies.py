@@ -202,7 +202,7 @@ async def get_token_data(
         if not impersonation_session_id:
             raise _unauthorized
         try:
-            from app.redis import redis_client
+            from app.redis import coordination_client as redis_client
             active = await redis_client.get(f"impersonation:session:{impersonation_session_id}")
         except Exception as exc:
             logger.error(f"Impersonation session validation unavailable: {type(exc).__name__}")
@@ -506,29 +506,22 @@ async def get_current_event(
         @router.get("/events/{event_id}/sessions")
         async def list_sessions(event: CurrentEvent): ...
     """
-    from loguru import logger
-    logger.info(f"CurrentEvent: fetching event {event_id} for user {user.id} ({user.role})")
-    
     stmt = select(Event).where(Event.id == event_id, Event.deleted_at.is_(None))
     if user.role in ("super_admin", "system_admin"):
-        logger.info(f"CurrentEvent: Skipping tenant filter for {user.role}")
         stmt = stmt.execution_options(skip_tenant_filter=True)
         
     result = await db.execute(stmt)
     event = result.scalar_one_or_none()
 
     if event is None:
-        logger.warning(f"CurrentEvent: Event {event_id} not found in DB.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Event {event_id} not found.",
         )
 
-    logger.info(f"DEBUG: CurrentEvent user.role = {user.role}, user.org = {user.organization_id}, event.org = {event.organization_id}")
     # Apply restricted-workspace assignment checks after tenant ownership.
     if user.role not in ("super_admin", "system_admin"):
         if event.organization_id != user.organization_id:
-            print("DEBUG: CurrentEvent raising 404 because orgs do not match")
             # Return 404 not 403 — don't leak existence of other orgs' events
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -542,8 +535,8 @@ async def get_current_event(
             from app.modules.agenda.models import Session
             from sqlalchemy import and_, or_
             # Check if assigned to the event itself, OR any room/session within this event
-            assignment_check = await db.execute(
-                select(UserAccessNode).where(
+            assignment_id = await db.scalar(
+                select(UserAccessNode.id).where(
                     UserAccessNode.user_id == user.id,
                     or_(
                         and_(UserAccessNode.node_id == event_id, UserAccessNode.node_type == 'EVENT'),
@@ -556,18 +549,18 @@ async def get_current_event(
                             UserAccessNode.node_id.in_(select(Session.id).where(Session.event_id == event_id))
                         )
                     )
-                )
+                ).limit(1)
             )
-            if not assignment_check.scalars().first():
+            if not assignment_id:
                 # Also check UserEventAssignment (legacy table)
                 from app.modules.rbac.models.user_assignment import UserEventAssignment
-                legacy_check = await db.execute(
-                    select(UserEventAssignment).where(
+                legacy_id = await db.scalar(
+                    select(UserEventAssignment.id).where(
                         UserEventAssignment.user_id == user.id,
                         UserEventAssignment.event_id == event_id
-                    )
+                    ).limit(1)
                 )
-                if not legacy_check.scalars().first():
+                if not legacy_id:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail="You are not assigned to this event or any of its rooms/sessions."

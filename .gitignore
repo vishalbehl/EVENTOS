@@ -14,6 +14,11 @@ __pycache__/
 *.sqlite3
 *.docx
 .env
+.env.staging
+.env.staging.test
+D:/conf-platform/minio/
+D:/conf-platform/backups/
+infrastructure/caddy/caddy-local-root.crt
 .DS_Store
 Thumbs.db
 scripts/
@@ -23,6 +28,8 @@ services/backend/scripts/*
 !services/backend/scripts/organizer_console_rollout.py
 scratch/
 docs/
+!docs/backend/
+!docs/backend/staging-object-storage.md
 .agents/
 excel_templates/
 .vscode/

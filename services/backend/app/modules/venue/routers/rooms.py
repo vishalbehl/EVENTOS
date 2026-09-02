@@ -6,7 +6,6 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, OrganizerOrAbove, get_current_user
@@ -15,9 +14,9 @@ from app.modules.identity.models.user import User
 from app.modules.venue.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import require_event_operation
-from app.modules.events.services.event_resource_mutation_service import (
-    EventResourceMutationService,
-)
+from app.core.concurrency import require_if_match
+from app.modules.agenda.application.commands import RoomCommandService
+from app.modules.agenda.application.queries import RoomQueryService
 
 router = APIRouter(prefix="/events/{event_id}/rooms", tags=["rooms"], dependencies=[require_event_operation("venue.rooms.manage")])
 
@@ -28,10 +27,7 @@ async def list_rooms(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[RoomResponse]:
-    q = select(Room).options(selectinload(Room.event)).where(
-        Room.event_id == event.id,
-        Room.is_active.is_(True),
-    )
+    access_predicate = None
 
     # Restricted roles (NOT super_admin, admin, or organiser) must have specific room assignments
     if current_user.role not in ["super_admin", "admin", "organiser", "organizer"]:
@@ -52,15 +48,17 @@ async def list_rooms(
         )
 
         # A user can see a room if they own the event OR are specifically assigned to that room
-        q = q.where(
-            or_(
-                event_assigned,
-                Room.id.in_(room_assignments)
-            )
+        access_predicate = or_(
+            event_assigned,
+            Room.id.in_(room_assignments),
         )
 
-    result = await db.execute(q.order_by(Room.name))
-    return [RoomResponse.model_validate(r) for r in result.scalars().all()]
+    rooms = await RoomQueryService(db).list_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        access_predicate=access_predicate,
+    )
+    return [RoomResponse.model_validate(room) for room in rooms]
 
 
 @router.post("", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
@@ -74,16 +72,14 @@ async def create_room(
     if not idempotency_key:
         idempotency_key = f"room-create:{uuid.uuid4()}"
 
-    room = await EventResourceMutationService.create_room(
+    room_id = await RoomCommandService.create_room(
         db,
         event=event,
         payload=payload,
         actor_user_id=current_user.id,
         idempotency_key=idempotency_key,
-        source="organizer_portal",
     )
-    await db.commit()
-    await db.refresh(room)
+    room = await _get_room_or_404(db, room_id, event.id, user=current_user, allow_inactive=True)
     return RoomResponse.model_validate(room)
 
 
@@ -106,20 +102,25 @@ async def update_room(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> RoomResponse:
     await _get_room_or_404(
         db, room_id, event.id, user=current_user, allow_inactive=True
     )
-    room, _, _ = await EventResourceMutationService.update_room(
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    await RoomCommandService.update_room(
         db,
         event=event,
         room_id=room_id,
         payload=payload,
         actor_user_id=current_user.id,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
-    await db.refresh(room)
-    return RoomResponse.model_validate(room)
+    return RoomResponse.model_validate(
+        await _get_room_or_404(db, room_id, event.id, user=current_user, allow_inactive=True)
+    )
 
 
 @router.delete("/{room_id}", response_model=MessageResponse)
@@ -127,17 +128,20 @@ async def delete_room(
     room_id: uuid.UUID,
     event: CurrentEvent,
     user: OrganizerOrAbove,
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     await _get_room_or_404(db, room_id, event.id, user=user)
-    await EventResourceMutationService.archive_room(
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    await RoomCommandService.archive_room(
         db,
         event=event,
         room_id=room_id,
         actor_user_id=user.id,
-        source="organizer_portal",
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
     return MessageResponse(message="Room archived and remains recoverable.")
 
 
@@ -148,43 +152,26 @@ async def _get_room_or_404(
     user: Optional[User] = None,
     allow_inactive: bool = False
 ) -> Room:
-    query = select(Room).options(selectinload(Room.event)).where(Room.id == room_id, Room.event_id == event_id)
-    if not allow_inactive:
-        query = query.where(Room.is_active == True)
-
-    result = await db.execute(query)
-    r = result.scalar_one_or_none()
+    query_service = RoomQueryService(db)
+    r = await query_service.get_for_event(
+        organization_id=getattr(user, "organization_id", None) or uuid.UUID(int=0),
+        event_id=event_id,
+        room_id=room_id,
+        allow_inactive=allow_inactive,
+    )
     if r is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
 
     # Enforce assignments for restricted roles
     if user and user.role not in ["super_admin", "admin", "organiser"]:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from sqlalchemy import or_, and_
-
-        # Check if assigned to the event, or the specific room
-        assignment_check = await db.execute(
-            select(UserAccessNode).where(
-                UserAccessNode.user_id == user.id,
-                or_(
-                    and_(UserAccessNode.node_id == event_id, UserAccessNode.node_type == 'EVENT'),
-                    and_(UserAccessNode.node_id == room_id, UserAccessNode.node_type == 'ROOM')
-                )
+        if not await query_service.user_can_access(
+            user_id=user.id,
+            event_id=event_id,
+            room_id=room_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this room.",
             )
-        )
-        if not assignment_check.scalars().first():
-            # Check legacy assignments as fallback
-            from app.modules.rbac.models.user_assignment import UserEventAssignment
-            legacy_check = await db.execute(
-                select(UserEventAssignment).where(
-                    UserEventAssignment.user_id == user.id,
-                    UserEventAssignment.event_id == event_id
-                )
-            )
-            if not legacy_check.scalars().first():
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, 
-                    detail="You do not have permission to access this room."
-                )
 
     return r

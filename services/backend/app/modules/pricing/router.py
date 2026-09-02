@@ -1,13 +1,16 @@
 import uuid
 from typing import Optional, List, Dict, Any
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db, require_active_user
 from app.modules.identity.models.user import User
-from app.modules.pricing.services import PricingService, SimulationService
+from app.modules.pricing.services import PricingService
+from app.modules.pricing.application.commands import PricingCommandService
+from app.modules.platform.application.governed_mutation_commands import GovernedMutationCommandService
+from app.modules.pricing.application.queries import PricingQueryService
 from app.modules.pricing.models import PricingSimulation, RevenueForecast
 from app.modules.pricing.schemas import (
     PriceCalculateRequest, PriceCalculateResponse,
@@ -42,38 +45,33 @@ async def calculate_price(
 async def simulate_pricing(
     req: PricingSimulationCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ):
     org_id = current_user.organization_id
     try:
-        sim = await SimulationService.simulate_pricing(
-            db=db,
+        return await PricingCommandService.simulate(
+            db,
             organization_id=org_id,
             user_id=current_user.id,
-            name=req.name,
-            input_data=req.input_data
+            payload=req,
+            idempotency_key=idempotency_key,
         )
-        await db.commit()
-        return sim
+    except HTTPException:
+        raise
     except Exception as e:
-        await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/simulations", response_model=List[PricingSimulationOut])
 async def get_simulations(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=100),
 ):
     org_id = current_user.organization_id
-    stmt = select(PricingSimulation)
-    if org_id:
-        stmt = stmt.where(or_(PricingSimulation.organization_id == org_id, PricingSimulation.user_id == current_user.id))
-    else:
-        stmt = stmt.where(PricingSimulation.user_id == current_user.id)
-    
-    stmt = stmt.order_by(desc(PricingSimulation.created_at))
-    res = await db.execute(stmt)
-    return list(res.scalars().all())
+    return await PricingQueryService.list_simulations(
+        db, organization_id=org_id, user_id=current_user.id, limit=limit
+    )
 
 @router.delete("/simulations/{simulation_id}")
 async def delete_simulation(
@@ -81,12 +79,14 @@ async def delete_simulation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(PricingSimulation).where(PricingSimulation.id == simulation_id)
-    sim = (await db.execute(stmt)).scalar_one_or_none()
-    if not sim:
+    deleted = await PricingCommandService.delete(
+        db,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        simulation_id=simulation_id,
+    )
+    if not deleted:
         raise HTTPException(status_code=404, detail="Simulation not found")
-    await db.delete(sim)
-    await db.commit()
     return {"status": "success", "detail": "Simulation deleted successfully"}
 
 @router.get("/forecast", response_model=List[RevenueForecastOut])
@@ -276,43 +276,11 @@ async def superadmin_create_pricing_rule(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    if body.is_default:
-        stmt = select(PricingRule)
-        res = await db.execute(stmt)
-        for r in res.scalars().all():
-            if r.description and r.description.strip().startswith("{"):
-                try:
-                    meta = json.loads(r.description)
-                    if meta.get("is_default"):
-                        meta["is_default"] = False
-                        r.description = json.dumps(meta)
-                except Exception:
-                    pass
-                    
-    meta = {
-        "is_default": body.is_default,
-        "hardware_markup_pct": body.hardware_markup_pct,
-        "staffing_markup_pct": body.staffing_markup_pct,
-        "management_fee_pct": body.management_fee_pct,
-        "contingency_pct": body.contingency_pct,
-        "gst_pct": body.gst_pct,
-        "description": body.description or ""
-    }
-    
-    rule = PricingRule(
-        id=uuid.uuid4(),
+    rule = await PricingCommandService.create_rule(
+        db,
         organization_id=current_user.organization_id,
-        name=body.name,
-        code="PR_" + body.name.upper().replace(" ", "_"),
-        description=json.dumps(meta),
-        status="ACTIVE",
-        effective_from=datetime.now(timezone.utc),
-        effective_to=datetime.now(timezone.utc) + timedelta(days=365*10),
-        priority=0
+        payload=body.model_dump(),
     )
-    db.add(rule)
-    await db.commit()
-    
     return {"status": "success", "id": str(rule.id)}
 
 @router.patch("/superadmin/catalog/pricing-rules/{rule_id}")
@@ -322,62 +290,12 @@ async def superadmin_update_pricing_rule(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    rule_stmt = select(PricingRule).where(PricingRule.id == rule_id)
-    rule = (await db.execute(rule_stmt)).scalar_one_or_none()
-    if not rule:
-        raise HTTPException(status_code=404, detail="Pricing rule not found")
-        
-    if body.name is not None:
-        rule.name = body.name
-    if body.is_active is not None:
-        rule.status = "ACTIVE" if body.is_active else "INACTIVE"
-        
-    if body.is_default:
-        stmt = select(PricingRule).where(PricingRule.id != rule_id)
-        res = await db.execute(stmt)
-        for r in res.scalars().all():
-            if r.description and r.description.strip().startswith("{"):
-                try:
-                    meta = json.loads(r.description)
-                    if meta.get("is_default"):
-                        meta["is_default"] = False
-                        r.description = json.dumps(meta)
-                except Exception:
-                    pass
-                    
-    meta = {
-        "is_default": False,
-        "hardware_markup_pct": 15.0,
-        "staffing_markup_pct": 20.0,
-        "management_fee_pct": 10.0,
-        "contingency_pct": 5.0,
-        "gst_pct": 18.0,
-        "description": ""
-    }
-    if rule.description and rule.description.strip().startswith("{"):
-        try:
-            meta = json.loads(rule.description)
-        except Exception:
-            meta["description"] = rule.description
-            
-    if body.is_default is not None:
-        meta["is_default"] = body.is_default
-    if body.hardware_markup_pct is not None:
-        meta["hardware_markup_pct"] = body.hardware_markup_pct
-    if body.staffing_markup_pct is not None:
-        meta["staffing_markup_pct"] = body.staffing_markup_pct
-    if body.management_fee_pct is not None:
-        meta["management_fee_pct"] = body.management_fee_pct
-    if body.contingency_pct is not None:
-        meta["contingency_pct"] = body.contingency_pct
-    if body.gst_pct is not None:
-        meta["gst_pct"] = body.gst_pct
-    if body.description is not None:
-        meta["description"] = body.description
-        
-    rule.description = json.dumps(meta)
-    await db.commit()
-    
+    rule = await PricingCommandService.update_rule(
+        db,
+        rule_id=rule_id,
+        organization_id=current_user.organization_id,
+        payload=body.model_dump(exclude_unset=True),
+    )
     return {"status": "success", "id": str(rule_id)}
 
 @router.post("/superadmin/catalog/pricing-simulator/run")
@@ -386,6 +304,7 @@ async def superadmin_run_simulation(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    command = GovernedMutationCommandService(db)
     from app.modules.inventory.models import HardwareItem
     from app.modules.commercial.models import StaffRole
     from sqlalchemy import and_
@@ -414,9 +333,16 @@ async def superadmin_run_simulation(
     hardware_subtotal = 0.0
     line_items = []
     
+    hardware_ids = {item.hardware_item_id for item in body.selected_hardware}
+    hardware_by_id = {}
+    if hardware_ids:
+        hardware_rows = await db.scalars(
+            select(HardwareItem).where(HardwareItem.id.in_(hardware_ids))
+        )
+        hardware_by_id = {item.id: item for item in hardware_rows.all()}
+
     for item in body.selected_hardware:
-        hw_stmt = select(HardwareItem).where(HardwareItem.id == item.hardware_item_id)
-        hw = (await db.execute(hw_stmt)).scalar_one_or_none()
+        hw = hardware_by_id.get(item.hardware_item_id)
         if hw:
             selling_price = float(hw.renting_price or 0)
             line_total = selling_price * item.quantity * body.event_days
@@ -521,7 +447,7 @@ async def superadmin_run_simulation(
         created_at=datetime.now(timezone.utc)
     )
     db.add(sim)
-    await db.commit()
+    await command.commit(organization_id=current_user.organization_id)
     
     return output_data
 
@@ -745,6 +671,7 @@ async def superadmin_create_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    command = GovernedMutationCommandService(db)
     import uuid
     import re
     from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
@@ -809,7 +736,7 @@ async def superadmin_create_template(
         tpl_obj.image_url = body.image_url
 
     db.add(tpl_obj)
-    await db.commit()
+    await command.commit(organization_id=current_user.organization_id)
     return {"status": "success", "slug": slug}
 
 @router.put("/superadmin/catalog/templates/{slug}")
@@ -819,6 +746,7 @@ async def superadmin_update_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    command = GovernedMutationCommandService(db)
     from sqlalchemy import update
     from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
@@ -866,7 +794,7 @@ async def superadmin_update_template(
     if body.image_url is not None and hasattr(tpl, 'image_url'):
         tpl.image_url = body.image_url
 
-    await db.commit()
+    await command.commit(organization_id=current_user.organization_id)
     return {"status": "success"}
 
 @router.post("/superadmin/catalog/templates/{slug}/duplicate")
@@ -875,6 +803,7 @@ async def superadmin_duplicate_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    command = GovernedMutationCommandService(db)
     import uuid
     import re
     from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
@@ -920,7 +849,7 @@ async def superadmin_duplicate_template(
             setattr(cloned_tpl, col_name, getattr(tpl, col_name))
             
     db.add(cloned_tpl)
-    await db.commit()
+    await command.commit(organization_id=current_user.organization_id)
     return {"status": "success", "slug": new_slug}
 
 @router.post("/superadmin/catalog/templates/{slug}/default")
@@ -929,6 +858,7 @@ async def superadmin_set_default_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    command = GovernedMutationCommandService(db)
     from sqlalchemy import update
     from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
@@ -953,7 +883,7 @@ async def superadmin_set_default_template(
 
     # Set default on this template
     tpl.is_default = True
-    await db.commit()
+    await command.commit(organization_id=current_user.organization_id)
     return {"status": "success"}
 
 @router.delete("/superadmin/catalog/templates/{slug}")
@@ -962,6 +892,7 @@ async def superadmin_delete_template(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    command = GovernedMutationCommandService(db)
     from app.modules.pricing.template_models import RoomTemplate, RegistrationTemplate, SrrTemplate
     
     # Try to delete from any template table
@@ -970,7 +901,7 @@ async def superadmin_delete_template(
         tpl = (await db.execute(stmt)).scalar_one_or_none()
         if tpl:
             await db.delete(tpl)
-            await db.commit()
+            await command.commit(organization_id=current_user.organization_id)
             return {"status": "success"}
 
     raise HTTPException(status_code=404, detail="Template not found")

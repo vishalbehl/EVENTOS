@@ -11,8 +11,17 @@ from starlette.requests import Request
 from starlette.types import ASGIApp
 
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import (
+    AsyncSessionLocal,
+    get_db_request_metrics,
+    reset_db_request_metrics,
+    restore_db_request_metrics,
+    request_id as db_request_id,
+    request_path as db_request_path,
+)
+from app.core.cache import get_cache_latency_ms, get_cache_lock_contention, get_cache_metrics, reset_cache_metrics, restore_cache_metrics
 from app.modules.audit.models.api_request_log import APIRequestLog
+from app.core.prometheus_metrics import observe_request
 
 def _extract_jwt_claims(authorization: Optional[str]) -> Tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
     """Decodes the Bearer JWT and returns (user_id, organization_id)"""
@@ -64,6 +73,8 @@ class RequestLoggingMiddleware:
             return
 
         status_code = [0]
+        metric_tokens = reset_db_request_metrics()
+        cache_tokens = reset_cache_metrics()
         async def send_wrapper(message: dict) -> None:
             if message["type"] == "http.response.start":
                 status_code[0] = message.get("status", 0)
@@ -71,11 +82,46 @@ class RequestLoggingMiddleware:
 
         start_time = time.monotonic()
         request = Request(scope)
+        request_id_header = request.headers.get("X-Request-ID")
+        try:
+            request_id_value = str(uuid.UUID(request_id_header)) if request_id_header else str(uuid.uuid4())
+        except ValueError:
+            request_id_value = str(uuid.uuid4())
+        request_id_token = db_request_id.set(request_id_value)
+        request_path_token = db_request_path.set(path)
         query_params = dict(request.query_params)
         payload_data = {"query_params": query_params}
 
-        await self.app(scope, receive, send_wrapper)
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            db_query_count, db_query_duration_ms = get_db_request_metrics()
+            restore_db_request_metrics(metric_tokens)
+            db_request_id.reset(request_id_token)
+            db_request_path.reset(request_path_token)
+            cache_data = get_cache_metrics()
+            cache_data["latency_ms"] = get_cache_latency_ms()
+            cache_data["lock_contention"] = get_cache_lock_contention()
+            restore_cache_metrics(cache_tokens)
+
+        if (
+            elapsed_ms >= settings.REQUEST_SLOW_MS
+            or db_query_count >= settings.REQUEST_DB_QUERY_WARN_COUNT
+            or db_query_duration_ms >= settings.REQUEST_DB_SLOW_MS
+        ):
+            logger.warning(
+                "slow_http_request method={} path={} status={} duration_ms={} db_query_count={} db_duration_ms={:.1f} cache_lock_contention={}",
+                method,
+                path,
+                status_code[0],
+                elapsed_ms,
+                db_query_count,
+                db_query_duration_ms,
+                cache_data["lock_contention"],
+            )
+
+        observe_request(method, path, status_code[0], elapsed_ms, db_query_count, db_query_duration_ms)
 
         # Log request details
         try:
@@ -90,15 +136,7 @@ class RequestLoggingMiddleware:
                 except ValueError:
                     pass
 
-            req_id_hdr = request.headers.get("X-Request-ID")
-            request_id = None
-            if req_id_hdr:
-                try:
-                    request_id = uuid.UUID(req_id_hdr)
-                except ValueError:
-                    pass
-            if not request_id:
-                request_id = uuid.uuid4()
+            request_id = uuid.UUID(request_id_value)
             
             ip_address = _get_client_ip(request)
             user_agent = request.headers.get("User-Agent")
@@ -111,6 +149,11 @@ class RequestLoggingMiddleware:
                 "path": path,
                 "status_code": status_code[0],
                 "duration_ms": float(elapsed_ms),
+                "db_query_count": db_query_count,
+                "db_query_duration_ms": float(db_query_duration_ms),
+                "cache_hits": cache_data["hits"],
+                "cache_misses": cache_data["misses"],
+                "cache_hit": bool(cache_data["hits"] > 0),
                 "ip_address": ip_address,
                 "user_id": str(user_id) if user_id else None,
                 "user_agent": user_agent,
@@ -125,10 +168,14 @@ class RequestLoggingMiddleware:
                         id=uuid.UUID(api_data["id"]),
                         request_id=uuid.UUID(api_data["request_id"]),
                         correlation_id=uuid.UUID(api_data["correlation_id"]) if api_data["correlation_id"] else None,
+                        organization_id=org_id,
                         method=api_data["method"],
                         path=api_data["path"],
                         status_code=api_data["status_code"],
                         duration_ms=api_data["duration_ms"],
+                        db_query_count=api_data["db_query_count"],
+                        db_query_duration_ms=api_data["db_query_duration_ms"],
+                        cache_hit=api_data["cache_hit"],
                         ip_address=api_data["ip_address"],
                         user_id=uuid.UUID(api_data["user_id"]) if api_data["user_id"] else None,
                         user_agent=api_data["user_agent"],

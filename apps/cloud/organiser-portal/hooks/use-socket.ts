@@ -45,7 +45,6 @@ export function useSocket(eventId?: string) {
       socket.off('notification', handleNotification);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
-      socketService.disconnect();
     };
   }, [isAuthenticated, accessToken, eventId]);
 }

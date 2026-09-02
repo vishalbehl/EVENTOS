@@ -12,13 +12,15 @@ from app.config import settings
 from app.modules.presentations.services.validation_service import validate_presentation_file
 from app.core.tenant_context import TenantContextGuard
 from app.database import tenant_org_id
+from app.core.async_runner import run_async as stable_run_async
+from app.core.task_policy import is_retryable, policy_for
 
 
 def _run_async(coro):
     """Utility to run async code in sync Celery workers (Windows safe)."""
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    return asyncio.run(coro)
+    return stable_run_async(coro)
 
 
 @contextmanager
@@ -31,7 +33,18 @@ def _tenant_worker_context(organization_id: uuid.UUID):
         tenant_org_id.reset(token)
 
 
-@celery_app.task(name="app.tasks.validate_presentation", bind=True)
+_FILES_POLICY = policy_for("files")
+
+
+@celery_app.task(
+    name="app.tasks.validate_presentation",
+    bind=True,
+    max_retries=_FILES_POLICY.max_retries,
+    soft_time_limit=_FILES_POLICY.soft_timeout_seconds,
+    time_limit=_FILES_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_FILES_POLICY.queue,
+)
 def validate_presentation(self, file_id_str: str, organization_id_str: str) -> None:
     """
     Background task to perform technical auditing on an uploaded file.
@@ -57,6 +70,17 @@ def validate_presentation(self, file_id_str: str, organization_id_str: str) -> N
         logger.info(f"[Celery] Validation job completed for file: {file_id}")
     except Exception as exc:
         logger.exception(f"[Celery] Validation failed for file {file_id}: {exc}")
+        if is_retryable(exc):
+            attempt = int(getattr(self.request, "retries", 0) or 0)
+            if attempt < _FILES_POLICY.max_retries:
+                raise self.retry(
+                    exc=exc,
+                    countdown=min(
+                        300,
+                        _FILES_POLICY.retry_delay(attempt, apply_jitter=True),
+                    ),
+                    max_retries=_FILES_POLICY.max_retries,
+                )
         raise
     finally:
         _run_async(engine.dispose())
@@ -74,7 +98,15 @@ async def _run_validation_async(
             tenant_org_id.reset(token)
 
 
-@celery_app.task(name="app.tasks.validate_poster", bind=True)
+@celery_app.task(
+    name="app.tasks.validate_poster",
+    bind=True,
+    max_retries=_FILES_POLICY.max_retries,
+    soft_time_limit=_FILES_POLICY.soft_timeout_seconds,
+    time_limit=_FILES_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_FILES_POLICY.queue,
+)
 def validate_poster(self, poster_id_str: str, organization_id_str: str) -> None:
     """
     Background task to audit an ePoster submission.

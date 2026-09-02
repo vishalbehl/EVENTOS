@@ -68,6 +68,7 @@ class ParticipantRegistration(Base, SoftDeleteMixin):
     approval_source: Mapped[str] = mapped_column(
         String(50), nullable=False, default="portal"  # portal, onsite, admin
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Relationships
     event: Mapped["Event"] = relationship("Event")

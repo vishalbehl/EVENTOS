@@ -12,6 +12,7 @@ from app.tasks.tenant_job_scope import (
     parse_required_organization_id,
     tenant_job_session,
 )
+from app.core.async_runner import run_async as stable_run_async
 
 
 async def calculate_all_organizations_health() -> None:
@@ -47,9 +48,14 @@ async def generate_daily_usage_snapshots() -> None:
     )
 
 
+import asyncio
+
 from app.worker import celery_app
 from datetime import datetime, timezone
 import sys
+from app.core.task_policy import is_retryable, policy_for
+
+_RECONCILIATION_POLICY = policy_for("reconciliation")
 
 def _run_async(coro):
     """
@@ -88,10 +94,18 @@ def _run_async(coro):
             raise exc_list[0]
         return res_list[0]
     else:
-        return asyncio.run(coro)
+        return stable_run_async(coro)
 
-@celery_app.task(name="app.tasks.platform_tasks.flush_api_usage")
-def flush_api_usage() -> None:
+@celery_app.task(
+    name="app.tasks.platform_tasks.flush_api_usage",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def flush_api_usage(self) -> None:
     """
     Celery task to periodically flush API usage metrics from Redis to PostgreSQL.
     """
@@ -100,7 +114,17 @@ def flush_api_usage() -> None:
         _run_async(_flush_api_usage_async())
         logger.info("[Celery] Successfully completed flush_api_usage task")
     except Exception as exc:
-        logger.exception(f"[Celery] Error flushing API usage: {exc}")
+        logger.exception("[Celery] Error flushing API usage: {}", type(exc).__name__)
+        if is_retryable(exc):
+            attempt = int(getattr(self.request, "retries", 0) or 0)
+            policy = policy_for("reconciliation")
+            if attempt < policy.max_retries:
+                raise self.retry(
+                    exc=exc,
+                    countdown=min(300, policy.retry_delay(attempt, apply_jitter=True)),
+                    max_retries=policy.max_retries,
+                )
+        raise
 
 
 async def _flush_api_usage_async() -> None:
@@ -115,19 +139,19 @@ async def _flush_api_usage_async() -> None:
         return
 
     for key in keys:
-        # Canonical usage keys are tenant:{org_uuid}:api-usage:{endpoint_hash}.
+        # Canonical usage keys are cache:v1:tenant:{org_uuid}:api-usage:{endpoint_hash}.
         # The endpoint itself is held in a tenant-bound metadata key, not in a
         # globally enumerable Redis key.
         parts = key.split(":")
-        if len(parts) != 4 or parts[0] != "tenant" or parts[2] != "api-usage":
+        if len(parts) != 6 or parts[:3] != ["cache", "v1", "tenant"] or parts[4] != "api-usage":
             logger.warning(f"Ignoring malformed API usage key: {key!r}")
             continue
         try:
-            org_id = uuid.UUID(parts[1])
+            org_id = uuid.UUID(parts[3])
         except (ValueError, TypeError):
             logger.warning(f"Ignoring API usage key with invalid organization: {key!r}")
             continue
-        endpoint_fingerprint = parts[3]
+        endpoint_fingerprint = parts[5]
         metadata_key = TenantCacheKey.api_usage_metadata(org_id, endpoint_fingerprint)
 
         # The control-plane set only coordinates flushing. Each tenant record

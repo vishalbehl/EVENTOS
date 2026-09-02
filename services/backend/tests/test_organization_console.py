@@ -78,9 +78,13 @@ async def test_command_center_event_directory_and_provisioning_are_tenant_scoped
     organizer: User,
     super_admin: User,
 ):
+    organization_id = organization.id
+    super_admin_id = super_admin.id
     await activate_event_for_test(db, event)
+    admin_headers = auth_headers(super_admin)
+    organizer_headers = auth_headers(organizer)
     headers = {
-        **auth_headers(super_admin),
+        **admin_headers,
         "Idempotency-Key": f"provision-{uuid.uuid4()}",
     }
     short_code = f"CC{uuid.uuid4().hex[:6].upper()}"
@@ -100,12 +104,12 @@ async def test_command_center_event_directory_and_provisioning_are_tenant_scoped
         "reason": "Provision the approved organization event from Command Center.",
         "case_reference": "OPS-2027-001",
     }
-    base = f"/api/v1/platform/organizations/{organization.id}/console/events"
+    base = f"/api/v1/platform/organizations/{organization_id}/console/events"
 
     created = await client.post(base, headers=headers, json=body)
     assert created.status_code == 201, created.text
     created_data = created.json()
-    assert created_data["organization_id"] == str(organization.id)
+    assert created_data["organization_id"] == str(organization_id)
     assert created_data["short_code"] == short_code
 
     replay = await client.post(base, headers=headers, json=body)
@@ -120,22 +124,23 @@ async def test_command_center_event_directory_and_provisioning_are_tenant_scoped
     assert changed_replay.status_code == 409
     assert changed_replay.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
 
-    directory = await client.get(base, headers=auth_headers(super_admin))
+    directory = await client.get(base, headers=admin_headers)
     assert directory.status_code == 200, directory.text
     assert directory.json()["source"] == "events.events"
     assert any(item["id"] == created_data["id"] for item in directory.json()["items"])
 
     created_row = await db.get(Event, uuid.UUID(created_data["id"]))
     assert created_row is not None
-    assert created_row.organization_id == organization.id
-    assert created_row.created_by == super_admin.id
+    created_row_id = uuid.UUID(created_data["id"])
+    assert created_row.organization_id == organization_id
+    assert created_row.created_by == super_admin_id
     assert created_row.registration_theme_setting is not None
     assert created_row.speaker_theme_setting is not None
 
     duplicate_from_portal = await client.post(
         "/api/v1/events",
         headers={
-            **auth_headers(organizer),
+            **organizer_headers,
             "Idempotency-Key": f"portal-create-{uuid.uuid4()}",
         },
         json=body["data"],
@@ -143,14 +148,16 @@ async def test_command_center_event_directory_and_provisioning_are_tenant_scoped
     assert duplicate_from_portal.status_code == 409
 
     audit = await db.scalar(
-        select(AuditLog).where(
-            AuditLog.organization_id == organization.id,
-            AuditLog.resource_id == created_row.id,
+        select(AuditLog)
+        .where(
+            AuditLog.organization_id == organization_id,
+            AuditLog.resource_id == created_row_id,
             AuditLog.action_type == "EVENT_PROVISIONED",
         )
+        .execution_options(skip_tenant_filter=True)
     )
     assert audit is not None
-    assert audit.actor_user_id == super_admin.id
+    assert audit.actor_user_id == super_admin_id
     assert audit.new_state["case_reference"] == "OPS-2027-001"
 
 
@@ -508,11 +515,16 @@ async def test_event_settings_share_portal_validation_and_operational_controls_b
     organizer: User,
     super_admin: User,
 ):
+    organization_id = organization.id
+    event_id = event.id
+    super_admin_id = super_admin.id
+    admin_headers = auth_headers(super_admin)
+    organizer_headers = auth_headers(organizer)
     await activate_event_for_test(db, event)
-    base = f"/api/v1/platform/organizations/{organization.id}/console/events/{event.id}"
+    base = f"/api/v1/platform/organizations/{organization_id}/console/events/{event_id}"
     updated = await client.patch(
         f"{base}/settings",
-        headers=auth_headers(super_admin),
+        headers=admin_headers,
         json={
             "data": {
                 "name": "Governed Event Configuration",
@@ -529,7 +541,7 @@ async def test_event_settings_share_portal_validation_and_operational_controls_b
 
     invalid_dates = await client.patch(
         f"{base}/settings",
-        headers=auth_headers(super_admin),
+        headers=admin_headers,
         json={
             "data": {
                 "start_date": "2027-04-15",
@@ -543,7 +555,7 @@ async def test_event_settings_share_portal_validation_and_operational_controls_b
 
     maintenance = await client.patch(
         f"{base}/operations",
-        headers=auth_headers(super_admin),
+        headers=admin_headers,
         json={
             "is_maintenance": True,
             "reason": "Place this event into scheduled platform maintenance.",
@@ -555,7 +567,7 @@ async def test_event_settings_share_portal_validation_and_operational_controls_b
 
     lifecycle_bypass = await client.patch(
         f"{base}/operations",
-        headers=auth_headers(super_admin),
+        headers=admin_headers,
         json={
             "status": "suspended",
             "reason": "Verify lifecycle suspension cannot bypass governed restrictions.",
@@ -565,16 +577,24 @@ async def test_event_settings_share_portal_validation_and_operational_controls_b
     assert lifecycle_bypass.status_code == 422
 
     portal_mutation = await client.patch(
-        f"/events/{event.id}",
-        headers=auth_headers(organizer),
+        f"/events/{event_id}",
+        headers=organizer_headers,
         json={"name": "Must not change during maintenance"},
     )
     assert portal_mutation.status_code == 423
     assert portal_mutation.json()["detail"]["code"] == "EVENT_MAINTENANCE"
 
+    # The guarded portal mutation may roll back the shared test transaction;
+    # reload the committed principal before the following request.
+    fresh_admin = await db.scalar(
+        select(User)
+        .where(User.id == super_admin_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    assert fresh_admin is not None
     restored = await client.patch(
         f"{base}/operations",
-        headers=auth_headers(super_admin),
+        headers=auth_headers(fresh_admin),
         json={
             "is_maintenance": False,
             "is_read_only": False,
@@ -1375,6 +1395,42 @@ async def test_registration_workspace_masks_pii_and_requires_scoped_privileged_s
     assert revoked.status_code == 200
     denied_after_revoke = await client.get(f"{workspace}?include_sensitive=true", headers={**auth_headers(super_admin), "X-Privileged-Access-Session": access.json()["id"]})
     assert denied_after_revoke.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_registration_administrative_correction_is_transactional_and_versioned(
+    client: AsyncClient,
+    db: AsyncSession,
+    organization: Organization,
+    event: Event,
+    super_admin: User,
+):
+    organization_id = organization.id
+    event_id = event.id
+    registration = ParticipantRegistration(
+        event_id=event_id,
+        registration_status="submitted",
+        registration_data={"name": "Correction Candidate", "email": "candidate@example.test"},
+        version=1,
+    )
+    db.add(registration)
+    await db.flush()
+    registration_id = registration.id
+    url = f"/api/v1/platform/organizations/{organization_id}/console/events/{event_id}/workspace/registrations/{registration_id}/correction"
+    payload = {
+        "status": "REJECTED",
+        "reason": "Reject the registration after the documented administrative review.",
+        "case_reference": "REG-CORRECTION-1001",
+        "rejection_reason": "The submitted registration does not meet the event requirements.",
+    }
+    response = await client.post(url, headers={**auth_headers(super_admin), "If-Match": "1"}, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "REJECTED"
+    stored = await db.scalar(select(ParticipantRegistration).where(ParticipantRegistration.id == registration_id))
+    assert stored and stored.registration_status == "rejected" and stored.version == 2
+    stale = await client.post(url, headers={**auth_headers(super_admin), "If-Match": "1"}, json=payload)
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "RESOURCE_VERSION_CONFLICT"
 
 
 @pytest.mark.asyncio
@@ -2859,6 +2915,7 @@ async def test_organization_api_keys_and_integration_connections_are_governed_an
     event: Event,
     super_admin: User,
 ):
+    organization_id = organization.id
     await activate_event_for_test(db, event)
     base = f"/api/v1/platform/organizations/{organization.id}/console"
     key_headers = {**auth_headers(super_admin), "Idempotency-Key": f"org-api-key-{uuid.uuid4()}"}
@@ -2890,5 +2947,5 @@ async def test_organization_api_keys_and_integration_connections_are_governed_an
     assert paused.status_code == 200 and paused.json()["is_active"] is False and paused.json()["version"] == 2
     stale = await client.patch(f"{base}/integrations/connections/{connected.json()['id']}", headers={**auth_headers(super_admin), "If-Match": "1"}, json={"is_active": True, "reason": "Attempt a stale concurrent integration status update.", "case_reference": "DEV-1002"})
     assert stale.status_code == 409 and stale.json()["detail"] == "VERSION_CONFLICT"
-    connection = await db.get(IntegrationConnection, uuid.UUID(connected.json()["id"]))
-    assert connection and connection.organization_id == organization.id and connection.is_active is False
+    connection = await db.scalar(select(IntegrationConnection).where(IntegrationConnection.id == uuid.UUID(connected.json()["id"])))
+    assert connection and connection.organization_id == organization_id and connection.is_active is False

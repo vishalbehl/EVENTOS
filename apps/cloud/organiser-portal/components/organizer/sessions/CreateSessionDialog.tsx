@@ -1,6 +1,8 @@
 "use client";
+// Quota control: max_sessions is enforced by the API before creation.
 
 import { useState, useMemo, useEffect } from "react";
+import { useLimitAccess } from "@/lib/capabilities";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Calendar, Clock, MapPin, Hash, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";

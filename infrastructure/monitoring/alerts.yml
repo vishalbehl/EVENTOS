@@ -1,0 +1,33 @@
+groups:
+  - name: conf-platform-local
+    rules:
+      - alert: BackendHighRequestLatency
+        expr: histogram_quantile(0.95, sum by (le) (rate(confplatform_http_request_duration_seconds_bucket[5m]))) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Backend request p95 exceeds 800ms" }
+      - alert: BackendHighDatabaseQueryCount
+        expr: histogram_quantile(0.95, sum by (le) (rate(confplatform_http_db_queries_bucket[5m]))) > 40
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Backend request query count is high" }
+      - alert: BackendHighErrorRate
+        expr: sum(rate(confplatform_http_requests_total{status_class=~"5xx|4xx"}[5m])) / clamp_min(sum(rate(confplatform_http_requests_total[5m])), 1) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Backend API error rate exceeds 5%" }
+      - alert: BackendDatabasePoolNearCapacity
+        expr: sum by (engine) (confplatform_db_pool_checked_out) / clamp_min(sum by (engine) (confplatform_db_pool_size + confplatform_db_pool_max_overflow), 1) > 0.80
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Backend database pool is above 80% capacity" }
+      - alert: BackendDatabasePoolExhausted
+        expr: sum by (engine) (confplatform_db_pool_checked_out) >= sum by (engine) (confplatform_db_pool_size + confplatform_db_pool_max_overflow)
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Backend database pool has reached capacity" }
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "A monitored local service is unavailable" }

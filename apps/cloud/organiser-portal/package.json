@@ -19,6 +19,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@eventos/email-builder-studio": "0.1.0",
     "@eventos/website-builder-studio": "0.1.0",
+    "@eventos/form-builder-studio": "0.1.0",
     "@heroui/react": "^3.2.4",
     "@heroui/styles": "^3.2.4",
     "@hookform/resolvers": "^3.9.1",

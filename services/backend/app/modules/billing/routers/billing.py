@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func, and_
 
 from app.dependencies import ActiveUser, DB
-from app.redis import redis_client
+from app.redis import coordination_client as redis_client
 from app.modules.billing.models.subscription import OrganizationSubscription, SubscriptionPlan
-from app.modules.analytics.models.usage import OrganizationUsage
+from app.modules.analytics.application.queries import OrganizationUsageQueryService
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.registration.models.participant_registration import ParticipantRegistration
@@ -54,7 +54,7 @@ async def get_billing_usage(user: ActiveUser, db: DB):
         select(func.count(ParticipantRegistration.id))
         .join(Event, Event.id == ParticipantRegistration.event_id)
         .where(and_(Event.organization_id == org_id, ParticipantRegistration.deleted_at == None))) or 0
-    usage_rec = await db.get(OrganizationUsage, org_id)
+    usage_rec = await OrganizationUsageQueryService(db).get(organization_id=org_id)
     storage_used_bytes = usage_rec.storage_used_bytes if usage_rec else 0
     api_calls_today = await redis_client.zcard(f"rl:{org_id}:day")
     measured_limits = [max_events, max_users, max_registrations, storage_quota_mb, daily_limit]
@@ -89,7 +89,7 @@ async def get_billing_plan(user: ActiveUser, db: DB):
                 select(func.count(ParticipantRegistration.id))
                 .join(Event, Event.id == ParticipantRegistration.event_id)
                 .where(Event.organization_id == org_id, ParticipantRegistration.deleted_at.is_(None))) or 0
-            usage_rec = await db.get(OrganizationUsage, org_id)
+            usage_rec = await OrganizationUsageQueryService(db).get(organization_id=org_id)
             storage_used_mb = round((usage_rec.storage_used_bytes if usage_rec else 0) / (1024 * 1024), 2)
             return {
                 "subscription_id": None,
@@ -142,7 +142,7 @@ async def get_billing_plan(user: ActiveUser, db: DB):
         select(func.count(ParticipantRegistration.id))
         .join(Event, Event.id == ParticipantRegistration.event_id)
         .where(Event.organization_id == org_id, ParticipantRegistration.deleted_at.is_(None))) or 0
-    usage_rec = await db.get(OrganizationUsage, org_id)
+    usage_rec = await OrganizationUsageQueryService(db).get(organization_id=org_id)
     storage_used_bytes = usage_rec.storage_used_bytes if usage_rec else 0
     storage_used_mb = round(storage_used_bytes / (1024 * 1024), 2)
     max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")

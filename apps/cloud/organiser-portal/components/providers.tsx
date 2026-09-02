@@ -1,9 +1,22 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { Toaster } from "sonner";
+
+const ReactQueryDevtools = dynamic(
+  () =>
+    import("@tanstack/react-query-devtools")
+      .then((mod) => ({ default: mod.ReactQueryDevtools }))
+      .catch(() => ({ default: () => null })),
+  { ssr: false }
+);
+
+const GlobalModal = dynamic(
+  () => import("@/components/organizer/modals/GlobalModal").then((mod) => mod.GlobalModal),
+  { ssr: false }
+);
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({
@@ -58,6 +71,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       {children}
+      <GlobalModal />
       <Toaster
         position="top-right"
         richColors
@@ -72,7 +86,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           },
         }}
       />
-      <ReactQueryDevtools initialIsOpen={false} />
+      {process.env.NODE_ENV === "development" && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   );
 }
+

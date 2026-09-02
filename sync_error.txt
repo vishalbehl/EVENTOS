@@ -1,1 +1,1 @@
-HTTP 500: Internal Server Error
+All connection attempts failed

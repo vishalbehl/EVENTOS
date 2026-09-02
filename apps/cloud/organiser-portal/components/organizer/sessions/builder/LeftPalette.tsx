@@ -391,7 +391,7 @@ export function LeftPalette() {
                 </div>
                 <div className="text-[10px] text-[var(--text-secondary)] flex justify-between">
                   <span>{room.room_type}</span>
-                  {room.capacity && <span className="font-medium">{room.capacity} seats</span>}
+                  {room.code && <span className="font-mono font-medium">{room.code}</span>}
                 </div>
               </div>
             ))}

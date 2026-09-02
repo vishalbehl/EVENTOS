@@ -25,37 +25,39 @@ class TenantTable:
 # strategy and are deliberately not inferred here.
 TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("events", "events"),
-    TenantTable("billing", "organization_subscriptions"),
-    TenantTable("billing", "entitlement_grants"),
-    TenantTable("billing", "grant_consumptions"),
-    TenantTable("billing", "event_activations"),
-    TenantTable("billing", "event_entitlement_snapshot_sets"),
-    TenantTable("billing", "operation_requests"),
+    TenantTable("commerce", "organization_subscriptions"),
+    TenantTable("commerce", "entitlement_grants"),
+    TenantTable("commerce", "grant_consumptions"),
+    TenantTable("commerce", "event_activations"),
+    TenantTable("commerce", "event_entitlement_snapshot_sets"),
+    TenantTable("commerce", "operation_requests"),
     TenantTable("technology_services", "service_requests"),
     TenantTable("search", "search_indexes"),
     TenantTable("search", "search_jobs"),
-    TenantTable("audit", "data_exports"),
-    TenantTable("operations_planning", "job_control_requests"),
+    TenantTable("command_center_audit", "data_exports"),
+    TenantTable("operations", "job_control_requests"),
     TenantTable("operations", "source_api_keys"),
+    TenantTable("content", "durable_uploads"),
 )
 
 
 EVENT_TENANT_TABLES: tuple[TenantTable, ...] = (
-    TenantTable("events", "rooms", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
-    TenantTable("events", "sessions", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
-    TenantTable("events", "speakers", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    TenantTable("agenda", "rooms", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    TenantTable("agenda", "sessions", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    TenantTable("speakers", "speakers", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("registration", "participants", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("registration", "registrations", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("registration", "ticket_types", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
-    TenantTable("registration", "roles", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    TenantTable("registration", "participant_roles", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("registration", "payment_transactions", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("registration", "import_jobs", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("presentations", "files", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("presentations", "bundles", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("presentations", "posters", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
-    TenantTable("rbac", "user_event_assignments", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    TenantTable("access", "user_event_assignments", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("communications", "email_campaigns", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
-    TenantTable("communications", "email_assets", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
+    # Email assets can be global or event-scoped (nullable event_id). Keep them
+    # out of the event-root rollout until their mixed-scope policy is explicit.
     TenantTable("communications", "announcements", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("integrations", "webhooks", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
     TenantTable("venue", "sync_jobs", "event_id", "EVENT_CANARY", "EVENT_ROOT"),
@@ -71,10 +73,10 @@ DERIVED_TENANT_TABLES: tuple[TenantTable, ...] = (
 
 MIXED_TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("venue", "printers", "organization_id", "MIXED_CANARY", "DIRECT_REQUIRED_EVENT"),
-    TenantTable("billing", "invoices", "organization_id", "MIXED_CANARY", "DIRECT_OPTIONAL_EVENT"),
-    TenantTable("billing", "organization_addons", "organization_id", "MIXED_CANARY", "DIRECT_OPTIONAL_EVENT"),
-    TenantTable("templates", "template_installations", "organization_id", "MIXED_CANARY", "DIRECT_REQUIRED_EVENT"),
-    TenantTable("rbac", "user_role_assignments", "user_id", "MIXED_CANARY", "USER_OPTIONAL_SCOPE"),
+    TenantTable("commerce", "invoices", "organization_id", "MIXED_CANARY", "DIRECT_OPTIONAL_EVENT"),
+    TenantTable("commerce", "organization_addons", "organization_id", "MIXED_CANARY", "DIRECT_OPTIONAL_EVENT"),
+    TenantTable("operation_templates", "template_installations", "organization_id", "MIXED_CANARY", "DIRECT_REQUIRED_EVENT"),
+    TenantTable("organizer_access", "user_role_assignments", "user_id", "MIXED_CANARY", "USER_OPTIONAL_SCOPE"),
 )
 
 

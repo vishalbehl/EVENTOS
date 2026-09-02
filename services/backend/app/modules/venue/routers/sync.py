@@ -30,6 +30,12 @@ from app.modules.venue.models.printer import Printer
 from app.modules.venue.models.venue_sync_job import VenueSyncJob
 from app.modules.platform.models.organization import Organization
 from app.modules.operations_control.models import SourceApiKey
+from app.modules.events.models.speaker import Speaker
+from app.modules.agenda.models.track import AgendaTrack
+from app.modules.agenda.models.session_person import AgendaSessionPerson
+from app.modules.presentations.models.presentation_file import PresentationFile
+from app.modules.presentations.models.poster import Poster
+from app.modules.sponsors.models.sponsor import Sponsor, SponsorBooth, SponsorAsset
 from app.modules.venue.models.registration_execution import (
     RegistrationCompanion,
     RegistrationParticipantExtension,
@@ -44,6 +50,9 @@ from app.modules.venue.models.registration_execution import (
     VenueParticipantActionLog,
     VenueNodeOperation,
     VenueNodeAssignment,
+)
+from app.modules.analytics.services.projection_dispatch import (
+    enqueue_event_attendance_projection_refresh,
 )
 from pydantic import BaseModel, field_validator
 
@@ -682,12 +691,9 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
     rooms_list = [{
         "id": str(rm.id),
         "name": rm.name,
-        "capacity": rm.capacity,
-        "screen_count": rm.screen_count,
+        "code": getattr(rm, "code", None),
         "room_type": rm.room_type,
         "room_coordinator": rm.room_coordinator,
-        "av_technician": rm.room_coordinator,
-        "location_notes": rm.location_notes,
         "is_active": rm.is_active
     } for rm in rooms]
 
@@ -885,10 +891,181 @@ async def _fetch_sync_queue(db: AsyncSession, event_id: uuid.UUID) -> dict:
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     } for row in assignments]
 
+    # 10. Fetch Event details
+    event_obj = await db.get(Event, event_id)
+    event_dict = {}
+    if event_obj:
+        event_dict = {
+            "id": str(event_obj.id),
+            "organization_id": str(event_obj.organization_id),
+            "name": event_obj.name,
+            "short_code": getattr(event_obj, "short_code", "SYNC"),
+            "status": getattr(event_obj, "status", "draft"),
+            "timezone": getattr(event_obj, "timezone", "UTC"),
+            "start_date": event_obj.start_date.isoformat() if getattr(event_obj, "start_date", None) else None,
+            "end_date": event_obj.end_date.isoformat() if getattr(event_obj, "end_date", None) else None,
+            "location": getattr(event_obj, "location", None),
+            "venue_name": getattr(event_obj, "venue_name", None),
+            "country": getattr(event_obj, "country", None),
+            "state": getattr(event_obj, "state", None),
+            "organizer_name": getattr(event_obj, "organizer_name", None),
+            "organizer_details": getattr(event_obj, "organizer_details", {}),
+            "license_tier": getattr(event_obj, "license_tier", "starter"),
+            "feature_toggles": getattr(event_obj, "feature_toggles", {}),
+            "currency": getattr(event_obj, "currency", "INR"),
+            "speaker_settings": getattr(event_obj, "speaker_settings", {"enabled": True}),
+            "registration_settings": getattr(event_obj, "registration_settings", {"enabled": True}),
+            "branding_settings": getattr(event_obj, "branding_settings", {"theme_color": "#1A73E8"}),
+            "max_file_size_mb": getattr(event_obj, "max_file_size_mb", 500),
+            "allowed_formats": getattr(event_obj, "allowed_formats", ["pptx", "pdf", "mp4"]),
+        }
+
+    # 11. Fetch Tracks
+    tracks_res = await db.execute(select(AgendaTrack).where(AgendaTrack.event_id == event_id))
+    tracks_list = [{
+        "id": str(t.id),
+        "event_id": str(t.event_id),
+        "name": t.name,
+        "code": getattr(t, "code", None),
+        "description": getattr(t, "description", None),
+        "display_color": getattr(t, "display_color", "#3b82f6"),
+        "sort_order": getattr(t, "sort_order", 0),
+        "is_active": getattr(t, "is_active", True)
+    } for t in tracks_res.scalars().all()]
+
+    # 12. Fetch Speakers
+    speakers_res = await db.execute(
+        select(Speaker).where(Speaker.event_id == event_id, Speaker.deleted_at.is_(None))
+    )
+    speakers_list = [{
+        "id": str(sp.id),
+        "event_id": str(sp.event_id),
+        "first_name": sp.first_name,
+        "last_name": sp.last_name,
+        "email": sp.email,
+        "phone": getattr(sp, "phone", None),
+        "designation": getattr(sp, "designation", None),
+        "affiliation": getattr(sp, "affiliation", None),
+        "country": getattr(sp, "country", None),
+        "bio": getattr(sp, "bio", None),
+        "photo_url": getattr(sp, "photo_url", None),
+        "upload_token": getattr(sp, "upload_token", None),
+        "speaker_code": getattr(sp, "speaker_code", None),
+        "upload_status": getattr(sp, "upload_status", "pending"),
+        "qr_code_url": getattr(sp, "qr_code_url", None),
+        "checked_in_at": sp.checked_in_at.isoformat() if getattr(sp, "checked_in_at", None) else None,
+    } for sp in speakers_res.scalars().all()]
+
+    # 13. Fetch Session Speakers
+    session_ids = [s.id for s in sessions]
+    session_speakers_list = []
+    if session_ids:
+        sp_res = await db.execute(select(AgendaSessionPerson).where(AgendaSessionPerson.session_id.in_(session_ids)))
+        for sp in sp_res.scalars().all():
+            session_speakers_list.append({
+                "id": str(sp.id),
+                "session_id": str(sp.session_id),
+                "speaker_id": str(sp.speaker_id) if sp.speaker_id else None,
+                "role": getattr(sp, "role", "Speaker"),
+                "name": getattr(sp, "name", None),
+                "presentation_title": getattr(sp, "presentation_title", None),
+                "talk_order": getattr(sp, "talk_order", 0),
+                "is_confirmed": getattr(sp, "is_confirmed", False),
+            })
+
+    # 14. Fetch Presentation Files
+    pf_res = await db.execute(
+        select(PresentationFile).where(PresentationFile.event_id == event_id, PresentationFile.deleted_at.is_(None))
+    )
+    presentation_files_list = [{
+        "id": str(pf.id),
+        "event_id": str(pf.event_id),
+        "speaker_id": str(pf.speaker_id),
+        "session_speaker_id": str(pf.session_speaker_id) if pf.session_speaker_id else None,
+        "original_filename": pf.original_filename,
+        "stored_filename": pf.stored_filename,
+        "storage_path": pf.storage_path,
+        "file_size_bytes": pf.file_size_bytes,
+        "mime_type": pf.mime_type,
+        "file_format": pf.file_format,
+        "version_number": getattr(pf, "version_number", 1),
+        "is_current_version": getattr(pf, "is_current_version", True),
+        "upload_source": getattr(pf, "upload_source", "web"),
+        "upload_status": getattr(pf, "upload_status", "approved"),
+        "created_at": pf.created_at.isoformat() if getattr(pf, "created_at", None) else None,
+    } for pf in pf_res.scalars().all()]
+
+    # 15. Fetch Posters
+    posters_res = await db.execute(select(Poster).where(Poster.event_id == event_id))
+    posters_list = [{
+        "id": str(pos.id),
+        "event_id": str(pos.event_id),
+        "speaker_id": str(pos.speaker_id) if pos.speaker_id else None,
+        "session_id": str(pos.session_id) if pos.session_id else None,
+        "title": pos.title,
+        "authors": getattr(pos, "authors", ""),
+        "abstract": getattr(pos, "abstract", None),
+        "file_id": str(pos.file_id) if getattr(pos, "file_id", None) else None,
+        "storage_path": getattr(pos, "storage_path", None),
+        "thumbnail_path": getattr(pos, "thumbnail_path", None),
+        "status": getattr(pos, "status", "submitted"),
+        "display_screen": getattr(pos, "display_screen", None),
+        "presentation_type": getattr(pos, "presentation_type", "eposter"),
+    } for pos in posters_res.scalars().all()]
+
+    # 16. Fetch Sponsors, Booths, Assets
+    sponsors_res = await db.execute(select(Sponsor))
+    all_sponsors = sponsors_res.scalars().all()
+    if event_obj and getattr(event_obj, "organization_id", None):
+        matched_sponsors = [s for s in all_sponsors if getattr(s, "organization_id", None) == event_obj.organization_id]
+    else:
+        matched_sponsors = all_sponsors
+    sponsor_ids = [s.id for s in matched_sponsors]
+
+    sponsors_list = [{
+        "id": str(s.id),
+        "name": s.name,
+        "tier": getattr(s, "tier", "bronze"),
+        "website": getattr(s, "website", None),
+        "description": getattr(s, "description", None),
+        "logo_url": getattr(s, "logo_url", None),
+        "is_active": getattr(s, "is_active", True),
+    } for s in matched_sponsors]
+
+    booths_list = []
+    assets_list = []
+    if sponsor_ids:
+        booths_res = await db.execute(select(SponsorBooth).where(SponsorBooth.sponsor_id.in_(sponsor_ids)))
+        booths_list = [{
+            "id": str(b.id),
+            "sponsor_id": str(b.sponsor_id),
+            "location": b.location,
+            "size": getattr(b, "size", None),
+            "notes": getattr(b, "notes", None),
+        } for b in booths_res.scalars().all()]
+
+        assets_res = await db.execute(select(SponsorAsset).where(SponsorAsset.sponsor_id.in_(sponsor_ids)))
+        assets_list = [{
+            "id": str(a.id),
+            "sponsor_id": str(a.sponsor_id),
+            "asset_type": a.asset_type,
+            "file_url": a.file_url,
+            "title": getattr(a, "title", None),
+        } for a in assets_res.scalars().all()]
+
     return {
         "event_id": str(event_id),
+        "event": event_dict,
+        "tracks": tracks_list,
         "rooms": rooms_list,
         "sessions": sessions_list,
+        "speakers": speakers_list,
+        "session_speakers": session_speakers_list,
+        "presentation_files": presentation_files_list,
+        "posters": posters_list,
+        "sponsors": sponsors_list,
+        "sponsor_booths": booths_list,
+        "sponsor_assets": assets_list,
         "participants": participants_list,
         "participant_extensions": extensions_list,
         "registrations": registrations_list,
@@ -930,6 +1107,7 @@ async def push_sync_payload(
     )
     processed_ids = []
     errors = []
+    attendance_projection_changed = False
     
     for item in payload:
         try:
@@ -968,6 +1146,7 @@ async def push_sync_payload(
                                 check_in_time=checkin_time
                             )
                             db.add(checkin)
+                            attendance_projection_changed = True
                             
                 elif item.action == "update":
                     log = await _get_event_attendance_log(db, event_id, item.entity_id)
@@ -1022,6 +1201,10 @@ async def push_sync_payload(
             errors.append({"id": str(item.id), "error": str(e)})
             
     await db.commit()
+    if attendance_projection_changed:
+        enqueue_event_attendance_projection_refresh(
+            organization_id=device_auth["organization_id"], event_id=event_id
+        )
     return {"processed_ids": processed_ids, "errors": errors}
 
 

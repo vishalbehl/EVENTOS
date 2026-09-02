@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.workflow.models.workflow import Workflow, WorkflowInstance, WorkflowTask
 from app.modules.workflow.services.workflow_service import WorkflowService
 from app.modules.workflow.schemas.workflow_schemas import WorkflowCreate, WorkflowStepCreate
+from app.modules.workflow.application.commands import WorkflowCommandService
+from app.modules.workflow.application.queries import WorkflowQueryService
 
 @pytest.mark.asyncio
 async def test_workflow_execution_and_approval(db: AsyncSession, organization, organizer):
@@ -63,3 +65,50 @@ async def test_workflow_execution_and_approval(db: AsyncSession, organization, o
     
     completed_tasks = completed_inst.tasks
     assert all(t.status == "completed" for t in completed_tasks)
+
+
+@pytest.mark.asyncio
+async def test_workflow_commands_are_tenant_scoped_and_idempotent(db: AsyncSession, organization, organizer):
+    organization_id = organization.id
+    actor_id = organizer.id
+    payload = WorkflowCreate(
+        name="Replay-safe workflow",
+        steps=[WorkflowStepCreate(step_name="Manual Review", step_order=1)],
+    )
+
+    first = await WorkflowCommandService.create(
+        db,
+        organization_id,
+        actor_id,
+        payload,
+        idempotency_key="workflow-create-replay-001",
+    )
+    replay = await WorkflowCommandService.create(
+        db,
+        organization_id,
+        actor_id,
+        payload,
+        idempotency_key="workflow-create-replay-001",
+    )
+
+    assert first["id"] == replay["id"]
+    workflow_id = uuid.UUID(first["id"])
+    assert await WorkflowQueryService.get_workflow(db, uuid.uuid4(), workflow_id) is None
+
+    triggered = await WorkflowCommandService.trigger(
+        db,
+        organization_id,
+        actor_id,
+        workflow_id,
+        None,
+        idempotency_key="workflow-trigger-replay-001",
+    )
+    triggered_replay = await WorkflowCommandService.trigger(
+        db,
+        organization_id,
+        actor_id,
+        workflow_id,
+        None,
+        idempotency_key="workflow-trigger-replay-001",
+    )
+    assert triggered["id"] == triggered_replay["id"]

@@ -25,6 +25,8 @@ class AgendaRoom(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    # Optimistic concurrency token for shared room configuration edits.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     event_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("events.events.id", ondelete="CASCADE"),
@@ -47,16 +49,10 @@ class AgendaRoom(Base):
     room_type: Mapped[str] = mapped_column(
         String(50), nullable=False, default="presentation"
     )
-    capacity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    screen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    floor: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    building: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    location: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     room_coordinator: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
-    av_technician: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
-    location_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    capacity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    screen_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -158,10 +158,14 @@ export default function EventPortalLayout({
     if (saved) {
       setTheme(saved);
       document.documentElement.setAttribute("data-theme", saved);
+    } else if (eventData?.dark_mode_default !== undefined) {
+      const mode = eventData.dark_mode_default ? "dark" : "light";
+      setTheme(mode);
+      document.documentElement.setAttribute("data-theme", mode);
     } else {
       document.documentElement.setAttribute("data-theme", "dark");
     }
-  }, []);
+  }, [eventData?.dark_mode_default]);
 
   const handleThemeChange = (newTheme: "dark" | "light" | "system") => {
     setTheme(newTheme);
@@ -178,10 +182,23 @@ export default function EventPortalLayout({
   useEffect(() => {
     if (!eventId) return;
 
+    // Load from local storage cache immediately on mount
+    try {
+      const cached = localStorage.getItem(`portal_theme_cache_${eventId}`);
+      if (cached) {
+        setEventData(JSON.parse(cached));
+      }
+    } catch (e) {}
+
     fetch(`${API_BASE}/api/v1/portal/registration/${eventId}/form`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) setEventData(data);
+        if (data) {
+          setEventData(data);
+          try {
+            localStorage.setItem(`portal_theme_cache_${eventId}`, JSON.stringify(data));
+          } catch (e) {}
+        }
       })
       .catch(() => { });
 
@@ -289,48 +306,55 @@ export default function EventPortalLayout({
 
   return (
     <div
+      suppressHydrationWarning
       className={`min-h-screen flex flex-col bg-[var(--bg-base)] text-[var(--text)] transition-colors duration-200 relative ${isAuthPage ? "lg:h-screen lg:max-h-screen lg:overflow-hidden" : ""
         }`}
       style={
-        {
-          "--pri": primaryHex,
-          "--sec": secondaryHex,
-          "--brand-primary": primaryHex,
-          "--brand-secondary": secondaryHex,
-          "--primary-contrast": primaryContrast,
-          "--secondary-contrast": secondaryContrast,
-          "--pri-text": priTextColor,
-          "--sec-text": secTextColor,
-          ...solidContrastVars,
-        } as React.CSSProperties
+        eventData
+          ? ({
+              "--pri": primaryHex,
+              "--sec": secondaryHex,
+              "--brand-primary": primaryHex,
+              "--brand-secondary": secondaryHex,
+              "--primary-contrast": primaryContrast,
+              "--secondary-contrast": secondaryContrast,
+              "--pri-text": priTextColor,
+              "--sec-text": secTextColor,
+              ...solidContrastVars,
+            } as React.CSSProperties)
+          : undefined
       }
     >
       {/* ── GLOBAL THEME INJECTION FOR RADIX PORTALS & DIALOGS ──────────────── */}
-      <style>{`
-        :root, html, body, [data-radix-portal], [role="dialog"], [role="menu"], [data-radix-popper-content-wrapper] {
-          --pri: ${primaryHex} !important;
-          --sec: ${secondaryHex} !important;
-          --brand-primary: ${primaryHex} !important;
-          --brand-secondary: ${secondaryHex} !important;
-          --primary-contrast: ${primaryContrast} !important;
-          --secondary-contrast: ${secondaryContrast} !important;
-          --pri-text: ${priTextColor} !important;
-          --sec-text: ${secTextColor} !important;
-          ${Object.entries(solidContrastVars)
+      {eventData && (
+        <style suppressHydrationWarning>{`
+          :root, html, body, [data-theme], [data-radix-portal], [role="dialog"], [role="menu"], [data-radix-popper-content-wrapper] {
+            --pri: ${primaryHex} !important;
+            --sec: ${secondaryHex} !important;
+            --brand-primary: ${primaryHex} !important;
+            --brand-secondary: ${secondaryHex} !important;
+            --primary-contrast: ${primaryContrast} !important;
+            --secondary-contrast: ${secondaryContrast} !important;
+            --pri-text: ${priTextColor} !important;
+            --sec-text: ${secTextColor} !important;
+            ${Object.entries(solidContrastVars)
             .map(([k, v]) => `${k}: ${v} !important;`)
             .join("\n")}
-        }
-      `}</style>
+          }
+        `}</style>
+      )}
 
       {/* ── DYNAMIC BACKGROUND THEME ────────────────────────────────────────── */}
-      <PortalBackground
-        mode={bgMode}
-        pattern={svgPattern}
-        imageUrl={bgImageUrl}
-        blur={Number(bgBlur)}
-        overlayOpacity={Number(bgOverlayOpacity)}
-        solidColor={bgSolidColor}
-      />
+      {eventData && bgMode !== "none" && (
+        <PortalBackground
+          mode={bgMode}
+          pattern={svgPattern}
+          imageUrl={bgImageUrl}
+          blur={Number(bgBlur)}
+          overlayOpacity={Number(bgOverlayOpacity)}
+          solidColor={bgSolidColor}
+        />
+      )}
 
       {/* ── TOP HEADER ──────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 w-full border-b border-[var(--border-default)] bg-[var(--bg-base)]/90 backdrop-blur-md shrink-0">
@@ -579,9 +603,8 @@ export default function EventPortalLayout({
                       {faq.q}
                     </span>
                     <ChevronDown
-                      className={`h-4 w-4 shrink-0 text-[var(--muted)] transition-transform duration-200 ${
-                        isExpanded ? "rotate-180 text-[var(--pri)]" : ""
-                      }`}
+                      className={`h-4 w-4 shrink-0 text-[var(--muted)] transition-transform duration-200 ${isExpanded ? "rotate-180 text-[var(--pri)]" : ""
+                        }`}
                     />
                   </button>
 

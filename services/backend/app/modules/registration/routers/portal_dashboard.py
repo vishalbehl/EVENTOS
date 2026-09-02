@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+import hashlib
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
@@ -20,10 +22,10 @@ from sqlalchemy import select, and_, text
 from app.dependencies import get_db
 from app.modules.registration.dependencies.portal_auth import PortalUser, get_portal_user
 from app.modules.registration.services.portal_service import (
-    get_dashboard_data,
     update_attendee_details,
     _check_edits_locked,
 )
+from app.modules.registration.application.queries import RegistrationDashboardQueryService
 from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
@@ -40,6 +42,10 @@ from app.modules.registration.routers.portal_auth import (
 )
 from app.modules.notifications.services.email_service import send_email
 from app.core.dependencies.feature_gate import enforce_event_operation
+from app.core.cache import cache_service
+from app.core.cache_keys import TenantCacheKey
+from app.core.cache_policy import CacheTTL, ttl
+from app.modules.analytics.services.projection_dispatch import enqueue_event_payment_projection_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -207,16 +213,59 @@ async def get_portal_dashboard(
         event.id,
         "registration.read",
     )
+    dashboard_revision = str(getattr(event, "version", 1) or 1)
+    # PortalUser is intentionally email-based, so derive a stable surrogate
+    # identity for the tenant-safe cache key without storing the email in Redis.
+    viewer_id = uuid.uuid5(uuid.NAMESPACE_URL, f"portal-dashboard:{portal_user.email.lower()}")
+    dashboard_cache_key = TenantCacheKey.identity(
+        "dashboard-v1",
+        event.id,
+        dashboard_revision,
+        hashlib.sha256(portal_user.email.lower().encode("utf-8")).hexdigest()[:24],
+        organization_id=event.organization_id,
+        user_id=viewer_id,
+        role=portal_user.role,
+        capability_revision=dashboard_revision,
+    )
+    cached_dashboard = await cache_service.get_json(dashboard_cache_key)
+    if isinstance(cached_dashboard, dict):
+        try:
+            return DashboardResponse.model_validate(cached_dashboard)
+        except Exception:
+            await cache_service.delete(dashboard_cache_key)
+    dashboard_lock_name = f"lock:{dashboard_cache_key}"
+    dashboard_lock_token, lock_backend_available = await cache_service.acquire_lock_status(
+        dashboard_lock_name,
+        ttl_seconds=max(15, ttl(CacheTTL.DASHBOARD)),
+    )
+    if lock_backend_available and dashboard_lock_token is None:
+        # Another request is populating the same identity/event snapshot. Wait
+        # in bounded intervals, then fall back to PostgreSQL if it is still
+        # unavailable rather than making the request unbounded.
+        for _ in range(30):
+            await asyncio.sleep(0.2)
+            cached_dashboard = await cache_service.get_json(dashboard_cache_key)
+            if isinstance(cached_dashboard, dict):
+                try:
+                    return DashboardResponse.model_validate(cached_dashboard)
+                except Exception:
+                    await cache_service.delete(dashboard_cache_key)
     try:
-        data = await get_dashboard_data(
+        data = await RegistrationDashboardQueryService(db).execute(
             email=portal_user.email,
             event_id=portal_user.event_id,
-            db=db,
+            event=event,
         )
     except ValueError as exc:
+        if dashboard_lock_token is not None:
+            await cache_service.release_lock(dashboard_lock_name, dashboard_lock_token)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except Exception:
+        if dashboard_lock_token is not None:
+            await cache_service.release_lock(dashboard_lock_name, dashboard_lock_token)
+        raise
 
-    return DashboardResponse(
+    dashboard_response = DashboardResponse(
         event=EventInfoResponse(
             name=data.event.name,
             start_date=data.event.start_date,
@@ -293,6 +342,14 @@ async def get_portal_dashboard(
             else None
         ),
     )
+    await cache_service.set_json(
+        dashboard_cache_key,
+        dashboard_response.model_dump(mode="json"),
+        ttl(CacheTTL.DASHBOARD),
+    )
+    if dashboard_lock_token is not None:
+        await cache_service.release_lock(dashboard_lock_name, dashboard_lock_token)
+    return dashboard_response
 
 
 @router.patch("/portal/attendee/details", response_model=ParticipantUpdateResponse)
@@ -387,6 +444,10 @@ async def patch_attendee_details(
     new_token = None
     if new_email:
         new_token = _issue_portal_jwt(new_email, portal_user.event_id)
+
+    updated_event = await db.get(Event, portal_user.event_id)
+    if updated_event is not None:
+        await cache_service.invalidate_event(updated_event.organization_id, updated_event.id)
 
     logger.info(
         "attendee_details_updated",
@@ -668,6 +729,9 @@ async def attendee_payment_checkout(
                     part.regno = await generate_next_regno(db, portal_user.event_id, part.role)
         
         await db.commit()
+        enqueue_event_payment_projection_refresh(
+            organization_id=event.organization_id, event_id=event.id
+        )
         return {
             "checkout_required": False,
             "status": "Paid",
@@ -704,6 +768,9 @@ async def attendee_payment_checkout(
 
     tx.gateway_order_id = checkout_details.get("gateway_order_id")
     await db.commit()
+    enqueue_event_payment_projection_refresh(
+        organization_id=event.organization_id, event_id=event.id
+    )
 
     return {
         "checkout_required": True,
@@ -818,6 +885,9 @@ async def attendee_payment_confirm(
         reg.participant_id = participant.id
 
     await db.commit()
+    enqueue_event_payment_projection_refresh(
+        organization_id=event.organization_id, event_id=event.id
+    )
     if participant:
         await db.refresh(participant)
     await db.refresh(tx)

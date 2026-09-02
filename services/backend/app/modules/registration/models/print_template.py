@@ -16,6 +16,7 @@ from app.modules.events.models.event import Event
 
 class PrintTemplate(Base, SoftDeleteMixin):
     __tablename__ = "print_templates"
+    __table_args__ = {"schema": "design"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

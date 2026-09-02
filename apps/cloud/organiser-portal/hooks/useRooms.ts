@@ -5,12 +5,10 @@ export interface RoomSummary {
   id: string;
   event_id: string;
   name: string;
-  capacity?: number;
-  screen_count: number;
+  code?: string;
   room_type: string;
+  room_type_id?: string;
   room_coordinator?: string;
-  av_technician?: string;
-  location_notes?: string;
   is_active: boolean;
   created_at: string;
   // Computed fields from merged analytics

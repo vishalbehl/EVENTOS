@@ -446,7 +446,7 @@ export function SessionInspectorDrawer({
                     <option value="">Select room...</option>
                     {rooms.map((r) => (
                       <option key={r.id} value={r.id}>
-                        {r.name} {r.capacity ? `(${r.capacity} pax)` : ""}
+                        {r.name} {r.code ? `(${r.code})` : ""}
                       </option>
                     ))}
                   </select>

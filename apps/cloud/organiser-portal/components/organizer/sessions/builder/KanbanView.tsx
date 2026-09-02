@@ -133,7 +133,6 @@ export function KanbanView({ onAddSessionForRoom }: KanbanViewProps) {
               id: "unassigned",
               event_id: "",
               name: "Unassigned Sessions",
-              screen_count: 0,
               room_type: "unassigned",
               is_active: true,
             }}

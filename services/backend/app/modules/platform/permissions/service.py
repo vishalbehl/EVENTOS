@@ -1,11 +1,12 @@
 # app/modules/platform/permissions/service.py
 import uuid
 from typing import List, Set, Optional, Dict, Any
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.modules.platform.permissions.models import PlatformPermission, PlatformRolePermission
+from app.modules.platform.departments.models import Department
+from app.modules.platform.teams.models import Team
 from app.modules.platform.permissions.repository import PermissionRepository
 from app.modules.platform.permissions.constants import DEFAULT_PERMISSIONS
 from app.modules.platform.roles.models import DepartmentRole, UserAssignment
@@ -99,41 +100,64 @@ class PermissionService:
 
     async def get_user_erp_context(self, user_id: uuid.UUID, org_id: uuid.UUID) -> List[Dict[str, Any]]:
         """
-        Gathers all department/team assignments for a user.
+        Gathers all department/team assignments for a user in one read.
+
+        The permission join replaces one permission query per assignment while
+        retaining the same organization boundary and output contract.
         """
         stmt = (
-            select(UserAssignment)
-            .options(
-                selectinload(UserAssignment.role),
-                selectinload(UserAssignment.department),
-                selectinload(UserAssignment.team)
+            select(
+                UserAssignment.id,
+                UserAssignment.department_id,
+                UserAssignment.team_id,
+                Department.code.label("department_code"),
+                Team.code.label("team_code"),
+                DepartmentRole.id.label("role_id"),
+                DepartmentRole.code.label("role_code"),
+                DepartmentRole.access_level,
+                PlatformPermission.code.label("permission_code"),
+            )
+            .join(Department, Department.id == UserAssignment.department_id)
+            .outerjoin(Team, Team.id == UserAssignment.team_id)
+            .join(DepartmentRole, DepartmentRole.id == UserAssignment.role_id)
+            .outerjoin(
+                PlatformRolePermission,
+                PlatformRolePermission.role_id == DepartmentRole.id,
+            )
+            .outerjoin(
+                PlatformPermission,
+                PlatformPermission.id == PlatformRolePermission.permission_id,
             )
             .where(
                 UserAssignment.user_id == user_id,
                 UserAssignment.organization_id == org_id,
-                UserAssignment.deleted_at == None
+                UserAssignment.deleted_at.is_(None),
+            )
+            .order_by(
+                UserAssignment.id,
+                PlatformPermission.code,
             )
         )
         result = await self.db.execute(stmt)
-        assignments = result.scalars().all()
-
-        user_context = []
-        for asgn in assignments:
-            # Gather role permissions
-            role_perms = await self.repository.get_permissions_for_role(asgn.role_id)
-            perm_codes = {p.code for p in role_perms}
-
-            user_context.append({
-                "assignment_id": asgn.id,
-                "department_id": asgn.department_id,
-                "department_code": asgn.department.code if asgn.department else None,
-                "team_id": asgn.team_id,
-                "team_code": asgn.team.code if asgn.team else None,
-                "role_id": asgn.role_id,
-                "role_code": asgn.role.code,
-                "access_level": asgn.role.access_level, # GLOBAL, DEPARTMENT, TEAM, SELF
-                "permissions": perm_codes
-            })
+        grouped: dict[uuid.UUID, dict[str, Any]] = {}
+        for row in result:
+            context = grouped.setdefault(
+                row.id,
+                {
+                    "assignment_id": row.id,
+                    "department_id": row.department_id,
+                    "department_code": row.department_code,
+                    "team_id": row.team_id,
+                    "team_code": row.team_code,
+                    "role_id": row.role_id,
+                    "role_code": row.role_code,
+                    "access_level": row.access_level,
+                    "permissions": set(),
+                },
+            )
+            if row.permission_code:
+                context["permissions"].add(row.permission_code)
+        user_context = list(grouped.values())
         return user_context
 
     async def check_user_permission(

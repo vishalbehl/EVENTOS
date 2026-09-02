@@ -57,7 +57,13 @@ class OrganizationLifecycleService:
 
     @staticmethod
     def _manifest_checksum(manifest: dict) -> str:
+        # Audit rows are retained and excluded from destructive operations. Their
+        # count is therefore evidence metadata, not part of the purge approval
+        # fingerprint, and may change while an approval is being executed.
         stable = {key: value for key, value in manifest.items() if key != "generated_at"}
+        counts = dict(stable.get("counts", {}))
+        counts.pop("audit_records_retained", None)
+        stable["counts"] = counts
         return hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     @staticmethod
@@ -77,7 +83,7 @@ class OrganizationLifecycleService:
         table_counts: dict[str, int] = {}
         if job_type in {"MERGE", "PURGE", "DELETE"}:
             for schema, table in await OrganizationLifecycleService._organization_tables(db):
-                if schema == "audit" or (schema, table) == ("platform", "organization_lifecycle_jobs"):
+                if schema == "audit" or table == "organization_lifecycle_jobs":
                     continue
                 count = await db.scalar(text(f"SELECT COUNT(*) FROM {OrganizationLifecycleService._qualified(schema, table)} WHERE organization_id=:organization_id"), {"organization_id": organization_id})
                 table_counts[f"{schema}.{table}"] = int(count or 0)

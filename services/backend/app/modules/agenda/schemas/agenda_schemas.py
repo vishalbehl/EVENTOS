@@ -63,6 +63,7 @@ class AgendaDayResponse(AgendaDayBase):
     agenda_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    version: int = 1
 
 
 # ── ROOM TYPES & ROOMS ───────────────────────────────────────────────────────
@@ -88,16 +89,8 @@ class RoomBase(BaseModel):
     code: Optional[str] = None
     room_type: str = Field(default="presentation")
     room_type_id: Optional[uuid.UUID] = None
-    capacity: Optional[int] = Field(None, ge=1)
-    screen_count: int = Field(default=1, ge=1)
-    floor: Optional[str] = None
-    building: Optional[str] = None
-    location: Optional[str] = None
     room_coordinator: Optional[str] = None
-    av_technician: Optional[str] = None
-    location_notes: Optional[str] = None
     is_active: bool = True
-    sort_order: int = 0
 
 class RoomCreate(RoomBase):
     agenda_id: Optional[uuid.UUID] = None
@@ -107,16 +100,8 @@ class RoomUpdate(BaseModel):
     code: Optional[str] = None
     room_type: Optional[str] = None
     room_type_id: Optional[uuid.UUID] = None
-    capacity: Optional[int] = None
-    screen_count: Optional[int] = None
-    floor: Optional[str] = None
-    building: Optional[str] = None
-    location: Optional[str] = None
     room_coordinator: Optional[str] = None
-    av_technician: Optional[str] = None
-    location_notes: Optional[str] = None
     is_active: Optional[bool] = None
-    sort_order: Optional[int] = None
 
 class RoomResponse(RoomBase):
     model_config = ConfigDict(from_attributes=True)
@@ -316,6 +301,7 @@ class SessionResponse(SessionBase):
     event_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    version: int = 1
     people: List[SessionPersonResponse] = Field(default_factory=list)
     slots: List[PresentationSlotResponse] = Field(default_factory=list)
 

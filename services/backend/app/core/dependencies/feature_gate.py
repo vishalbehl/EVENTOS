@@ -281,7 +281,15 @@ async def enforce_event_feature(
 ):
     """Authoritative operation gate usable by authenticated and public flows."""
     try:
-        result = await CapabilityService.resolve_event(db, organization_id, event_id, user_id=user_id)
+        # Authorization needs feature state only; quota aggregation belongs to
+        # capability/billing reads and is intentionally excluded from this hot path.
+        result = await CapabilityService.resolve_event(
+            db,
+            organization_id,
+            event_id,
+            user_id=user_id,
+            include_usage=False,
+        )
     except Exception as exc:
         raise EntitlementRequiredException(
             feature_key,

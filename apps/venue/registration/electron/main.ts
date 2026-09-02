@@ -96,12 +96,12 @@ function localDatabaseStatus(databasePath = bootstrapLocalDatabasePath()): Local
 }
 
 function serviceRuntime(): { serviceRoot: string; pythonExe: string; runtimeSource: string; runtimeAvailable: boolean; checkedPaths: string[] } {
-  const serviceRoot = path.join(repoRoot(), "services", "registration-server");
+  const serviceRoot = path.join(repoRoot(), "services", "venue", "registration-server");
   const configuredPython = process.env.REGISTRATION_SERVER_PYTHON || process.env.VENUE_REGISTRATION_PYTHON;
   const candidates = [
     configuredPython,
     path.join(serviceRoot, ".venv", "Scripts", "python.exe"),
-    path.join(repoRoot(), "services", "venue-server", ".venv", "Scripts", "python.exe"),
+    path.join(repoRoot(), "services", "venue", "venue-server", ".venv", "Scripts", "python.exe"),
     path.join(repoRoot(), "services", "backend", ".venv", "Scripts", "python.exe"),
   ].filter((candidate): candidate is string => Boolean(candidate));
   const pythonExe = candidates.find((candidate) => fs.existsSync(candidate));
@@ -185,7 +185,7 @@ function runtimeStatus(): Record<string, unknown> {
 }
 
 async function initializeLocalDatabase(): Promise<LocalDatabaseStatus> {
-  const scriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "initialize_local_db.py");
+  const scriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "initialize_local_db.py");
   const result = await runPythonJson(scriptPath, [bootstrapLocalDatabasePath()]);
   return {
     ...localDatabaseStatus(bootstrapLocalDatabasePath()),
@@ -229,7 +229,7 @@ function postgresAsyncUrl(setup: RegistrationPostgresSetup): string {
 }
 
 function writeVenueServerDatabaseUrlValue(databaseUrl: string): string {
-  const serviceRoot = path.join(repoRoot(), "services", "registration-server");
+  const serviceRoot = path.join(repoRoot(), "services", "venue", "registration-server");
   const envPath = path.join(serviceRoot, ".env");
   const line = `DATABASE_URL=${databaseUrl}`;
   let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
@@ -278,7 +278,7 @@ async function registrationSetupStatus(): Promise<Record<string, unknown>> {
   }
   let validation: Record<string, unknown> = { configured: false, reason: "setup_marker_missing" };
   if (marker) {
-    const scriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "validate_registration_setup.py");
+    const scriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "validate_registration_setup.py");
     validation = await runPythonJson(scriptPath, [uploadedRegistrationDatabasePath(), setupMarkerPath(), rememberedPassword]);
   }
   return {
@@ -300,20 +300,50 @@ function stopNodeAgent(): void {
 
 async function stopVenueServerOnPort(port = 8002): Promise<void> {
   if (venueServerProcess && !venueServerProcess.killed) {
-    venueServerProcess.kill("SIGTERM");
+    try {
+      venueServerProcess.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
   }
   venueServerProcess = null;
 
   const command = `
     $connections = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue;
     foreach ($connection in $connections) {
-      $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($connection.OwningProcess)" -ErrorAction SilentlyContinue;
-      if ($processInfo -and ($processInfo.CommandLine -match 'uvicorn|app\\\\.main:app|python')) {
-        Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue;
-      }
+      Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue;
     }
   `;
-  await runPowerShell(command);
+  try {
+    await runPowerShell(command);
+  } catch {
+    // ignore
+  }
+}
+
+async function hotReloadVenueServerDatabase(databaseUrl?: string): Promise<boolean> {
+  try {
+    const res = await fetch("http://127.0.0.1:8002/api/v1/venue/admin/reload-database", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(databaseUrl ? { database_url: databaseUrl } : {}),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function touchMainFile(): void {
+  try {
+    const mainPy = path.join(repoRoot(), "services", "venue", "registration-server", "app", "main.py");
+    if (fs.existsSync(mainPy)) {
+      const now = new Date();
+      fs.utimesSync(mainPy, now, now);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 function startVenueServer(): { started: boolean; status: string; port: number } {
@@ -337,11 +367,16 @@ async function waitForVenueServer(timeoutMs = 15000): Promise<{ ready: boolean; 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      await fetch("http://127.0.0.1:8002/api/v1/auth/verify", { headers: { "X-Venue-Key": "venue_secret_key" } });
-      return { ready: true, status: "ready" };
+      const res = await fetch("http://127.0.0.1:8002/api/v1/venue/admin/dashboard/metrics", {
+        headers: { "X-Venue-Key": "dev_venue_auth_key_1234567890123456" },
+      });
+      if (res.ok || res.status < 500) {
+        return { ready: true, status: "ready" };
+      }
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // retry
     }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return { ready: false, status: "timeout" };
 }
@@ -514,7 +549,7 @@ ipcMain.handle("venue-desktop:import-local-database", async () => {
   fs.mkdirSync(path.dirname(uploadedRegistrationDatabasePath()), { recursive: true });
   fs.copyFileSync(result.filePaths[0], uploadedRegistrationDatabasePath());
   await initializeLocalDatabase();
-  const markScriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "mark_registration_sqlite_setup.py");
+  const markScriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "mark_registration_sqlite_setup.py");
   await runPythonJson(markScriptPath, [uploadedRegistrationDatabasePath()]);
   const marker = writeSetupMarker({ mode: "uploaded_local_db", importedFrom: result.filePaths[0], sqlitePath: uploadedRegistrationDatabasePath() });
   const agent = fs.existsSync(nodeConfigPath()) ? startNodeAgent() : { started: false, status: "missing_config", configPath: nodeConfigPath() };
@@ -537,7 +572,7 @@ ipcMain.handle("venue-desktop:export-local-database", async () => {
     return { canceled: true, ...localDatabaseStatus() };
   }
 
-  const scriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "export_local_db.py");
+  const scriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "export_local_db.py");
   const sourcePath = fs.existsSync(uploadedRegistrationDatabasePath()) ? uploadedRegistrationDatabasePath() : bootstrapLocalDatabasePath();
   const exported = await runPythonJson(scriptPath, [sourcePath, result.filePath]);
   return { canceled: false, ...exported };
@@ -564,9 +599,9 @@ ipcMain.handle("venue-desktop:load-local-snapshot", async (_event, snapshot: unk
   const snapshotPath = path.join(app.getPath("userData"), `local-db-snapshot-${Date.now()}.json`);
   fs.writeFileSync(snapshotPath, JSON.stringify(snapshot), "utf-8");
   try {
-    const scriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "load_local_snapshot.py");
+    const scriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "load_local_snapshot.py");
     const loaded = await runPythonJson(scriptPath, [uploadedRegistrationDatabasePath(), snapshotPath]);
-    const markScriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "mark_registration_sqlite_setup.py");
+    const markScriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "mark_registration_sqlite_setup.py");
     await runPythonJson(markScriptPath, [uploadedRegistrationDatabasePath()]);
     return { ...localDatabaseStatus(uploadedRegistrationDatabasePath()), ...loaded };
   } finally {
@@ -604,7 +639,7 @@ ipcMain.handle("venue-desktop:setup-registration-postgres", async (_event, setup
   const setupPayloadPath = path.join(app.getPath("userData"), `registration-postgres-setup-${Date.now()}.json`);
   fs.writeFileSync(setupPayloadPath, JSON.stringify(setup), "utf-8");
   try {
-    const scriptPath = path.join(repoRoot(), "services", "registration-server", "scripts", "node", "setup_registration_postgres.py");
+    const scriptPath = path.join(repoRoot(), "services", "venue", "registration-server", "scripts", "node", "setup_registration_postgres.py");
     const result = await runPythonJson(scriptPath, [bootstrapLocalDatabasePath(), setupPayloadPath]);
     const safeConfig = {
       mode: "shared_postgres",
@@ -618,7 +653,12 @@ ipcMain.handle("venue-desktop:setup-registration-postgres", async (_event, setup
     savePostgresPassword(setup.postgres_password);
     const serverEnvPath = writeVenueServerDatabaseUrl(setup);
     const marker = writeSetupMarker(safeConfig);
-    const serverRestart = await restartVenueServer();
+    touchMainFile();
+    const hotReloaded = await hotReloadVenueServerDatabase(postgresAsyncUrl(setup));
+    let serverRestart: Record<string, unknown> = { hotReloaded };
+    if (!hotReloaded) {
+      serverRestart = await restartVenueServer();
+    }
     return { ...result, marker, configPath: registrationDbConfigPath(), serverEnvPath, serverRestart };
   } finally {
     fs.rmSync(setupPayloadPath, { force: true });
@@ -644,7 +684,7 @@ ipcMain.handle("venue-desktop:reset-registration-database", async () => {
   }
 
   // 2. Clear DATABASE_URL in registration-server .env so it returns to fresh state
-  const serviceRoot = path.join(repoRoot(), "services", "registration-server");
+  const serviceRoot = path.join(repoRoot(), "services", "venue", "registration-server");
   const envPath = path.join(serviceRoot, ".env");
   if (fs.existsSync(envPath)) {
     let content = fs.readFileSync(envPath, "utf-8");
@@ -660,8 +700,18 @@ ipcMain.handle("venue-desktop:reset-registration-database", async () => {
   return { success: true, status };
 });
 
+async function ensureVenueServerRunning(): Promise<void> {
+  try {
+    const res = await fetch("http://127.0.0.1:8002/docs");
+    if (res.ok || res.status < 500) return;
+  } catch {
+    startVenueServer();
+  }
+}
+
 app.whenReady().then(() => {
   void initializeLocalDatabase().catch((error) => console.error(`[venue-local-db] ${error}`));
+  void ensureVenueServerRunning();
   startNodeAgent();
   createMainWindow();
 

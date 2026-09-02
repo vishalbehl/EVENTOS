@@ -41,16 +41,20 @@ export function RoomColumn({ room, sessions, onAddSession }: RoomColumnProps) {
               {room.room_type}
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)] mt-0.5">
-            {room.capacity && (
-              <span className="flex items-center gap-1">
-                <Users className="h-3 w-3" /> {room.capacity} seats
-              </span>
-            )}
-            <span className="flex items-center gap-1">
-              <Monitor className="h-3 w-3" /> {room.screen_count} screens
-            </span>
-          </div>
+          {(room.code || room.room_coordinator) && (
+            <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)] mt-0.5">
+              {room.code && (
+                <span className="font-mono text-[10px] font-bold">
+                  {room.code}
+                </span>
+              )}
+              {room.room_coordinator && (
+                <span className="truncate max-w-[140px] text-[10px]">
+                  {room.room_coordinator}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <span className="text-xs font-semibold text-[var(--brand-primary)] bg-[var(--brand-primary-muted)] border border-[var(--brand-primary)]/20 px-2 py-0.5 rounded-full">

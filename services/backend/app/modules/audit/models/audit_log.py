@@ -86,6 +86,7 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_logs_correlation", "correlation_id"),
         Index("ix_audit_logs_row_hash", "row_hash"),
+        {"schema": "command_center_audit"},
     )
 
 
@@ -100,7 +101,7 @@ def generate_row_hash(mapper, connection, target):
     if not target.occurred_at:
         target.occurred_at = datetime.now(timezone.utc)
 
-    schema_name = "audit"
+    schema_name = "command_center_audit"
     table_name = "logs"
     record_id = str(target.resource_id) if target.resource_id else ""
     action = target.action_type or ""

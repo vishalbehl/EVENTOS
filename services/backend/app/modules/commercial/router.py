@@ -1,6 +1,7 @@
 ﻿import uuid
+import hashlib
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, Header, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db
@@ -10,8 +11,155 @@ from app.modules.commercial.schemas import (
     ServiceCreate, ServiceOut, ServicePackageCreate, ServicePackageOut,
     ServiceCategoryCreate, ServiceCategoryOut
 )
+from app.modules.inventory.models import HardwareCategory, HardwareItem, HardwareStock
+from app.modules.superadmin.dependencies import require_super_admin
+from sqlalchemy import select, func
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.modules.platform.application.governed_mutation_commands import commit_transaction
+from app.modules.commercial.application.queries import (
+    CommercialCatalogQueryService,
+    ServiceCatalogQueryService,
+)
 
 router = APIRouter(prefix="/commercial", tags=["commercial"])
+
+
+@router.post("/superadmin/catalog/hardware/import")
+async def superadmin_import_hardware(
+    file: "UploadFile" = File(...),
+    current_user: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
+):
+    """Bounded, tenant-aware hardware catalog upsert."""
+    import io
+    import openpyxl
+
+    contents = await file.read()
+    if len(contents) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB).")
+    idempotency_record = None
+    if idempotency_key:
+        idempotency_record = await begin_idempotent(
+            db,
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            operation="commercial.hardware_catalog_import",
+            key=idempotency_key,
+            payload={
+                "filename": file.filename or "",
+                "size_bytes": len(contents),
+                "sha256": hashlib.sha256(contents).hexdigest(),
+            },
+        )
+        replay = replay_response(idempotency_record)
+        if replay is not None:
+            return replay[1]
+    try:
+        sheet = openpyxl.load_workbook(io.BytesIO(contents), data_only=True, read_only=True).active
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid Excel file.") from exc
+    headers = {str(cell.value).strip().lower().replace("_", " "): idx for idx, cell in enumerate(next(sheet.iter_rows())) if cell.value}
+    def value(row, *names, default=None):
+        for name in names:
+            idx = headers.get(name)
+            if idx is not None and idx < len(row) and row[idx].value is not None:
+                return row[idx].value
+        return default
+    records = []
+    for row in sheet.iter_rows(min_row=2, max_row=10001):
+        code = str(value(row, "hardware code", "asset code", "code", default="")).strip()
+        if not code:
+            continue
+        category_name = str(value(row, "category", default="General")).strip()
+        data = dict(category_id=None, asset_code=code,
+                    name=str(value(row, "hardware name", "name", default=code)),
+                    brand=str(value(row, "brand", default="")), model=str(value(row, "model", default="")),
+                    purchase_cost=float(value(row, "cost price", "purchase cost", default=0) or 0),
+                    renting_price=float(value(row, "renting price", default=0) or 0),
+                    pricing_unit=str(value(row, "pricing unit", default="PER_EVENT")),
+                    description=value(row, "description", default=None), tax_category=value(row, "tax category", default=None))
+        requested = int(value(row, "inventory count", "quantity", default=1) or 1)
+        records.append((category_name, data, requested))
+
+    if not records:
+        response = {"status": "success", "count": 0}
+        if idempotency_record is not None:
+            await complete_idempotent(
+                db, idempotency_record, response_status=200, response_body=response
+            )
+        await commit_transaction(db, organization_id=current_user.organization_id)
+        return response
+
+    # Resolve all existing catalog rows in bounded batches. The previous
+    # implementation performed three round trips for every spreadsheet row.
+    category_names = {category_name.lower() for category_name, _, _ in records}
+    category_display_names = {
+        category_name.lower(): category_name for category_name, _, _ in records
+    }
+    categories = list((await db.scalars(
+        select(HardwareCategory).where(func.lower(HardwareCategory.name).in_(category_names))
+    )).all())
+    categories_by_name = {category.name.lower(): category for category in categories}
+    for category_name in category_names:
+        if category_name not in categories_by_name:
+            category = HardwareCategory(name=category_display_names[category_name])
+            db.add(category)
+            categories_by_name[category_name] = category
+    await db.flush()
+
+    codes = {data["asset_code"] for _, data, _ in records}
+    items = list((await db.scalars(
+        select(HardwareItem).where(HardwareItem.asset_code.in_(codes))
+    )).all())
+    items_by_code = {item.asset_code: item for item in items}
+
+    for category_name, data, _ in records:
+        data["category_id"] = categories_by_name[category_name.lower()].id
+        item = items_by_code.get(data["asset_code"])
+        if item is None:
+            item = HardwareItem(**data, organization_id=current_user.organization_id)
+            db.add(item)
+            items_by_code[data["asset_code"]] = item
+        else:
+            for key, val in data.items():
+                setattr(item, key, val)
+    await db.flush()
+
+    item_ids = [item.id for item in items_by_code.values()]
+    stocks = list((await db.scalars(
+        select(HardwareStock).where(HardwareStock.hardware_id.in_(item_ids)).with_for_update()
+    )).all())
+    stocks_by_item = {stock.hardware_id: stock for stock in stocks}
+    for _, data, requested in records:
+        item = items_by_code[data["asset_code"]]
+        stock = stocks_by_item.get(item.id)
+        if stock is None:
+            stock = HardwareStock(hardware_id=item.id, quantity=requested, reserved_quantity=0, available_quantity=requested)
+            db.add(stock)
+            stocks_by_item[item.id] = stock
+        else:
+            stock.quantity = requested
+            stock.available_quantity = max(0, requested - stock.reserved_quantity)
+
+    response = {"status": "success", "count": len(records)}
+    if idempotency_record is not None:
+        # Persist completion atomically with the catalog mutation.
+        await complete_idempotent(
+            db, idempotency_record, response_status=200, response_body=response
+        )
+    await commit_transaction(db, organization_id=current_user.organization_id)
+    return response
+
+
+@router.delete("/superadmin/catalog/hardware/{hardware_id}")
+async def superadmin_delete_hardware(hardware_id: uuid.UUID, current_user: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    item = await db.scalar(select(HardwareItem).where(HardwareItem.id == hardware_id))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Hardware item not found")
+    await db.delete(item)
+    await commit_transaction(db, organization_id=current_user.organization_id)
+    return {"status": "success", "id": str(hardware_id)}
 
 @router.post("/categories", response_model=ServiceCategoryOut)
 async def create_category(
@@ -25,7 +173,7 @@ async def create_category(
             name=req.name,
             description=req.description
         )
-        await db.commit()
+        await commit_transaction(db, organization_id=current_user.organization_id)
         return category
     except Exception as e:
         await db.rollback()
@@ -50,7 +198,7 @@ async def create_service(
             is_internal=req.is_internal,
             features=req.features
         )
-        await db.commit()
+        await commit_transaction(db, organization_id=current_user.organization_id)
         return service
     except Exception as e:
         await db.rollback()
@@ -60,14 +208,13 @@ async def create_service(
 async def search_services(
     category_id: Optional[uuid.UUID] = None,
     query: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=100_000),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     org_id = current_user.organization_id
-    services = await ServiceCatalogService.search_service(
-        db=db,
+    services = await ServiceCatalogQueryService(db).search_services(
         organization_id=org_id,
         category_id=category_id,
         query=query,
@@ -83,10 +230,12 @@ async def clone_service(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        cloned = await ServiceCatalogService.clone_service(db=db, service_id=id)
+        cloned = await ServiceCatalogService.clone_service(
+            db=db, service_id=id, organization_id=current_user.organization_id
+        )
         if not cloned:
             raise HTTPException(status_code=404, detail="Service not found to clone")
-        await db.commit()
+        await commit_transaction(db, organization_id=current_user.organization_id)
         return cloned
     except HTTPException:
         raise
@@ -101,10 +250,12 @@ async def archive_service(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        success = await ServiceCatalogService.archive_service(db=db, service_id=id)
+        success = await ServiceCatalogService.archive_service(
+            db=db, service_id=id, organization_id=current_user.organization_id
+        )
         if not success:
             raise HTTPException(status_code=404, detail="Service not found or already archived")
-        await db.commit()
+        await commit_transaction(db, organization_id=current_user.organization_id)
         return {"status": "success", "message": "Service archived"}
     except HTTPException:
         raise
@@ -130,7 +281,7 @@ async def create_package(
             price=req.price,
             services=services_dict
         )
-        await db.commit()
+        await commit_transaction(db, organization_id=current_user.organization_id)
         return package
     except Exception as e:
         await db.rollback()
@@ -138,14 +289,13 @@ async def create_package(
 
 @router.get("/packages", response_model=List[ServicePackageOut])
 async def get_packages(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=100_000),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     org_id = current_user.organization_id
-    packages = await ServiceCatalogService.get_packages(
-        db=db,
+    packages = await ServiceCatalogQueryService(db).list_packages(
         organization_id=org_id,
         limit=limit,
         offset=offset
@@ -236,62 +386,12 @@ async def superadmin_get_staff(
     current_user: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(StaffRole)
-    if search:
-        stmt = stmt.where(or_(
-            StaffRole.role_name.ilike(f"%{search}%"),
-            StaffRole.role_code.ilike(f"%{search}%"),
-            StaffRole.description.ilike(f"%{search}%")
-        ))
-    if status:
-        stmt = stmt.where(StaffRole.status == status)
-
-    count_stmt = select(func.count()).select_from(stmt.subquery())
-    total = (await db.execute(count_stmt)).scalar() or 0
-
-    stmt = stmt.order_by(StaffRole.role_name).offset(skip).limit(limit)
-    res = await db.execute(stmt)
-    roles = res.scalars().all()
-
-    items = []
-    for r in roles:
-        margin_pct = ((r.selling_per_day - r.cost_per_day) / r.selling_per_day) * 100 if r.selling_per_day > 0 else 0.0
-        items.append({
-            "id": str(r.id),
-            "role_code": r.role_code,
-            "name": r.role_name,
-            "description": r.description or "",
-            "cost_per_day": float(r.cost_per_day),
-            "selling_per_day": float(r.selling_per_day),
-            "margin_pct": round(margin_pct, 2),
-            "region": "Global",
-            "is_active": r.status == "ACTIVE",
-            "grade": r.grade,
-            "team_category": r.team_category,
-            "department": r.team_category,
-            "available_count": r.available_count,
-            "status": r.status
-        })
-
-    # Summary metrics
-    sum_stmt = select(
-        func.count(StaffRole.id).label("total_roles"),
-        func.sum(case((StaffRole.status == "ACTIVE", 1), else_=0)).label("active_roles"),
-        func.avg(StaffRole.cost_per_day).label("avg_cost_day"),
-        func.avg(StaffRole.selling_per_day).label("avg_selling_day")
+    return await CommercialCatalogQueryService(db).list_staff(
+        search=search,
+        status=status,
+        skip=skip,
+        limit=limit,
     )
-    s_res = await db.execute(sum_stmt)
-    s = s_res.fetchone()
-
-    summary = {
-        "total_roles": s.total_roles or 0,
-        "active_roles": s.active_roles or 0,
-        "avg_cost_per_day": float(s.avg_cost_day or 0),
-        "avg_selling_per_day": float(s.avg_selling_day or 0),
-        "total_staff_deployed": 0
-    }
-
-    return {"items": items, "total": total, "summary": summary}
 
 @router.post("/superadmin/catalog/staff")
 async def superadmin_create_staff(
@@ -316,7 +416,7 @@ async def superadmin_create_staff(
         description=body.description or ""
     )
     db.add(role)
-    await db.commit()
+    await commit_transaction(db, organization_id=current_user.organization_id)
     return {"status": "success", "id": str(role.id)}
 
 @router.patch("/superadmin/catalog/staff/{role_id}")
@@ -358,7 +458,7 @@ async def superadmin_update_staff(
     if body.description is not None:
         role.description = body.description
 
-    await db.commit()
+    await commit_transaction(db, organization_id=current_user.organization_id)
     return {"status": "success", "id": str(role_id)}
 
 from fastapi import File, UploadFile
@@ -485,7 +585,7 @@ async def superadmin_import_staff(
 
         imported_count += 1
 
-    await db.commit()
+    await commit_transaction(db, organization_id=current_user.organization_id)
     return {"status": "success", "count": imported_count}
 
 @router.delete("/superadmin/catalog/staff/{role_id}")
@@ -501,7 +601,7 @@ async def superadmin_delete_staff(
 
     try:
         await db.delete(role)
-        await db.commit()
+        await commit_transaction(db, organization_id=current_user.organization_id)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to delete staff role: {str(e)}")

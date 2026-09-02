@@ -1,0 +1,14 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: local-log
+  group_by: [alertname, service]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: local-log
+    # Configure a real webhook/email receiver in a private override file when needed.
+    webhook_configs: []

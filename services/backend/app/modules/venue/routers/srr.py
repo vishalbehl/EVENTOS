@@ -30,6 +30,8 @@ router = APIRouter(
     tags=["srr"],
     dependencies=[require_event_operation("venue.sync")],
 )
+from app.modules.venue.application.commands import SrrStationCommandService
+from app.modules.venue.application.queries import SrrQueryService
 
 
 # ── Stations ──────────────────────────────────────────────────
@@ -39,12 +41,11 @@ async def list_stations(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> List[StationResponse]:
-    result = await db.execute(
-        select(SRRStation)
-        .where(SRRStation.event_id == event.id)
-        .order_by(SRRStation.station_number)
+    stations = await SrrQueryService(db).list_stations(
+        organization_id=event.organization_id,
+        event_id=event.id,
     )
-    return [StationResponse.model_validate(s) for s in result.scalars().all()]
+    return [StationResponse.model_validate(station) for station in stations]
 
 
 @router.post("/stations", response_model=StationResponse, status_code=status.HTTP_201_CREATED)
@@ -53,19 +54,10 @@ async def create_station(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> StationResponse:
-    dup = await db.execute(
-        select(SRRStation).where(
-            SRRStation.event_id == event.id,
-            SRRStation.station_number == payload.station_number,
-        )
+    station = await SrrStationCommandService(db).create(
+        event_id=event.id,
+        data=payload.model_dump(),
     )
-    if dup.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=f"Station #{payload.station_number} already exists.")
-    station = SRRStation(event_id=event.id, **payload.model_dump())
-    db.add(station)
-    await db.commit()
-    await db.refresh(station)
     return StationResponse.model_validate(station)
 
 
@@ -76,11 +68,11 @@ async def update_station(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> StationResponse:
-    station = await _get_station_or_404(db, station_id, event.id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(station, field, value)
-    await db.commit()
-    await db.refresh(station)
+    station = await SrrStationCommandService(db).update(
+        event_id=event.id,
+        station_id=station_id,
+        data=payload.model_dump(exclude_unset=True),
+    )
     return StationResponse.model_validate(station)
 
 
@@ -91,31 +83,13 @@ async def assign_speaker_to_station(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    station = await _get_station_or_404(db, payload.station_id, event.id)
-    if not station.is_available:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=f"Station #{station.station_number} is not available (status: {station.status}).")
-
-    speaker_result = await db.execute(
-        select(Speaker).where(Speaker.id == payload.speaker_id, Speaker.event_id == event.id)
-    )
-    speaker = speaker_result.scalar_one_or_none()
-    if speaker is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
-
-    station.status = "occupied"
-    station.assigned_speaker_id = speaker.id
-    station.session_assigned_at = datetime.now(timezone.utc)
-
-    checkin = SRRCheckin(
+    station, speaker, _ = await SrrStationCommandService(db).assign(
         event_id=event.id,
-        speaker_id=speaker.id,
-        station_id=station.id,
+        station_id=payload.station_id,
+        speaker_id=payload.speaker_id,
         checked_in_by=current_user.id,
         checkin_method="manual",
     )
-    db.add(checkin)
-    await db.commit()
 
     await notify_speaker_checked_in(event.id, speaker, station.station_number)
     await broadcast_srr_event(event.id, EventType.SRR_STATION_ASSIGNED, {
@@ -132,11 +106,10 @@ async def release_station(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    station = await _get_station_or_404(db, station_id, event.id)
-    station.status = "idle"
-    station.assigned_speaker_id = None
-    station.session_assigned_at = None
-    await db.commit()
+    station = await SrrStationCommandService(db).release(
+        event_id=event.id,
+        station_id=station_id,
+    )
     await broadcast_srr_event(event.id, EventType.SRR_STATION_FREED, {
         "station_id": str(station_id), "station_number": station.station_number,
     })
@@ -231,20 +204,14 @@ async def qr_checkin(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="No stations available. Please see a technician.")
 
-    station.status = "occupied"
-    station.assigned_speaker_id = speaker.id
-    station.session_assigned_at = datetime.now(timezone.utc)
-    speaker.checked_in_at = datetime.now(timezone.utc)
-
-    checkin = SRRCheckin(
+    station, speaker, checkin = await SrrStationCommandService(db).assign(
         event_id=event_id,
-        speaker_id=speaker.id,
         station_id=station.id,
+        speaker_id=speaker.id,
+        checked_in_by=None,
         checkin_method="qr_scan",
+        mark_speaker_checked_in=True,
     )
-    db.add(checkin)
-    await db.flush()
-    await db.commit()
 
     await notify_speaker_checked_in(event_id, speaker, station.station_number)
     await broadcast_srr_event(event_id, EventType.SPEAKER_CHECKED_IN, {
@@ -265,24 +232,10 @@ async def list_checkins(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> List[CheckinResponse]:
-    result = await db.execute(
-        select(SRRCheckin)
-        .where(SRRCheckin.event_id == event.id)
-        .order_by(SRRCheckin.checked_in_at.desc())
-        .limit(200)
+    checkins = await SrrQueryService(db).list_checkins(
+        organization_id=event.organization_id,
+        event_id=event.id,
     )
-    return [CheckinResponse.model_validate(c) for c in result.scalars().all()]
+    return [CheckinResponse.model_validate(checkin) for checkin in checkins]
 
 
-async def _get_station_or_404(
-    db: AsyncSession, station_id: uuid.UUID, event_id: uuid.UUID
-) -> SRRStation:
-    result = await db.execute(
-        select(SRRStation).where(
-            SRRStation.id == station_id, SRRStation.event_id == event_id
-        )
-    )
-    s = result.scalar_one_or_none()
-    if s is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found.")
-    return s

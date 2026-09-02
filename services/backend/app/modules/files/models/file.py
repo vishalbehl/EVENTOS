@@ -78,6 +78,35 @@ class UploadSession(Base):
     status: Mapped[str] = mapped_column(String(50), default="initiated") # initiated, uploading, completed, failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+
+class DurableUpload(Base):
+    """Tenant-scoped upload state independent of any specific domain."""
+    __tablename__ = "durable_uploads"
+    __table_args__ = {"schema": "content"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("events.events.id", ondelete="SET NULL"), index=True)
+    # May represent a speaker-token actor rather than an identity user.
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    object_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    storage_bucket: Mapped[str] = mapped_column(String(100), nullable=False, default="assets")
+    original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(150), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    checksum: Mapped[Optional[str]] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="created", index=True)
+    processing_error: Mapped[Optional[str]] = mapped_column(Text)
+    task_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
 class VirusScan(Base):
     __tablename__ = "virus_scans"
 

@@ -9,7 +9,8 @@ const nextConfig = {
     reactStrictMode: true,
     transpilePackages: [
         "@eventos/email-builder-studio",
-        "@eventos/website-builder-studio"
+        "@eventos/website-builder-studio",
+        "@eventos/form-builder-studio"
     ],
     experimental: {
         optimizePackageImports: [

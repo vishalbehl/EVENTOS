@@ -1,7 +1,7 @@
 # app/modules/platform/teams/router.py
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_db, OrganizerOrAbove, get_current_user
@@ -12,7 +12,10 @@ from app.modules.platform.teams.schemas import (
 )
 from app.modules.platform.teams.service import TeamService
 from app.modules.platform.teams.dependencies import get_team_service
+from app.modules.platform.teams.application.queries import TeamQueryService
 from app.schemas.common import MessageResponse
+from app.schemas.cursor_pagination import CursorPage
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 router = APIRouter(prefix="/platform/teams", tags=["teams"])
 
@@ -28,45 +31,34 @@ async def list_teams(
     sort_order: str = Query("asc"),
     service: TeamService = Depends(get_team_service)
 ):
-    items, total = await service.list_teams(
+    rows, total = await TeamQueryService(service.db).list_with_counts(
         org_id=current_user.organization_id,
         department_id=department_id,
-        skip=skip,
+        offset=skip,
         limit=limit,
         search=search,
         sort_by=sort_by,
         sort_order=sort_order
     )
-    
-    # Enrich response with counters
-    res = []
-    from sqlalchemy import select, func
-    from app.modules.platform.teams.models import TeamMember
-    
-    for team in items:
-        # Get count of members
-        member_count_stmt = select(func.count(TeamMember.id)).where(
-            TeamMember.team_id == team.id,
-            TeamMember.deleted_at == None
-        )
-        
-        m_count = (await service.db.execute(member_count_stmt)).scalar_one()
-        
-        res.append(
-            TeamResponse(
-                id=team.id,
-                department_id=team.department_id,
-                organization_id=team.organization_id,
-                name=team.name,
-                code=team.code,
-                description=team.description,
-                created_at=team.created_at,
-                updated_at=team.updated_at,
-                department_name=team.department.name if team.department else "",
-                members_count=m_count
-            )
-        )
-    return res
+    return [TeamResponse(**row) for row in rows]
+
+
+@router.get("/cursor", response_model=CursorPage[TeamResponse])
+async def cursor_teams(
+    current_user: OrganizerOrAbove,
+    department_id: Optional[uuid.UUID] = Query(None),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    service: TeamService = Depends(get_team_service),
+):
+    return await service.repository.cursor_page(
+        current_user.organization_id,
+        cursor=cursor,
+        limit=limit,
+        department_id=department_id,
+        search=search,
+    )
 
 
 @router.get("/export")
@@ -88,13 +80,35 @@ async def export_teams(
 async def create_team(
     payload: TeamCreate,
     current_user: OrganizerOrAbove,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     service: TeamService = Depends(get_team_service)
 ):
-    return await service.create_team(
+    idem = None
+    if idempotency_key:
+        idem = await begin_idempotent(
+            service.db,
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            operation="platform.team.create",
+            key=idempotency_key,
+            payload=payload.model_dump(mode="json"),
+        )
+        replay = replay_response(idem)
+        if replay:
+            return replay[1]
+    team = await service.create_team(
         org_id=current_user.organization_id,
         payload=payload,
         creator_id=current_user.id
     )
+    if idem:
+        body = TeamSummary.model_validate(team).model_dump(mode="json")
+        await complete_idempotent(
+            service.db, idem, response_status=status.HTTP_201_CREATED,
+            response_body=body, resource_id=team.id
+        )
+        await service.db.commit()
+    return team
 
 
 @router.get("/{id}", response_model=TeamResponse)
@@ -103,31 +117,12 @@ async def get_team(
     current_user: OrganizerOrAbove,
     service: TeamService = Depends(get_team_service)
 ):
-    team = await service.get_team(current_user.organization_id, id)
-    
-    from sqlalchemy import select, func
-    from app.modules.platform.teams.models import TeamMember
-    
-    # Get count of members
-    member_count_stmt = select(func.count(TeamMember.id)).where(
-        TeamMember.team_id == team.id,
-        TeamMember.deleted_at == None
+    row = await TeamQueryService(service.db).get_with_count(
+        current_user.organization_id, id
     )
-    
-    m_count = (await service.db.execute(member_count_stmt)).scalar_one()
-    
-    return TeamResponse(
-        id=team.id,
-        department_id=team.department_id,
-        organization_id=team.organization_id,
-        name=team.name,
-        code=team.code,
-        description=team.description,
-        created_at=team.created_at,
-        updated_at=team.updated_at,
-        department_name=team.department.name if team.department else "",
-        members_count=m_count
-    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found.")
+    return TeamResponse(**row)
 
 
 @router.patch("/{id}", response_model=TeamSummary)
@@ -135,13 +130,15 @@ async def update_team(
     id: uuid.UUID,
     payload: TeamUpdate,
     current_user: OrganizerOrAbove,
+    expected_version: Optional[int] = Header(None, alias="If-Match", ge=1),
     service: TeamService = Depends(get_team_service)
 ):
     return await service.update_team(
         org_id=current_user.organization_id,
         id=id,
         payload=payload,
-        updater_id=current_user.id
+        updater_id=current_user.id,
+        expected_version=expected_version,
     )
 
 

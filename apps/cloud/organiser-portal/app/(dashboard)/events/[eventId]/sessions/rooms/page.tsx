@@ -61,7 +61,7 @@ export default function RoomsPage() {
       if (!roomsConfig) return [];
       return roomsConfig
          .filter(r => !typeFilter || r.room_type === typeFilter)
-         .filter(r => !searchTerm || r.name.toLowerCase().includes(searchTerm.toLowerCase()) || r.location_notes?.toLowerCase().includes(searchTerm.toLowerCase()))
+         .filter(r => !searchTerm || r.name.toLowerCase().includes(searchTerm.toLowerCase()) || r.code?.toLowerCase().includes(searchTerm.toLowerCase()) || r.room_type?.toLowerCase().includes(searchTerm.toLowerCase()))
          .map(config => {
             const analytics = roomsAnalytics?.find(a => a.room_id === config.id);
             const mappedSessions = roomSessionsMap[config.id] || [];
@@ -75,9 +75,9 @@ export default function RoomsPage() {
 
    const stats = [
       { label: "Active Rooms", val: rooms.filter(r => r.is_active).length.toString(), icon: Globe, color: "text-[var(--pri)]" },
-      { label: "Total Capacity", val: rooms.reduce((acc, r) => acc + (r.capacity || 0), 0).toString(), icon: Users, color: "text-[var(--success)]" },
+      { label: "Total Rooms", val: rooms.length.toString(), icon: LayoutGrid, color: "text-[var(--success)]" },
       { label: "Avg Readiness", val: `${Math.round(rooms.reduce((acc, r) => acc + (r.readiness || 0), 0) / Math.max(1, rooms.length))}%`, icon: Zap, color: "text-[var(--sec)]" },
-      { label: "Mapped Sessions", val: rooms.reduce((acc, r) => acc + (r.sessions_count || 0), 0).toString(), icon: LayoutGrid, color: "text-[var(--warn)]" },
+      { label: "Mapped Sessions", val: rooms.reduce((acc, r) => acc + (r.sessions_count || 0), 0).toString(), icon: Layers, color: "text-[var(--warn)]" },
    ];
 
    const uniqueTypes = Array.from(new Set(roomsConfig?.map(r => r.room_type).filter(Boolean) || []));
@@ -207,17 +207,17 @@ export default function RoomsPage() {
                                  </h3>
                                  <p className="text-[11px] font-bold text-muted mb-5 flex items-center gap-1.5">
                                     <MapPin className="h-3 w-3 text-[var(--pri)]" />
-                                    {event?.venue_name ? `${event.venue_name}, ` : ""}{room.location_notes || "Main Venue"}
+                                    {room.room_coordinator ? `Coord: ${room.room_coordinator}` : (event?.venue_name || "Main Venue")}
                                  </p>
 
                                  <div className="grid grid-cols-2 gap-4 mb-6 p-3 rounded-2xl bg-background/40 border border-default/40">
                                     <div>
-                                       <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-0.5">Capacity</p>
-                                       <p className="text-[12px] font-extrabold text-[var(--text)]">{room.capacity || 0} Pax</p>
+                                       <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-0.5">Code</p>
+                                       <p className="text-[12px] font-mono font-extrabold text-[var(--text)]">{room.code || "—"}</p>
                                     </div>
                                     <div>
                                        <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-0.5">Type</p>
-                                       <p className="text-[12px] font-extrabold text-[var(--text)] uppercase tracking-tight">{room.room_type || "ROOM"}</p>
+                                       <p className="text-[12px] font-extrabold text-[var(--text)] uppercase tracking-tight truncate">{room.room_type || "ROOM"}</p>
                                     </div>
                                  </div>
                               </div>

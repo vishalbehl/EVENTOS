@@ -280,7 +280,7 @@ export function TimelineScheduleBuilder({
                     {room.name}
                   </span>
                   <span className="text-[10px] text-[var(--text-tertiary)] truncate">
-                    Cap: {room.capacity ?? 100} • {room.room_type || "presentation"}
+                    {room.code ? `${room.code} • ` : ""}{room.room_type || "Stage"}
                   </span>
                 </div>
 

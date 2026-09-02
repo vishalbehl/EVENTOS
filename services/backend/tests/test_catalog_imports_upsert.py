@@ -58,10 +58,18 @@ async def test_hardware_catalog_import_upsert(client, db, super_admin):
     res = await client.post(
         "/api/v1/inventory/superadmin/catalog/hardware/import",
         files={"file": ("test_import.xlsx", excel_file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-        headers=auth_headers(super_admin)
+        headers={**auth_headers(super_admin), "Idempotency-Key": "hardware-import-test-001"}
     )
     assert res.status_code == 200, res.text
     assert res.json()["count"] == 1
+
+    replay = await client.post(
+        "/api/v1/inventory/superadmin/catalog/hardware/import",
+        files={"file": ("test_import.xlsx", io.BytesIO(excel_file.getvalue()), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers={**auth_headers(super_admin), "Idempotency-Key": "hardware-import-test-001"}
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == res.json()
 
     # 4. Assert values are updated in DB (no new items created, existing updated)
     items_stmt = select(HardwareItem).where(HardwareItem.asset_code == "HW-TEST-001")

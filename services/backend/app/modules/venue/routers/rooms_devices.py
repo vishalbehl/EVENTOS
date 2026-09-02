@@ -21,6 +21,7 @@ from app.modules.agenda.models import Room
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.venue.application.queries import RoomDeviceQueryService
 
 router = APIRouter(prefix="/events/{event_id}/rooms/{room_id}/devices", tags=["room-devices"], dependencies=[require_event_operation("venue.devices.manage")])
 
@@ -74,12 +75,12 @@ async def list_devices(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> List[DeviceResponse]:
-    result = await db.execute(
-        select(RoomDevice)
-        .where(RoomDevice.room_id == room_id, RoomDevice.event_id == event.id)
-        .order_by(RoomDevice.device_type)
+    devices = await RoomDeviceQueryService(db).list_for_room(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        room_id=room_id,
     )
-    return [DeviceResponse.model_validate(d) for d in result.scalars().all()]
+    return [DeviceResponse.model_validate(device) for device in devices]
 
 
 @router.post("/register", response_model=DeviceKeyResponse, status_code=status.HTTP_201_CREATED)

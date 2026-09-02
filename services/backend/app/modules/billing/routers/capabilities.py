@@ -18,6 +18,7 @@ from app.modules.audit.models.audit_log import AuditLog
 from app.modules.billing.capability_registry import registry_coverage
 from app.modules.billing.services.capability_service import CapabilityService
 from app.modules.billing.services.platform_flag_service import PlatformFlagService
+from app.modules.billing.application.commands import PlatformFlagCommandService
 from app.modules.events.models.event import Event
 from app.modules.identity.models.user import User
 from app.modules.platform.models.platform_domain_tables import PlatformFlagDefinition, PlatformFlagMutation, PlatformFlagOverride
@@ -278,11 +279,7 @@ async def capability_coverage(db: AsyncSession = Depends(get_db)):
 
 @admin_router.post("/catalogue/sync")
 async def sync_capability_catalogue(request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    result = await CapabilityService.sync_catalogue(db)
-    audit_id = uuid.uuid4()
-    db.add(_audit(actor, "CAPABILITY_CATALOGUE_SYNCED", "capability_catalogue", audit_id, result))
-    await db.commit()
-    return result
+    return await PlatformFlagCommandService.sync_catalogue(db, actor)
 
 
 @admin_router.get("/flags")
@@ -333,57 +330,21 @@ async def flag_hygiene_report(stale_days: int = 90, db: AsyncSession = Depends(g
 
 @admin_router.post("/flags", status_code=201)
 async def create_flag(payload: FlagDefinitionWrite, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    request_hash = _request_hash("CREATE_FLAG", payload.model_dump(mode="json"))
-    replay = await _mutation_replay(db, idempotency_key=idempotency_key, request_hash=request_hash)
-    if replay:
-        return replay.response_json
-    if await db.scalar(select(PlatformFlagDefinition.id).where(PlatformFlagDefinition.flag_key == payload.flag_key)):
-        raise HTTPException(status_code=409, detail="Flag key already exists")
-    if payload.flag_type == "KILL_SWITCH" and payload.default_value.get("value") is not False:
-        raise HTTPException(status_code=422, detail={"code": "SAFE_DEFAULT_REQUIRED", "message": "Kill switches must be created disabled and activated through a dual-approved override."})
-    await _validate_target_capabilities(db, payload.target_capabilities)
-    values = payload.model_dump(exclude={"reason"})
-    row = PlatformFlagDefinition(**values, created_by=actor.id, updated_by=actor.id)
-    db.add(row); await db.flush()
-    db.add(_audit(actor, "PLATFORM_FLAG_CREATED", "platform_flag", row.id, {**values, "reason": payload.reason}))
-    response_json = _flag_row(row)
-    db.add(PlatformFlagMutation(flag_id=row.id, operation_type="CREATE", idempotency_key=idempotency_key, request_hash=request_hash, response_json=response_json, requested_by=actor.id))
-    await db.commit()
-    return response_json
+    return await PlatformFlagCommandService.create_flag(
+        db, payload=payload, actor=actor, idempotency_key=idempotency_key
+    )
 
 
 @admin_router.patch("/flags/{flag_id}")
 async def update_flag(flag_id: uuid.UUID, payload: FlagDefinitionUpdate, request: Request, step_up: StepUpAuth, expected_version: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    request_hash = _request_hash("UPDATE_FLAG", {"flag_id": str(flag_id), "expected_version": expected_version, "payload": payload.model_dump(mode="json")})
-    replay = await _mutation_replay(db, idempotency_key=idempotency_key, request_hash=request_hash)
-    if replay:
-        return replay.response_json
-    row = await db.scalar(select(PlatformFlagDefinition).where(PlatformFlagDefinition.id == flag_id).with_for_update())
-    if not row:
-        raise HTTPException(status_code=404, detail="Flag not found")
-    if row.version != expected_version:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    requested = payload.model_dump(exclude_unset=True, exclude={"reason"})
-    if "target_capabilities" in requested:
-        await _validate_target_capabilities(db, requested["target_capabilities"] or [])
-    effective_starts_at = requested.get("starts_at", row.starts_at)
-    effective_expires_at = requested.get("expires_at", row.expires_at)
-    if effective_starts_at and effective_expires_at and effective_expires_at <= effective_starts_at:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_FLAG_SCHEDULE", "message": "expires_at must follow starts_at"},
-        )
-    if (row.flag_type == "KILL_SWITCH" or row.risk_level in {"HIGH", "CRITICAL"}) and any(key in requested for key in {"rollout_percentage", "is_active", "starts_at", "expires_at"}):
-        raise HTTPException(status_code=409, detail={"code": "DUAL_APPROVAL_REQUIRED", "message": "High-risk rollout changes must use a GLOBAL scoped override and independent approval."})
-    old = {"rollout_percentage": row.rollout_percentage, "is_active": row.is_active, "expires_at": row.expires_at.isoformat() if row.expires_at else None, "version": row.version}
-    for key, value in requested.items():
-        setattr(row, key, value)
-    row.version += 1; row.updated_by = actor.id; row.updated_at = datetime.now(timezone.utc)
-    db.add(_audit(actor, "PLATFORM_FLAG_UPDATED", "platform_flag", row.id, {"old": old, "reason": payload.reason, "version": row.version}))
-    response_json = _flag_row(row)
-    db.add(PlatformFlagMutation(flag_id=row.id, operation_type="UPDATE", idempotency_key=idempotency_key, request_hash=request_hash, response_json=response_json, requested_by=actor.id))
-    await db.commit()
-    return response_json
+    return await PlatformFlagCommandService.update_flag(
+        db,
+        flag_id=flag_id,
+        payload=payload,
+        expected_version=expected_version,
+        actor=actor,
+        idempotency_key=idempotency_key,
+    )
 
 
 @admin_router.get("/flags/{flag_id}/overrides")
@@ -396,41 +357,24 @@ async def list_flag_overrides(flag_id: uuid.UUID, db: AsyncSession = Depends(get
 
 @admin_router.post("/flags/{flag_id}/overrides", status_code=202)
 async def request_flag_override(flag_id: uuid.UUID, payload: FlagOverrideWrite, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    definition = await db.get(PlatformFlagDefinition, flag_id)
-    if not definition:
-        raise HTTPException(status_code=404, detail="Flag not found")
-    _validate_flag_value(definition, payload.value)
-    await _validate_flag_scope(db, payload)
-    request_hash = _request_hash("REQUEST_FLAG_OVERRIDE", {"flag_id": str(flag_id), "payload": payload.model_dump(mode="json")})
-    existing = await db.scalar(select(PlatformFlagOverride).where(PlatformFlagOverride.idempotency_key == idempotency_key))
-    if existing:
-        if existing.request_hash != request_hash:
-            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        return {"id": existing.id, "status": existing.status}
-    row = PlatformFlagOverride(flag_id=flag_id, created_by=actor.id, status="PENDING", idempotency_key=idempotency_key, request_hash=request_hash, **payload.model_dump())
-    db.add(row); await db.flush()
-    db.add(_audit(actor, "PLATFORM_FLAG_OVERRIDE_REQUESTED", "platform_flag_override", row.id, {"flag_id": str(flag_id), "scope_type": row.scope_type, "case_reference": row.case_reference}, row.organization_id))
-    await db.commit()
-    return {"id": row.id, "status": row.status}
+    return await PlatformFlagCommandService.request_override(
+        db,
+        flag_id=flag_id,
+        payload=payload,
+        actor=actor,
+        idempotency_key=idempotency_key,
+    )
 
 
 @admin_router.post("/flags/overrides/{override_id}/decision")
 async def decide_flag_override(override_id: uuid.UUID, payload: FlagDecision, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    request_hash = _request_hash("DECIDE_FLAG_OVERRIDE", {"override_id": str(override_id), "payload": payload.model_dump(mode="json")})
-    replay = await _mutation_replay(db, idempotency_key=idempotency_key, request_hash=request_hash)
-    if replay:
-        return replay.response_json
-    row = await db.scalar(select(PlatformFlagOverride).where(PlatformFlagOverride.id == override_id).with_for_update())
-    if not row or row.status != "PENDING":
-        raise HTTPException(status_code=409, detail="Pending flag override not found")
-    if row.created_by == actor.id:
-        raise HTTPException(status_code=409, detail="Requester cannot approve their own flag override")
-    row.status = payload.decision; row.approved_by = actor.id; row.decided_at = datetime.now(timezone.utc); row.version += 1
-    db.add(_audit(actor, f"PLATFORM_FLAG_OVERRIDE_{payload.decision}", "platform_flag_override", row.id, {"reason": payload.reason}, row.organization_id))
-    response_json = jsonable_encoder({"id": row.id, "status": row.status, "version": row.version})
-    db.add(PlatformFlagMutation(flag_id=row.flag_id, override_id=row.id, operation_type="DECISION", idempotency_key=idempotency_key, request_hash=request_hash, response_json=response_json, requested_by=actor.id))
-    await db.commit()
-    return response_json
+    return await PlatformFlagCommandService.decide_override(
+        db,
+        override_id=override_id,
+        payload=payload,
+        actor=actor,
+        idempotency_key=idempotency_key,
+    )
 
 
 @admin_router.get("/flags/evaluate")

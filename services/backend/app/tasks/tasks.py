@@ -14,6 +14,10 @@ from app.modules.events.models.event import Event
 from app.config import settings
 from app.core.tenant_context import TenantContextGuard
 from app.database import tenant_org_id
+from app.core.async_runner import run_async as stable_run_async
+from app.core.task_policy import is_retryable, policy_for
+
+_IMPORTS_POLICY = policy_for("imports")
 
 
 def _run_async(coro):
@@ -26,10 +30,18 @@ def _run_async(coro):
     """
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(coro)
+    stable_run_async(coro)
 
 
-@celery_app.task(name="app.tasks.run_excel_import", bind=True)
+@celery_app.task(
+    name="app.tasks.run_excel_import",
+    bind=True,
+    max_retries=_IMPORTS_POLICY.max_retries,
+    soft_time_limit=_IMPORTS_POLICY.soft_timeout_seconds,
+    time_limit=_IMPORTS_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_IMPORTS_POLICY.queue,
+)
 def run_excel_import(self, job_id_str: str, organization_id_str: str) -> None:
     """
     Celery task to process an Excel schedule import.
@@ -43,8 +55,22 @@ def run_excel_import(self, job_id_str: str, organization_id_str: str) -> None:
         _run_async(_run_excel_import_async(job_id, organization_id))
         logger.info(f"[Celery] Import job completed: {job_id}")
     except Exception as exc:
-        logger.exception(f"[Celery] Unhandled error for job {job_id}: {exc}")
-        # Re-raise so Celery marks the task as FAILURE (not SUCCESS)
+        logger.exception(
+            "[Celery] Unhandled import error job_id={} error_type={}",
+            job_id,
+            type(exc).__name__,
+        )
+        if is_retryable(exc):
+            attempt = int(getattr(self.request, "retries", 0) or 0)
+            policy = policy_for("imports")
+            if attempt < policy.max_retries:
+                raise self.retry(
+                    exc=exc,
+                    countdown=min(300, policy.retry_delay(attempt, apply_jitter=True)),
+                    max_retries=policy.max_retries,
+                )
+        # Re-raise so Celery records the terminal failure and its failure
+        # signal can persist bounded diagnostics.
         raise
 
 

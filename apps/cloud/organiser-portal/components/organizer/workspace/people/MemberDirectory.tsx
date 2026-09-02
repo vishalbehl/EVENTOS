@@ -26,8 +26,10 @@ import { PeoplePage } from "./shared";
 
 export function MemberDirectory({
   invitationsOnly = false,
+  memberInviteEnabled = true,
 }: {
   invitationsOnly?: boolean;
+  memberInviteEnabled?: boolean;
 }) {
   const client = useQueryClient();
   const [page, setPage] = useState(1);
@@ -172,7 +174,7 @@ export function MemberDirectory({
   return (
     <PeoplePage
       actions={
-        <Button onClick={() => setOpen(true)}>
+        <Button onClick={() => setOpen(true)} disabled={!memberInviteEnabled}>
           <UserPlus className="mr-2 h-4 w-4" />
           Invite member
         </Button>

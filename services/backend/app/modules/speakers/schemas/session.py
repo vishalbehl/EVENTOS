@@ -159,6 +159,7 @@ class SessionResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    version: int = 1
     room_name: Optional[str] = None
     event_timezone: str = "UTC"
     session_speakers: List[SessionSpeakerResponse] = []

@@ -15,9 +15,10 @@ from app.modules.billing.schemas.event_activation import (
     SnapshotSummary,
 )
 from app.modules.billing.services.activation_service import ActivationService
+from app.modules.billing.application.commands import BillingActivationCommandService
+from app.modules.billing.application.queries import BillingActivationQueryService
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.services.usage_service import UsageService
-from app.modules.events.models.event import Event
 
 router = APIRouter(prefix="/billing", tags=["billing-activations"])
 
@@ -65,7 +66,7 @@ async def activate_event(
     if not user.organization_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
     _require_idempotency(idempotency_key)
-    activation = await ActivationService.activate_event(
+    activation = await BillingActivationCommandService.activate(
         db,
         organization_id=user.organization_id,
         event_id=event_id,
@@ -75,7 +76,6 @@ async def activate_event(
         idempotency_key=idempotency_key,
         actor_id=user.id,
     )
-    await db.commit()
     return await _serialize_activation_detail(db, activation)
 
 
@@ -85,14 +85,8 @@ async def get_event_activation(event_id: uuid.UUID, user: ActiveUser, db: DB):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
     activation = await EntitlementResolver.get_event_activation(db, user.organization_id, event_id)
     if not activation:
-        activation = await db.scalar(
-            select(EventActivation)
-            .where(
-                EventActivation.event_id == event_id,
-                EventActivation.organization_id == user.organization_id,
-            )
-            .order_by(EventActivation.created_at.desc())
-            .limit(1)
+        activation = await BillingActivationQueryService(db).get_latest_activation(
+            user.organization_id, event_id
         )
     if not activation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No activation record found for this event.")
@@ -100,12 +94,11 @@ async def get_event_activation(event_id: uuid.UUID, user: ActiveUser, db: DB):
 
 
 @router.get("/organizations/{org_id}/activations", response_model=List[EventActivationResponse])
-async def list_organization_activations(org_id: uuid.UUID, user: ActiveUser, db: DB):
+async def list_organization_activations(org_id: uuid.UUID, user: ActiveUser, db: DB, limit: int = Query(100, ge=1, le=100)):
     if not user.organization_id or user.organization_id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this organization's billing data.")
-    stmt = select(EventActivation).where(EventActivation.organization_id == org_id).order_by(EventActivation.created_at.desc())
-    res = await db.execute(stmt)
-    return [EventActivationResponse.model_validate(row) for row in res.scalars().all()]
+    rows = await BillingActivationQueryService(db).list_activations(org_id, limit=limit)
+    return [EventActivationResponse.model_validate(row) for row in rows]
 
 
 @router.post("/events/{event_id}/deactivate", response_model=EventActivationResponse)
@@ -118,14 +111,13 @@ async def deactivate_event(
     if not user.organization_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
     _require_idempotency(idempotency_key)
-    activation = await ActivationService.deactivate_event(
+    activation = await BillingActivationCommandService.deactivate(
         db,
         organization_id=user.organization_id,
         event_id=event_id,
         idempotency_key=idempotency_key,
         actor_id=user.id,
     )
-    await db.commit()
     return EventActivationResponse.model_validate(activation)
 
 
@@ -140,7 +132,7 @@ async def transfer_event_activation(
     if not user.organization_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
     _require_idempotency(idempotency_key)
-    result = await ActivationService.transfer_activation(
+    result = await BillingActivationCommandService.transfer(
         db,
         organization_id=user.organization_id,
         source_event_id=event_id,
@@ -148,7 +140,6 @@ async def transfer_event_activation(
         idempotency_key=idempotency_key,
         actor_id=user.id,
     )
-    await db.commit()
     if "activation" in result:
         result["activation"] = EventActivationResponse.model_validate(result["activation"]).model_dump()
     return result
@@ -167,40 +158,43 @@ async def get_event_usage(event_id: uuid.UUID, user: ActiveUser, db: DB):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
     from app.modules.billing.services.usage_service import UsageService
 
-    event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == user.organization_id))
-    if not event:
+    if not await BillingActivationQueryService(db).event_exists(
+        user.organization_id, event_id
+    ):
         raise HTTPException(status_code=404, detail="Event not found.")
     return await UsageService.get_event_usage(db, event_id)
 
 
 @router.get("/subscriptions", response_model=List[Dict[str, Any]])
-async def list_subscriptions(user: ActiveUser, db: DB):
+async def list_subscriptions(
+    user: ActiveUser,
+    db: DB,
+    limit: int = Query(100, ge=1, le=100),
+):
     if not user.organization_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
-    subs = await EntitlementResolver.get_active_subscriptions(db, user.organization_id)
+    subs = await BillingActivationQueryService(db).list_active_subscriptions(
+        user.organization_id, limit=limit
+    )
     return [
         {
-            "subscription_id": str(sub.id),
-            "plan_id": str(sub.plan_id),
-            "status": sub.status,
-            "trial_ends_at": sub.trial_ends_at,
-            "current_period_end": sub.current_period_end,
+            "subscription_id": str(sub["subscription_id"]),
+            "plan_id": str(sub["plan_id"]),
+            "status": sub["status"],
+            "trial_ends_at": sub["trial_ends_at"],
+            "current_period_end": sub["current_period_end"],
         }
         for sub in subs
     ]
 
 
 @router.get("/grants", response_model=List[Dict[str, Any]])
-async def list_grants(user: ActiveUser, db: DB):
+async def list_grants(user: ActiveUser, db: DB, limit: int = Query(100, ge=1, le=100)):
     if not user.organization_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
-    rows = (
-        await db.execute(
-            select(EntitlementGrant)
-            .where(EntitlementGrant.organization_id == user.organization_id)
-            .order_by(EntitlementGrant.created_at.desc())
-        )
-    ).scalars().all()
+    rows = await BillingActivationQueryService(db).list_grants(
+        user.organization_id, limit=limit
+    )
     return [
         {
             "id": str(row.id),
@@ -221,15 +215,10 @@ async def list_grants(user: ActiveUser, db: DB):
 
 
 @router.get("/grants/{grant_id}/consumptions", response_model=List[GrantConsumptionResponse])
-async def list_grant_consumptions(grant_id: uuid.UUID, user: ActiveUser, db: DB):
+async def list_grant_consumptions(grant_id: uuid.UUID, user: ActiveUser, db: DB, limit: int = Query(100, ge=1, le=100)):
     if not user.organization_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context is required.")
-    rows = (
-        await db.execute(
-            select(GrantConsumption).where(
-                GrantConsumption.grant_id == grant_id,
-                GrantConsumption.organization_id == user.organization_id,
-            )
-        )
-    ).scalars().all()
+    rows = await BillingActivationQueryService(db).list_consumptions(
+        user.organization_id, grant_id, limit=limit
+    )
     return [GrantConsumptionResponse.model_validate(row) for row in rows]

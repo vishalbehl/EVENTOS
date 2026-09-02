@@ -281,5 +281,17 @@ class ProviderWebhookService:
                 },
                 is_sensitive=True,
             ))
-            await db.commit()
             return receipt
+
+    @classmethod
+    async def execute_command(
+        cls,
+        db: AsyncSession,
+        gateway: PaymentGateway,
+        event: NormalizedProviderEvent,
+        body: bytes,
+    ) -> ProviderWebhookEvent:
+        """Run the webhook mutation and own its single transaction boundary."""
+        receipt = await cls.ingest(db, gateway, event, body)
+        await db.commit()
+        return receipt

@@ -10,20 +10,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.dependencies import DB, SuperAdminOnly, get_current_user
 from app.modules.identity.models.user import User
-from app.modules.audit.models.audit_extensions import WorkerJobLog
-from app.modules.audit.models.audit_domain_tables import (
-    SystemChange,
-    DataExport,
-)
+from app.modules.audit.application.queries import AuditQueryService
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -89,17 +82,7 @@ async def list_worker_logs(
     Returns background worker job failure records from the audit trail.
     These are written when Celery tasks fail after all retries.
     """
-    total = await db.scalar(
-        select(func.count()).select_from(WorkerJobLog)
-    ) or 0
-
-    result = await db.execute(
-        select(WorkerJobLog)
-        .order_by(WorkerJobLog.logged_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    logs = result.scalars().all()
+    logs, total = await AuditQueryService(db).list_worker_logs(page=page, page_size=page_size)
 
     return {
         "items": [WorkerLogOut.model_validate(l).model_dump() for l in logs],
@@ -153,22 +136,9 @@ async def list_system_changes(
     Returns platform configuration changes: organization creation/deletion,
     plan modifications, feature flag overrides, etc.
     """
-    filters = []
-    if entity_type:
-        filters.append(SystemChange.entity_type == entity_type)
-
-    total = await db.scalar(
-        select(func.count()).select_from(SystemChange).where(*filters)
-    ) or 0
-
-    result = await db.execute(
-        select(SystemChange)
-        .where(*filters)
-        .order_by(SystemChange.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    changes, total = await AuditQueryService(db).list_system_changes(
+        entity_type=entity_type, page=page, page_size=page_size
     )
-    changes = result.scalars().all()
 
     return {
         "items": [SystemChangeOut.model_validate(c).model_dump() for c in changes],
@@ -194,28 +164,12 @@ async def get_my_activity(
     Returns the audit logs associated with the current user (actor_user_id) within the last 90 days.
     Does not expose old_state, new_state, or diff.
     """
-    from app.modules.audit.models.audit_log import AuditLog
-    from datetime import datetime, timezone, timedelta
-
-    ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
-
-    filters = [
-        AuditLog.actor_user_id == current_user.id,
-        AuditLog.occurred_at >= ninety_days_ago
-    ]
-
-    total = await db.scalar(
-        select(func.count()).select_from(AuditLog).where(*filters)
-    ) or 0
-
-    result = await db.execute(
-        select(AuditLog)
-        .where(*filters)
-        .order_by(AuditLog.occurred_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    logs, total = await AuditQueryService(db).list_user_activity(
+        actor_user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        page=page,
+        page_size=page_size,
     )
-    logs = result.scalars().all()
 
     items = []
     for log in logs:

@@ -9,13 +9,13 @@ from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=1, max_length=320)
     password: str = Field(min_length=1)
     mfa_code: Optional[str] = Field(default=None, min_length=6, max_length=6)
 
 
 class CommandCenterLoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=1, max_length=320)
     password: str = Field(min_length=1)
     totp_code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
     remember_me: bool = False

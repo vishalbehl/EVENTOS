@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Award,
   CheckCircle2,
+  CreditCard,
   FolderPlus,
   LayoutTemplate,
   Plus,
@@ -16,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api-client";
 import { useEvent, useUpdateEvent } from "@/hooks/useEvents";
 import { useLimitAccess, useOperationAccess } from "@/lib/capabilities";
@@ -212,6 +215,7 @@ function ToggleSwitch({
 
 export default function RoleCategoriesPage() {
   const params = useParams();
+  const router = useRouter();
   const eventId = params?.eventId as string;
 
   const roleReadAccess = useOperationAccess("registration.ticket_types.read");
@@ -573,13 +577,13 @@ export default function RoleCategoriesPage() {
 
         <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
-            Badge Templates
+            Active Event Roles
           </span>
           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">
-            {templates.length}
+            {roles.filter((r) => r.is_active).length}
           </div>
           <span className="text-[11px] text-[var(--text-secondary)]">
-            {useSameDesign ? "Uniform badge policy" : "Custom per-role badges"}
+            Of {roles.length} total roles
           </span>
         </div>
 
@@ -594,55 +598,41 @@ export default function RoleCategoriesPage() {
         </div>
       </div>
 
-      {/* ── Badge Design Assignment Policy Bar ── */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm">
+      {/* ── Design Studio Badge & Certificate Assignment Notice ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-[var(--border-default,#27272a)] bg-[var(--surface-panel,#18181b)] p-4 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 shrink-0">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-[var(--pri,#4f46e5)]/10 text-[var(--pri,#4f46e5)] border border-[var(--pri,#4f46e5)]/20 shrink-0">
             <LayoutTemplate className="size-4" />
           </div>
           <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
-              Badge Template Assignment Policy
+            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary,#fff)]">
+              Multi-Role Badge & Certificate Mappings
             </h3>
-            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-              Choose whether all attendee roles share one default print template or have dedicated custom badges.
+            <p className="text-xs text-[var(--text-secondary,#a1a1aa)] mt-0.5">
+              Custom per-role badge and certificate layouts are centrally managed in the Design Studio.
             </p>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <select
-            value={defaultTemplateId}
-            onChange={(e) => {
-              setDefaultTemplateId(e.target.value);
-              saveTemplateSettings({ defaultTemplateId: e.target.value });
-            }}
-            disabled={templateSaving || templates.length === 0}
-            className="h-9 min-w-56 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs font-medium text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none disabled:opacity-40"
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(`/events/${eventId}/design-studio/badges/settings`)}
+            className="h-8 text-xs font-semibold gap-1.5 border-[var(--border-default)] cursor-pointer"
           >
-            <option value="">Default Badge Template</option>
-            {templates.map((tpl) => (
-              <option key={tpl.id} value={tpl.id}>
-                {tpl.template_name}
-              </option>
-            ))}
-          </select>
-
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 py-1.5">
-            <ToggleSwitch
-              size="sm"
-              checked={useSameDesign}
-              onChange={(next) => {
-                setUseSameDesign(next);
-                saveTemplateSettings({ useSameDesign: next });
-              }}
-              disabled={templateSaving}
-              label="Same Design For All"
-            />
-            <span className="text-xs font-medium text-[var(--text-primary)]">
-              Same Design For All
-            </span>
-          </div>
+            <CreditCard className="size-3.5 text-[var(--pri,#4f46e5)]" />
+            Badge Settings
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(`/events/${eventId}/design-studio/certificates/settings`)}
+            className="h-8 text-xs font-semibold gap-1.5 border-[var(--border-default)] cursor-pointer"
+          >
+            <Award className="size-3.5 text-amber-400" />
+            Certificate Settings
+          </Button>
         </div>
       </div>
 
@@ -739,19 +729,17 @@ export default function RoleCategoriesPage() {
 
                 {/* Table with Uniform Columns */}
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] table-fixed text-left text-xs">
+                  <table className="w-full min-w-[640px] table-fixed text-left text-xs">
                     <colgroup>
-                      <col className="w-[30%]" />
-                      <col className="w-[15%]" />
-                      <col className="w-[28%]" />
-                      <col className="w-[17%]" />
+                      <col className="w-[45%]" />
+                      <col className="w-[20%]" />
+                      <col className="w-[25%]" />
                       <col className="w-[10%]" />
                     </colgroup>
                     <thead>
                       <tr className="border-b border-[var(--border-subtle)] text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] bg-[var(--bg-surface-2)]/40">
                         <th className="px-4 py-2.5 truncate">Role Name</th>
                         <th className="px-4 py-2.5 truncate">Reg Code</th>
-                        <th className="px-4 py-2.5 truncate">Badge Print Template</th>
                         <th className="px-4 py-2.5 truncate">Portal Visibility</th>
                         <th className="px-4 py-2.5 text-right truncate">Actions</th>
                       </tr>
@@ -782,29 +770,6 @@ export default function RoleCategoriesPage() {
                               placeholder="CODE"
                               className="h-8 w-full max-w-[120px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2 text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none"
                             />
-                          </td>
-
-                          <td className="px-4 py-3">
-                            <select
-                              value={roleTemplateAssignments[role.id] || (useSameDesign ? defaultTemplateId : "")}
-                              onChange={(e) => {
-                                const nextTpl = e.target.value;
-                                const nextAssignments = { ...roleTemplateAssignments, [role.id]: nextTpl };
-                                if (!nextTpl) delete nextAssignments[role.id];
-                                setRoleTemplateAssignments(nextAssignments);
-                                setUseSameDesign(false);
-                                saveTemplateSettings({ assignments: nextAssignments, useSameDesign: false });
-                              }}
-                              disabled={templateSaving || templates.length === 0}
-                              className="h-8 w-full max-w-[240px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-2 text-xs text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none disabled:opacity-40"
-                            >
-                              <option value="">Use Default Badge</option>
-                              {templates.map((tpl) => (
-                                <option key={tpl.id} value={tpl.id}>
-                                  {tpl.template_name}
-                                </option>
-                              ))}
-                            </select>
                           </td>
 
                           <td className="px-4 py-3">

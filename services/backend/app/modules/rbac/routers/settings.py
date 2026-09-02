@@ -14,8 +14,8 @@ from app.modules.billing.services.capability_service import CapabilityService
 router = APIRouter(prefix="/events/{event_id}/settings", tags=["settings"])
 
 
-def _build_response(event) -> SettingsResponse:
-    branding = dict(event.branding_settings or {})
+def _build_response(event, branding_override: dict | None = None) -> SettingsResponse:
+    branding = dict(branding_override if branding_override is not None else event.branding_settings or {})
     return SettingsResponse(
         event_id=event.id,
         max_file_size_mb=event.max_file_size_mb,
@@ -128,9 +128,18 @@ async def update_settings(
         current_branding.update(branding_patch)
         event.branding_settings = current_branding
 
+    # Build the response from the accepted patch as well as the ORM state.
+    # This keeps the command response authoritative even when the event's
+    # joined theme relationship was loaded before the mutation.
+    response_branding = dict(event.branding_settings or {})
+    response_branding.update(branding_patch)
     await db.commit()
-    await db.refresh(event)
-    return _build_response(event)
+    # Settings affect every event-scoped read projection, including cached
+    # public form and dashboard payloads. Invalidate only after commit so a
+    # failed mutation cannot evict a still-authoritative cached response.
+    from app.core.cache import invalidate_event
+    await invalidate_event(event.organization_id, event.id)
+    return _build_response(event, response_branding)
 
 
 @router.get("/license")

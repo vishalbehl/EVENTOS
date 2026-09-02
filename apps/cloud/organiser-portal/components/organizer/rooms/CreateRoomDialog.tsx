@@ -1,12 +1,15 @@
 "use client";
+// Quota control: max_rooms is enforced by the API before creation.
 
 import { useState, useEffect } from "react";
+import { useLimitAccess } from "@/lib/capabilities";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Users, Plus, Box, Monitor, ShieldCheck, Loader2 } from "lucide-react";
+import { X, MapPin, Plus, Box, ShieldCheck, Loader2, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCreateRoom } from "@/hooks/useRooms";
+import { useRoomTypes } from "@/hooks/useRoomTypes";
 import { formatApiError } from "@/lib/utils";
 import { toast } from "sonner";
 import { CapabilityAction } from "@/lib/capabilities";
@@ -19,13 +22,14 @@ interface CreateRoomDialogProps {
 export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
   const { eventId } = useParams();
   const createRoom = useCreateRoom();
+  const { data: roomTypes = [], isLoading: loadingTypes } = useRoomTypes();
+
   const [formData, setFormData] = useState({
     name: "",
-    capacity: 100,
-    screen_count: 1,
-    room_type: "presentation",
+    code: "",
+    room_type: "MAIN_HALL",
+    room_type_id: "",
     room_coordinator: "",
-    location_notes: "",
     is_active: true,
   });
 
@@ -44,29 +48,39 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (roomTypes.length > 0 && !formData.room_type_id) {
+      setFormData((prev) => ({
+        ...prev,
+        room_type: roomTypes[0].code || roomTypes[0].name,
+        room_type_id: roomTypes[0].id,
+      }));
+    }
+  }, [roomTypes]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    const payload = {
-      ...formData,
-      capacity: isNaN(formData.capacity) ? 0 : formData.capacity,
-      screen_count: isNaN(formData.screen_count) ? 1 : formData.screen_count,
-    };
 
     try {
       await createRoom.mutateAsync({
         eventId: eventId as string,
-        data: payload,
+        data: {
+          name: formData.name,
+          code: formData.code || undefined,
+          room_type: formData.room_type,
+          room_type_id: formData.room_type_id || undefined,
+          room_coordinator: formData.room_coordinator || undefined,
+          is_active: formData.is_active,
+        },
       });
       toast.success("Room registered successfully.");
       onClose();
       setFormData({
         name: "",
-        capacity: 100,
-        screen_count: 1,
-        room_type: "presentation",
+        code: "",
+        room_type: roomTypes[0]?.code || "MAIN_HALL",
+        room_type_id: roomTypes[0]?.id || "",
         room_coordinator: "",
-        location_notes: "",
         is_active: true,
       });
     } catch (error: any) {
@@ -74,17 +88,6 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
       toast.error(message);
     }
   };
-
-  const ROOM_TYPES = [
-    { value: "presentation", label: "Presentation Hall" },
-    { value: "workshop", label: "Workshop Room" },
-    { value: "poster", label: "Poster Session" },
-    { value: "plenary", label: "Plenary Hall" },
-    { value: "open_area", label: "Open Area / Foyer" },
-    { value: "dining", label: "Dining Area" },
-    { value: "registration", label: "Registration Desk" },
-    { value: "virtual", label: "Virtual / No Physical Room" },
-  ];
 
   return (
     <AnimatePresence>
@@ -107,7 +110,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="w-full max-w-lg rounded-lg border border-[var(--border-default)] bg-[var(--card)] shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden relative text-[var(--text-primary)]"
+              className="w-full max-w-md rounded-2xl border border-[var(--border-default)] bg-[var(--card)] shadow-2xl pointer-events-auto flex flex-col max-h-[90vh] overflow-hidden relative text-[var(--text-primary)]"
             >
               {/* Header */}
               <div className="flex items-center justify-between p-5 border-b border-[var(--border-subtle)]">
@@ -120,7 +123,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
                       Add New Room
                     </h3>
                     <p className="text-[11px] text-[var(--text-secondary)]">
-                      Configure stage capacity and location details
+                      Configure conference room and stage details
                     </p>
                   </div>
                 </div>
@@ -141,7 +144,7 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
                 className="flex-1 overflow-y-auto p-5 space-y-4 text-xs"
               >
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
                     Room Name *
                   </label>
                   <div className="relative">
@@ -158,89 +161,63 @@ export function CreateRoomDialog({ isOpen, onClose }: CreateRoomDialogProps) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
-                      Room Type
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                      Room Code
+                    </label>
+                    <div className="relative">
+                      <Tag className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                      <Input
+                        value={formData.code}
+                        onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+                        placeholder="e.g. RM-01"
+                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-mono font-bold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                      Room Type *
                     </label>
                     <select
-                      value={formData.room_type}
-                      onChange={(e) => setFormData({ ...formData, room_type: e.target.value })}
+                      value={formData.room_type_id || formData.room_type}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const matched = roomTypes.find((t) => t.id === val || t.code === val || t.name === val);
+                        setFormData({
+                          ...formData,
+                          room_type: matched ? (matched.code || matched.name) : val,
+                          room_type_id: matched ? matched.id : "",
+                        });
+                      }}
                       className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)] focus:outline-none cursor-pointer"
                     >
-                      {ROOM_TYPES.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
+                      {loadingTypes ? (
+                        <option value="">Loading room types...</option>
+                      ) : (
+                        roomTypes.map((t) => (
+                          <option key={t.id || t.code} value={t.id || t.code}>
+                            {t.name}
+                          </option>
+                        ))
+                      )}
                     </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
-                      Max Capacity *
-                    </label>
-                    <div className="relative">
-                      <Users className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
-                      <Input
-                        required
-                        type="number"
-                        value={isNaN(formData.capacity) ? "" : formData.capacity}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFormData({ ...formData, capacity: val === "" ? NaN : parseInt(val) });
-                        }}
-                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
-                      Screens Count *
-                    </label>
-                    <div className="relative">
-                      <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
-                      <Input
-                        required
-                        type="number"
-                        min="1"
-                        value={isNaN(formData.screen_count) ? "" : formData.screen_count}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFormData({ ...formData, screen_count: val === "" ? NaN : parseInt(val) });
-                        }}
-                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
-                      Room Coordinator
-                    </label>
-                    <div className="relative">
-                      <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
-                      <Input
-                        value={formData.room_coordinator}
-                        onChange={(e) => setFormData({ ...formData, room_coordinator: e.target.value })}
-                        placeholder="Onsite room coordinator / lead"
-                        className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
-                      />
-                    </div>
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block">
-                    Location Notes
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                    Room Coordinator / Lead
                   </label>
-                  <textarea
-                    value={formData.location_notes}
-                    onChange={(e) => setFormData({ ...formData, location_notes: e.target.value })}
-                    placeholder="e.g. Level 2, North Wing, beside main auditorium"
-                    className="w-full min-h-[70px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] p-2.5 text-xs text-[var(--text-primary)] font-medium outline-none resize-none focus:border-[var(--pri)] shadow-sm"
-                  />
+                  <div className="relative">
+                    <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--text-tertiary)]" />
+                    <Input
+                      value={formData.room_coordinator}
+                      onChange={(e) => setFormData({ ...formData, room_coordinator: e.target.value })}
+                      placeholder="e.g. John Doe (Coordinator)"
+                      className="h-9 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface-2)] pl-9 text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                    />
+                  </div>
                 </div>
               </form>
 

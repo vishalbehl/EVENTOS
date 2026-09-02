@@ -15,13 +15,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant_context import TenantContextGuard
 from app.dependencies import get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.search.models.search import SearchJob
 from app.modules.superadmin.dependencies import require_super_admin
+from app.modules.search.application.commands import SearchCommandService
+from app.modules.search.application.queries import SearchJobQueryService
 
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -101,21 +102,11 @@ async def list_search_jobs(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_super_admin),
 ) -> PaginatedSearchJobs:
-    stmt = select(SearchJob).execution_options(skip_tenant_filter=True)
-    count_stmt = select(func.count(SearchJob.id)).execution_options(skip_tenant_filter=True)
-
-    if organization_id is not None:
-        stmt = stmt.where(SearchJob.organization_id == organization_id)
-        count_stmt = count_stmt.where(SearchJob.organization_id == organization_id)
-
-    total = (await db.scalar(count_stmt)) or 0
-
-    stmt = (
-        stmt.order_by(desc(SearchJob.created_at))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    total, jobs = await SearchJobQueryService(db).list_page(
+        organization_id=organization_id,
+        page=page,
+        page_size=page_size,
     )
-    jobs = list((await db.scalars(stmt)).all())
 
     return PaginatedSearchJobs(
         items=[SearchJobOut.model_validate(job) for job in jobs],
@@ -138,77 +129,11 @@ async def trigger_reindex(
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_super_admin),
 ) -> SearchJobOut:
-    # Validate organization exists
-    org = await db.scalar(
-        select(Organization)
-        .where(Organization.id == body.organization_id)
-        .execution_options(skip_tenant_filter=True)
+    job = await SearchCommandService(db).trigger_reindex(
+        organization_id=body.organization_id,
+        entity_types=body.entity_types,
+        reason=body.reason,
+        idempotency_key=idempotency_key,
+        actor=actor,
     )
-
-    if org is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "ORGANIZATION_NOT_FOUND", "message": "Organization not found."},
-        )
-
-    # Check idempotency
-    existing = await db.scalar(
-        select(SearchJob)
-        .where(
-            SearchJob.organization_id == body.organization_id,
-            SearchJob.idempotency_key == idempotency_key,
-        )
-        .execution_options(skip_tenant_filter=True)
-    )
-    if existing is not None:
-        return SearchJobOut.model_validate(existing)
-
-    async with TenantContextGuard.scoped(db, body.organization_id):
-        job = SearchJob(
-            id=uuid.uuid4(),
-            organization_id=body.organization_id,
-            status="pending",
-            entity_types=body.entity_types,
-            records_processed=0,
-            requested_by=actor.id,
-            request_reason=body.reason,
-            idempotency_key=idempotency_key,
-            queued_at=datetime.now(timezone.utc),
-        )
-        db.add(job)
-        await db.flush()
-
-        _audit(
-            db=db,
-            actor=actor,
-            org_id=body.organization_id,
-            resource_type="search_job",
-            resource_id=job.id,
-            action="SEARCH_REINDEX_REQUESTED",
-            reason=body.reason,
-            state={
-                "idempotency_key": idempotency_key,
-                "entity_types": body.entity_types,
-            },
-        )
-
-        await db.commit()
-        await db.refresh(job)
-
-        # Attempt to dispatch Celery worker task if available
-        try:
-            from app.worker import celery_app
-            celery_app.send_task(
-                "workers.tasks.search_tasks.reindex_organization",
-                kwargs={
-                    "org_id": str(body.organization_id),
-                    "job_id": str(job.id),
-                    "entity_types": body.entity_types,
-                },
-                queue="search",
-            )
-            logger.info(f"Dispatched search reindex task for job {job.id}")
-        except Exception as exc:
-            logger.warning(f"Could not dispatch async Celery search task (recorded in DB): {exc}")
-
-        return SearchJobOut.model_validate(job)
+    return SearchJobOut.model_validate(job)

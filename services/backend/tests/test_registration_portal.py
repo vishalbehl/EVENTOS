@@ -35,6 +35,61 @@ async def test_get_form_config_default(
     assert first_name_field["is_default"] is True
     assert first_name_field["is_required"] is True
 
+    # GET is a projection and must not seed configuration or normalized rows.
+    from sqlalchemy import func, select
+    from app.modules.registration.models.registration_domain_tables import FormField
+    from app.modules.registration.models.registration_form_config import RegistrationFormConfig
+    assert await db.scalar(
+        select(func.count()).select_from(RegistrationFormConfig).where(
+            RegistrationFormConfig.event_id == event.id
+        )
+    ) == 0
+    assert await db.scalar(
+        select(func.count()).select_from(FormField)
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_registration_query_service_uses_stable_cursor_pages(
+    db: AsyncSession,
+    event: Event,
+):
+    from datetime import datetime, timedelta, timezone
+    from app.modules.registration.application.queries import RegistrationQueryService
+    from app.modules.registration.models.participant_registration import ParticipantRegistration
+
+    base = datetime.now(timezone.utc)
+    db.add_all([
+        ParticipantRegistration(
+            event_id=event.id,
+            registration_status="submitted",
+            registration_data={"email": f"cursor-{index}@example.com"},
+            submitted_at=base - timedelta(minutes=index),
+            approval_source="test",
+        )
+        for index in range(3)
+    ])
+    await db.flush()
+
+    service = RegistrationQueryService(db)
+    first = await service.list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=2,
+    )
+    assert len(first.items) == 2
+    assert first.has_next is True
+    assert first.next_cursor
+
+    second = await service.list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=2,
+        cursor=first.next_cursor,
+    )
+    assert len(second.items) == 1
+    assert {row.id for row in first.items}.isdisjoint({row.id for row in second.items})
+
 
 @pytest.mark.asyncio
 async def test_update_form_config(
@@ -85,6 +140,17 @@ async def test_update_form_config(
     assert len(config["fields"]) == 3
     assert config["fields"][0]["label"] == "Custom Full Name Label"
     assert config["fields"][2]["id"] == "custom_diet"
+    assert config["version"] == 2
+
+    with pytest.raises(HTTPException) as stale:
+        await update_registration_form_config(
+            payload=RegistrationFormConfigUpdate(is_live=False),
+            event=event,
+            db=db,
+            if_match='"1"',
+        )
+    assert stale.value.status_code == 409
+    assert stale.value.detail["code"] == "RESOURCE_VERSION_CONFLICT"
 
 
 @pytest.mark.asyncio

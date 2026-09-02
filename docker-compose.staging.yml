@@ -1,0 +1,278 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_DB: eventos_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    mem_limit: 1g
+    cpus: "1.50"
+    logging: *default-logging
+    volumes:
+      - staging_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eventos_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    mem_limit: 512m
+    cpus: "0.50"
+    logging: *default-logging
+    volumes:
+      - staging_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  clamav:
+    image: clamav/clamav:stable
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "false"
+    expose:
+      - "3310"
+    ports:
+      - "127.0.0.1:3310:3310"
+    mem_limit: 1g
+    cpus: "1.00"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 3:1 localhost:3310"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    env_file:
+      - .env.staging
+    ports:
+      - "0.0.0.0:9000:9000"
+      - "0.0.0.0:9001:9001"
+    mem_limit: 1g
+    cpus: "1.00"
+    logging: *default-logging
+    volumes:
+      - type: bind
+        source: D:\conf-platform\minio
+        target: /data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env.staging
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mc alias set staging http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc admin user add staging "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY" || true
+        mc admin policy attach staging readwrite --user "$$MINIO_APP_ACCESS_KEY"
+        for bucket in presentations posters thumbnails imports assets exports event-branding quarantine; do
+          mc mb --ignore-existing "staging/$$bucket"
+          mc anonymous set none "staging/$$bucket"
+        done
+        echo "MinIO staging buckets are ready."
+    restart: "no"
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8180:80"
+      - "127.0.0.1:8443:443"
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - staging_caddy_data:/data
+      - staging_caddy_config:/config
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.25"
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - staging_prometheus_data:/prometheus
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.50"
+    logging: *default-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    env_file:
+      - .env.staging
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./infrastructure/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./ops/alertmanager-entrypoint.sh:/runtime-alertmanager-entrypoint.sh:ro
+      - staging_alertmanager_data:/alertmanager
+    entrypoint: ["/bin/sh", "/runtime-alertmanager-entrypoint.sh"]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.25"
+    logging: *default-logging
+
+  backend:
+    build:
+      context: ./services/backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env.staging
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_URL: redis://redis:6379/2
+      REDIS_LOCK_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CONF_PLATFORM_ROOT: /workspace
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
+      ANTIVIRUS_COMMAND: tcp://clamav:3310
+      API_BASE_URL: http://127.0.0.1:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - .:/workspace:ro
+      - ./ops:/runtime-ops:ro
+      - ./services/backend/tests:/runtime-tests:ro
+      - ./services/backend/tests:/app/tests:ro
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.00"
+    logging: *default-logging
+
+  workers:
+    build:
+      context: ./services/backend
+      dockerfile: Dockerfile
+    command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--queues=critical,default,notifications"]
+    env_file:
+      - .env.staging
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_URL: redis://redis:6379/2
+      REDIS_LOCK_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
+      ANTIVIRUS_COMMAND: tcp://clamav:3310
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./ops:/runtime-ops:ro
+    mem_limit: 1536m
+    cpus: "1.50"
+    logging: *default-logging
+    healthcheck:
+      disable: true
+
+  # Heavy work has its own pool so imports, files, videos, reports, and
+  # reconciliation cannot consume the worker capacity reserved for critical
+  # commands and user-facing notifications.
+  workers-processing:
+    build:
+      context: ./services/backend
+      dockerfile: Dockerfile
+    command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--queues=files,videos,imports,search,reports,reconciliation"]
+    env_file:
+      - .env.staging
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@postgres:5432/eventos_db
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@postgres:5432/eventos_db
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_URL: redis://redis:6379/2
+      REDIS_LOCK_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
+      ANTIVIRUS_COMMAND: tcp://clamav:3310
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./ops:/runtime-ops:ro
+    mem_limit: 1536m
+    cpus: "1.50"
+    logging: *default-logging
+    healthcheck:
+      disable: true
+
+volumes:
+  staging_postgres_data:
+  staging_redis_data:
+  staging_caddy_data:
+  staging_caddy_config:
+  staging_prometheus_data:
+  staging_alertmanager_data:

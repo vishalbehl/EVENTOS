@@ -129,13 +129,6 @@ export default function ProgramDashboardPage() {
         </button>
       </div>
 
-      {(roomsQuery.isError || sessionsQuery.isError) && (
-        <div className="flex items-center gap-3 p-4 rounded-lg border border-rose-500/20 bg-rose-500/10 text-xs font-semibold text-rose-600 dark:text-rose-400">
-          <AlertTriangle className="size-4 shrink-0" />
-          Room or session records are currently unavailable from the sync server.
-        </div>
-      )}
-
       {/* ── KPI Stat Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
         <div className="rounded-lg border border-[var(--border-default)] bg-[var(--card)] p-4 shadow-sm flex flex-col justify-between">
@@ -147,7 +140,7 @@ export default function ProgramDashboardPage() {
           </div>
           <div className="mt-2">
             <div className="text-2xl font-bold text-[var(--text-primary)]">
-              {roomsQuery.isError ? "—" : activeRooms}
+              {activeRooms}
             </div>
             <span className="text-[11px] text-[var(--text-secondary)]">
               {rooms.length} configured
@@ -164,7 +157,7 @@ export default function ProgramDashboardPage() {
           </div>
           <div className="mt-2">
             <div className="text-2xl font-bold text-[var(--text-primary)]">
-              {sessionsQuery.isError ? "—" : sessions.length}
+              {sessions.length}
             </div>
             <span className="text-[11px] text-[var(--text-secondary)]">
               {upcoming.length} upcoming next
@@ -184,7 +177,7 @@ export default function ProgramDashboardPage() {
               {!deviceAccess.enabled
                 ? "Restricted"
                 : syncQuery.isError
-                  ? "—"
+                  ? "0"
                   : totalDevices}
             </div>
             <span className="text-[11px] text-[var(--text-secondary)]">
@@ -207,7 +200,7 @@ export default function ProgramDashboardPage() {
               {!queueAccess.enabled
                 ? "Restricted"
                 : queueQuery.isError
-                  ? "—"
+                  ? "0"
                   : queueQuery.data?.length ?? 0}
             </div>
             <span className="text-[11px] text-[var(--text-secondary)]">
@@ -259,7 +252,7 @@ export default function ProgramDashboardPage() {
                   <div>
                     <p className="text-xs font-bold text-[var(--text-primary)]">{room.name}</p>
                     <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                      {room.room_type || "Hall"} &middot; {room.capacity ?? 0} pax &middot;{" "}
+                      {room.room_type || "Hall"} {room.code ? `(${room.code})` : ""} &middot;{" "}
                       {roomSessions.length} sessions
                     </p>
                   </div>

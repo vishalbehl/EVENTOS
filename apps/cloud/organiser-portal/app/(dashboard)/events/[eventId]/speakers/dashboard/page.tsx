@@ -181,37 +181,37 @@ export default function EventOverviewPage() {
   const metrics = [
     {
       label: "Total Speakers",
-      value: mainStats?.total_speakers || stats?.total_speakers || 0,
+      value: mainStats?.total_speakers ?? stats?.total_speakers ?? 0,
       icon: Users,
       color: "text-indigo-500",
     },
     {
       label: "Uploads Approved",
-      value: stats?.files_approved || 0,
+      value: stats?.files_approved ?? 0,
       icon: CheckCircle,
       color: "text-emerald-500",
     },
     {
       label: "Pending Review",
-      value: stats?.files_pending || 0,
+      value: stats?.files_pending ?? 0,
       icon: Clock,
       color: "text-amber-500",
     },
     {
       label: "Uploads Rejected",
-      value: stats?.files_rejected || 0,
+      value: stats?.files_rejected ?? 0,
       icon: XCircle,
       color: "text-rose-500",
     },
     {
       label: "Active Rooms",
-      value: mainStats?.active_rooms || stats?.total_rooms || 0,
+      value: mainStats?.active_rooms ?? stats?.total_rooms ?? 0,
       icon: MapPin,
       color: "text-purple-500",
     },
     {
       label: "Total Sessions",
-      value: mainStats?.total_sessions || 0,
+      value: mainStats?.total_sessions ?? stats?.total_sessions ?? 0,
       icon: Calendar,
       color: "text-sky-500",
     },
@@ -219,7 +219,7 @@ export default function EventOverviewPage() {
       label: "Program Readiness",
       value: mainStats?.event_readiness_pct
         ? `${mainStats.event_readiness_pct}%`
-        : `${Math.round(stats?.approval_rate_pct || 0)}%`,
+        : `${Math.round(stats?.approval_rate_pct ?? 0)}%`,
       icon: Zap,
       color: "text-[var(--pri)]",
     },

@@ -14,7 +14,29 @@ from app.modules.platform.services.lifecycle_service import OrganizationLifecycl
 from app.modules.platform.services.metering_service import MeteringService
 from app.database import AsyncSessionLocal
 from app.tasks.tenant_job_scope import parse_required_organization_id, tenant_job_session
+from app.core.task_policy import is_retryable, policy_for
 from app.worker import celery_app
+
+
+_RECONCILIATION_POLICY = policy_for("reconciliation")
+
+
+def _run_reconciliation_task(task, operation):
+    """Run a reconciliation operation with bounded, classified retries."""
+    from app.tasks.platform_tasks import _run_async
+
+    try:
+        return _run_async(operation)
+    except Exception as exc:
+        policy = policy_for("reconciliation")
+        attempt = int(getattr(task.request, "retries", 0) or 0)
+        if is_retryable(exc) and attempt < policy.max_retries:
+            raise task.retry(
+                exc=exc,
+                countdown=min(300, policy.retry_delay(attempt, apply_jitter=True)),
+                max_retries=policy.max_retries,
+            )
+        raise
 
 
 async def expire_organization_overrides(organization_id_str: str, override_id_str: str | None = None) -> int:
@@ -31,10 +53,17 @@ async def expire_organization_overrides(organization_id_str: str, override_id_st
         return counts["entitlement_overrides"]
 
 
-@celery_app.task(name="app.tasks.organization_console_tasks.expire_override")
-def expire_override(organization_id_str: str, override_id_str: str | None = None) -> int:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(expire_organization_overrides(organization_id_str, override_id_str))
+@celery_app.task(
+    name="app.tasks.organization_console_tasks.expire_override",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def expire_override(self, organization_id_str: str, override_id_str: str | None = None) -> int:
+    return _run_reconciliation_task(self, expire_organization_overrides(organization_id_str, override_id_str))
 
 
 async def expire_tenant_capability_controls_in_session(
@@ -93,10 +122,17 @@ async def expire_tenant_capability_controls(organization_id_str: str) -> dict:
     return {"organization_id": str(organization_id), **counts}
 
 
-@celery_app.task(name="app.tasks.organization_console_tasks.expire_tenant_capability_controls")
-def expire_tenant_capability_controls_task(organization_id_str: str) -> dict:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(expire_tenant_capability_controls(organization_id_str))
+@celery_app.task(
+    name="app.tasks.organization_console_tasks.expire_tenant_capability_controls",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def expire_tenant_capability_controls_task(self, organization_id_str: str) -> dict:
+    return _run_reconciliation_task(self, expire_tenant_capability_controls(organization_id_str))
 
 
 async def fanout_capability_control_expiry() -> int:
@@ -119,10 +155,17 @@ async def fanout_capability_control_expiry() -> int:
     return len(organization_ids)
 
 
-@celery_app.task(name="app.tasks.organization_console_tasks.fanout_capability_control_expiry")
-def fanout_capability_control_expiry_task() -> int:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(fanout_capability_control_expiry())
+@celery_app.task(
+    name="app.tasks.organization_console_tasks.fanout_capability_control_expiry",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def fanout_capability_control_expiry_task(self) -> int:
+    return _run_reconciliation_task(self, fanout_capability_control_expiry())
 
 
 async def execute_organization_lifecycle_job(organization_id_str: str, job_id_str: str) -> dict:
@@ -191,10 +234,17 @@ async def execute_organization_lifecycle_job(organization_id_str: str, job_id_st
         raise
 
 
-@celery_app.task(name="app.tasks.organization_console_tasks.execute_lifecycle_job")
-def execute_lifecycle_job(organization_id_str: str, job_id_str: str) -> dict:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(execute_organization_lifecycle_job(organization_id_str, job_id_str))
+@celery_app.task(
+    name="app.tasks.organization_console_tasks.execute_lifecycle_job",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def execute_lifecycle_job(self, organization_id_str: str, job_id_str: str) -> dict:
+    return _run_reconciliation_task(self, execute_organization_lifecycle_job(organization_id_str, job_id_str))
 
 
 async def reconcile_organization_usage(organization_id_str: str) -> dict:
@@ -215,10 +265,17 @@ async def reconcile_organization_usage(organization_id_str: str) -> dict:
     return {"organization_id": str(organization_id), "events": len(event_ids), "metrics": reconciled, "drifted": drifted}
 
 
-@celery_app.task(name="app.tasks.organization_console_tasks.reconcile_organization_usage")
-def reconcile_organization_usage_task(organization_id_str: str) -> dict:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(reconcile_organization_usage(organization_id_str))
+@celery_app.task(
+    name="app.tasks.organization_console_tasks.reconcile_organization_usage",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def reconcile_organization_usage_task(self, organization_id_str: str) -> dict:
+    return _run_reconciliation_task(self, reconcile_organization_usage(organization_id_str))
 
 
 async def fanout_nightly_usage_reconciliation() -> int:
@@ -230,7 +287,14 @@ async def fanout_nightly_usage_reconciliation() -> int:
     return len(organization_ids)
 
 
-@celery_app.task(name="app.tasks.organization_console_tasks.fanout_nightly_usage_reconciliation")
-def fanout_nightly_usage_reconciliation_task() -> int:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(fanout_nightly_usage_reconciliation())
+@celery_app.task(
+    name="app.tasks.organization_console_tasks.fanout_nightly_usage_reconciliation",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def fanout_nightly_usage_reconciliation_task(self) -> int:
+    return _run_reconciliation_task(self, fanout_nightly_usage_reconciliation())

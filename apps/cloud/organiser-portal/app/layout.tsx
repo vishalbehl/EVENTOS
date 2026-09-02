@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
-import { GlobalModal } from "@/components/organizer/modals/GlobalModal";
 import { ImpersonationBanner } from "@/components/organizer/ImpersonationBanner";
 
 export const metadata: Metadata = {
@@ -19,6 +18,7 @@ export default function RootLayout({
       <head>
         {/* Inline script: apply theme immediately before paint to avoid flash */}
         <script
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
@@ -42,9 +42,10 @@ export default function RootLayout({
         <Providers>
           <ImpersonationBanner />
           {children}
-          <GlobalModal />
         </Providers>
       </body>
     </html>
   );
 }
+
+

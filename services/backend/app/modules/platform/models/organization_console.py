@@ -284,6 +284,92 @@ class OrganizationCustomField(Base):
     )
 
 
+class OrganizationComplianceControl(Base):
+    __tablename__ = "organization_compliance_controls"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "framework", "control_key", name="uq_org_compliance_control"),
+        Index("ix_org_compliance_controls_org_state", "organization_id", "state"),
+        {"schema": "platform_compliance"},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
+    framework: Mapped[str] = mapped_column(String(30), nullable=False)
+    control_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"))
+    applicability: Mapped[str] = mapped_column(String(24), nullable=False, default="APPLICABLE")
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="NOT_ASSESSED")
+    readiness_score: Mapped[Optional[int]] = mapped_column(Integer)
+    review_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class OrganizationComplianceEvidence(Base):
+    __tablename__ = "organization_compliance_evidence"
+    __table_args__ = (Index("ix_org_compliance_evidence_org_control", "organization_id", "control_id"), {"schema": "platform_compliance"})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
+    control_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform_compliance.organization_compliance_controls.id", ondelete="CASCADE"), nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    storage_reference: Mapped[str] = mapped_column(String(500), nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    classification: Mapped[str] = mapped_column(String(30), nullable=False, default="CONFIDENTIAL")
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reviewer_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class OrganizationPrivacyRequest(Base):
+    __tablename__ = "organization_privacy_requests"
+    __table_args__ = (Index("ix_org_privacy_requests_org_status_due", "organization_id", "status", "due_at"), {"schema": "platform_compliance"})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="RESTRICT"), nullable=False)
+    request_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    subject_reference_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="RECEIVED")
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    assigned_to: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"))
+    legal_hold_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    result_reference: Mapped[Optional[str]] = mapped_column(String(500))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class OrganizationRetentionPolicy(Base):
+    __tablename__ = "organization_retention_policies"
+    __table_args__ = (UniqueConstraint("organization_id", "data_category", name="uq_org_retention_category"), {"schema": "platform_compliance"})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="CASCADE"), nullable=False)
+    data_category: Mapped[str] = mapped_column(String(80), nullable=False)
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    disposition_action: Mapped[str] = mapped_column(String(24), nullable=False, default="DELETE")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class OrganizationLegalHold(Base):
+    __tablename__ = "organization_legal_holds"
+    __table_args__ = (Index("ix_org_legal_holds_org_status", "organization_id", "status"), {"schema": "platform_compliance"})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("platform.organizations.id", ondelete="RESTRICT"), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    scope: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ACTIVE")
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
 class OrganizationDocument(Base):
     __tablename__ = "organization_documents"
 

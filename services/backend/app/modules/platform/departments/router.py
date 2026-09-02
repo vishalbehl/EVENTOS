@@ -1,7 +1,7 @@
 # app/modules/platform/departments/router.py
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_db, OrganizerOrAbove, get_current_user
@@ -11,8 +11,11 @@ from app.modules.platform.departments.schemas import (
     DepartmentMemberResponse, DepartmentMemberAdd
 )
 from app.modules.platform.departments.service import DepartmentService
+from app.modules.platform.departments.application.queries import DepartmentQueryService
 from app.modules.platform.departments.dependencies import get_department_service
 from app.schemas.common import MessageResponse
+from app.schemas.cursor_pagination import CursorPage
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 router = APIRouter(prefix="/platform/departments", tags=["departments"])
 
@@ -27,8 +30,8 @@ async def list_departments(
     sort_order: str = Query("asc"),
     service: DepartmentService = Depends(get_department_service)
 ):
-    items, total = await service.list_departments(
-        org_id=current_user.organization_id,
+    items, total, counts = await DepartmentQueryService(service.db).list_with_counts(
+        organization_id=current_user.organization_id,
         skip=skip,
         limit=limit,
         search=search,
@@ -36,27 +39,9 @@ async def list_departments(
         sort_order=sort_order
     )
     
-    # Enrich response with counters
     res = []
-    from sqlalchemy import select, func
-    from app.modules.platform.departments.models import DepartmentMember
-    from app.modules.platform.teams.models import Team
-    
     for dept in items:
-        # Get count of members
-        member_count_stmt = select(func.count(DepartmentMember.id)).where(
-            DepartmentMember.department_id == dept.id,
-            DepartmentMember.deleted_at == None
-        )
-        # Get count of teams
-        team_count_stmt = select(func.count(Team.id)).where(
-            Team.department_id == dept.id,
-            Team.deleted_at == None
-        )
-        
-        m_count = (await service.db.execute(member_count_stmt)).scalar_one()
-        t_count = (await service.db.execute(team_count_stmt)).scalar_one()
-        
+        m_count, t_count = counts.get(dept.id, (0, 0))
         res.append(
             DepartmentResponse(
                 id=dept.id,
@@ -71,6 +56,22 @@ async def list_departments(
             )
         )
     return res
+
+
+@router.get("/cursor", response_model=CursorPage[DepartmentResponse])
+async def cursor_departments(
+    current_user: OrganizerOrAbove,
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    service: DepartmentService = Depends(get_department_service),
+):
+    return await service.repository.cursor_page(
+        current_user.organization_id,
+        cursor=cursor,
+        limit=limit,
+        search=search,
+    )
 
 
 @router.get("/export")
@@ -91,13 +92,35 @@ async def export_departments(
 async def create_department(
     payload: DepartmentCreate,
     current_user: OrganizerOrAbove,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     service: DepartmentService = Depends(get_department_service)
 ):
-    return await service.create_department(
+    idem = None
+    if idempotency_key:
+        idem = await begin_idempotent(
+            service.db,
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            operation="platform.department.create",
+            key=idempotency_key,
+            payload=payload.model_dump(mode="json"),
+        )
+        replay = replay_response(idem)
+        if replay:
+            return replay[1]
+    department = await service.create_department(
         org_id=current_user.organization_id,
         payload=payload,
         creator_id=current_user.id
     )
+    if idem:
+        body = DepartmentSummary.model_validate(department).model_dump(mode="json")
+        await complete_idempotent(
+            service.db, idem, response_status=status.HTTP_201_CREATED,
+            response_body=body, resource_id=department.id
+        )
+        await service.db.commit()
+    return department
 
 
 @router.get("/{id}", response_model=DepartmentResponse)
@@ -144,13 +167,15 @@ async def update_department(
     id: uuid.UUID,
     payload: DepartmentUpdate,
     current_user: OrganizerOrAbove,
+    expected_version: Optional[int] = Header(None, alias="If-Match", ge=1),
     service: DepartmentService = Depends(get_department_service)
 ):
     return await service.update_department(
         org_id=current_user.organization_id,
         id=id,
         payload=payload,
-        updater_id=current_user.id
+        updater_id=current_user.id,
+        expected_version=expected_version,
     )
 
 

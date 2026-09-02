@@ -3,17 +3,54 @@ import sys
 import uuid
 import json
 import traceback
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from loguru import logger
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
-from celery.exceptions import Retry
 
 from app.worker import celery_app
+from app.core.async_runner import run_async as stable_run_async
 from app.config import settings
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.api_request_log import WorkerJobLog, APIRequestLog
 from app.modules.audit.services.audit_service import make_json_serializable
+from app.core.task_policy import is_retryable, policy_for
+
+_AUDIT_POLICY = policy_for("default")
+
+
+def _retry_audit_task(task, exc: BaseException) -> bool:
+    """Retry only transient audit failures and keep retry timing bounded."""
+    attempt = int(getattr(task.request, "retries", 0) or 0)
+    if not is_retryable(exc) or attempt >= _AUDIT_POLICY.max_retries:
+        return False
+    raise task.retry(
+        exc=exc,
+        countdown=min(300, _AUDIT_POLICY.retry_delay(attempt, apply_jitter=True)),
+    )
+
+
+@asynccontextmanager
+async def _task_database_session():
+    """Create a task-local engine and always release it after the job."""
+    task_engine = create_async_engine(
+        settings.async_database_url,
+        echo=settings.debug,
+        poolclass=NullPool,
+    )
+    task_session_factory = async_sessionmaker(
+        bind=task_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+    try:
+        async with task_session_factory() as db:
+            yield db
+    finally:
+        await task_engine.dispose()
 
 
 def _run_async(coro):
@@ -53,10 +90,18 @@ def _run_async(coro):
             raise exc_list[0]
         return res_list[0]
     else:
-        return asyncio.run(coro)
+        return stable_run_async(coro)
 
 
-@celery_app.task(name="app.tasks.write_audit_log", bind=True, max_retries=3, default_retry_delay=5)
+@celery_app.task(
+    name="app.tasks.write_audit_log",
+    bind=True,
+    max_retries=_AUDIT_POLICY.max_retries,
+    soft_time_limit=_AUDIT_POLICY.soft_timeout_seconds,
+    time_limit=_AUDIT_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_AUDIT_POLICY.queue,
+)
 def write_audit_log(self, audit_data: dict) -> None:
     """
     Celery task to asynchronously write an audit log entry.
@@ -67,38 +112,18 @@ def write_audit_log(self, audit_data: dict) -> None:
         _run_async(_write_audit_log_async(audit_data))
     except Exception as exc:
         logger.warning(f"[Celery] Error writing audit log: {exc}")
+        if _retry_audit_task(self, exc):
+            return
+        logger.error(f"[Celery] Permanent failure writing audit log: {exc}")
         try:
-            # Attempt to retry the task on exception (e.g. database disconnect)
-            self.retry(exc=exc)
-        except Retry as retry_exc:
-            # Re-raise Celery's Retry exception so Celery schedules the retry
-            raise retry_exc
-        except Exception as final_exc:
-            # Max retries exceeded or non-retryable error
-            logger.error(f"[Celery] Permanent failure writing audit log: {final_exc}")
-            try:
-                _run_async(_log_worker_failure(self, audit_data, final_exc))
-            except Exception as inner_exc:
-                logger.error(f"[Celery] Failed to write failure log to DB: {inner_exc}")
+            _run_async(_log_worker_failure(self, audit_data, exc))
+        except Exception as inner_exc:
+            logger.error(f"[Celery] Failed to write failure log to DB: {inner_exc}")
 
 
 async def _write_audit_log_async(audit_data: dict) -> None:
     """Async handler for writing the audit log to the database."""
-    task_engine = create_async_engine(
-        settings.async_database_url,
-        echo=settings.debug,
-        poolclass=NullPool,
-    )
-    
-    TaskSessionLocal = async_sessionmaker(
-        bind=task_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autoflush=False,
-        autocommit=False,
-    )
-    
-    async with TaskSessionLocal() as db:
+    async with _task_database_session() as db:
         occurred_at_val = audit_data.get("occurred_at")
         if occurred_at_val:
             occurred_at = datetime.fromisoformat(occurred_at_val)
@@ -135,21 +160,7 @@ async def _write_audit_log_async(audit_data: dict) -> None:
 
 async def _log_worker_failure(self_task, audit_data: dict, exc: Exception) -> None:
     """Logs the task failure inside audit.worker_logs."""
-    task_engine = create_async_engine(
-        settings.async_database_url,
-        echo=settings.debug,
-        poolclass=NullPool,
-    )
-    
-    TaskSessionLocal = async_sessionmaker(
-        bind=task_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autoflush=False,
-        autocommit=False,
-    )
-    
-    async with TaskSessionLocal() as db:
+    async with _task_database_session() as db:
         corr_id = None
         if audit_data.get("correlation_id"):
             try:
@@ -185,37 +196,28 @@ async def _log_worker_failure(self_task, audit_data: dict, exc: Exception) -> No
         await db.commit()
 
 
-@celery_app.task(name="app.tasks.write_api_request_log", bind=True, max_retries=3, default_retry_delay=5)
+@celery_app.task(
+    name="app.tasks.write_api_request_log",
+    bind=True,
+    max_retries=_AUDIT_POLICY.max_retries,
+    soft_time_limit=_AUDIT_POLICY.soft_timeout_seconds,
+    time_limit=_AUDIT_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_AUDIT_POLICY.queue,
+)
 def write_api_request_log(self, api_data: dict) -> None:
     logger.info(f"[Celery] Processing write_api_request_log task: {self.request.id}")
     try:
         _run_async(_write_api_request_log_async(api_data))
     except Exception as exc:
         logger.warning(f"[Celery] Error writing API request log: {exc}")
-        try:
-            self.retry(exc=exc)
-        except Retry as retry_exc:
-            raise retry_exc
-        except Exception as final_exc:
-            logger.error(f"[Celery] Permanent failure writing API request log: {final_exc}")
+        if _retry_audit_task(self, exc):
+            return
+        logger.error(f"[Celery] Permanent failure writing API request log: {exc}")
 
 
 async def _write_api_request_log_async(api_data: dict) -> None:
-    task_engine = create_async_engine(
-        settings.async_database_url,
-        echo=settings.debug,
-        poolclass=NullPool,
-    )
-    
-    TaskSessionLocal = async_sessionmaker(
-        bind=task_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autoflush=False,
-        autocommit=False,
-    )
-    
-    async with TaskSessionLocal() as db:
+    async with _task_database_session() as db:
         occurred_at_val = api_data.get("occurred_at")
         occurred_at = datetime.fromisoformat(occurred_at_val) if occurred_at_val else datetime.now(timezone.utc)
         
@@ -227,6 +229,8 @@ async def _write_api_request_log_async(api_data: dict) -> None:
             path=api_data.get("path"),
             status_code=api_data.get("status_code"),
             duration_ms=api_data.get("duration_ms", 0.0),
+            db_query_count=api_data.get("db_query_count", 0),
+            db_query_duration_ms=api_data.get("db_query_duration_ms", 0.0),
             ip_address=api_data.get("ip_address"),
             user_id=uuid.UUID(api_data["user_id"]) if api_data.get("user_id") else None,
             user_agent=api_data.get("user_agent"),

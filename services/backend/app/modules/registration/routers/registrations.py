@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.events.models.capacity_rule import CapacityRule
 from app.modules.events.models.event import Event
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
+from app.core.concurrency import require_if_match
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.platform.services.metering_service import MeteringService
 from app.modules.registration.schemas.registration import (
@@ -30,6 +31,9 @@ from app.modules.registration.schemas.registration import (
 )
 from app.modules.registration.routers.participants import generate_next_regno
 from app.schemas.common import MessageResponse
+from app.schemas.cursor_pagination import CursorPage
+from app.modules.registration.application.queries import RegistrationQueryService
+from app.modules.registration.application.commands import RegistrationCommandService
 
 router = APIRouter(prefix="/events/{event_id}/registrations", tags=["registrations"])
 
@@ -38,7 +42,8 @@ router = APIRouter(prefix="/events/{event_id}/registrations", tags=["registratio
 async def submit_registration(
     event_id: uuid.UUID,
     payload: ParticipantRegistrationCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Submit registration data. If event-level capacity is reached and waitlist is enabled,
@@ -48,67 +53,68 @@ async def submit_registration(
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
     await enforce_event_operation(db, event.organization_id, event.id, "registration.submit")
-    q_rule = select(CapacityRule).where(
-        CapacityRule.event_id == event_id,
-        CapacityRule.session_id.is_(None),
-        CapacityRule.room_id.is_(None)
+    return await RegistrationCommandService.submit(
+        db, event=event, payload=payload, idempotency_key=idempotency_key
     )
-    rule = (await db.execute(q_rule)).scalar_one_or_none()
-
-    # Get current approved count (participants registered)
-    q_count = select(func.count(Participant.id)).where(Participant.event_id == event_id)
-    current_approved = (await db.execute(q_count)).scalar() or 0
-
-    status_str = "submitted"
-    waitlist_pos = None
-
-    if rule and current_approved >= rule.capacity:
-        if rule.waitlist_enabled:
-            status_str = "waitlisted"
-            # Determine next waitlist position
-            q_wl = select(func.max(ParticipantRegistration.waitlist_position)).where(
-                ParticipantRegistration.event_id == event_id,
-                ParticipantRegistration.registration_status == "waitlisted"
-            )
-            max_pos = (await db.execute(q_wl)).scalar()
-            waitlist_pos = (max_pos or 0) + 1
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This event is at full capacity and waitlisting is disabled."
-            )
-
-    reg = ParticipantRegistration(
-        event_id=event_id,
-        registration_status=status_str,
-        registration_data=payload.registration_data,
-        approval_source=payload.approval_source,
-        waitlist_position=waitlist_pos
-    )
-    db.add(reg)
-    await db.flush()
-    await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="registration_submissions", quantity=1, unit="count", source="registration.submit", idempotency_key=f"registration-submit:{reg.id}", metadata={"registration_id": str(reg.id), "status": status_str})
-    await db.commit()
-    await db.refresh(reg)
-    return reg
 
 
 @router.get("", response_model=List[ParticipantRegistrationResponse])
 async def list_registrations(
     event: CurrentEvent,
+    current_user: AdminOrAbove,
     registration_status: Optional[str] = Query(None, description="Filter by status (submitted, approved, waitlisted, rejected)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db)
 ):
     """
     List all registrations for the current event, optionally filtered by status.
     """
-    q = select(ParticipantRegistration).where(ParticipantRegistration.event_id == event.id)
-    if registration_status:
-        q = q.where(ParticipantRegistration.registration_status == registration_status)
-    q = q.order_by(ParticipantRegistration.submitted_at.desc())
-    
-    result = await db.execute(q)
-    return list(result.scalars().all())
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.read",
+        user_id=current_user.id,
+    )
+    return await RegistrationQueryService(db).list_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page=page,
+        page_size=page_size,
+        registration_status=registration_status,
+    )
+
+
+@router.get("/page", response_model=CursorPage[ParticipantRegistrationResponse])
+async def list_registrations_page(
+    event: CurrentEvent,
+    current_user: AdminOrAbove,
+    registration_status: Optional[str] = Query(None, description="Filter by status."),
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stable cursor pagination for high-volume registration workspaces."""
+    await enforce_event_operation(
+        db,
+        event.organization_id,
+        event.id,
+        "registration.read",
+        user_id=current_user.id,
+    )
+    page = await RegistrationQueryService(db).list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+        registration_status=registration_status,
+    )
+    return CursorPage(
+        items=[ParticipantRegistrationResponse.model_validate(row) for row in page.items],
+        next_cursor=page.next_cursor,
+        has_next=page.has_next,
+    )
 
 
 async def helper_approve_registration(
@@ -267,43 +273,23 @@ async def approve_registration(
     event: CurrentEvent,
     payload: RegistrationApprovalRequest,
     current_user: AdminOrAbove,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Approve a registration. Generates Participant and Badge records.
     """
-    q = select(ParticipantRegistration).where(
-        ParticipantRegistration.id == id,
-        ParticipantRegistration.event_id == event.id
+    expected_version = require_if_match(if_match) if if_match else None
+    return await RegistrationCommandService.approve(
+        db,
+        event=event,
+        registration_id=id,
+        reviewer_id=current_user.id,
+        review_notes=payload.review_notes,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
     )
-    reg = (await db.execute(q)).scalar_one_or_none()
-    if not reg:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found.")
-
-    if reg.registration_status == "approved":
-        return reg
-
-    # Enforce capacity checks
-    q_rule = select(CapacityRule).where(
-        CapacityRule.event_id == event.id,
-        CapacityRule.session_id.is_(None),
-        CapacityRule.room_id.is_(None)
-    )
-    rule = (await db.execute(q_rule)).scalar_one_or_none()
-
-    if rule:
-        q_count = select(func.count(Participant.id)).where(Participant.event_id == event.id)
-        current_approved = (await db.execute(q_count)).scalar() or 0
-        if current_approved >= rule.capacity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot approve. Event is at capacity ({rule.capacity})."
-            )
-
-    approved = await helper_approve_registration(db, reg, current_user.id, payload.review_notes)
-    await db.commit()
-    await db.refresh(approved)
-    return approved
 
 
 @router.patch("/{id}/reject", response_model=ParticipantRegistrationResponse, dependencies=[require_event_operation("registration.approve")])
@@ -312,49 +298,24 @@ async def reject_registration(
     event: CurrentEvent,
     payload: RegistrationRejectionRequest,
     current_user: AdminOrAbove,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Reject a registration submission.
     """
-    q = select(ParticipantRegistration).where(
-        ParticipantRegistration.id == id,
-        ParticipantRegistration.event_id == event.id
+    expected_version = require_if_match(if_match) if if_match else None
+    return await RegistrationCommandService.reject(
+        db,
+        event=event,
+        registration_id=id,
+        reviewer_id=current_user.id,
+        rejection_reason=payload.rejection_reason,
+        review_notes=payload.review_notes,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
     )
-    reg = (await db.execute(q)).scalar_one_or_none()
-    if not reg:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found.")
-
-    if reg.registration_status == "rejected":
-        return reg
-
-    old_status = reg.registration_status
-    old_position = reg.waitlist_position
-
-    reg.registration_status = "rejected"
-    reg.rejection_reason = payload.rejection_reason
-    reg.reviewed_by = current_user.id
-    reg.reviewed_at = datetime.now(timezone.utc)
-    reg.review_notes = payload.review_notes
-    reg.waitlist_position = None
-
-    # Shift waitlist positions if rejected from waitlist
-    if old_status == "waitlisted" and old_position is not None:
-        await db.execute(
-            update(ParticipantRegistration)
-            .where(
-                and_(
-                    ParticipantRegistration.event_id == event.id,
-                    ParticipantRegistration.registration_status == "waitlisted",
-                    ParticipantRegistration.waitlist_position > old_position
-                )
-            )
-            .values(waitlist_position=ParticipantRegistration.waitlist_position - 1)
-        )
-
-    await db.commit()
-    await db.refresh(reg)
-    return reg
 
 
 @router.patch("/{id}/waitlist", response_model=ParticipantRegistrationResponse, dependencies=[require_event_operation("registration.approve")])
@@ -362,38 +323,22 @@ async def waitlist_registration(
     id: uuid.UUID,
     event: CurrentEvent,
     current_user: AdminOrAbove,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Manually put a registration on the waitlist.
     """
-    q = select(ParticipantRegistration).where(
-        ParticipantRegistration.id == id,
-        ParticipantRegistration.event_id == event.id
+    expected_version = require_if_match(if_match) if if_match else None
+    return await RegistrationCommandService.waitlist(
+        db,
+        event=event,
+        registration_id=id,
+        reviewer_id=current_user.id,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
     )
-    reg = (await db.execute(q)).scalar_one_or_none()
-    if not reg:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found.")
-
-    if reg.registration_status == "waitlisted":
-        return reg
-
-    # Calculate next waitlist position
-    q_wl = select(func.max(ParticipantRegistration.waitlist_position)).where(
-        ParticipantRegistration.event_id == event.id,
-        ParticipantRegistration.registration_status == "waitlisted"
-    )
-    max_pos = (await db.execute(q_wl)).scalar()
-    waitlist_pos = (max_pos or 0) + 1
-
-    reg.registration_status = "waitlisted"
-    reg.waitlist_position = waitlist_pos
-    reg.reviewed_by = current_user.id
-    reg.reviewed_at = datetime.now(timezone.utc)
-
-    await db.commit()
-    await db.refresh(reg)
-    return reg
 
 
 @router.patch("/{id}/promote", response_model=ParticipantRegistrationResponse)
@@ -401,44 +346,22 @@ async def promote_registration(
     id: uuid.UUID,
     event: CurrentEvent,
     current_user: AdminOrAbove,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Manually promote a registration from the waitlist.
     """
-    q = select(ParticipantRegistration).where(
-        ParticipantRegistration.id == id,
-        ParticipantRegistration.event_id == event.id
+    expected_version = require_if_match(if_match) if if_match else None
+    return await RegistrationCommandService.promote(
+        db,
+        event=event,
+        registration_id=id,
+        reviewer_id=current_user.id,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
     )
-    reg = (await db.execute(q)).scalar_one_or_none()
-    if not reg:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found.")
-
-    if reg.registration_status != "waitlisted":
-        raise HTTPException(status_code=400, detail="Only waitlisted registrations can be promoted.")
-
-    old_position = reg.waitlist_position
-
-    # Run approval
-    approved_reg = await helper_approve_registration(db, reg, current_user.id, "Promoted from waitlist")
-
-    # Shift waitlist positions
-    if old_position is not None:
-        await db.execute(
-            update(ParticipantRegistration)
-            .where(
-                and_(
-                    ParticipantRegistration.event_id == event.id,
-                    ParticipantRegistration.registration_status == "waitlisted",
-                    ParticipantRegistration.waitlist_position > old_position
-                )
-            )
-            .values(waitlist_position=ParticipantRegistration.waitlist_position - 1)
-        )
-    await db.commit()
-    await db.refresh(approved_reg)
-
-    return approved_reg
 
 
 @router.post("/reset-data", response_model=MessageResponse)

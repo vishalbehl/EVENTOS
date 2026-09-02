@@ -6,11 +6,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies.feature_gate import enforce_event_operation
+from app.core.concurrency import raise_version_conflict
 from app.modules.billing.services.usage_reservation_service import (
     UsageReservationService,
 )
@@ -176,6 +177,7 @@ class EventParticipantMutationService:
         participant_id: uuid.UUID,
         payload: ParticipantUpdate,
         actor_user_id: uuid.UUID,
+        expected_version: int | None = None,
     ) -> tuple[Participant, bool, dict[str, Any], dict[str, Any]]:
         await enforce_event_operation(
             db,
@@ -200,6 +202,8 @@ class EventParticipantMutationService:
             include_archived=False,
             lock=True,
         )
+        if expected_version is not None and participant.version != expected_version:
+            raise_version_conflict(participant.version)
         old = {
             field: EventParticipantMutationService._json_value(
                 getattr(participant, field, None)
@@ -283,6 +287,7 @@ class EventParticipantMutationService:
             participant.regno = await EventParticipantMutationService._next_regno(
                 db, event.id, next_role
             )
+        participant.version = int(participant.version or 1) + 1
         participant.updated_at = datetime.now(timezone.utc)
         await db.flush()
         return participant, (not payment_enabled or role_price <= 0), changes, old
@@ -310,6 +315,7 @@ class EventParticipantMutationService:
             return participant, "ALREADY_ARCHIVED"
         participant.deleted_at = datetime.now(timezone.utc)
         participant.deleted_by = actor_user_id
+        participant.version = int(participant.version or 1) + 1
         await MeteringService.record(
             db,
             organization_id=event.organization_id,
@@ -381,6 +387,7 @@ class EventParticipantMutationService:
         )
         participant.deleted_at = None
         participant.deleted_by = None
+        participant.version = int(participant.version or 1) + 1
         participant.updated_at = datetime.now(timezone.utc)
         await UsageReservationService.consume(
             db,
@@ -497,23 +504,52 @@ class EventParticipantMutationService:
         prefix = await EventParticipantMutationService._role_prefix(
             db, event_id, role_name
         )
-        regnos = (
-            await db.scalars(
-                select(Participant.regno).where(
-                    Participant.event_id == event_id,
-                    Participant.regno.like(f"{prefix}-%"),
+        # Registration creation already locks the event row, so the next
+        # number can be computed safely in one database aggregate. Avoid
+        # materializing every registration number for large events.
+        bind = db.get_bind()
+        if bind.dialect.name == "postgresql":
+            number = int(
+                await db.scalar(
+                    select(
+                        func.coalesce(
+                            func.max(
+                                cast(
+                                    func.substring(
+                                        Participant.regno,
+                                        f"^{re.escape(prefix)}-(\\d+)$",
+                                    ),
+                                    Integer,
+                                )
+                            ),
+                            0,
+                        )
+                    ).where(
+                        Participant.event_id == event_id,
+                        Participant.regno.like(f"{prefix}-%"),
+                    )
                 )
-            )
-        ).all()
-        pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$", re.IGNORECASE)
-        used = {
-            int(match.group(1))
-            for value in regnos
-            if value and (match := pattern.match(value))
-        }
-        number = 1
-        while number in used:
-            number += 1
+            ) + 1
+        else:
+            # Keep SQLite and other lightweight development databases
+            # compatible with the production allocation semantics.
+            regnos = (
+                await db.scalars(
+                    select(Participant.regno).where(
+                        Participant.event_id == event_id,
+                        Participant.regno.like(f"{prefix}-%"),
+                    )
+                )
+            ).all()
+            pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$", re.IGNORECASE)
+            used = {
+                int(match.group(1))
+                for value in regnos
+                if value and (match := pattern.match(value))
+            }
+            number = 1
+            while number in used:
+                number += 1
         return f"{prefix}-{number:04d}"
 
     @staticmethod

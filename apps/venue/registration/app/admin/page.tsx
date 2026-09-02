@@ -210,7 +210,7 @@ export default function AdminDashboardPage() {
         <AlertCircle className="mx-auto mb-3 h-8 w-8 text-amber-400" />
         <h2 className="font-black text-[var(--text)]">No local event available</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">Sync an event to this Venue Server before the dashboard can show operational data.</p>
-        <button onClick={() => router.push("/admin/sync")} className="mt-5 rounded-xl bg-[var(--pri)] px-4 py-2 text-xs font-black text-white">Open Sync</button>
+        <button onClick={() => router.push("/admin/sync")} className="mt-5 rounded-xl bg-[var(--pri)] px-4 py-2 text-xs font-black text-[var(--primary-contrast)] shadow-md hover:opacity-90 transition-opacity">Open Sync</button>
       </div>
     );
   }
@@ -241,7 +241,7 @@ export default function AdminDashboardPage() {
           <select value={eventId} onChange={(e) => setEventId(e.target.value)} className="min-w-52 rounded-xl border border-[var(--border)] bg-[var(--surf)] px-3 py-2 text-xs font-bold text-[var(--text)]">
             {events.map((row) => <option key={row.id} value={row.id}>{row.name} · {row.status}</option>)}
           </select>
-          <button onClick={() => void refresh(true)} disabled={refreshing} aria-label="Refresh dashboard" className="rounded-xl border border-[var(--border)] p-2 text-[var(--muted)] hover:text-[var(--pri)] disabled:opacity-50">
+          <button onClick={() => void refresh(true)} disabled={refreshing} aria-label="Refresh dashboard" className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-2 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--pri)] hover:bg-[var(--raised)] transition-colors disabled:opacity-50">
             <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
           </button>
         </div>
@@ -301,12 +301,12 @@ export default function AdminDashboardPage() {
             { label: "PostgreSQL", icon: Database, status: metrics?.system?.database.status ?? "unavailable", detail: bytes(metrics?.system?.database.used_bytes) },
             { label: "Local disk", icon: HardDrive, status: metrics?.system?.disk.status ?? "unavailable", detail: metrics?.system?.disk.status === "available" ? `${bytes(metrics.system.disk.used_bytes)} / ${bytes(metrics.system.disk.total_bytes)}` : "Unavailable" },
           ].map((row) => <div key={row.label} className="flex items-center justify-between border-b border-[var(--border)]/50 py-2.5 last:border-0"><div className="flex items-center gap-2"><row.icon className="h-3.5 w-3.5 text-[var(--muted)]" /><span className="text-[11px] font-bold text-[var(--text)]">{row.label}</span></div><div className="flex items-center gap-2"><span className="max-w-36 truncate text-[9px] text-[var(--muted)]">{row.detail}</span><StatusDot status={row.status} /></div></div>)}
-          <button onClick={() => router.push("/admin/sync")} className="mt-3 w-full rounded-xl border border-[var(--border)] py-2 text-xs font-bold text-[var(--text)] hover:border-[var(--pri)]">Open Sync & Local Data</button>
+          <button onClick={() => router.push("/admin/sync")} className="mt-3 w-full rounded-xl border border-[var(--border)] bg-[var(--surf)] py-2 text-xs font-bold text-[var(--text)] hover:border-[var(--pri)] hover:bg-[var(--raised)] transition-all">Open Sync & Local Data</button>
         </section>
 
         {[{ title: "Registration desks", rows: desks }, { title: "Device health", rows: hardware.length ? hardware : devices }].map((group) => (
           <section key={group.title} className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] lg:col-span-4">
-            <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surf)]/60 px-4 py-3"><h2 className="text-xs font-black uppercase text-[var(--text)]">{group.title}</h2><button onClick={() => router.push("/admin/devices")} className="text-[10px] font-bold text-[var(--pri)]">Manage</button></div>
+            <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surf)]/60 px-4 py-3"><h2 className="text-xs font-black uppercase text-[var(--text)]">{group.title}</h2><button onClick={() => router.push("/admin/devices")} className="text-[10px] font-bold text-[var(--pri)] hover:underline">Manage</button></div>
             <div className="divide-y divide-[var(--border)]">{group.rows.length === 0 ? <p className="p-8 text-center text-xs text-[var(--muted)]">No devices bound to {event?.name ?? "this event"}</p> : group.rows.slice(0, 5).map((row) => <div key={row.id} className="flex items-center justify-between px-4 py-3"><div className="flex min-w-0 items-center gap-2"><MonitorSmartphone className="h-4 w-4 text-blue-400" /><div className="min-w-0"><p className="truncate text-[11px] font-black text-[var(--text)]">{row.hostname || row.device_name}</p><p className="truncate text-[9px] text-[var(--muted)]">{row.room_name || DEVICE_LABEL[row.device_type] || row.device_type}</p></div></div><div className="flex items-center gap-1.5"><StatusDot status={row.status} /><span className="text-[9px] font-black capitalize text-[var(--muted)]">{row.status}</span><ChevronRight className="h-3 w-3 text-[var(--muted)]" /></div></div>)}</div>
           </section>
         ))}
@@ -324,7 +324,7 @@ export default function AdminDashboardPage() {
             ["View Reports", "Event reporting", BarChart2, "/admin/reports"],
           ].map(([label, description, Icon, path]) => {
             const ActionIcon = Icon as typeof Users;
-            return <button key={String(label)} onClick={() => router.push(String(path))} className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 text-left hover:border-[var(--pri)]"><ActionIcon className="mb-3 h-5 w-5 text-[var(--pri)]" /><p className="text-xs font-black text-[var(--text)]">{label as string}</p><p className="mt-0.5 text-[10px] text-[var(--muted)]">{description as string}</p></button>;
+            return <button key={String(label)} onClick={() => router.push(String(path))} className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 text-left hover:border-[var(--pri)] hover:bg-[var(--raised)] transition-all"><ActionIcon className="mb-3 h-5 w-5 text-[var(--pri)]" /><p className="text-xs font-black text-[var(--text)]">{label as string}</p><p className="mt-0.5 text-[10px] text-[var(--muted)]">{description as string}</p></button>;
           })}
         </div>
       </div>

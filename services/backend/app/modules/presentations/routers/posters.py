@@ -1,6 +1,7 @@
 # backend/app/routers/posters.py
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -252,7 +253,8 @@ async def request_poster_upload_url(
         )
 
     storage_path, stored_filename = upload_service.build_poster_path(event.id, uuid.uuid4(), payload.filename)
-    upload_info = upload_service.create_presigned_upload(
+    upload_info = await asyncio.to_thread(
+        upload_service.create_presigned_upload,
         bucket=settings.S3_BUCKET_POSTERS,
         storage_path=storage_path,
         content_type=payload.mime_type or "application/octet-stream",
@@ -288,7 +290,8 @@ async def get_poster_download_url(
     if not poster.storage_path:
         raise HTTPException(status_code=404, detail="No file uploaded for this poster.")
         
-    url = upload_service.create_presigned_download(
+    url = await asyncio.to_thread(
+        upload_service.create_presigned_download,
         bucket=settings.S3_BUCKET_POSTERS,
         storage_path=poster.storage_path,
         filename=poster.original_filename or f"poster_{poster_id}.pdf",

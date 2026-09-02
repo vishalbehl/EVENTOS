@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, Any
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 ROOM_TYPES = (
@@ -28,18 +28,17 @@ ROOM_TYPES = (
 
 class RoomCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    capacity: Optional[int] = Field(None, ge=1)
-    screen_count: int = Field(default=1, ge=1)
+    code: Optional[str] = None
     room_type: str = Field(default="presentation")
+    room_type_id: Optional[uuid.UUID] = None
     room_coordinator: Optional[str] = Field(None, max_length=150)
-    av_technician: Optional[str] = Field(None, max_length=150)
-    location_notes: Optional[str] = None
 
-    @model_validator(mode="after")
-    def populate_coordinator(self) -> "RoomCreate":
-        if not self.room_coordinator and self.av_technician:
-            self.room_coordinator = self.av_technician
-        return self
+    @field_validator("room_type")
+    @classmethod
+    def validate_room_type(cls, value: str) -> str:
+        if value not in ROOM_TYPES:
+            raise ValueError(f"Unsupported room type: {value}")
+        return value
 
     @property
     def validated_room_type(self) -> str:
@@ -48,19 +47,18 @@ class RoomCreate(BaseModel):
 
 class RoomUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
-    capacity: Optional[int] = Field(None, ge=1)
-    screen_count: Optional[int] = Field(None, ge=1)
+    code: Optional[str] = None
     room_type: Optional[str] = None
+    room_type_id: Optional[uuid.UUID] = None
     room_coordinator: Optional[str] = Field(None, max_length=150)
-    av_technician: Optional[str] = Field(None, max_length=150)
-    location_notes: Optional[str] = None
     is_active: Optional[bool] = None
 
-    @model_validator(mode="after")
-    def populate_coordinator(self) -> "RoomUpdate":
-        if not self.room_coordinator and self.av_technician:
-            self.room_coordinator = self.av_technician
-        return self
+    @field_validator("room_type")
+    @classmethod
+    def validate_room_type(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ROOM_TYPES:
+            raise ValueError(f"Unsupported room type: {value}")
+        return value
 
 
 class RoomResponse(BaseModel):
@@ -77,12 +75,11 @@ class RoomResponse(BaseModel):
     id: uuid.UUID
     event_id: uuid.UUID
     name: str
-    capacity: Optional[int] = None
-    screen_count: int
+    code: Optional[str] = None
     room_type: str
+    room_type_id: Optional[uuid.UUID] = None
     room_coordinator: Optional[str] = None
-    av_technician: Optional[str] = None
-    location_notes: Optional[str] = None
     is_active: bool
+    version: int = 1
     event_timezone: str = "UTC"
     created_at: datetime

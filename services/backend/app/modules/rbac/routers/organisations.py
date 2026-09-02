@@ -28,7 +28,7 @@ from app.modules.rbac.schemas.organization import OrganizationResponse, Organiza
 from app.services import auth_service
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 
-from app.redis import redis_client
+from app.redis import coordination_client as redis_client
 import json
 
 router = APIRouter(tags=["organisations"])
@@ -1159,7 +1159,7 @@ async def calculate_price(
     res["selected_addon_keys"] = payload.addon_keys or []
     # Save to redis cart
     cart_key = f"cart:{current_user.organization_id}"
-    await redis_client.setex(cart_key, 3600, json.dumps(payload.model_dump()))
+    await redis_client.set(cart_key, json.dumps(payload.model_dump()), ex=3600)
     return res
 
 

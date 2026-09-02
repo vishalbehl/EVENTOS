@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 import hashlib
 import json
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -18,16 +18,18 @@ from app.core.dependencies.feature_gate import resolve_org_operation
 from app.config import settings
 from app.dependencies import StepUpAuth, get_current_user, get_db
 from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.billing.models.subscription import ActivityTimeline
 from app.modules.identity.models.user import User
-from app.modules.files.models.file import Asset, AssetVersion, VirusScan
+from app.modules.files.models.file import Asset, VirusScan
 from app.modules.platform.support_access import (
     PlatformSupportScopeDependency,
     execute_platform_support_cursor_read,
 )
+from app.modules.platform.application.support_commands import SupportTicketCommandService
 from app.modules.support.models.ticket import SupportTicket, TicketComment
 from app.modules.support.models.support_domain_tables import TicketAttachment
-from app.modules.presentations.services.upload_service import create_presigned_download, create_presigned_upload, get_object_metadata
+from app.modules.presentations.services.upload_service import create_presigned_download, get_object_metadata
 from app.schemas.cursor_pagination import CursorPage
 
 router = APIRouter(prefix="/support/tickets", tags=["Support Desk"])
@@ -244,7 +246,6 @@ async def create_ticket(
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User not attached to an organization")
     priority = _normalize(payload.priority, TICKET_PRIORITIES, "priority")
-    now = datetime.now(timezone.utc)
     response_hours, resolution_hours = SLA_HOURS[priority]
     sla_capability = await resolve_org_operation(
         db,
@@ -266,32 +267,18 @@ async def create_ticket(
     multiplier = SLA_TIER_MULTIPLIER.get(sla_tier, 1.0)
     response_hours = max(response_hours * multiplier, 0.25)
     resolution_hours = max(resolution_hours * multiplier, 1.0)
-    ticket = SupportTicket(
-        organization_id=current_user.organization_id,
-        creator_id=current_user.id,
-        subject=payload.subject.strip(),
-        description=payload.content.strip(),
-        priority=priority,
-        category=payload.category.strip().upper(),
-        status="OPEN",
-        first_response_due_at=now + timedelta(hours=response_hours),
-        resolution_due_at=now + timedelta(hours=resolution_hours),
-    )
-    db.add(ticket)
-    await db.flush()
-    db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, content=payload.content.strip()))
-    db.add(ActivityTimeline(
-        organization_id=current_user.organization_id,
-        actor_id=current_user.id,
-        action_type="SUPPORT_TICKET_CREATED",
-        metadata_data={
-            "ticket_id": str(ticket.id),
+    ticket = await SupportTicketCommandService(db).create(
+        payload={
             "subject": payload.subject,
-            "sla_tier": sla_tier,
-            "dedicated_manager_entitled": bool(dedicated_manager.get("enabled")),
+            "content": payload.content,
+            "priority": priority,
+            "category": payload.category,
+            "sla_hours": (response_hours, resolution_hours),
         },
-    ))
-    await db.commit()
+        actor=current_user,
+        sla_tier=sla_tier,
+        dedicated_manager_entitled=bool(dedicated_manager.get("enabled")),
+    )
     return {
         "message": "Ticket created successfully",
         "ticket_id": ticket.id,
@@ -378,48 +365,14 @@ async def request_admin_ticket_attachment_upload(
         raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_ATTACHMENT_TYPE"})
     request_hash = hashlib.sha256(json.dumps(payload.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
     async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        ticket = await _admin_ticket(db, support_scope, ticket_id)
-        existing = await db.scalar(select(TicketAttachment).where(
-            TicketAttachment.organization_id == support_scope.organization_id,
-            TicketAttachment.ticket_id == ticket_id,
-            TicketAttachment.idempotency_key == idempotency_key,
-        ))
-        if existing:
-            if existing.request_hash != request_hash:
-                raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-            asset = await db.get(Asset, existing.asset_id) if existing.asset_id else None
-            if not asset:
-                raise HTTPException(status_code=409, detail={"code": "ATTACHMENT_ASSET_MISSING"})
-            upload = create_presigned_upload(bucket=settings.S3_BUCKET_ASSETS, storage_path=asset.file_path, content_type=asset.mime_type, max_size_bytes=asset.file_size_bytes)
-            return _attachment_out(existing, asset, upload)
-
-        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", payload.file_name).strip(".-") or "attachment"
-        asset_id = uuid.uuid4()
-        storage_path = f"{support_scope.organization_id}/support/{ticket.id}/{asset_id}/{safe_name}"
-        asset = Asset(
-            id=asset_id,
+        attachment, asset, upload = await SupportTicketCommandService(db).request_attachment_upload(
+            ticket_id=ticket_id,
             organization_id=support_scope.organization_id,
-            name=payload.file_name,
-            file_path=storage_path,
-            file_size_bytes=payload.file_size_bytes,
-            mime_type=payload.mime_type,
-            processing_status="UPLOADING",
-        )
-        attachment = TicketAttachment(
-            organization_id=support_scope.organization_id,
-            ticket_id=ticket.id,
-            asset_id=asset.id,
-            uploaded_by=support_scope.actor.id,
+            actor=support_scope.actor,
+            payload=payload.model_dump(),
             idempotency_key=idempotency_key,
             request_hash=request_hash,
-            file_path=storage_path,
-            file_name=payload.file_name,
         )
-        db.add_all([asset, AssetVersion(asset_id=asset.id, version_number=1, file_path=storage_path), attachment])
-        await db.flush()
-        db.add(_audit(ticket, support_scope.actor, "SUPPORT_ATTACHMENT_UPLOAD_REQUESTED", payload.reason))
-        upload = create_presigned_upload(bucket=settings.S3_BUCKET_ASSETS, storage_path=storage_path, content_type=payload.mime_type, max_size_bytes=payload.file_size_bytes)
-        await db.commit()
         return _attachment_out(attachment, asset, upload)
 
 
@@ -434,45 +387,13 @@ async def complete_admin_ticket_attachment(
 ):
     del step_up
     async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        ticket = await _admin_ticket(db, support_scope, ticket_id)
-        row = (await db.execute(
-            select(TicketAttachment, Asset)
-            .join(Asset, TicketAttachment.asset_id == Asset.id)
-            .where(
-                TicketAttachment.id == attachment_id,
-                TicketAttachment.ticket_id == ticket_id,
-                TicketAttachment.organization_id == support_scope.organization_id,
-            )
-            .with_for_update()
-        )).one_or_none()
-        if not row:
-            raise HTTPException(status_code=404, detail="Attachment not found.")
-        attachment, asset = row
-        if asset.processing_status not in {"UPLOADING", "QUARANTINED", "SCAN_FAILED"}:
-            raise HTTPException(status_code=409, detail={"code": "INVALID_FILE_STATE", "current_state": asset.processing_status})
-        try:
-            metadata = get_object_metadata(bucket=settings.S3_BUCKET_ASSETS, storage_path=asset.file_path)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=409, detail={"code": "UPLOAD_NOT_FOUND"}) from exc
-        if metadata["size"] != asset.file_size_bytes:
-            asset.processing_status = "SCAN_FAILED"
-            await db.commit()
-            raise HTTPException(status_code=409, detail={"code": "UPLOAD_SIZE_MISMATCH"})
-        if metadata.get("content_type") and metadata["content_type"] != asset.mime_type:
-            asset.processing_status = "SCAN_FAILED"
-            await db.commit()
-            raise HTTPException(status_code=409, detail={"code": "UPLOAD_CONTENT_TYPE_MISMATCH"})
-        asset.processing_status = "QUARANTINED"
-        existing_scan = await db.scalar(select(VirusScan).where(VirusScan.asset_id == asset.id, VirusScan.status == "pending"))
-        if not existing_scan:
-            db.add(VirusScan(asset_id=asset.id, status="pending"))
-        db.add(_audit(ticket, support_scope.actor, "SUPPORT_ATTACHMENT_QUARANTINED", payload.reason))
-        await db.commit()
-    try:
-        from workers.tasks.file_tasks import scan_file_for_viruses
-        scan_file_for_viruses.delay(str(asset.id), str(support_scope.organization_id))
-    except Exception as exc:
-        logger.exception("Failed to queue malware scan for support attachment {}: {}", asset.id, exc)
+        attachment, asset = await SupportTicketCommandService(db).complete_attachment(
+            ticket_id=ticket_id,
+            attachment_id=attachment_id,
+            organization_id=support_scope.organization_id,
+            actor=support_scope.actor,
+            reason=payload.reason,
+        )
     return _attachment_out(attachment, asset)
 
 
@@ -499,9 +420,17 @@ async def download_admin_ticket_attachment(
         attachment, asset = row
         if asset.processing_status != "READY":
             raise HTTPException(status_code=409, detail={"code": "FILE_NOT_READY", "current_state": asset.processing_status})
-        url = create_presigned_download(bucket=settings.S3_BUCKET_ASSETS, storage_path=asset.file_path, filename=attachment.file_name)
-        db.add(_audit(ticket, support_scope.actor, "SUPPORT_ATTACHMENT_DOWNLOADED", support_scope.reason))
-        await db.commit()
+        url = await asyncio.to_thread(create_presigned_download, bucket=settings.S3_BUCKET_ASSETS, storage_path=asset.file_path, filename=attachment.file_name)
+        await AuditService.write_log(AuditContext(
+            organization_id=ticket.organization_id,
+            actor_user_id=support_scope.actor.id,
+            resource_type="support_ticket",
+            resource_id=ticket.id,
+            action_type="SUPPORT_ATTACHMENT_DOWNLOADED",
+            actor_role=support_scope.actor.platform_role or support_scope.actor.role,
+            change_diff={"reason": support_scope.reason},
+            is_sensitive=True,
+        ))
     return {"download_url": url, "expires_in": settings.S3_PRESIGNED_EXPIRY_SECONDS}
 
 
@@ -514,48 +443,20 @@ async def update_admin_ticket(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        ticket = await _admin_ticket(db, support_scope, ticket_id)
-        if ticket.version != payload.version:
-            raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": ticket.version})
-        old_state = {
-            "status": ticket.status,
-            "priority": ticket.priority,
-            "category": ticket.category,
-            "assigned_to": str(ticket.assigned_to) if ticket.assigned_to else None,
-            "version": ticket.version,
-        }
-        now = datetime.now(timezone.utc)
-        if payload.status:
-            next_status = _normalize(payload.status, TICKET_STATUSES, "status")
-            if next_status != ticket.status and next_status not in STATUS_TRANSITIONS.get(ticket.status, set()):
-                raise HTTPException(status_code=409, detail={"code": "INVALID_STATUS_TRANSITION", "from": ticket.status, "to": next_status})
-            ticket.status = next_status
-            if next_status == "RESOLVED":
-                ticket.resolved_at = now
-            elif next_status == "CLOSED":
-                ticket.closed_at = now
-            elif next_status == "OPEN":
-                ticket.resolved_at = None
-                ticket.closed_at = None
-        if payload.priority:
-            ticket.priority = _normalize(payload.priority, TICKET_PRIORITIES, "priority")
-        if payload.category:
-            ticket.category = payload.category.strip().upper()
-        if payload.assigned_to is not None:
-            assignee = await db.scalar(select(User).where(User.id == payload.assigned_to, User.is_active.is_(True)))
-            if not assignee or assignee.platform_role not in {"SUPER_ADMIN", "SUPPORT_ADMIN"}:
-                raise HTTPException(status_code=422, detail={"code": "INVALID_SUPPORT_ASSIGNEE"})
-            ticket.assigned_to = assignee.id
-        if payload.escalate is True and ticket.escalated_at is None:
-            ticket.escalated_at = now
-        elif payload.escalate is False:
-            ticket.escalated_at = None
-        ticket.version += 1
-        ticket.updated_at = now
-        db.add(_audit(ticket, support_scope.actor, "SUPPORT_TICKET_UPDATED", payload.reason, old_state))
-        await db.commit()
-        await db.refresh(ticket)
+    ticket = await SupportTicketCommandService(db).update(
+        ticket_id=ticket_id,
+        organization_id=support_scope.organization_id,
+        actor=support_scope.actor,
+        payload={
+            "status": _normalize(payload.status, TICKET_STATUSES, "status") if payload.status else None,
+            "priority": _normalize(payload.priority, TICKET_PRIORITIES, "priority") if payload.priority else None,
+            "category": payload.category,
+            "assigned_to": payload.assigned_to,
+            "escalate": payload.escalate,
+            "reason": payload.reason,
+            "version": payload.version,
+        },
+    )
     return _ticket_response(ticket)
 
 
@@ -595,24 +496,15 @@ async def add_admin_ticket_comment(
     db: AsyncSession = Depends(get_db),
 ):
     async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        ticket = await _admin_ticket(db, support_scope, ticket_id)
-        comment = TicketComment(
-            ticket_id=ticket.id,
-            author_id=support_scope.actor.id,
-            content=payload.content.strip(),
+        message = await SupportTicketCommandService(db).add_comment(
+            ticket_id=ticket_id,
+            organization_id=support_scope.organization_id,
+            actor=support_scope.actor,
+            content=payload.content,
             is_internal=payload.is_internal,
+            reason=support_scope.reason,
         )
-        db.add(comment)
-        now = datetime.now(timezone.utc)
-        if not payload.is_internal and ticket.first_responded_at is None:
-            ticket.first_responded_at = now
-        if not payload.is_internal and ticket.status == "OPEN":
-            ticket.status = "IN_PROGRESS"
-        ticket.version += 1
-        ticket.updated_at = now
-        db.add(_audit(ticket, support_scope.actor, "SUPPORT_INTERNAL_NOTE_ADDED" if payload.is_internal else "SUPPORT_REPLY_ADDED", support_scope.reason))
-        await db.commit()
-    return {"message": "Internal note added." if payload.is_internal else "Reply added."}
+    return {"message": message}
 
 
 @router.get("")
@@ -661,13 +553,11 @@ async def add_ticket_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ticket = await db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id, SupportTicket.organization_id == current_user.organization_id))
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, content=payload.content.strip()))
-    if ticket.status == "WAITING_ON_CUSTOMER":
-        ticket.status = "IN_PROGRESS"
-    ticket.version += 1
-    ticket.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    return {"message": "Comment added successfully"}
+    message = await SupportTicketCommandService(db).add_comment(
+        ticket_id=ticket_id,
+        organization_id=current_user.organization_id,
+        actor=current_user,
+        content=payload.content,
+        reopen_waiting=True,
+    )
+    return {"message": "Comment added successfully" if message == "Reply added." else message}

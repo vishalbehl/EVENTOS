@@ -1,3 +1,8 @@
 "use client";
 import { AccessAssignments } from "./AccessAssignments";
-export function AccessEventTab() { return <AccessAssignments scope="EVENT" />; }
+import { useLimitAccess } from "@/lib/capabilities";
+
+export function AccessEventTab() {
+  const access = useLimitAccess("max_event_team_members");
+  return <AccessAssignments scope="EVENT" />;
+}

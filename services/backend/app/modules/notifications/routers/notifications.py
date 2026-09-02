@@ -28,7 +28,7 @@ from app.modules.notifications.schemas.notification import (
     EmailComponentCreate, EmailComponentUpdate, EmailComponentResponse,
     CampaignCreate, CampaignUpdate, CampaignResponse, InviteSpeakersRequest,
     SendToSpeakersRequest,
-    PaginatedEmailLogResponse, TestTemplateRequest
+    PaginatedEmailLogResponse, TestTemplateRequest, EmailLogResponse
 )
 from app.modules.communications.models.email_component import EmailComponent
 from app.schemas.common import MessageResponse
@@ -47,6 +47,8 @@ from app.modules.notifications.services.channel_delivery_service import (
     ChannelDeliveryService,
     batch_response,
 )
+from app.modules.notifications.application.queries import EmailLogQueryService
+from app.schemas.cursor_pagination import CursorPage
 from app.modules.notifications.tasks.channel_delivery_tasks import (
     dispatch_communication_batch,
 )
@@ -635,6 +637,31 @@ async def get_email_logs(
 
 
 @router.get(
+    "/logs/cursor",
+    response_model=CursorPage[EmailLogResponse],
+    dependencies=[require_event_operation("communications.email.read")],
+)
+async def get_email_logs_cursor(
+    event: CurrentEvent,
+    cursor: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    campaign_id: Optional[uuid.UUID] = None,
+    status: Optional[str] = None,
+    target_type: str = "speaker",
+    db: AsyncSession = Depends(get_db),
+):
+    """Bounded cursor path for large delivery-log histories."""
+    return await EmailLogQueryService(db).list_for_event(
+        event_id=event.id,
+        target_type=target_type,
+        campaign_id=campaign_id,
+        status=status,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+@router.get(
     "/logs/download",
     dependencies=[
         require_event_operation("communications.email.read"),
@@ -939,11 +966,17 @@ async def list_campaigns(
 
     result = await db.execute(q.order_by(EmailCampaign.created_at.desc()))
     campaigns = result.scalars().all()
+    responses = []
     for campaign in campaigns:
+        response = CampaignResponse.model_validate(campaign)
         if campaign.status == "draft":
-            campaign.total_recipients = await get_campaign_recipient_count(db, campaign)
-    await db.commit()
-    return campaigns
+            response = response.model_copy(
+                update={
+                    "total_recipients": await get_campaign_recipient_count(db, campaign),
+                }
+            )
+        responses.append(response)
+    return responses
 
 
 @router.post(
@@ -1542,7 +1575,7 @@ async def upload_asset(
         raise HTTPException(status_code=422, detail={"code": "EMPTY_FILE"})
     if len(contents) > MAX_EMAIL_ASSET_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={"code": "EMAIL_ASSET_TOO_LARGE", "max_bytes": MAX_EMAIL_ASSET_BYTES},
         )
     extension, signature_matches = type_rule

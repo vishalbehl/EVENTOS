@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
-    transpilePackages: ["@eventos/email-builder-studio", "@eventos/website-builder-studio"],
+    transpilePackages: ["@eventos/email-builder-studio", "@eventos/website-builder-studio", "@eventos/form-builder-studio"],
     outputFileTracingRoot: path.join(__dirname, '../../..'),
     distDir: process.env.NEXT_DIST_DIR || ".next",
     images: {

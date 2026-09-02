@@ -77,10 +77,15 @@ class ServiceCatalogService:
     @staticmethod
     async def clone_service(
         db: AsyncSession,
-        service_id: uuid.UUID
+        service_id: uuid.UUID,
+        organization_id: Optional[uuid.UUID] = None,
     ) -> Optional[Service]:
         """Clone an existing service catalog item."""
         stmt = select(Service).where(Service.id == service_id)
+        if organization_id is not None:
+            stmt = stmt.where(
+                or_(Service.organization_id == organization_id, Service.organization_id.is_(None))
+            )
         original = (await db.execute(stmt)).scalar_one_or_none()
         if not original:
             return None
@@ -92,7 +97,9 @@ class ServiceCatalogService:
         cloned_code = f"{original.service_code}_CLONE_{uuid.uuid4().hex[:6].upper()}"
         cloned_service = Service(
             id=uuid.uuid4(),
-            organization_id=original.organization_id,
+            # A shared catalog entry is a template; the clone belongs to the
+            # requesting organization and must not remain globally mutable.
+            organization_id=organization_id if original.organization_id is None else original.organization_id,
             category_id=original.category_id,
             service_code=cloned_code,
             service_name=f"{original.service_name} (Clone)",
@@ -121,10 +128,14 @@ class ServiceCatalogService:
     @staticmethod
     async def archive_service(
         db: AsyncSession,
-        service_id: uuid.UUID
+        service_id: uuid.UUID,
+        organization_id: Optional[uuid.UUID] = None,
     ) -> bool:
         """Mark a service as archived (inactive)."""
-        stmt = update(Service).where(Service.id == service_id).values(
+        stmt = update(Service).where(Service.id == service_id)
+        if organization_id is not None:
+            stmt = stmt.where(Service.organization_id == organization_id)
+        stmt = stmt.values(
             is_active=False,
             updated_at=datetime.now(timezone.utc)
         )
@@ -141,6 +152,8 @@ class ServiceCatalogService:
         offset: int = 0
     ) -> List[Service]:
         """Search technology services by name, code, or description."""
+        limit = min(max(int(limit), 1), 100)
+        offset = min(max(int(offset), 0), 100_000)
         stmt = select(Service)
         filters = []
         
@@ -207,6 +220,8 @@ class ServiceCatalogService:
         offset: int = 0
     ) -> List[ServicePackage]:
         """Fetch all packages."""
+        limit = min(max(int(limit), 1), 100)
+        offset = min(max(int(offset), 0), 100_000)
         stmt = select(ServicePackage)
         if organization_id:
             stmt = stmt.where(or_(ServicePackage.organization_id == organization_id, ServicePackage.organization_id.is_(None)))

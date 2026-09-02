@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 from pathlib import Path
 
 from app.modules.billing.capability_registry import (
@@ -10,7 +11,7 @@ from app.modules.billing.capability_registry import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(os.environ.get("CONF_PLATFORM_ROOT", Path(__file__).resolve().parents[3] if len(Path(__file__).resolve().parents) > 3 else "/workspace"))
 PORTAL_ROOT = REPO_ROOT / "apps" / "cloud" / "organiser-portal"
 CAPABILITY_SOURCE = PORTAL_ROOT / "lib" / "capabilities.tsx"
 

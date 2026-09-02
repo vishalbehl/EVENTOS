@@ -113,6 +113,7 @@ class ParticipantResponse(BaseModel):
     is_free: bool = False
     registered_at: datetime
     updated_at: datetime
+    version: int = 1
 
 
 class RegistrationConfirmationQRRequest(BaseModel):

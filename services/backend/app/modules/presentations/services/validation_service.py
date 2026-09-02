@@ -19,6 +19,8 @@ from app.modules.presentations.models.file_integrity_log import FileIntegrityLog
 from app.modules.presentations.models.presentation_file import PresentationFile
 from app.modules.presentations.services import upload_service
 from app.config import settings
+from app.modules.events.models.event import Event
+from app.modules.analytics.services.projection_dispatch import enqueue_event_speaker_projection_refresh
 
 
 # ─── Format groups ────────────────────────────────────────────────────────────
@@ -49,6 +51,9 @@ async def validate_presentation_file(
     pf = res.scalar_one_or_none()
     if not pf:
         raise ValueError(f"File {file_id} not found")
+    organization_id = await db.scalar(select(Event.organization_id).where(Event.id == pf.event_id))
+    if organization_id is None:
+        raise ValueError(f"Event for file {file_id} not found")
 
     try:
         file_bytes = upload_service.get_object_bytes(
@@ -127,6 +132,9 @@ async def validate_presentation_file(
     db.add(integrity_log)
 
     await db.commit()
+    enqueue_event_speaker_projection_refresh(
+        organization_id=organization_id, event_id=pf.event_id
+    )
     await db.refresh(validation)
     logger.info(f"Validation complete for {file_id}: {validation.overall_result}")
     return validation

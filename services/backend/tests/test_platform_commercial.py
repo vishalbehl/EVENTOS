@@ -11,6 +11,7 @@ from app.modules.inventory.services import InventoryService
 from app.modules.pricing.services import PricingService, CostEngineService, MarginEngineService, SimulationService
 from app.modules.procurement.services import VendorService
 from app.modules.pricing.models import PricingRule, PricingRuleCondition, PricingRuleAction, ServicePricing, TaxRule, CurrencyRate
+from app.database import reset_db_request_metrics
 
 @pytest.mark.asyncio
 async def test_commercial_catalog_service_flow(db: AsyncSession, organization):
@@ -38,6 +39,30 @@ async def test_commercial_catalog_service_flow(db: AsyncSession, organization):
     assert cloned is not None
     assert cloned.service_name == "Led Wall 4K (Clone)"
     assert cloned.service_code.startswith("AV-LED-001_CLONE_")
+
+    foreign_org = uuid.uuid4()
+    assert await ServiceCatalogService.clone_service(
+        db, service.id, organization_id=foreign_org
+    ) is None
+    assert await ServiceCatalogService.archive_service(
+        db, service.id, organization_id=foreign_org
+    ) is False
+
+    global_service = await ServiceCatalogService.create_service(
+        db=db,
+        organization_id=None,
+        category_id=category.id,
+        service_code="AV-GLOBAL-001",
+        service_name="Shared AV Template",
+    )
+    global_clone = await ServiceCatalogService.clone_service(
+        db, global_service.id, organization_id=organization.id
+    )
+    assert global_clone is not None
+    assert global_clone.organization_id == organization.id
+    assert await ServiceCatalogService.archive_service(
+        db, global_service.id, organization_id=organization.id
+    ) is False
 
     # 4. Search Service
     results = await ServiceCatalogService.search_service(db, organization_id=organization.id, query="Led Wall")
@@ -326,3 +351,54 @@ async def test_commercial_pricing_api_endpoints(client: AsyncClient, organizer):
     res = await client.post("/pricing/simulate", json=sim_payload, headers=headers)
     assert res.status_code == 200
     assert res.json()["name"] == "Epson Visuals Simulation"
+
+
+@pytest.mark.asyncio
+async def test_pricing_simulation_idempotency_and_tenant_safe_delete(client: AsyncClient, organizer):
+    base_headers = auth_headers(organizer)
+    headers = {**base_headers, "Idempotency-Key": "pricing-simulation-replay-001"}
+    payload = {"name": "Replayable simulation", "input_data": {"region": "India", "services": []}}
+
+    first = await client.post("/pricing/simulate", json=payload, headers=headers)
+    replay = await client.post("/pricing/simulate", json=payload, headers=headers)
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["id"] == first.json()["id"]
+
+    deleted = await client.delete(f"/pricing/simulations/{first.json()['id']}", headers=base_headers)
+    assert deleted.status_code == 200, deleted.text
+
+
+@pytest.mark.asyncio
+async def test_pricing_rules_are_loaded_in_bounded_queries(db: AsyncSession, organization, performance_metrics):
+    now = datetime.now(timezone.utc)
+    for index in range(8):
+        rule = PricingRule(
+            id=uuid.uuid4(),
+            organization_id=organization.id,
+            name=f"Bounded rule {index}",
+            code=f"BOUNDED-{index}",
+            status="ACTIVE",
+            effective_from=now - timedelta(days=1),
+            effective_to=now + timedelta(days=30),
+            priority=index,
+        )
+        db.add(rule)
+        await db.flush()
+        db.add(PricingRuleCondition(id=uuid.uuid4(), rule_id=rule.id, field_name="attendees", operator=">", value="1"))
+        db.add(PricingRuleAction(id=uuid.uuid4(), rule_id=rule.id, action_type="FLAT_MARKUP", value=1))
+    await db.flush()
+
+    reset_db_request_metrics()
+    result = await PricingService.calculate_price(
+        db=db,
+        organization_id=organization.id,
+        service_id=uuid.uuid4(),
+        region="India",
+        currency="USD",
+        quantity=1,
+        input_data={"attendees": 10},
+    )
+    assert result["applied_rules"]
+    query_count, _ = performance_metrics()
+    assert query_count <= 6

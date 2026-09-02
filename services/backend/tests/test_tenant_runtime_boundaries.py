@@ -191,7 +191,7 @@ def test_tenant_cache_keys_are_namespaced_and_fail_closed():
     finally:
         tenant_org_id.reset(context_token)
 
-    assert key == f"tenant:{organization_id}:event:{event_id}:analytics:snapshot"
+    assert key == f"cache:v1:tenant:{organization_id}:event:{event_id}:analytics:snapshot"
     missing_token = tenant_org_id.set(None)
     try:
         with pytest.raises(TenantCacheKeyError):

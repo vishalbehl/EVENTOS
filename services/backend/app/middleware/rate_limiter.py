@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
-from app.redis import redis_client
+from app.redis import coordination_client as redis_client
 from app.database import AsyncSessionLocal
 from app.core.cache_keys import TenantCacheKey
 from app.modules.developer.models.developer_registry import RateLimit
@@ -170,11 +170,7 @@ class RateLimiterMiddleware:
                 req_per_day = config["day"]
             else:
                 req_per_min, req_per_day = await fetch_db_rate_limits(org_id)
-                await redis_client.setex(
-                    limit_config_key,
-                    300,  # cache for 5 minutes
-                    json.dumps({"minute": req_per_min, "day": req_per_day})
-                )
+                await redis_client.set(limit_config_key, json.dumps({"minute": req_per_min, "day": req_per_day}), ex=300)
         except Exception as e:
             logger.error(f"[RateLimiter] Failed to resolve limits: {e}")
             req_per_min, req_per_day = 60, 10000
@@ -246,7 +242,7 @@ class RateLimiterMiddleware:
                     org_id, endpoint_fingerprint
                 )
                 await redis_client.incr(redis_key)
-                await redis_client.setex(metadata_key, 86400, normalized_endpoint)
+                await redis_client.set(metadata_key, normalized_endpoint, ex=86400)
                 await redis_client.sadd("control:api_usage_keys", redis_key)
             except Exception as e:
                 logger.warning(f"[RateLimiter] Usage tracking failed: {e}")

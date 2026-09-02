@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import select
@@ -41,6 +41,10 @@ from app.modules.speakers.services.session_builder_service import (
     get_builder_snapshot_data,
 )
 from app.core.dependencies.feature_gate import require_event_operation, enforce_event_operation
+from app.core.concurrency import require_if_match
+from app.modules.agenda.application.commands import TrackCommandService
+from app.modules.agenda.application.queries import TrackQueryService
+from app.modules.analytics.services.projection_dispatch import enqueue_event_speaker_projection_refresh
 
 router = APIRouter(
     prefix="/events/{event_id}/sessions",
@@ -75,14 +79,9 @@ async def get_builder_snapshot(
             "id": room.id,
             "event_id": room.event_id,
             "name": room.name,
-            "capacity": room.capacity,
-            "screen_count": room.screen_count,
             "room_type": room.room_type,
             "room_coordinator": room.room_coordinator,
-            "av_technician": room.room_coordinator,
-            "location_notes": room.location_notes,
             "is_active": room.is_active,
-            "sort_order": getattr(room, "sort_order", 0),
             "sessions_count": session_room_counts.get(room.id, 0),
         }
         rooms_resp.append(RoomBuilderResponse(**r_dict))
@@ -204,6 +203,9 @@ async def duplicate_session_endpoint(
         )
         await db.commit()
         await db.refresh(new_session)
+        enqueue_event_speaker_projection_refresh(
+            organization_id=event.organization_id, event_id=event.id
+        )
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
@@ -275,33 +277,25 @@ async def list_tracks(
     db: AsyncSession = Depends(get_db),
 ):
     """List all tracks for an event, sorted by sort_order."""
-    stmt = (
-        select(Track)
-        .where(Track.event_id == event.id)
-        .order_by(Track.sort_order, Track.name)
+    tracks = await TrackQueryService(db).list_for_event(
+        organization_id=event.organization_id, event_id=event.id
     )
-    result = await db.execute(stmt)
-    return [TrackResponse.model_validate(t) for t in result.scalars().all()]
+    return [TrackResponse.model_validate(t) for t in tracks]
 
 
 @tracks_router.post("", response_model=TrackResponse, status_code=status.HTTP_201_CREATED)
 async def create_track(
     payload: TrackUpsertRequest,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new track for an event."""
-    track = Track(
-        event_id=event.id,
-        name=payload.name,
-        description=payload.description,
-        display_color=payload.display_color,
-        sort_order=payload.sort_order,
+    key = idempotency_key or f"track-create:{uuid.uuid4()}"
+    return await TrackCommandService.create(
+        db, event=event, payload=payload, actor_user_id=current_user.id, idempotency_key=key
     )
-    db.add(track)
-    await db.commit()
-    await db.refresh(track)
-    return TrackResponse.model_validate(track)
 
 
 @tracks_router.patch("/{track_id}", response_model=TrackResponse)
@@ -309,37 +303,32 @@ async def update_track(
     track_id: uuid.UUID,
     payload: TrackUpsertRequest,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a track's name, description, color or sort order."""
-    stmt = select(Track).where(Track.id == track_id, Track.event_id == event.id)
-    result = await db.execute(stmt)
-    track = result.scalar_one_or_none()
-
-    if not track:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Track not found")
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(track, field, value)
-
-    await db.commit()
-    await db.refresh(track)
-    return TrackResponse.model_validate(track)
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    return await TrackCommandService.update(
+        db, event=event, track_id=track_id, payload=payload,
+        actor_user_id=current_user.id, expected_version=expected_version,
+        idempotency_key=idempotency_key,
+    )
 
 
 @tracks_router.delete("/{track_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_track(
     track_id: uuid.UUID,
     event: CurrentEvent,
+    current_user: User = Depends(get_current_user),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a track. Sessions remain but lose their track association."""
-    stmt = select(Track).where(Track.id == track_id, Track.event_id == event.id)
-    result = await db.execute(stmt)
-    track = result.scalar_one_or_none()
-
-    if not track:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Track not found")
-
-    await db.delete(track)
-    await db.commit()
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    await TrackCommandService.delete(
+        db, event=event, track_id=track_id, actor_user_id=current_user.id,
+        expected_version=expected_version, idempotency_key=idempotency_key,
+    )

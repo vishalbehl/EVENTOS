@@ -10,12 +10,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies.feature_gate import enforce_event_operation
+from app.core.concurrency import raise_version_conflict
 from app.modules.billing.services.usage_reservation_service import (
     UsageReservationService,
 )
 from app.modules.events.models.event import Event
 from app.modules.agenda.models import Room
 from app.modules.agenda.models import Session
+from app.modules.agenda.models import Track
 from app.modules.agenda.models import SessionPerson as SessionSpeaker
 from app.modules.events.models.speaker import Speaker
 from app.modules.identity.models.user import User
@@ -23,6 +25,7 @@ from app.modules.platform.services.metering_service import MeteringService
 from app.modules.speakers.schemas.session import SessionCreate, SessionUpdate
 from app.modules.speakers.schemas.speaker import SpeakerCreate, SpeakerUpdate
 from app.modules.venue.schemas.room import ROOM_TYPES, RoomCreate, RoomUpdate
+from app.modules.speakers.schemas.session_builder import TrackUpsertRequest
 
 
 class EventResourceMutationService:
@@ -31,6 +34,37 @@ class EventResourceMutationService:
     Methods deliberately do not commit. The caller owns the transaction so it can
     append the appropriate customer or privileged audit record atomically.
     """
+
+    @staticmethod
+    async def create_track(db: AsyncSession, *, event: Event, payload: TrackUpsertRequest, actor_user_id: uuid.UUID) -> Track:
+        await enforce_event_operation(db, event.organization_id, event.id, "sessions.manage", user_id=actor_user_id)
+        track = Track(event_id=event.id, **payload.model_dump())
+        db.add(track)
+        await db.flush()
+        return track
+
+    @staticmethod
+    async def update_track(db: AsyncSession, *, event: Event, track_id: uuid.UUID, payload: TrackUpsertRequest, actor_user_id: uuid.UUID, expected_version: int | None = None) -> Track:
+        await enforce_event_operation(db, event.organization_id, event.id, "sessions.manage", user_id=actor_user_id)
+        track = await EventResourceMutationService._track(db, event.id, track_id, lock=True)
+        current_version = int(track.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            setattr(track, field, value)
+        track.version = current_version + 1
+        await db.flush()
+        return track
+
+    @staticmethod
+    async def archive_track(db: AsyncSession, *, event: Event, track_id: uuid.UUID, actor_user_id: uuid.UUID, expected_version: int | None = None) -> None:
+        await enforce_event_operation(db, event.organization_id, event.id, "sessions.manage", user_id=actor_user_id)
+        track = await EventResourceMutationService._track(db, event.id, track_id, lock=True)
+        current_version = int(track.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
+        await db.delete(track)
+        await db.flush()
 
     @staticmethod
     async def create_speaker(
@@ -99,6 +133,7 @@ class EventResourceMutationService:
         speaker_id: uuid.UUID,
         payload: SpeakerUpdate,
         actor_user_id: uuid.UUID,
+        expected_version: int | None = None,
     ) -> tuple[Speaker, dict[str, Any], dict[str, Any]]:
         await enforce_event_operation(
             db,
@@ -110,6 +145,9 @@ class EventResourceMutationService:
         speaker = await EventResourceMutationService._speaker(
             db, event.id, speaker_id, include_archived=False, lock=True
         )
+        current_version = int(speaker.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
         changes = payload.model_dump(exclude_unset=True)
         if changes.get("email"):
             email = str(changes["email"]).strip().lower()
@@ -130,6 +168,8 @@ class EventResourceMutationService:
         old = {field: getattr(speaker, field, None) for field in changes}
         for field, value in changes.items():
             setattr(speaker, field, value)
+        speaker.version = current_version + 1
+        await db.flush()
         return speaker, changes, old
 
     @staticmethod
@@ -140,6 +180,7 @@ class EventResourceMutationService:
         speaker_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Speaker, str]:
         await enforce_event_operation(
             db,
@@ -151,10 +192,14 @@ class EventResourceMutationService:
         speaker = await EventResourceMutationService._speaker(
             db, event.id, speaker_id, include_archived=True, lock=True
         )
+        current_version = int(speaker.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
         if speaker.deleted_at is not None:
             return speaker, "ALREADY_ARCHIVED"
         speaker.deleted_at = datetime.now(timezone.utc)
         speaker.deleted_by = actor_user_id
+        speaker.version = current_version + 1
         await MeteringService.record(
             db,
             organization_id=event.organization_id,
@@ -296,6 +341,7 @@ class EventResourceMutationService:
         session_id: uuid.UUID,
         payload: SessionUpdate,
         actor_user_id: uuid.UUID,
+        expected_version: int | None = None,
     ) -> tuple[Session, dict[str, Any], dict[str, Any]]:
         await enforce_event_operation(
             db,
@@ -307,12 +353,15 @@ class EventResourceMutationService:
         session = await EventResourceMutationService._session(
             db, event.id, session_id, include_archived=False, lock=True
         )
+        current_version = int(session.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
         changes = payload.model_dump(exclude_unset=True)
         start_time = changes.get("start_time", session.start_time)
         end_time = changes.get("end_time", session.end_time)
         if end_time <= start_time:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="end_time must be after start_time",
             )
         await EventResourceMutationService._validate_session_references(
@@ -338,6 +387,8 @@ class EventResourceMutationService:
         old = {field: getattr(session, field, None) for field in changes}
         for field, value in changes.items():
             setattr(session, field, value)
+        session.version = current_version + 1
+        await db.flush()
         return session, changes, old
 
     @staticmethod
@@ -348,6 +399,7 @@ class EventResourceMutationService:
         session_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Session, str]:
         await enforce_event_operation(
             db,
@@ -359,6 +411,9 @@ class EventResourceMutationService:
         session = await EventResourceMutationService._session(
             db, event.id, session_id, include_archived=True, lock=True
         )
+        current_version = int(session.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
         if session.deleted_at is not None:
             return session, "ALREADY_ARCHIVED"
         if session.status == "in_progress":
@@ -368,6 +423,7 @@ class EventResourceMutationService:
             )
         session.deleted_at = datetime.now(timezone.utc)
         session.deleted_by = actor_user_id
+        session.version = current_version + 1
         await MeteringService.record(
             db,
             organization_id=event.organization_id,
@@ -471,6 +527,7 @@ class EventResourceMutationService:
         room_id: uuid.UUID,
         payload: RoomUpdate,
         actor_user_id: uuid.UUID,
+        expected_version: int | None = None,
     ) -> tuple[Room, dict[str, Any], dict[str, Any]]:
         await enforce_event_operation(
             db,
@@ -482,12 +539,17 @@ class EventResourceMutationService:
         room = await EventResourceMutationService._room(
             db, event.id, room_id, include_archived=True, lock=True
         )
+        current_version = int(room.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
         changes = payload.model_dump(exclude_unset=True)
         if changes.get("room_type"):
             EventResourceMutationService._validate_room_type(changes["room_type"])
         old = {field: getattr(room, field, None) for field in changes}
         for field, value in changes.items():
             setattr(room, field, value)
+        room.version = current_version + 1
+        await db.flush()
         return room, changes, old
 
     @staticmethod
@@ -498,6 +560,7 @@ class EventResourceMutationService:
         room_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         source: str,
+        expected_version: int | None = None,
     ) -> tuple[Room, str]:
         await enforce_event_operation(
             db,
@@ -509,9 +572,13 @@ class EventResourceMutationService:
         room = await EventResourceMutationService._room(
             db, event.id, room_id, include_archived=True, lock=True
         )
+        current_version = int(room.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
         if not room.is_active:
             return room, "ALREADY_ARCHIVED"
         room.is_active = False
+        room.version = current_version + 1
         await MeteringService.record(
             db,
             organization_id=event.organization_id,
@@ -595,14 +662,10 @@ class EventResourceMutationService:
 
     @staticmethod
     def _validate_room_type(room_type: str) -> None:
-        if not room_type:
-            return
-        norm = room_type.lower().replace(" ", "_").replace("-", "_")
-        allowed = [r.lower() for r in ROOM_TYPES]
-        if norm not in allowed and room_type.lower() not in allowed and not (len(room_type.strip()) > 0):
+        if not room_type or not room_type.strip():
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"room_type must be one of {ROOM_TYPES}",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="room_type cannot be empty",
             )
 
     @staticmethod
@@ -664,4 +727,14 @@ class EventResourceMutationService:
         row = await db.scalar(query)
         if row is None:
             raise HTTPException(status_code=404, detail="Room not found")
+        return row
+
+    @staticmethod
+    async def _track(db: AsyncSession, event_id: uuid.UUID, track_id: uuid.UUID, *, lock: bool) -> Track:
+        query = select(Track).where(Track.id == track_id, Track.event_id == event_id)
+        if lock:
+            query = query.with_for_update()
+        row = await db.scalar(query)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Track not found")
         return row

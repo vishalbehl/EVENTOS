@@ -94,31 +94,31 @@ export default function AdminSetupWizard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+    <div className="min-h-screen bg-[var(--base)] flex items-center justify-center p-4">
+      <div className="w-full max-w-2xl bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-xl overflow-hidden">
         
-        <div className="bg-slate-900 p-8 text-white text-center">
-          <div className="w-16 h-16 bg-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <Server className="w-8 h-8 text-white" />
+        <div className="bg-[var(--surf)] border-b border-[var(--border)] p-8 text-center">
+          <div className="w-16 h-16 bg-[var(--pri)] rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg text-[var(--primary-contrast)]">
+            <Server className="w-8 h-8" />
           </div>
-          <h2 className="text-2xl font-bold">Venue Server Setup</h2>
-          <p className="text-slate-400 mt-2 text-sm">Initialize local edge node with cloud configuration</p>
+          <h2 className="text-2xl font-bold text-[var(--text)]">Venue Server Setup</h2>
+          <p className="text-[var(--muted)] mt-2 text-sm">Initialize local edge node with cloud configuration</p>
         </div>
 
         <div className="p-8">
           
           {/* Progress Indicators */}
           <div className="flex items-center justify-center space-x-4 mb-8">
-            <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 1 ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>1</div>
-            <div className={`w-12 h-1 ${step >= 2 ? 'bg-blue-600' : 'bg-slate-100'}`} />
-            <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 2 ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>2</div>
-            <div className={`w-12 h-1 ${step >= 3 ? 'bg-blue-600' : 'bg-slate-100'}`} />
-            <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 4 ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>3</div>
+            <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 1 ? 'bg-[var(--pri)] text-[var(--primary-contrast)]' : 'bg-[var(--surf)] text-[var(--muted)] border border-[var(--border)]'}`}>1</div>
+            <div className={`w-12 h-1 ${step >= 2 ? 'bg-[var(--pri)]' : 'bg-[var(--border)]'}`} />
+            <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 2 ? 'bg-[var(--pri)] text-[var(--primary-contrast)]' : 'bg-[var(--surf)] text-[var(--muted)] border border-[var(--border)]'}`}>2</div>
+            <div className={`w-12 h-1 ${step >= 3 ? 'bg-[var(--pri)]' : 'bg-[var(--border)]'}`} />
+            <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 4 ? 'bg-[var(--pri)] text-[var(--primary-contrast)]' : 'bg-[var(--surf)] text-[var(--muted)] border border-[var(--border)]'}`}>3</div>
           </div>
 
           {error && (
-            <div className="bg-red-50 text-red-700 p-4 rounded-xl text-sm font-semibold mb-6 flex items-center gap-3">
-              <Lock className="w-5 h-5 text-red-500" />
+            <div className="bg-red-500/10 text-red-500 border border-red-500/20 p-4 rounded-xl text-sm font-semibold mb-6 flex items-center gap-3">
+              <Lock className="w-5 h-5" />
               {error}
             </div>
           )}
@@ -126,35 +126,35 @@ export default function AdminSetupWizard() {
           {step === 1 && (
             <form onSubmit={handleLogin} className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="text-center mb-6">
-                <h3 className="text-lg font-bold text-slate-900">Cloud Authentication</h3>
-                <p className="text-sm text-slate-500">Login with your Organizer account to connect the node.</p>
+                <h3 className="text-lg font-bold text-[var(--text)]">Cloud Authentication</h3>
+                <p className="text-sm text-[var(--muted)]">Login with your Organizer account to connect the node.</p>
               </div>
               
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email Address</label>
+                <label className="block text-sm font-semibold text-[var(--text)] mb-1.5">Email Address</label>
                 <div className="relative">
-                  <Cloud className="w-5 h-5 text-slate-400 absolute left-3 top-2.5" />
+                  <Cloud className="w-5 h-5 text-[var(--muted)] absolute left-3 top-2.5" />
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 bg-[var(--surf)] border border-[var(--border)] text-[var(--text)] rounded-xl focus:border-[var(--pri)] outline-none transition-all"
                     placeholder="admin@eventos.com"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Password</label>
+                <label className="block text-sm font-semibold text-[var(--text)] mb-1.5">Password</label>
                 <div className="relative">
-                  <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-2.5" />
+                  <Lock className="w-5 h-5 text-[var(--muted)] absolute left-3 top-2.5" />
                   <input
                     type="password"
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 bg-[var(--surf)] border border-[var(--border)] text-[var(--text)] rounded-xl focus:border-[var(--pri)] outline-none transition-all"
                     placeholder="••••••••"
                   />
                 </div>
@@ -163,7 +163,7 @@ export default function AdminSetupWizard() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                className="w-full py-3 bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Connect to Cloud"}
               </button>
@@ -173,16 +173,16 @@ export default function AdminSetupWizard() {
           {step === 2 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="text-center mb-6">
-                <h3 className="text-lg font-bold text-slate-900">Select Event Configuration</h3>
-                <p className="text-sm text-slate-500">Choose the event data to download to this local node.</p>
+                <h3 className="text-lg font-bold text-[var(--text)]">Select Event Configuration</h3>
+                <p className="text-sm text-[var(--muted)]">Choose the event data to download to this local node.</p>
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Organization</label>
+                <label className="block text-sm font-semibold text-[var(--text)] mb-1.5">Organization</label>
                 <select
                   value={selectedOrgId}
                   onChange={(e) => handleOrgChange(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2.5 bg-[var(--surf)] border border-[var(--border)] text-[var(--text)] rounded-xl focus:border-[var(--pri)] outline-none"
                 >
                   <option value="">-- Select Organization --</option>
                   {organizations.map(org => (
@@ -193,14 +193,14 @@ export default function AdminSetupWizard() {
 
               {selectedOrgId && (
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Event</label>
+                  <label className="block text-sm font-semibold text-[var(--text)] mb-1.5">Event</label>
                   {loading && events.length === 0 ? (
-                    <div className="flex items-center gap-2 text-sm text-slate-500 p-2"><Loader2 className="w-4 h-4 animate-spin"/> Loading events...</div>
+                    <div className="flex items-center gap-2 text-sm text-[var(--muted)] p-2"><Loader2 className="w-4 h-4 animate-spin"/> Loading events...</div>
                   ) : (
                     <select
                       value={selectedEventId}
                       onChange={(e) => setSelectedEventId(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full px-4 py-2.5 bg-[var(--surf)] border border-[var(--border)] text-[var(--text)] rounded-xl focus:border-[var(--pri)] outline-none"
                     >
                       <option value="">-- Select Event --</option>
                       {events.map(ev => (
@@ -214,7 +214,7 @@ export default function AdminSetupWizard() {
               <button
                 onClick={handleSync}
                 disabled={!selectedEventId || loading}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                className="w-full py-3 bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Database className="w-5 h-5" />}
                 {loading ? "Initializing..." : "Pull Event Data & Sync"}
@@ -224,9 +224,9 @@ export default function AdminSetupWizard() {
 
           {step === 3 && (
             <div className="text-center py-12 animate-in fade-in zoom-in duration-500">
-              <RefreshCw className="w-16 h-16 text-blue-500 animate-spin mx-auto mb-6" />
-              <h3 className="text-xl font-bold text-slate-900">Syncing Local Database...</h3>
-              <p className="text-slate-500 mt-2 max-w-sm mx-auto">
+              <RefreshCw className="w-16 h-16 text-[var(--pri)] animate-spin mx-auto mb-6" />
+              <h3 className="text-xl font-bold text-[var(--text)]">Syncing Local Database...</h3>
+              <p className="text-[var(--muted)] mt-2 max-w-sm mx-auto">
                 Downloading participants, sessions, print templates, and authorized staff accounts. This may take a moment.
               </p>
             </div>
@@ -234,16 +234,16 @@ export default function AdminSetupWizard() {
 
           {step === 4 && (
             <div className="text-center py-10 animate-in fade-in zoom-in duration-500">
-              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <CheckCircle className="w-10 h-10 text-green-600" />
+              <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-500 border border-emerald-500/20">
+                <CheckCircle className="w-10 h-10" />
               </div>
-              <h3 className="text-2xl font-bold text-slate-900">Setup Complete!</h3>
-              <p className="text-slate-500 mt-2 mb-8 max-w-sm mx-auto">
+              <h3 className="text-2xl font-bold text-[var(--text)]">Setup Complete!</h3>
+              <p className="text-[var(--muted)] mt-2 mb-8 max-w-sm mx-auto">
                 The Venue Server is successfully provisioned and ready for offline operations.
               </p>
               <button
                 onClick={() => router.push("/admin")}
-                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold transition-colors"
+                className="w-full py-3 bg-[var(--pri)] hover:opacity-90 text-[var(--primary-contrast)] rounded-xl font-bold transition-all shadow-md"
               >
                 Go to Dashboard
               </button>

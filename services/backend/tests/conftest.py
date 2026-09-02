@@ -34,6 +34,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -58,6 +59,7 @@ settings.PAYMENT_SECRET_KEY = _TEST_FERNET_KEY
 settings.FERNET_KEY = _TEST_FERNET_KEY
 
 from app.database import Base
+from app.database import get_db_request_metrics, reset_db_request_metrics, restore_db_request_metrics
 from app.models import (  # ensures all models are registered with Base
     AuditLog, EmailCampaign, EmailLog, EmailTemplate, Event,
     FileValidation, ImportJob, Organization, PlaybackEvent,
@@ -173,6 +175,13 @@ _test_engine = create_async_engine(
     poolclass=NullPool,
 )
 
+# Use the same SQL metrics hooks as the application engine so route budget
+# tests measure real statements instead of passing with an uninstrumented
+# test connection.
+from app.database import _after_cursor_execute, _before_cursor_execute
+event.listen(_test_engine.sync_engine, "before_cursor_execute", _before_cursor_execute)
+event.listen(_test_engine.sync_engine, "after_cursor_execute", _after_cursor_execute)
+
 _TestSessionLocal = async_sessionmaker(
     bind=_test_engine,
     class_=AsyncSession,
@@ -182,10 +191,29 @@ _TestSessionLocal = async_sessionmaker(
 )
 
 
+@pytest.fixture
+def performance_metrics():
+    """Reset request SQL metrics and expose a snapshot for performance tests."""
+    tokens = reset_db_request_metrics()
+    try:
+        yield get_db_request_metrics
+    finally:
+        restore_db_request_metrics(tokens)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def close_loop_bound_redis_clients():
+    """Close Redis pools before pytest tears down each function event loop."""
+    yield
+    from app.redis import close_redis
+
+    await close_redis()
+
+
 # ── pytest-asyncio event loop managed via pytest.ini ──────────
 # ── Database schema setup (once per session) ──────────────────
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def setup_test_database():
     """
     Create all tables in the test database once before tests run.
@@ -232,7 +260,8 @@ async def setup_test_database():
             # Create default partitions for test runs only when parent tables exist in metadata/schema.
             partition_specs = [
                 ("inventory", "hardware_movements", "hardware_movements_default"),
-                ("pricing", "pricing_simulations", "pricing_simulations_default"),
+                # Runtime schema normalization maps pricing models to commerce.
+                ("commerce", "pricing_simulations", "pricing_simulations_default"),
                 ("pricing", "revenue_forecasts", "revenue_forecasts_default"),
                 ("technology_services", "request_history", "request_history_default"),
                 ("operations_planning", "project_tasks", "project_tasks_default"),
@@ -252,7 +281,26 @@ async def setup_test_database():
                     ),
                     {"schema_name": schema_name, "table_name": parent_table},
                 )
+                # Some legacy migrations left a normal table behind while
+                # retaining the old partition name. Only attach a partition
+                # when PostgreSQL confirms the parent is partitioned.
+                is_partitioned = False
                 if exists:
+                    is_partitioned = bool(
+                        await conn.scalar(
+                            text(
+                                """
+                                SELECT c.relkind = 'p'
+                                FROM pg_class c
+                                JOIN pg_namespace n ON n.oid = c.relnamespace
+                                WHERE n.nspname = :schema_name
+                                  AND c.relname = :table_name
+                                """
+                            ),
+                            {"schema_name": schema_name, "table_name": parent_table},
+                        )
+                    )
+                if is_partitioned:
                     await conn.execute(
                         text(
                             f"CREATE TABLE IF NOT EXISTS {schema_name}.{default_table} "
@@ -280,7 +328,7 @@ async def setup_test_database():
 
 # ── Per-test transaction rollback ─────────────────────────────
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function", loop_scope="function")
 async def db() -> AsyncGenerator[AsyncSession, None]:
     """
     Provide an async DB session that is rolled back after each test.
@@ -290,7 +338,15 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
     """
     async with _test_engine.connect() as conn:
         await conn.begin()
-        session = AsyncSession(bind=conn, expire_on_commit=False)
+        # Keep fixture data in the outer transaction while allowing route
+        # handlers to commit or roll back their own work.  Without an
+        # explicit savepoint join mode, a handler rollback can erase the
+        # fixture rows and make subsequent assertions depend on request order.
+        session = AsyncSession(
+            bind=conn,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
         try:
             yield session
         finally:
@@ -328,6 +384,9 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     # should still traverse the real outer ASGI stack.
     fastapi_app = getattr(asgi_app, "other_asgi_app", asgi_app)
     fastapi_app.state.test_db_session = db
+    # Route commits must not expire fixture identities that are reused for
+    # subsequent authenticated requests in the same test.
+    db.sync_session.expire_on_commit = False
 
     async def _override_get_db():
         yield fastapi_app.state.test_db_session
@@ -552,7 +611,15 @@ async def session_speaker(
 def make_access_token(user: User) -> str:
     """Generate a real JWT for a user — used in Authorization headers."""
     from app.modules.identity.services.auth_service import create_access_token
-    return create_access_token(user)
+    # Route-level rollbacks may expire the ORM identity. Keep only the
+    # non-sensitive JWT claims needed by this test helper outside the ORM
+    # state so repeated requests remain independent of session expiration.
+    claims = user.__dict__.get("_test_auth_claims")
+    if claims is None:
+        claims = (user.id, user.role, user.organization_id)
+        user.__dict__["_test_auth_claims"] = claims
+    from types import SimpleNamespace
+    return create_access_token(SimpleNamespace(id=claims[0], role=claims[1], organization_id=claims[2]))
 
 
 def auth_headers(user: User) -> dict:

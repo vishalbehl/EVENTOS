@@ -25,12 +25,14 @@ import { useParams } from "next/navigation";
 import { useUpdateRoom, useDeleteRoom } from "@/hooks/useRooms";
 import { useSessions } from "@/hooks/useSessions";
 import { useEvent } from "@/hooks/useEvents";
+import { useRoomTypes } from "@/hooks/useRoomTypes";
 
 export function GlobalModal() {
   const { isOpen, type, data, closeModal } = useModalStore();
   const { eventId } = useParams();
   const updateRoom = useUpdateRoom();
   const deleteRoom = useDeleteRoom();
+  const { data: roomTypes = [] } = useRoomTypes();
 
   const [roomData, setRoomData] = useState<any>(null);
 
@@ -60,23 +62,22 @@ export function GlobalModal() {
 
   if (!isOpen) return null;
 
-  const handleFieldChange = async (field: string, value: any) => {
+  const handleFieldChange = (field: string, value: any) => {
+    if (!roomData) return;
     const updated = { ...roomData, [field]: value };
     setRoomData(updated);
 
-    try {
-      await updateRoom.mutateAsync({
+    if (type === "ROOM_SETTINGS") {
+      updateRoom.mutate({
         eventId: eventId as string,
-        roomId: data.id,
+        roomId: roomData.id,
         data: { [field]: value },
       });
-    } catch (error) {
-      console.error(`Failed to update ${field}:`, error);
     }
   };
 
   const handleDelete = async () => {
-    if (confirm("Are you sure you want to delete this room? This action cannot be undone.")) {
+    if (type === "ROOM_SETTINGS" && data) {
       try {
         await deleteRoom.mutateAsync({
           eventId: eventId as string,
@@ -88,16 +89,6 @@ export function GlobalModal() {
       }
     }
   };
-
-  const ROOM_TYPES = [
-    { value: "presentation", label: "Presentation Hall" },
-    { value: "workshop", label: "Workshop Room" },
-    { value: "poster", label: "Poster Session" },
-    { value: "plenary", label: "Plenary Hall" },
-    { value: "open_area", label: "Open Area / Foyer" },
-    { value: "dining", label: "Dining Area" },
-    { value: "registration", label: "Registration Desk" },
-  ];
 
   return (
     <AnimatePresence>
@@ -395,66 +386,43 @@ export function GlobalModal() {
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1">
                           <Label className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] tracking-wider">
-                            Capacity (Pax)
+                            Room Code
                           </Label>
                           <Input
-                            type="number"
-                            value={roomData.capacity ?? ""}
-                            onChange={(e) =>
-                              handleFieldChange(
-                                "capacity",
-                                e.target.value === "" ? 0 : parseInt(e.target.value)
-                              )
-                            }
-                            className="h-9 bg-[var(--card)] border-[var(--border-default)] rounded-lg text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
+                            value={roomData.code ?? ""}
+                            onChange={(e) => handleFieldChange("code", e.target.value.toUpperCase())}
+                            placeholder="e.g. RM-01"
+                            className="h-9 bg-[var(--card)] border-[var(--border-default)] rounded-lg text-xs font-mono font-bold text-[var(--text-primary)] focus:border-[var(--pri)]"
                           />
                         </div>
                         <div className="space-y-1">
                           <Label className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] tracking-wider">
-                            Screens
+                            Room Type
                           </Label>
-                          <Input
-                            type="number"
-                            min="1"
-                            value={roomData.screen_count ?? 1}
-                            onChange={(e) =>
-                              handleFieldChange(
-                                "screen_count",
-                                e.target.value === "" ? 1 : parseInt(e.target.value)
-                              )
-                            }
-                            className="h-9 bg-[var(--card)] border-[var(--border-default)] rounded-lg text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
-                          />
+                          <select
+                            value={roomData.room_type}
+                            onChange={(e) => handleFieldChange("room_type", e.target.value)}
+                            className="w-full h-9 bg-[var(--card)] border border-[var(--border-default)] rounded-lg px-3 text-xs font-semibold text-[var(--text-primary)] outline-none cursor-pointer focus:border-[var(--pri)] shadow-sm"
+                          >
+                            {roomTypes.map((t) => (
+                              <option key={t.id || t.code} value={t.code || t.name}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </div>
 
                       <div className="space-y-1">
                         <Label className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] tracking-wider">
-                          Location Notes
+                          Room Coordinator
                         </Label>
-                        <textarea
-                          value={roomData.location_notes ?? ""}
-                          onChange={(e) => handleFieldChange("location_notes", e.target.value)}
-                          placeholder="e.g. Floor 2, North Wing"
-                          className="w-full min-h-[70px] bg-[var(--card)] border border-[var(--border-default)] rounded-lg p-2.5 text-xs text-[var(--text-primary)] font-medium outline-none resize-none focus:border-[var(--pri)] transition-colors shadow-sm"
+                        <Input
+                          value={roomData.room_coordinator ?? ""}
+                          onChange={(e) => handleFieldChange("room_coordinator", e.target.value)}
+                          placeholder="e.g. Stage coordinator"
+                          className="h-9 bg-[var(--card)] border-[var(--border-default)] rounded-lg text-xs font-semibold text-[var(--text-primary)] focus:border-[var(--pri)]"
                         />
-                      </div>
-
-                      <div className="space-y-1">
-                        <Label className="text-[10px] font-bold uppercase text-[var(--text-tertiary)] tracking-wider">
-                          Room Type
-                        </Label>
-                        <select
-                          value={roomData.room_type}
-                          onChange={(e) => handleFieldChange("room_type", e.target.value)}
-                          className="w-full h-9 bg-[var(--card)] border border-[var(--border-default)] rounded-lg px-3 text-xs font-semibold text-[var(--text-primary)] outline-none cursor-pointer focus:border-[var(--pri)] shadow-sm"
-                        >
-                          {ROOM_TYPES.map((t) => (
-                            <option key={t.value} value={t.value}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </select>
                       </div>
                     </div>
 

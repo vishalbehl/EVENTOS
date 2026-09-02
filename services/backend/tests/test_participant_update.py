@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 import uuid
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
@@ -13,6 +14,9 @@ from app.modules.registration.models.participant_role import ParticipantRole
 from app.modules.registration.schemas.participant import ParticipantUpdate
 from app.modules.registration.routers.participants import update_participant, create_participant, generate_next_regno
 from app.modules.registration.schemas.participant import ParticipantCreate
+from app.modules.registration.application.commands import ParticipantCommandService
+from app.modules.platform.models.idempotency import IdempotencyRecord
+from sqlalchemy import func, select
 from tests.conftest import activate_event_for_test
 
 
@@ -93,6 +97,119 @@ async def test_participant_regno_update_on_role_change(
     )
     p2 = await create_participant(payload=p2_create, event=event, idempotency_key=f"test-{uuid.uuid4()}", current_user=organizer, db=db)
     assert p2.regno == "DEL-0001"
+
+
+@pytest.mark.asyncio
+async def test_participant_create_replays_idempotently(
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+):
+    payload = ParticipantCreate(
+        name="Replay Participant",
+        email="replay@example.com",
+        role="Delegate",
+        paid_status="Unpaid",
+    )
+    key = f"participant-replay-{uuid.uuid4()}"
+
+    first, _, first_outcome = await ParticipantCommandService.create(
+        db,
+        event=event,
+        payload=payload,
+        actor_user_id=organizer.id,
+        idempotency_key=key,
+        source="test",
+    )
+    second, _, second_outcome = await ParticipantCommandService.create(
+        db,
+        event=event,
+        payload=payload,
+        actor_user_id=organizer.id,
+        idempotency_key=key,
+        source="test",
+    )
+
+    assert first.id == second.id
+    assert first_outcome == "CREATED"
+    assert second_outcome == "REPLAYED"
+    assert await db.scalar(
+        select(func.count(Participant.id)).where(Participant.event_id == event.id)
+    ) == 1
+    assert await db.scalar(
+        select(IdempotencyRecord.status).where(
+            IdempotencyRecord.organization_id == event.organization_id,
+            IdempotencyRecord.operation == "registration.participant.create",
+            IdempotencyRecord.idempotency_key == key,
+        )
+    ) == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_participant_update_replays_idempotently(
+    db: AsyncSession,
+    event: Event,
+    organizer: User,
+):
+    created, _, _ = await ParticipantCommandService.create(
+        db,
+        event=event,
+        payload=ParticipantCreate(
+            name="Update Replay Participant",
+            email="update-replay@example.com",
+            role="Delegate",
+            paid_status="Unpaid",
+        ),
+        actor_user_id=organizer.id,
+        idempotency_key=f"participant-create-{uuid.uuid4()}",
+        source="test",
+    )
+    key = f"participant-update-{uuid.uuid4()}"
+    payload = ParticipantUpdate(name="Updated Once")
+    initial_version = created.version
+    organization_id = event.organization_id
+
+    first, _, _, _ = await ParticipantCommandService.update(
+        db,
+        event=event,
+        participant_id=created.id,
+        payload=payload,
+        actor_user_id=organizer.id,
+        expected_version=initial_version,
+        idempotency_key=key,
+    )
+    second, _, _, _ = await ParticipantCommandService.update(
+        db,
+        event=event,
+        participant_id=created.id,
+        payload=payload,
+        actor_user_id=organizer.id,
+        expected_version=initial_version,
+        idempotency_key=key,
+    )
+
+    assert first.id == second.id
+    assert second.name == "Updated Once"
+    with pytest.raises(HTTPException) as conflict:
+        await ParticipantCommandService.update(
+            db,
+            event=event,
+            participant_id=created.id,
+            payload=ParticipantUpdate(name="Different Payload"),
+            actor_user_id=organizer.id,
+            expected_version=initial_version,
+            idempotency_key=key,
+        )
+    assert getattr(conflict.value, "status_code", None) == 409
+    assert conflict.value.detail["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await db.scalar(
+        select(func.count(IdempotencyRecord.id)).where(
+            IdempotencyRecord.organization_id == organization_id,
+            IdempotencyRecord.operation == "registration.participant.update",
+            IdempotencyRecord.idempotency_key == key,
+            IdempotencyRecord.status == "COMPLETED",
+        )
+    ) == 1
 
 
 @pytest.mark.asyncio

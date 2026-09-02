@@ -12,6 +12,7 @@ from app.modules.platform.teams.models import Team, TeamMember
 from app.modules.platform.teams.repository import TeamRepository
 from app.modules.platform.teams.schemas import TeamCreate, TeamUpdate
 from app.modules.platform.departments.repository import DepartmentRepository
+from app.core.concurrency import raise_version_conflict
 
 
 class TeamService:
@@ -87,9 +88,12 @@ class TeamService:
         org_id: uuid.UUID,
         id: uuid.UUID,
         payload: TeamUpdate,
-        updater_id: uuid.UUID
+        updater_id: uuid.UUID,
+        expected_version: Optional[int] = None,
     ) -> Team:
         team = await self.get_team(org_id, id)
+        if expected_version is not None and team.version != expected_version:
+            raise_version_conflict(team.version)
 
         if payload.code:
             payload_code = payload.code.upper()
@@ -110,6 +114,7 @@ class TeamService:
 
         team.updated_by = updater_id
         team.updated_at = datetime.now(timezone.utc)
+        team.version = int(team.version or 1) + 1
 
         await self.repository.save(team)
         await self.db.commit()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import List
 
@@ -15,6 +16,7 @@ from app.core.tenant_context import TenantContextGuard
 from app.dependencies import DB, StepUpAuth
 from app.modules.audit.models.audit_domain_tables import DataExport
 from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.billing.models.credit_notes import CreditNote
 from app.modules.billing.models.billing_domain_tables import Invoice, InvoiceItem
 from app.modules.billing.models.financial_audit_trail import FinancialAuditTrail
@@ -153,7 +155,6 @@ async def list_org_subscriptions(
 
 @router.get(
     "/entitlements",
-    response_model=CursorPage[EntitlementGrantAdminResponse],
 )
 async def list_entitlement_grants(
     db: DB,
@@ -170,7 +171,7 @@ async def list_entitlement_grants(
         statement = statement.where(EntitlementGrant.status == status.upper())
     if grant_type:
         statement = statement.where(EntitlementGrant.grant_type == grant_type.upper())
-    return await execute_platform_support_cursor_read(
+    page = await execute_platform_support_cursor_read(
         db,
         support_scope,
         statement,
@@ -180,6 +181,13 @@ async def list_entitlement_grants(
         limit=limit,
         resource_type="billing_entitlement_grants",
     )
+    # This compatibility route predates the shared ``has_more`` envelope.
+    # Keep its established ``has_next`` shape until its consumers migrate.
+    return {
+        "items": [EntitlementGrantAdminResponse.model_validate(item) for item in page.items],
+        "next_cursor": page.next_cursor,
+        "has_next": page.has_next,
+    }
 
 
 @router.get(
@@ -461,14 +469,13 @@ async def download_invoice_artifact(
             raise HTTPException(status_code=status.HTTP_410_GONE, detail={"code": "ARTIFACT_EXPIRED"})
         filename = f"invoice-{invoice_id}.pdf"
         expires_in = min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300)
-        download_url = create_presigned_download(
+        download_url = await asyncio.to_thread(create_presigned_download,
             bucket=settings.S3_BUCKET_EXPORTS,
             storage_path=export.storage_key,
             filename=filename,
             expiry_seconds=expires_in,
         )
-        export.downloaded_at = now
-        db.add(AuditLog(
+        await AuditService.write_log(AuditContext(
             organization_id=support_scope.organization_id,
             actor_user_id=support_scope.actor.id,
             resource_type="invoice_artifact",
@@ -478,7 +485,6 @@ async def download_invoice_artifact(
             new_state={"invoice_id": str(invoice_id), "downloaded_at": now.isoformat()},
             is_sensitive=True,
         ))
-        await db.commit()
         return InvoiceArtifactDownload(download_url=download_url, filename=filename, expires_in=expires_in)
 
 

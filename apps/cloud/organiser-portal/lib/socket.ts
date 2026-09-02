@@ -1,6 +1,13 @@
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:8000';
+const getSocketUrl = () => {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost') return 'http://localhost:8000';
+    if (host === '127.0.0.1') return 'http://127.0.0.1:8000';
+  }
+  return process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:8000';
+};
 
 class SocketService {
   public socket: Socket | null = null;
@@ -8,25 +15,33 @@ class SocketService {
 
   connect(token: string) {
     if (!token) return;
-    if (this.socket && this.currentToken === token) return;
+    if (this.socket && this.currentToken === token) {
+      if (this.socket.connected) return;
+      if (!this.socket.disconnected) return;
+    }
     
-    // If token changed or socket exists, clean up first
+    // If token changed or old socket was disconnected, clean up first
     if (this.socket) {
       this.disconnect();
     }
 
     this.currentToken = token;
+    const socketUrl = getSocketUrl();
     
-    this.socket = io(SOCKET_URL, {
+    this.socket = io(socketUrl, {
       auth: { token },
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 15000,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+      timeout: 20000,
+      autoConnect: true,
     });
 
+    let hasLoggedError = false;
+
     this.socket.on('connect', () => {
+      hasLoggedError = false;
       console.log('[Socket.IO] Connected to backend:', this.socket?.id);
     });
 
@@ -36,8 +51,9 @@ class SocketService {
       if (isAuthError) {
         console.warn('[Socket.IO] Authentication rejected or expired. Disconnecting socket.');
         this.disconnect();
-      } else {
-        console.warn(`[Socket.IO] Connection issue (${error.message}). Retrying...`);
+      } else if (!hasLoggedError) {
+        hasLoggedError = true;
+        console.debug(`[Socket.IO] Connecting to real-time service (${error.message})...`);
       }
     });
   }

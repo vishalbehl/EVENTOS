@@ -15,9 +15,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
+from app.core.cache import invalidate_event
 from app.modules.events.models.event import Event
 from app.modules.registration.models.participant import Participant
 from app.modules.registration.models.participant_registration import ParticipantRegistration
@@ -146,12 +148,14 @@ async def get_dashboard_data(
     email: str,
     event_id: uuid.UUID,
     db: AsyncSession,
+    event: Event | None = None,
 ) -> DashboardData:
     """Aggregate all portal dashboard data for an attendee."""
 
     # 1 — Load event
-    event_result = await db.execute(select(Event).where(Event.id == event_id))
-    event = event_result.scalar_one_or_none()
+    if event is None:
+        event_result = await db.execute(select(Event).where(Event.id == event_id))
+        event = event_result.scalar_one_or_none()
     if not event:
         raise ValueError("Event not found.")
 
@@ -241,36 +245,14 @@ async def get_dashboard_data(
                 select(ParticipantRegistration)
                 .where(
                     ParticipantRegistration.event_id == event_id,
-                    text("registration_data->>'email' = :email").bindparams(email=email.lower()),
+                    func.lower(ParticipantRegistration.registration_data["email"].astext) == email.lower(),
                 )
                 .order_by(ParticipantRegistration.submitted_at.desc())
                 .limit(1)
             )
             reg_row = (await db.execute(reg_email_stmt)).scalar_one_or_none()
-            if reg_row:
-                reg_row.participant_id = p.id
-                await db.commit()
-            else:
-                reg_row = ParticipantRegistration(
-                    event_id=event_id,
-                    participant_id=p.id,
-                    registration_status="approved",
-                    registration_data={
-                        "name": p.name,
-                        "email": p.email,
-                        "phone": p.phone or "",
-                        "company": p.company or "",
-                        "designation": p.designation or "",
-                        "country": p.country or "",
-                        "role": p.role,
-                        "paid_status": p.paid_status,
-                        "custom_fields": p.custom_fields or {},
-                    },
-                    submitted_at=p.registered_at or datetime.now(timezone.utc),
-                )
-                db.add(reg_row)
-                await db.commit()
-                await db.refresh(reg_row)
+            # Dashboard reads must remain side-effect free. Legacy registration
+            # repair is handled by the explicit reconciliation workflow.
 
         reg_info = RegistrationInfo(
             status="approved",
@@ -306,7 +288,7 @@ async def get_dashboard_data(
             select(ParticipantRegistration)
             .where(
                 ParticipantRegistration.event_id == event_id,
-                text("registration_data->>'email' = :email").bindparams(email=email.lower()),
+                func.lower(ParticipantRegistration.registration_data["email"].astext) == email.lower(),
             )
             .order_by(ParticipantRegistration.submitted_at.desc())
             .limit(1)
@@ -387,7 +369,18 @@ async def get_dashboard_data(
     payment_info = None
     if reg_row:
         pay_result = await db.execute(
-            select(PaymentTransaction)
+            select(PaymentTransaction).options(
+                load_only(
+                    PaymentTransaction.id,
+                    PaymentTransaction.status,
+                    PaymentTransaction.amount,
+                    PaymentTransaction.currency,
+                    PaymentTransaction.payment_method,
+                    PaymentTransaction.created_at,
+                    PaymentTransaction.gateway_payment_id,
+                    PaymentTransaction.discount_applied,
+                )
+            )
             .where(PaymentTransaction.registration_id == reg_row.id)
             .order_by(PaymentTransaction.created_at.desc())
             .limit(1)
@@ -407,7 +400,9 @@ async def get_dashboard_data(
 
     # 5 — Speaker check
     sp_result = await db.execute(
-        select(Speaker).where(
+        select(Speaker).options(
+            load_only(Speaker.id, Speaker.speaker_code, Speaker.event_id, Speaker.email)
+        ).where(
             Speaker.event_id == event_id,
             Speaker.email == email.lower(),
         ).limit(1)
@@ -432,7 +427,15 @@ async def get_dashboard_data(
         attendee_role = reg_row.registration_data.get("role")
 
     # Fetch all active roles configured for this event by organizer
-    role_stmt = select(ParticipantRole).where(ParticipantRole.event_id == event_id)
+    role_stmt = select(ParticipantRole).options(
+        load_only(
+            ParticipantRole.id,
+            ParticipantRole.event_id,
+            ParticipantRole.name,
+            ParticipantRole.category,
+            ParticipantRole.is_default,
+        )
+    ).where(ParticipantRole.event_id == event_id)
     roles_db = (await db.execute(role_stmt)).scalars().all()
     roles_list = [
         {
@@ -445,7 +448,14 @@ async def get_dashboard_data(
     ]
 
     # Resolve exact ticket price from TicketType table for attendee's role and active tier
-    resolved_price = await get_ticket_price(db, event_id, attendee_role, active_tier)
+    resolved_price = active_prices.get(attendee_role)
+    if resolved_price is None:
+        for r_name, r_price in active_prices.items():
+            if r_name.strip().lower() == attendee_role.strip().lower():
+                resolved_price = r_price
+                break
+    if resolved_price is None:
+        resolved_price = await get_ticket_price(db, event_id, attendee_role, active_tier)
     if resolved_price is None and attendee_role in active_prices:
         resolved_price = active_prices[attendee_role]
     if resolved_price is None:
@@ -508,6 +518,14 @@ async def update_attendee_details(
     """
     allowed_fields = {"name", "first_name", "last_name", "title", "phone", "company", "designation", "country", "state"}
     target_email = new_email.lower() if new_email else email.lower()
+    organization_id = await db.scalar(
+        select(Event.organization_id).where(
+            Event.id == event_id,
+            Event.deleted_at.is_(None),
+        )
+    )
+    if organization_id is None:
+        raise ValueError("Event not found.")
 
     # Check if a confirmed Participant exists first
     participant = await Participant.find_by_email(db, event_id, email)
@@ -602,6 +620,7 @@ async def update_attendee_details(
             reg_row.registration_data = reg_data
 
         await db.commit()
+        await invalidate_event(organization_id, event_id)
 
         participant_details = {
             "regno": participant.regno or "",
@@ -623,7 +642,7 @@ async def update_attendee_details(
         select(ParticipantRegistration)
         .where(
             ParticipantRegistration.event_id == event_id,
-            text("registration_data->>'email' = :email").bindparams(email=email.lower()),
+            func.lower(ParticipantRegistration.registration_data["email"].astext) == email.lower(),
         )
         .order_by(ParticipantRegistration.submitted_at.desc())
         .limit(1)
@@ -664,6 +683,7 @@ async def update_attendee_details(
 
     reg_row.registration_data = reg_data
     await db.commit()
+    await invalidate_event(organization_id, event_id)
 
     participant_details = {
         "regno": "",
@@ -776,8 +796,8 @@ async def verify_and_resolve_registration(
             match_participant.custom_fields = custom
             match_participant.updated_at = datetime.now(timezone.utc)
 
-            # Save and return
-            await db.commit()
+            # The application command owns the transaction. Callers commit
+            # after composing any additional mutation/audit work.
             return match_participant
 
     return None

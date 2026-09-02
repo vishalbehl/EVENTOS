@@ -15,6 +15,7 @@ from app.modules.platform.roles.schemas import RoleCreate, RoleUpdate, UserAssig
 from app.modules.platform.departments.repository import DepartmentRepository
 from app.modules.platform.teams.repository import TeamRepository
 from app.modules.audit.models.audit_log import AuditLog
+from app.core.concurrency import raise_version_conflict
 
 
 class RoleService:
@@ -114,8 +115,12 @@ class RoleService:
         updater_id: uuid.UUID,
         reason: Optional[str] = None,
         expected_updated_at: Optional[datetime] = None,
+        expected_version: Optional[int] = None,
     ) -> DepartmentRole:
         role = await self.get_role(org_id, id)
+
+        if expected_version is not None and role.version != expected_version:
+            raise_version_conflict(role.version)
 
         if expected_updated_at and role.updated_at != expected_updated_at:
             raise HTTPException(
@@ -154,6 +159,7 @@ class RoleService:
 
         role.updated_by = updater_id
         role.updated_at = datetime.now(timezone.utc)
+        role.version = int(role.version or 1) + 1
 
         await self.repository.save_role(role)
         if reason:
@@ -297,6 +303,7 @@ class RoleService:
 
         # Check existing assignment
         existing = await self.repository.get_assignment(
+            org_id=org_id,
             user_id=payload.user_id,
             dept_id=payload.department_id,
             team_id=payload.team_id,

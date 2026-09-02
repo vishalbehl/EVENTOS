@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Query, HTTPException, status, Depends
+from fastapi import APIRouter, Query, HTTPException, status, Depends, Header
 
 from app.dependencies import DB, ActiveUser
-from app.modules.workflow.services.workflow_service import WorkflowService
+from app.modules.workflow.application.commands import WorkflowCommandService
+from app.modules.workflow.application.queries import WorkflowQueryService
 from app.modules.workflow.schemas.workflow_schemas import (
     WorkflowOut, WorkflowCreate, WorkflowInstanceOut, CompleteTaskRequest
 )
@@ -21,7 +22,8 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 async def create_workflow(
     body: WorkflowCreate,
     current_user: ActiveUser,
-    db: DB
+    db: DB,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ) -> WorkflowOut:
     org_id = current_user.organization_id
     if not org_id:
@@ -30,25 +32,10 @@ async def create_workflow(
             detail="User must belong to an organization to create workflows."
         )
         
-    # Order steps to verify no gaps
-    sorted_steps = sorted(body.steps, key=lambda s: s.step_order)
-    for idx, step in enumerate(sorted_steps):
-        expected_order = idx + 1
-        if step.step_order != expected_order:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Workflow steps must be sequential starting at 1. Expected step order {expected_order}, got {step.step_order}."
-            )
-            
-    workflow = await WorkflowService.create_workflow(db, org_id, body)
-    await db.commit()
-    
-    # Reload workflow to populate steps relationship
-    updated_wf = await WorkflowService.get_workflow(db, org_id, workflow.id)
-    if not updated_wf:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Workflow creation failed.")
-        
-    return WorkflowOut.model_validate(updated_wf)
+    result = await WorkflowCommandService.create(
+        db, org_id, current_user.id, body, idempotency_key=idempotency_key
+    )
+    return WorkflowOut.model_validate(result)
 
 @router.get(
     "",
@@ -63,7 +50,7 @@ async def list_workflows(
     if not org_id:
         return []
         
-    workflows = await WorkflowService.list_workflows(db, org_id)
+    workflows = await WorkflowQueryService.list_workflows(db, org_id)
     return [WorkflowOut.model_validate(w) for w in workflows]
 
 @router.get(
@@ -80,7 +67,7 @@ async def get_workflow(
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found.")
         
-    workflow = await WorkflowService.get_workflow(db, org_id, workflow_id)
+    workflow = await WorkflowQueryService.get_workflow(db, org_id, workflow_id)
     if not workflow:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found.")
         
@@ -96,24 +83,17 @@ async def trigger_workflow(
     workflow_id: uuid.UUID,
     current_user: ActiveUser,
     db: DB,
-    entity_id: Optional[uuid.UUID] = Query(None, description="Optional entity ID triggering the workflow")
+    entity_id: Optional[uuid.UUID] = Query(None, description="Optional entity ID triggering the workflow"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ) -> WorkflowInstanceOut:
     org_id = current_user.organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found.")
         
-    instance = await WorkflowService.trigger_workflow(db, org_id, workflow_id, entity_id)
-    if not instance:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not trigger workflow. Verify it is active.")
-        
-    await db.commit()
-    
-    # Reload instance with relations
-    updated_inst = await WorkflowService.get_instance(db, org_id, instance.id)
-    if not updated_inst:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Workflow execution failed.")
-        
-    return WorkflowInstanceOut.model_validate(updated_inst)
+    result = await WorkflowCommandService.trigger(
+        db, org_id, current_user.id, workflow_id, entity_id, idempotency_key=idempotency_key
+    )
+    return WorkflowInstanceOut.model_validate(result)
 
 @router.get(
     "/instances/{instance_id}",
@@ -129,7 +109,7 @@ async def get_instance_status(
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow instance not found.")
         
-    instance = await WorkflowService.get_instance(db, org_id, instance_id)
+    instance = await WorkflowQueryService.get_instance(db, org_id, instance_id)
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow instance not found.")
         
@@ -143,18 +123,13 @@ async def complete_task(
     task_id: uuid.UUID,
     body: CompleteTaskRequest,
     current_user: ActiveUser,
-    db: DB
+    db: DB,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=255),
 ):
     org_id = current_user.organization_id
     if not org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
         
-    success = await WorkflowService.complete_task(db, org_id, task_id, body.comment)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not complete task. Task may not be pending manual review, or you do not have permission."
-        )
-        
-    await db.commit()
-    return {"status": "success", "message": "Manual task completed."}
+    return await WorkflowCommandService.complete_task(
+        db, org_id, current_user.id, task_id, body, idempotency_key=idempotency_key
+    )

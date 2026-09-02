@@ -43,6 +43,14 @@ from app.modules.billing.services.entitlement_resolver import EntitlementResolve
 from app.core.dependencies.feature_gate import enforce_org_operation
 from app.core.tenant_context import TenantContextGuard
 from app.modules.presentations.services import upload_service as presentation_upload_service
+from app.modules.platform.application.governed_mutation_commands import commit_transaction
+from app.modules.platform.application.queries import (
+    OrganizationConsoleQueryService,
+    PlatformCommercialCatalogQueryService,
+    PlatformCoreDashboardQueryService,
+)
+from app.modules.platform.application.identity_commands import IdentityAdminCommandService
+from app.modules.platform.application.organization_commands import OrganizationCommandService
 
 router = APIRouter(prefix="/platform", tags=["Platform Admin CRM"])
 
@@ -210,53 +218,33 @@ async def _get_current_subscription(
 @router.get("/dashboard", response_model=DashboardMetrics)
 async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Fetch aggregated SaaS metrics for the Super Admin dashboard."""
-    total_orgs = await db.scalar(select(func.count(Organization.id))) or 0
-    active_orgs = await db.scalar(select(func.count(Organization.id)).where(Organization.is_active == True)) or 0
-    trial_orgs = await db.scalar(
-        select(func.count(OrganizationSubscription.id))
-        .where(OrganizationSubscription.status == 'TRIAL')
-    ) or 0
-    
-    total_users = await db.scalar(select(func.count(User.id))) or 0
-    total_events = await db.scalar(select(func.count(Event.id))) or 0
-    
-    # Aggregated from denormalized usage metrics
-    total_active_events_usage = await db.scalar(select(func.sum(OrganizationUsage.active_events_count))) or 0
-    total_regs = await db.scalar(select(func.sum(OrganizationUsage.total_registrations_count))) or 0
-    total_storage = await db.scalar(select(func.sum(OrganizationUsage.storage_used_bytes))) or 0
-    
-    # Aggregated MRR from recent Revenue Metrics
-    current_period = datetime.now(timezone.utc).strftime("%Y-%m")
-    mrr_current = await db.scalar(select(func.sum(RevenueMetric.mrr)).where(RevenueMetric.period == current_period)) or 0.0
-    mrr_current = float(mrr_current)
-    arr_current = mrr_current * 12.0
-
-    # active_users_30d
-    active_users_30d = await db.scalar(
-        select(func.count()).select_from(User)
-        .where(User.last_login_at >= datetime.now(timezone.utc) - timedelta(days=30))
-    ) or 0
-
-    # churn_rate = (cancelled this month / active last month) * 100
     now_dt = datetime.now(timezone.utc)
     month_start = now_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    cancelled_this_month = await db.scalar(
-        select(func.count(OrganizationSubscription.id))
-        .where(
-            OrganizationSubscription.status == 'CANCELLED',
-            OrganizationSubscription.updated_at >= month_start
-        )
-    ) or 0
+    current_period = now_dt.strftime("%Y-%m")
+    core = await PlatformCoreDashboardQueryService(db).metrics(
+        current_period=current_period,
+        month_start=month_start,
+        thirty_days_ago=now_dt - timedelta(days=30),
+    )
+    total_orgs = core.total_orgs
+    active_orgs = core.active_orgs
+    trial_orgs = core.trial_orgs
+    total_users = core.total_users
+    total_events = core.total_events
+    total_active_events_usage = core.total_active_events_usage
+    total_regs = core.total_regs
+    total_storage = core.total_storage
+    mrr_current = core.mrr_current
+    active_users_30d = core.active_users_30d
+    cancelled_this_month = core.cancelled_this_month
+    active_last_month = core.active_last_month
+    events_this_month = core.events_this_month
+    revenue_today = core.revenue_today
 
-    last_month_end = month_start - timedelta(seconds=1)
-    active_last_month = await db.scalar(
-        select(func.count(OrganizationSubscription.id))
-        .where(
-            OrganizationSubscription.status == 'ACTIVE',
-            OrganizationSubscription.created_at <= last_month_end
-        )
-    ) or 0
+    # Aggregated MRR from recent Revenue Metrics
+    arr_current = mrr_current * 12.0
 
+    # churn_rate = (cancelled this month / active last month) * 100
     if active_last_month == 0:
         active_last_month = active_orgs or 1
     churn_rate = round((cancelled_this_month / active_last_month) * 100.0, 2)
@@ -269,22 +257,6 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
     except Exception:
         await db.rollback()
         open_tickets = 0
-
-    # events_this_month
-    events_this_month = await db.scalar(
-        select(func.count(Event.id))
-        .where(Event.created_at >= month_start)
-    ) or 0
-
-    # revenue_today
-    revenue_today = await db.scalar(
-        select(func.coalesce(func.sum(PaymentTransaction.amount), 0))
-        .where(
-            func.date(PaymentTransaction.created_at) == func.current_date(),
-            func.lower(PaymentTransaction.status) == 'completed'
-        )
-    ) or 0.0
-    revenue_today = float(revenue_today)
 
     # Sparkline data: trends (last 7 days)
     today = date.today()
@@ -520,152 +492,32 @@ async def get_dashboard_metrics(db: AsyncSession = Depends(get_db), current_user
 
 @router.get("/organizations")
 async def list_organizations(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin), skip: int = 0, limit: int = 100):
-    """List tenants with enriched health and billing state."""
-    stmt = (
-        select(Organization, OrganizationHealth, OrganizationUsage)
-        .outerjoin(OrganizationHealth, Organization.id == OrganizationHealth.organization_id)
-        .outerjoin(OrganizationUsage, Organization.id == OrganizationUsage.organization_id)
-        .offset(skip)
-        .limit(limit)
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_list(
+        skip=skip,
+        limit=min(max(limit, 1), 100),
     )
-    result = await db.execute(stmt)
-    
-    response = []
-    for org, health, usage in result.all():
-        sub = await _get_current_subscription(db, org.id, with_plan=True)
-        plan_name = sub.plan.name if sub and sub.plan else "NONE"
-        # Revenue is reported only from the financial ledger. Plan-name price
-        # guesses are not authoritative MRR evidence.
-        mrr = None
-            
-        # Query users count in organization
-        users_count = await db.scalar(
-            select(func.count(User.id)).where(User.organization_id == org.id)
-        ) or 0
-
-        # Query organizer/owner name (creator)
-        owner_stmt = select(User).where(
-            and_(User.organization_id == org.id, User.role.in_(["owner", "admin", "super_admin"]))
-        ).order_by(User.created_at.asc()).limit(1)
-        owner_user = (await db.execute(owner_stmt)).scalar_one_or_none()
-        if not owner_user:
-            owner_stmt = select(User).where(User.organization_id == org.id).order_by(User.created_at.asc()).limit(1)
-            owner_user = (await db.execute(owner_stmt)).scalar_one_or_none()
-
-        creator_name = f"{owner_user.first_name} {owner_user.last_name}" if owner_user else "—"
-
-        response.append({
-            "id": org.id,
-            "name": org.name,
-            "slug": org.slug,
-            "plan": plan_name,
-            "status": sub.status if sub else "TRIAL",
-            "health_score": health.health_score if health else None,
-            "health_status": health.status if health else "NOT_MEASURED",
-            "created_at": org.created_at,
-            "events_count": usage.active_events_count if usage else 0,
-            "users_count": users_count,
-            "created_by": creator_name,
-            "mrr": mrr
-        })
-    return response
 
 @router.get("/organizations/{org_id}")
 async def get_organization_detail(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Get full details for CRM Overview tab."""
     del current_user
     async with TenantContextGuard.scoped(db, org_id):
-        org = await db.get(Organization, org_id)
-        if not org:
-            raise HTTPException(status_code=404, detail="Organization not found")
-
-        sub = await _get_current_subscription(db, org_id, with_plan=True)
-        health_stmt = select(OrganizationHealth).where(OrganizationHealth.organization_id == org_id)
-        health = (await db.execute(health_stmt)).scalar_one_or_none()
-        max_events = await EntitlementResolver.get_limit(db, org_id, "max_events")
-        max_users = await EntitlementResolver.get_limit(db, org_id, "max_users")
-        storage_quota_mb = await EntitlementResolver.get_limit(db, org_id, "storage_quota_mb")
-        resolved_limits = (max_events, max_users, storage_quota_mb)
-        availability = (
-            "AVAILABLE"
-            if all(value is not None for value in resolved_limits)
-            else "UNAVAILABLE"
-            if all(value is None for value in resolved_limits)
-            else "PARTIAL"
+        detail = await OrganizationConsoleQueryService(db).organization_detail(
+            organization_id=org_id
         )
-
-        return {
-            "id": org.id,
-            "name": org.name,
-            "slug": org.slug,
-            "domain": org.custom_domain,
-            "created_at": org.created_at,
-            "max_events": max_events,
-            "max_users": max_users,
-            "max_storage_gb": (
-                storage_quota_mb / 1024 if storage_quota_mb is not None else None
-            ),
-            "commercial": {
-                "source": "CANONICAL_ENTITLEMENT_RESOLVER",
-                "availability": availability,
-                "limits": {
-                    "max_events": max_events,
-                    "max_users": max_users,
-                    "storage_quota_mb": storage_quota_mb,
-                },
-            },
-            "country": org.country,
-            "timezone": org.timezone,
-            "subscription": {
-                "plan": sub.plan.name if sub and sub.plan else None,
-                "status": sub.status if sub else "NOT_CONFIGURED",
-                "current_period_end": sub.current_period_end if sub else None,
-                "stripe_customer_id": sub.stripe_customer_id if sub else None
-            },
-            "health": {
-                "score": health.health_score if health else None,
-                "status": health.status if health else "NOT_MEASURED",
-                "warnings": health.warnings if health else []
-            }
-        }
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        return detail
 
 
 @router.get("/organizations/{org_id}/features")
 async def get_organization_features(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """List all features and whether they are enabled by Plan or Override, plus default/override states."""
-    # Get org subscription and plan
-    sub = await _get_current_subscription(db, org_id)
-    plan_id = sub.plan_id if sub else None
-    
-    # Get plan features
-    plan_feat_keys = set()
-    if plan_id:
-        pf_stmt = select(FeatureCatalog.key).join(PlanFeature).where(
-            and_(PlanFeature.plan_id == plan_id, PlanFeature.enabled == True)
-        )
-        plan_feat_keys = set((await db.execute(pf_stmt)).scalars().all())
-        
-    # Get active overrides
-    ov_stmt = select(OrganizationFeature).where(OrganizationFeature.organization_id == org_id)
-    overrides = {o.feature_id: o.is_enabled for o in (await db.execute(ov_stmt)).scalars().all()}
-    
-    catalog = (await db.execute(select(FeatureCatalog))).scalars().all()
-    
-    response = []
-    for f in catalog:
-        override_val = overrides.get(f.id) # True, False, or None
-        is_enabled = override_val if override_val is not None else (f.key in plan_feat_keys)
-        response.append({
-            "id": str(f.id),
-            "key": f.key,
-            "name": f.name,
-            "description": f.description,
-            "category": f.category,
-            "plan_enabled": f.key in plan_feat_keys,
-            "override_enabled": override_val, # True, False, or None
-            "is_enabled": is_enabled
-        })
-    return response
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_features(
+        organization_id=org_id
+    )
 
 class FeatureOverrideRequest(BaseModel):
     feature_id: uuid.UUID
@@ -684,67 +536,14 @@ async def override_organization_feature(org_id: uuid.UUID, payload: FeatureOverr
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required for overrides")
 
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    feature = await db.get(FeatureCatalog, payload.feature_id)
-    if not feature:
-        raise HTTPException(status_code=404, detail="Feature not found")
-        
-    stmt = select(OrganizationFeature).where(
-        and_(OrganizationFeature.organization_id == org_id, OrganizationFeature.feature_id == payload.feature_id)
-    )
-    override = (await db.execute(stmt)).scalar_one_or_none()
-    previous_override = override.is_enabled if override else None
-    
-    if override:
-        override.is_enabled = payload.is_enabled
-        override.effective_from = datetime.now(timezone.utc)
-        override.expires_at = payload.expires_at
-        override.reason = payload.reason
-        override.override_by = current_user.id
-        override.override_at = datetime.now(timezone.utc)
-        override.version += 1
-    else:
-        new_override = OrganizationFeature(
-            organization_id=org_id,
-            feature_id=payload.feature_id,
-            is_enabled=payload.is_enabled,
-            override_by=current_user.id,
-            effective_from=datetime.now(timezone.utc),
-            expires_at=payload.expires_at,
-            reason=payload.reason,
-        )
-        db.add(new_override)
-        
-    # Log timeline event
-    log = ActivityTimeline(
+    await OrganizationCommandService(db).set_feature_override(
         organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="FEATURE_OVERRIDE_CHANGED",
-        metadata_data={
-            "feature_id": str(payload.feature_id),
-            "feature_key": feature.key,
-            "previous_override": previous_override,
-            "enabled": payload.is_enabled,
-            "reason": payload.reason,
-        },
+        feature_id=payload.feature_id,
+        actor=current_user,
+        is_enabled=payload.is_enabled,
+        reason=payload.reason,
+        expires_at=payload.expires_at,
     )
-    db.add(log)
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="FEATURE_OVERRIDE_CHANGED",
-        resource_type="organization",
-        resource_id=org_id,
-        old_state={"feature_id": str(payload.feature_id), "feature_key": feature.key, "override": previous_override},
-        new_state={"feature_id": str(payload.feature_id), "feature_key": feature.key, "override": payload.is_enabled},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    
-    await db.commit()
     return {"message": "Override applied successfully"}
 
 @router.delete("/organizations/{org_id}/features/overrides/{feature_id}")
@@ -760,98 +559,39 @@ async def delete_organization_feature_override(
     if current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required for overrides")
 
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    feature = await db.get(FeatureCatalog, feature_id)
-    if not feature:
-        raise HTTPException(status_code=404, detail="Feature not found")
-
-    existing = await db.scalar(
-        select(OrganizationFeature).where(
-            and_(OrganizationFeature.organization_id == org_id, OrganizationFeature.feature_id == feature_id)
-        )
-    )
-    previous_override = existing.is_enabled if existing else None
-        
-    await db.execute(
-        delete(OrganizationFeature).where(
-            and_(OrganizationFeature.organization_id == org_id, OrganizationFeature.feature_id == feature_id)
-        )
-    )
-    
-    # Log timeline event
-    log = ActivityTimeline(
+    await OrganizationCommandService(db).remove_feature_override(
         organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="FEATURE_OVERRIDE_REMOVED",
-        metadata_data={
-            "feature_id": str(feature_id),
-            "feature_key": feature.key,
-            "previous_override": previous_override,
-            "by": str(current_user.id),
-            "reason": payload.reason,
-        }
+        feature_id=feature_id,
+        actor=current_user,
+        reason=payload.reason,
     )
-    db.add(log)
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="FEATURE_OVERRIDE_REMOVED",
-        resource_type="organization",
-        resource_id=org_id,
-        old_state={"feature_id": str(feature_id), "feature_key": feature.key, "override": previous_override},
-        new_state={"feature_id": str(feature_id), "feature_key": feature.key, "override": None},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.commit()
     return {"message": "Override removed successfully"}
 
 
 @router.get("/organizations/{org_id}/addons")
 async def list_organization_addons(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """List active addons for the tenant."""
-    stmt = select(OrganizationAddon, Addon).join(Addon).where(OrganizationAddon.organization_id == org_id)
-    result = await db.execute(stmt)
-    return [
-        {
-            "addon_id": addon.id,
-            "name": addon.name,
-            "status": org_addon.status,
-            "purchased_at": org_addon.purchased_at
-        } for org_addon, addon in result.all()
-    ]
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_addons(
+        organization_id=org_id
+    )
 
 @router.get("/organizations/{org_id}/usage")
 async def get_organization_usage(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin)):
     """Fetch usage metrics for quota tracking."""
-    usage = await db.get(OrganizationUsage, org_id)
-    if not usage:
-        return {"active_events_count": 0, "active_users_count": 0, "total_registrations_count": 0, "storage_used_bytes": 0}
-    return {
-        "active_events_count": usage.active_events_count,
-        "active_users_count": usage.active_users_count,
-        "total_registrations_count": usage.total_registrations_count,
-        "storage_used_bytes": usage.storage_used_bytes,
-        "last_calculated_at": usage.last_calculated_at
-    }
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_usage(
+        organization_id=org_id
+    )
 
 @router.get("/organizations/{org_id}/timeline")
 async def get_organization_timeline(org_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_platform_admin), limit: int = 50):
     """Get the customer activity timeline."""
-    stmt = select(ActivityTimeline).where(ActivityTimeline.organization_id == org_id).order_by(ActivityTimeline.timestamp.desc()).limit(limit)
-    result = await db.execute(stmt)
-    return [
-        {
-            "id": t.id,
-            "action_type": t.action_type,
-            "actor_id": t.actor_id,
-            "timestamp": t.timestamp,
-            "metadata": t.metadata_data
-        } for t in result.scalars().all()
-    ]
+    del current_user
+    return await OrganizationConsoleQueryService(db).organization_timeline(
+        organization_id=org_id,
+        limit=limit,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1033,65 +773,10 @@ async def list_subscription_plans(
     current_user: User = Depends(require_platform_admin)
 ):
     """List all subscription plans with full details, subscriber counts, and MRR (Super Admin)."""
-    plans_stmt = select(SubscriptionPlan).order_by(SubscriptionPlan.display_order.asc())
-    plans = (await db.execute(plans_stmt)).scalars().all()
-    
     mrr_period = datetime.now(timezone.utc).strftime("%Y-%m")
-    
-    res = []
-    for p in plans:
-        # Get active subscribers count
-        subscribers_count = await db.scalar(
-            select(func.count(OrganizationSubscription.id))
-            .where(
-                OrganizationSubscription.plan_id == p.id,
-                OrganizationSubscription.status.in_(["ACTIVE", "TRIAL"])
-            )
-        ) or 0
-        
-        # Calculate MRR for this plan
-        plan_mrr = await db.scalar(
-            select(func.sum(RevenueMetric.mrr))
-            .join(OrganizationSubscription, OrganizationSubscription.organization_id == RevenueMetric.organization_id)
-            .where(
-                OrganizationSubscription.plan_id == p.id,
-                RevenueMetric.period == mrr_period
-            )
-        ) or 0.0
-        
-        res.append({
-            "id": p.id,
-            "name": p.name,
-            "tagline": p.tagline,
-            "description": p.description,
-            "billing_model": p.billing_model,
-            "currency": p.currency,
-            "price_per_event": float(p.price_per_event) if p.price_per_event is not None else None,
-            "price_display": p.price_display,
-            "max_events": p.max_events,
-            "max_users": p.max_users,
-            "max_registrations": p.max_registrations,
-            "max_speakers": p.max_speakers,
-            "max_sessions": p.max_sessions,
-            "max_rooms": p.max_rooms,
-            "max_ticket_categories": p.max_ticket_categories,
-            "max_badge_templates": p.max_badge_templates,
-            "max_certificate_templates": p.max_certificate_templates,
-            "max_emails_per_event": p.max_emails_per_event,
-            "storage_quota_mb": p.storage_quota_mb,
-            "display_order": p.display_order,
-            "is_popular": p.is_popular,
-            "color_hex": p.color_hex,
-            "is_active": p.is_active,
-            "version": p.version,
-            "lifecycle_status": p.lifecycle_status,
-            "effective_at": p.effective_at,
-            "retired_at": p.retired_at,
-            "created_at": p.created_at,
-            "subscribers_count": subscribers_count,
-            "mrr": float(plan_mrr),
-        })
-    return res
+    return await PlatformCommercialCatalogQueryService(db).list_subscription_plans(
+        mrr_period=mrr_period
+    )
 
 
 @router.get("/plans")
@@ -1110,36 +795,7 @@ async def get_features_matrix(
 ):
     """Return the canonical catalogue grouped for typed plan assignment."""
     del current_user
-    stmt = select(FeatureCatalog).where(FeatureCatalog.is_active == True).order_by(
-        FeatureCatalog.category_order.asc(),
-        FeatureCatalog.feature_order.asc()
-    )
-    features = (await db.execute(stmt)).scalars().all()
-
-    categories: dict[str, dict[str, Any]] = {}
-    for f in features:
-        cat = f.category or "GENERAL"
-        if cat not in categories:
-            categories[cat] = {
-                "category": cat,
-                "category_name": cat.replace("_", " ").title(),
-                "features": []
-            }
-
-        categories[cat]["features"].append({
-            "key": f.key,
-            "name": f.name,
-            "description": f.description,
-            "value_type": f.value_type,
-            "scope_type": f.scope_type,
-            "enforcement_mode": f.enforcement_mode,
-            "default_value": f.default_value,
-            "allowed_values": f.allowed_values or [],
-            "unit": f.unit,
-            "period": f.period,
-            "version": f.version,
-        })
-    return list(categories.values())
+    return await PlatformCommercialCatalogQueryService(db).features_matrix()
 
 
 async def calculate_addon_final_price(
@@ -1339,7 +995,7 @@ async def create_subscription_plan(
         db, plan, actor=current_user, idempotency_key=idempotency_key,
         request_hash=request_hash, reason=reason, change_type="CREATED",
     )
-    await db.commit()
+    await commit_transaction(db)
     await db.refresh(plan)
     return {"id": plan.id, "name": plan.name, "message": "Plan created", "version": plan.version, "replayed": False}
 
@@ -1393,7 +1049,7 @@ async def update_subscription_plan(
         db, plan, actor=current_user, idempotency_key=idempotency_key,
         request_hash=request_hash, reason=reason, change_type="UPDATED",
     )
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Plan updated", "version": plan.version, "replayed": False}
 
 
@@ -1581,7 +1237,7 @@ async def create_feature_catalog_item(
         enforcement_mode=payload.enforcement_mode,
     )
     db.add(feature)
-    await db.commit()
+    await commit_transaction(db)
     await db.refresh(feature)
     return {**_serialize_feature_catalog_item(feature), "message": "Feature created successfully"}
 
@@ -1626,7 +1282,7 @@ async def update_feature_catalog_item(
     feature.enforcement_mode = payload.enforcement_mode
     feature.version = (feature.version or 0) + 1
 
-    await db.commit()
+    await commit_transaction(db)
     await db.refresh(feature)
     return {**_serialize_feature_catalog_item(feature), "message": "Feature updated successfully"}
 
@@ -1660,7 +1316,7 @@ async def reorder_feature_categories(
             .values(category_order=order)
         )
 
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Category order updated successfully"}
 
 
@@ -1699,7 +1355,7 @@ async def reorder_features_within_category(
             .values(feature_order=order)
         )
 
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Feature order updated successfully"}
 
 
@@ -1721,7 +1377,7 @@ async def delete_feature_catalog_item(
     feature.is_active = False
     feature.lifecycle_status = "DEPRECATED"
     feature.version = (feature.version or 0) + 1
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Feature deprecated successfully", "feature_key": feature.key}
 
 
@@ -1768,7 +1424,7 @@ async def update_plan_features(
         for f in features:
             db.add(PlanFeature(plan_id=plan_id, feature_id=f.id, enabled=True))
         
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Plan features updated successfully"}
 
 
@@ -2177,27 +1833,12 @@ async def force_logout_user(
     current_user: User = Depends(require_platform_admin)
 ):
     del step_up
-    target = await db.get(User, user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    result = await db.execute(
-        update(RefreshToken)
-        .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == False)
-        .values(is_revoked=True, revoked_reason="FORCE_LOGOUT_BY_ADMIN")
+    revoked = await IdentityAdminCommandService(db).force_logout(
+        user_id=user_id,
+        actor=current_user,
+        reason=payload.reason,
     )
-    db.add(AuditLog(
-        organization_id=target.organization_id,
-        actor_user_id=current_user.id,
-        action_type="USER_SESSIONS_REVOKED",
-        resource_type="user",
-        resource_id=user_id,
-        old_state={"active_sessions_revoked": result.rowcount},
-        new_state={"active_sessions": 0},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-    ))
-    await db.commit()
-    return {"revoked": result.rowcount}
+    return {"revoked": revoked}
 
 
 # C3: Reset 2FA
@@ -2210,31 +1851,11 @@ async def reset_user_2fa(
     current_user: User = Depends(require_platform_admin)
 ):
     del step_up
-    from app.modules.identity.models.identity_domain_tables import MfaDevice
-    from app.modules.identity.services.auth_service import revoke_user_refresh_tokens
-    target = await db.get(User, user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    was_2fa_enabled = target.is_2fa_enabled
-    await db.execute(
-        update(User)
-        .where(User.id == user_id)
-        .values(is_2fa_enabled=False, two_factor_secret=None)
+    await IdentityAdminCommandService(db).reset_2fa(
+        user_id=user_id,
+        actor=current_user,
+        reason=payload.reason,
     )
-    await db.execute(delete(MfaDevice).where(MfaDevice.user_id == user_id))
-    await revoke_user_refresh_tokens(db, user_id, reason="admin_mfa_reset")
-    db.add(AuditLog(
-        organization_id=target.organization_id,
-        actor_user_id=current_user.id,
-        action_type="USER_MFA_RESET",
-        resource_type="user",
-        resource_id=user_id,
-        old_state={"is_2fa_enabled": was_2fa_enabled},
-        new_state={"is_2fa_enabled": False, "sessions_revoked": True},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-    ))
-    await db.commit()
     return {"success": True}
 
 
@@ -2280,7 +1901,7 @@ async def get_audit_logs(
         al.actor_role,
         """ + ("al.old_state, al.new_state," if include_state else "") + """
         COUNT(*) OVER() as total_count
-    FROM audit.logs al
+    FROM command_center_audit.logs al
     LEFT JOIN platform.organizations o ON o.id = al.organization_id
     LEFT JOIN identity.users u ON u.id = al.actor_user_id
     WHERE 1=1
@@ -2335,7 +1956,7 @@ async def get_audit_logs(
     # Action type counts for quick filters sidebar
     counts = await db.execute(text("""
     SELECT action_type, COUNT(*) as cnt 
-    FROM audit.logs 
+    FROM command_center_audit.logs 
     GROUP BY action_type 
     ORDER BY cnt DESC
     """))
@@ -2458,7 +2079,7 @@ async def get_impersonation_logs(
         o.name as org_name,
         EXTRACT(EPOCH FROM (COALESCE(il.terminated_at, NOW()) - il.started_at)) as duration_seconds,
         CASE WHEN il.terminated_at IS NULL THEN 'ACTIVE' ELSE 'ENDED' END as status
-    FROM audit.impersonation_logs il
+        FROM command_center_audit.impersonation_logs il
     JOIN identity.users imp ON imp.id = il.super_admin_id
     JOIN identity.users tgt ON tgt.id = il.target_user_id
     LEFT JOIN platform.organizations o ON o.id = tgt.organization_id
@@ -2473,7 +2094,7 @@ async def get_impersonation_logs(
         AVG(EXTRACT(EPOCH FROM (COALESCE(terminated_at, NOW()) - started_at))) as avg_duration,
         MAX(EXTRACT(EPOCH FROM (COALESCE(terminated_at, NOW()) - started_at))) as max_duration,
         COUNT(DISTINCT super_admin_id) as unique_impersonators
-    FROM audit.impersonation_logs
+        FROM command_center_audit.impersonation_logs
     WHERE started_at >= NOW() - INTERVAL '30 days'
     """), {"skip": skip, "limit": limit})
     s = summary.fetchone()
@@ -2508,14 +2129,13 @@ async def update_organization_status(
     is_auth = (current_user.platform_role in ["SUPER_ADMIN", "SUPPORT_ADMIN"]) or current_user.role == "super_admin" or getattr(current_user, "is_platform_admin", False)
     if not is_auth:
         raise HTTPException(status_code=403, detail="SUPER_ADMIN or SUPPORT_ADMIN required")
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    old_state = {
-        "is_active": org.is_active,
-        "suspended_at": org.suspended_at.isoformat() if org.suspended_at else None,
-        "suspension_reason": org.suspension_reason,
-    }
+    await OrganizationCommandService(db).update_status(
+        organization_id=org_id,
+        actor=current_user,
+        is_active=payload.is_active,
+        suspension_reason=payload.suspension_reason,
+    )
+    return {"message": f"Organization {'suspended' if not payload.is_active else 'activated'} successfully"}
 
 
 @router.get("/organizations/{org_id}/dossier")
@@ -2643,48 +2263,6 @@ async def get_organization_dossier(
         "availability": {"profile": True, "subscriptions": True, "entitlements": True, "capabilities": True, "addons": True, "events": True, "people": True, "billing": True},
     }
 
-    org.is_active = payload.is_active
-    if not payload.is_active:
-        org.suspended_at = datetime.now(timezone.utc)
-        org.suspension_reason = payload.suspension_reason
-    else:
-        org.suspended_at = None
-        org.suspension_reason = None
-    
-    # Sync corresponding OrganizationSubscription status
-    sub = await _get_current_subscription(db, org_id)
-    if sub:
-        sub.status = "SUSPENDED" if not payload.is_active else "ACTIVE"
-    
-    # Log activity
-    log = ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="ORG_SUSPENDED" if not payload.is_active else "ORG_ACTIVATED",
-        metadata_data={"reason": payload.suspension_reason, "by": str(current_user.id)}
-    )
-    db.add(log)
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="ORG_SUSPENDED" if not payload.is_active else "ORG_ACTIVATED",
-        resource_type="organization",
-        resource_id=org_id,
-        old_state=old_state,
-        new_state={
-            "is_active": org.is_active,
-            "suspended_at": org.suspended_at.isoformat() if org.suspended_at else None,
-            "suspension_reason": org.suspension_reason,
-            "subscription_status": sub.status if sub else None,
-        },
-        change_diff={"reason": payload.suspension_reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    await db.commit()
-    return {"message": f"Organization {'suspended' if not payload.is_active else 'activated'} successfully"}
-
-
 @router.delete("/organizations/{org_id}")
 async def delete_organization(
     org_id: uuid.UUID,
@@ -2772,7 +2350,7 @@ async def start_impersonation(
         session_token_hash=token_hash,
     )
     db.add(log)
-    await db.commit()
+    await commit_transaction(db)
     await db.refresh(log)
 
     return {
@@ -2851,7 +2429,7 @@ async def end_impersonation(
         return {"message": "Impersonation session already ended"}
 
     log.terminated_at = datetime.now(timezone.utc)
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Impersonation session ended successfully"}
 
 
@@ -3494,7 +3072,7 @@ async def save_org_feature_overrides(
     )
     db.add(log)
     
-    await db.commit()
+    await commit_transaction(db)
     return {"success": True, "updated": len(payload.overrides)}
 
 
@@ -3595,7 +3173,7 @@ async def change_organization_plan(
         occurred_at=datetime.now(timezone.utc),
     ))
     
-    await db.commit()
+    await commit_transaction(db)
     return {
         "success": True,
         "new_plan_name": plan.name
@@ -3690,7 +3268,7 @@ async def extend_organization_trial(
         occurred_at=datetime.now(timezone.utc),
     ))
     
-    await db.commit()
+    await commit_transaction(db)
     return {
         "success": True,
         "new_trial_ends_at": new_trial.isoformat()
@@ -3745,7 +3323,7 @@ async def apply_organization_credit(
         is_sensitive=True,
         occurred_at=datetime.now(timezone.utc),
     ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Credit applied successfully", "amount": payload.amount}
 
 
@@ -3813,7 +3391,7 @@ async def update_organization_limits(
         },
     ))
 
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Limits updated successfully"}
 
 
@@ -3980,37 +3558,12 @@ async def add_organization_domain(
         "branding.custom_domain.manage",
         user_id=current_user.id,
     )
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    dom = OrganizationDomain(organization_id=org_id, domain=payload.domain, is_verified=False)
-    db.add(dom)
-    await db.flush()
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
+    dom = await OrganizationCommandService(db).add_domain(
         organization_id=org_id,
-        action_type="ORG_DOMAIN_ADDED",
-        resource_type="organization_domain",
-        resource_id=dom.id,
-        old_state=None,
-        new_state={"domain": payload.domain, "is_verified": False},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    db.add(ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="ORG_DOMAIN_ADDED",
-        metadata_data={
-            "domain": payload.domain,
-            "reason": payload.reason,
-            "by": str(current_user.id),
-        }
-    ))
-    await db.commit()
-    await db.refresh(dom)
+        actor=current_user,
+        domain=payload.domain,
+        reason=payload.reason,
+    )
     return {
         "id": dom.id,
         "domain": dom.domain,
@@ -4033,43 +3586,12 @@ async def delete_organization_domain(
         "branding.custom_domain.manage",
         user_id=current_user.id,
     )
-    stmt = select(OrganizationDomain).where(
-        and_(OrganizationDomain.organization_id == org_id, OrganizationDomain.id == domain_id)
+    await OrganizationCommandService(db).delete_domain(
+        organization_id=org_id,
+        domain_id=domain_id,
+        actor=current_user,
+        reason=payload.reason,
     )
-    dom = (await db.execute(stmt)).scalar_one_or_none()
-    if not dom:
-        raise HTTPException(status_code=404, detail="Domain mapping not found")
-    domain_name = dom.domain
-    old_state = {
-        "domain_id": str(domain_id),
-        "domain": domain_name,
-        "is_verified": dom.is_verified,
-    }
-    await db.delete(dom)
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="ORG_DOMAIN_DELETED",
-        resource_type="organization_domain",
-        resource_id=domain_id,
-        old_state=old_state,
-        new_state=None,
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    db.add(ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="ORG_DOMAIN_DELETED",
-        metadata_data={
-            "domain_id": str(domain_id),
-            "domain": domain_name,
-            "reason": payload.reason,
-            "by": str(current_user.id),
-        }
-    ))
-    await db.commit()
     return {"message": "Domain mapping deleted"}
 
 @router.post("/organizations/{org_id}/domains/{domain_id}/verify")
@@ -4087,56 +3609,12 @@ async def verify_organization_domain(
         "branding.custom_domain.manage",
         user_id=current_user.id,
     )
-    stmt = select(OrganizationDomain).where(
-        and_(OrganizationDomain.organization_id == org_id, OrganizationDomain.id == domain_id)
+    dom = await OrganizationCommandService(db).verify_domain(
+        organization_id=org_id,
+        domain_id=domain_id,
+        actor=current_user,
+        reason=payload.reason,
     )
-    dom = (await db.execute(stmt)).scalar_one_or_none()
-    if not dom:
-        raise HTTPException(status_code=404, detail="Domain mapping not found")
-
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    old_state = {
-        "domain_id": str(domain_id),
-        "domain": dom.domain,
-        "is_verified": dom.is_verified,
-        "custom_domain": org.custom_domain,
-    }
-    dom.is_verified = True
-    org.custom_domain = dom.domain
-
-    db.add(AuditLog(
-        actor_user_id=current_user.id,
-        organization_id=org_id,
-        action_type="ORG_DOMAIN_VERIFIED",
-        resource_type="organization_domain",
-        resource_id=domain_id,
-        old_state=old_state,
-        new_state={
-            "domain_id": str(domain_id),
-            "domain": dom.domain,
-            "is_verified": True,
-            "custom_domain": org.custom_domain,
-        },
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-        occurred_at=datetime.now(timezone.utc),
-    ))
-    db.add(ActivityTimeline(
-        organization_id=org_id,
-        actor_id=current_user.id,
-        action_type="ORG_DOMAIN_VERIFIED",
-        metadata_data={
-            "domain_id": str(domain_id),
-            "domain": dom.domain,
-            "reason": payload.reason,
-            "by": str(current_user.id),
-        },
-    ))
-
-    await db.commit()
     return {"message": "Domain successfully verified", "domain": dom.domain}
 
 
@@ -4149,30 +3627,20 @@ async def get_organization_events(
     current_user: User = Depends(require_platform_admin)
 ):
     """List all events of an organization along with participant counts."""
-    from app.modules.registration.models.participant import Participant
-    
-    stmt = (
-        select(Event)
-        .where(Event.organization_id == org_id)
-        .execution_options(skip_tenant_filter=True)
+    rows = await OrganizationConsoleQueryService(db).events_with_registration_counts(
+        organization_id=org_id
     )
-    events = (await db.execute(stmt)).scalars().all()
-    
+
     output = []
-    for e in events:
-        reg_count = await db.scalar(
-            select(func.count(Participant.id))
-            .where(Participant.event_id == e.id)
-            .execution_options(skip_tenant_filter=True)
-        ) or 0
+    for row in rows:
         output.append({
-            "id": str(e.id),
-            "name": e.name,
-            "short_code": e.short_code,
-            "status": e.status,
-            "start_date": e.start_date.isoformat() if e.start_date else None,
-            "end_date": e.end_date.isoformat() if e.end_date else None,
-            "registration_count": reg_count
+            "id": str(row.id),
+            "name": row.name,
+            "short_code": row.short_code,
+            "status": row.status,
+            "start_date": row.start_date.isoformat() if row.start_date else None,
+            "end_date": row.end_date.isoformat() if row.end_date else None,
+            "registration_count": row.registration_count or 0
         })
     return output
 
@@ -4186,20 +3654,7 @@ async def list_payment_events(
     limit: int = 10
 ):
     """List recent billing/payment events platform-wide."""
-    stmt = select(ActivityTimeline, Organization).join(
-        Organization, ActivityTimeline.organization_id == Organization.id
-    ).order_by(ActivityTimeline.timestamp.desc()).limit(limit)
-    result = await db.execute(stmt)
-    return [
-        {
-            "id": str(t.id),
-            "organization_id": str(t.organization_id),
-            "organization_name": org.name,
-            "action_type": t.action_type,
-            "timestamp": t.timestamp.isoformat(),
-            "metadata": t.metadata_data
-        } for t, org in result.all()
-    ]
+    return await OrganizationConsoleQueryService(db).payment_events(limit=limit)
 
 
 # ── Update User Status ────────────────────────────────────────
@@ -4225,37 +3680,12 @@ async def update_user_platform_role(
     del step_up
     if current_user.role != "super_admin" and current_user.platform_role != "SUPER_ADMIN":
         raise HTTPException(status_code=403, detail="Super Admin required")
-    target = await db.get(User, user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    next_role = None if payload.platform_role == "NONE" else payload.platform_role
-    if target.id == current_user.id and next_role != "SUPER_ADMIN":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "SELF_DEMOTION_FORBIDDEN",
-                "message": "Use a separate Super Admin account to change this administrator role.",
-            },
-        )
-    old_role = target.platform_role
-    target.platform_role = next_role
-    result = await db.execute(
-        update(RefreshToken)
-        .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == False)
-        .values(is_revoked=True, revoked_reason="PLATFORM_ROLE_CHANGED")
+    next_role, _ = await IdentityAdminCommandService(db).update_platform_role(
+        user_id=user_id,
+        actor=current_user,
+        platform_role=payload.platform_role,
+        reason=payload.reason,
     )
-    db.add(AuditLog(
-        organization_id=target.organization_id,
-        actor_user_id=current_user.id,
-        action_type="USER_PLATFORM_ROLE_CHANGED",
-        resource_type="user",
-        resource_id=user_id,
-        old_state={"platform_role": old_role},
-        new_state={"platform_role": next_role, "sessions_revoked": result.rowcount},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-    ))
-    await db.commit()
     return {"message": "Platform role updated", "platform_role": next_role}
 
 @router.patch("/users/{user_id}/status")
@@ -4268,50 +3698,12 @@ async def update_user_status(
 ):
     """Enable or disable a user account globally."""
     del step_up
-    user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.id == current_user.id and not payload.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "SELF_DEACTIVATION_FORBIDDEN",
-                "message": "Use a separate privileged account to deactivate this administrator.",
-            },
-        )
-    old_active = user.is_active
-    user.is_active = payload.is_active
-    revoked_sessions = 0
-    if not payload.is_active:
-        result = await db.execute(
-            update(RefreshToken)
-            .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == False)
-            .values(is_revoked=True, revoked_reason="USER_DEACTIVATED_BY_ADMIN")
-        )
-        revoked_sessions = result.rowcount
-    db.add(ActivityTimeline(
-        organization_id=user.organization_id,
-        actor_id=current_user.id,
-        action_type="USER_ACTIVATED" if payload.is_active else "USER_DEACTIVATED",
-        metadata_data={
-            "target_user_id": str(user_id),
-            "target_email": user.email,
-            "reason": payload.reason,
-            "by": str(current_user.id),
-        }
-    ))
-    db.add(AuditLog(
-        organization_id=user.organization_id,
-        actor_user_id=current_user.id,
-        action_type="USER_ACTIVATED" if payload.is_active else "USER_DEACTIVATED",
-        resource_type="user",
-        resource_id=user_id,
-        old_state={"is_active": old_active},
-        new_state={"is_active": payload.is_active, "sessions_revoked": revoked_sessions},
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-    ))
-    await db.commit()
+    revoked_sessions = await IdentityAdminCommandService(db).update_status(
+        user_id=user_id,
+        actor=current_user,
+        is_active=payload.is_active,
+        reason=payload.reason,
+    )
     return {"message": f"User account {'activated' if payload.is_active else 'deactivated'} successfully"}
 
 
@@ -4628,7 +4020,7 @@ async def bulk_update_plan_features(
         db, plan, actor=current_user, idempotency_key=idempotency_key,
         request_hash=request_hash, reason=reason, change_type="ENTITLEMENTS_UPDATED",
     )
-    await db.commit()
+    await commit_transaction(db)
     
     # Calculate affected organizations count
     org_count = await db.scalar(
@@ -4944,7 +4336,7 @@ async def create_platform_addon(
         db, addon, actor=current_user, idempotency_key=idempotency_key,
         request_hash=request_hash, reason=reason, change_type="CREATED",
     )
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Add-on created successfully", "addon_id": addon.id, "version": addon.version, "replayed": False}
 
 @router.patch("/addons/{addon_id}")
@@ -5027,7 +4419,7 @@ async def patch_platform_addon(
         db, addon, actor=current_user, idempotency_key=idempotency_key,
         request_hash=request_hash, reason=reason, change_type="UPDATED",
     )
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Add-on updated successfully", "addon": addon.name, "version": addon.version, "replayed": False}
 
 @router.delete("/addons/{addon_id}")
@@ -5062,7 +4454,7 @@ async def delete_platform_addon(
         db, addon, actor=current_user, idempotency_key=idempotency_key,
         request_hash=request_hash, reason=reason, change_type="RETIRED",
     )
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Add-on retired", "version": addon.version, "replayed": False}
 
 
@@ -5113,7 +4505,7 @@ async def bulk_extend_trial(
                 is_sensitive=True,
                 occurred_at=datetime.now(timezone.utc),
             ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": f"Successfully extended trial for {len(payload.org_ids)} tenants"}
 
 
@@ -5173,7 +4565,7 @@ async def bulk_change_plan(
                 is_sensitive=True,
                 occurred_at=datetime.now(timezone.utc),
             ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": f"Successfully migrated plan to {plan.name} for {len(payload.org_ids)} tenants"}
 
 
@@ -5209,7 +4601,7 @@ async def cancel_subscription(
         is_sensitive=True,
         occurred_at=datetime.now(timezone.utc),
     ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Subscription cancelled successfully"}
 
 
@@ -5245,7 +4637,7 @@ async def reactivate_subscription(
         is_sensitive=True,
         occurred_at=datetime.now(timezone.utc),
     ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Subscription reactivated successfully"}
 
 
@@ -5319,7 +4711,7 @@ async def mark_invoice_paid(
         is_sensitive=True,
         occurred_at=datetime.now(timezone.utc),
     ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Invoice status updated to PAID"}
 
 
@@ -5364,7 +4756,7 @@ async def send_invoice_reminder(
         is_sensitive=True,
         occurred_at=datetime.now(timezone.utc),
     ))
-    await db.commit()
+    await commit_transaction(db)
     raise HTTPException(
         status_code=501,
         detail="Invoice reminders are not available until a durable communications job is implemented.",
@@ -5417,7 +4809,7 @@ async def void_invoice(
         is_sensitive=True,
         occurred_at=datetime.now(timezone.utc),
     ))
-    await db.commit()
+    await commit_transaction(db)
     return {"message": "Invoice voided successfully"}
 
 

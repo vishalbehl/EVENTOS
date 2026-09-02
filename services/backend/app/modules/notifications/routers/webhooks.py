@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import List
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,8 @@ from app.modules.events.models.event import Event
 from app.core.dependencies.feature_gate import require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.audit.models.audit_log import AuditLog
+from app.modules.notifications.application.commands import WebhookCommandService
+from app.modules.notifications.application.queries import WebhookQueryService
 
 router = APIRouter(prefix="/events/{event_id}/webhooks", tags=["webhooks"], dependencies=[require_event_operation("developer.webhooks.manage")])
 
@@ -70,15 +72,11 @@ def _audit(actor: User, event: CurrentEvent, webhook_id: uuid.UUID, action: str,
 @router.get("", response_model=List[WebhookResponse])
 async def list_webhooks(
     event: CurrentEvent,
+    limit: int = Query(100, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> List[WebhookResponse]:
     """List all registered webhook endpoints for this event."""
-    result = await db.execute(
-        select(Webhook)
-        .where(Webhook.event_id == event.id, Webhook.status != "paused")
-        .order_by(Webhook.created_at.desc())
-    )
-    return [WebhookResponse.model_validate(w) for w in result.scalars().all()]
+    return await WebhookQueryService(db).list_for_event(event.id, limit=limit)
 
 
 @router.post("", response_model=WebhookCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -93,60 +91,9 @@ async def create_webhook(
     Register a new webhook. The plain-text secret is returned exactly once
     and then never stored again. Save it securely.
     """
-    fingerprint = _request_hash("CREATE", payload.model_dump(mode="json"))
-    replay = await _mutation_replay(db, event, idempotency_key, fingerprint)
-    if replay:
-        return WebhookCreateResponse.model_validate(replay.response_json)
-
-    # Serialize event-scoped mutations and check for duplicate active URL.
-    await db.scalar(select(Event.id).where(Event.id == event.id).with_for_update())
-    dup = await db.execute(
-        select(Webhook).where(
-            Webhook.event_id == event.id,
-            Webhook.url == payload.url,
-            Webhook.status != "paused",
-        )
+    return await WebhookCommandService.create(
+        db, event=event, actor=actor, payload=payload, idempotency_key=idempotency_key
     )
-    if dup.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A webhook with this URL already exists for this event.",
-        )
-
-    plain_secret = payload.secret
-    secret_hash = hashlib.sha256(plain_secret.encode()).hexdigest() if plain_secret else None
-
-    wh = Webhook(
-        event_id=event.id,
-        url=payload.url,
-        description=payload.description,
-        subscribed_events=payload.subscribed_events,
-        secret_hash=secret_hash,
-        status="active",
-    )
-    db.add(wh)
-    await db.flush()
-    response = WebhookCreateResponse.model_validate(wh)
-    response.secret = plain_secret  # One-time reveal
-    replay_response = response.model_copy(update={"secret": None})
-    db.add(WebhookMutation(
-        organization_id=event.organization_id,
-        event_id=event.id,
-        webhook_id=wh.id,
-        operation_type="CREATE",
-        idempotency_key=idempotency_key,
-        request_hash=fingerprint,
-        response_json=replay_response.model_dump(mode="json"),
-        requested_by=actor.id,
-    ))
-    db.add(_audit(actor, event, wh.id, "WEBHOOK_CREATED", {
-        "url": wh.url,
-        "subscribed_events": wh.subscribed_events,
-        "secret_configured": bool(wh.secret_hash),
-        "version": wh.version,
-    }))
-    await db.commit()
-    return response
 
 
 @router.get("/{webhook_id}", response_model=WebhookResponse)
@@ -155,8 +102,10 @@ async def get_webhook(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> WebhookResponse:
-    wh = await _get_webhook_or_404(db, webhook_id, event.id)
-    return WebhookResponse.model_validate(wh)
+    webhook = await WebhookQueryService(db).get_for_event(event.id, webhook_id)
+    if webhook is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found.")
+    return webhook
 
 
 @router.patch("/{webhook_id}", response_model=WebhookResponse)
@@ -170,39 +119,15 @@ async def update_webhook(
     db: AsyncSession = Depends(get_db),
 ) -> WebhookResponse:
     """Update URL, subscribed events, or pause/resume a webhook."""
-    fingerprint = _request_hash("UPDATE", {"webhook_id": str(webhook_id), "version": if_match, **payload.model_dump(mode="json", exclude_unset=True)})
-    replay = await _mutation_replay(db, event, idempotency_key, fingerprint)
-    if replay:
-        return WebhookResponse.model_validate(replay.response_json)
-    wh = await db.scalar(select(Webhook).where(Webhook.id == webhook_id, Webhook.event_id == event.id).with_for_update())
-    if wh is None:
-        raise HTTPException(status_code=404, detail="Webhook not found.")
-    if wh.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": wh.version})
-    old_state = {"url": wh.url, "status": wh.status, "subscribed_events": wh.subscribed_events, "version": wh.version}
-    updates = payload.model_dump(exclude_unset=True)
-    for field, value in updates.items():
-        setattr(wh, field, value)
-    # If re-activating after failure, reset counter
-    if payload.status == "active":
-        wh.consecutive_failures = 0
-        wh.last_failure_reason = None
-    wh.updated_at = datetime.now(timezone.utc)
-    wh.version += 1
-    await db.flush()
-    response = WebhookResponse.model_validate(wh)
-    db.add(WebhookMutation(
-        organization_id=event.organization_id, event_id=event.id, webhook_id=wh.id,
-        operation_type="UPDATE", idempotency_key=idempotency_key, request_hash=fingerprint,
-        response_json=response.model_dump(mode="json"), requested_by=actor.id,
-    ))
-    audit = _audit(actor, event, wh.id, "WEBHOOK_UPDATED", {
-        "changed_fields": sorted(updates), "status": wh.status, "version": wh.version,
-    })
-    audit.old_state = old_state
-    db.add(audit)
-    await db.commit()
-    return response
+    return await WebhookCommandService.update(
+        db,
+        event=event,
+        actor=actor,
+        webhook_id=webhook_id,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        expected_version=if_match,
+    )
 
 
 @router.delete("/{webhook_id}", response_model=MessageResponse)
@@ -214,27 +139,14 @@ async def delete_webhook(
     if_match: int = Header(..., alias="If-Match", ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    fingerprint = _request_hash("ARCHIVE", {"webhook_id": str(webhook_id), "version": if_match})
-    replay = await _mutation_replay(db, event, idempotency_key, fingerprint)
-    if replay:
-        return MessageResponse.model_validate(replay.response_json)
-    wh = await db.scalar(select(Webhook).where(Webhook.id == webhook_id, Webhook.event_id == event.id).with_for_update())
-    if wh is None:
-        raise HTTPException(status_code=404, detail="Webhook not found.")
-    if wh.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": wh.version})
-    wh.status = "paused"
-    wh.updated_at = datetime.now(timezone.utc)
-    wh.version += 1
-    response = MessageResponse(message="Webhook paused and remains recoverable.")
-    db.add(WebhookMutation(
-        organization_id=event.organization_id, event_id=event.id, webhook_id=wh.id,
-        operation_type="ARCHIVE", idempotency_key=idempotency_key, request_hash=fingerprint,
-        response_json=response.model_dump(mode="json"), requested_by=actor.id,
-    ))
-    db.add(_audit(actor, event, wh.id, "WEBHOOK_ARCHIVED", {"status": wh.status, "version": wh.version}))
-    await db.commit()
-    return response
+    return await WebhookCommandService.archive(
+        db,
+        event=event,
+        actor=actor,
+        webhook_id=webhook_id,
+        idempotency_key=idempotency_key,
+        expected_version=if_match,
+    )
 
 
 # ── Test delivery ─────────────────────────────────────────────

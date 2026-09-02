@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import {
   ArrowRight, ShieldCheck, AlertCircle,
   Loader2, Sparkles, Calendar, MapPin,
-  FileText, Users, Layers, ArrowLeft, Presentation, Mic
+  FileText, Users, Layers, ArrowLeft, Presentation, Mic, Download
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -147,10 +147,22 @@ export default function LoginPage() {
 
   // Fetch Event Info
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem(`portal_theme_cache_${eventId}`);
+      if (cached) {
+        setEventData(JSON.parse(cached));
+      }
+    } catch (e) {}
+
     fetch(`${API_BASE}/api/v1/portal/registration/${eventId}/form`)
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => {
-        if (d) setEventData(d);
+        if (d) {
+          setEventData(d);
+          try {
+            localStorage.setItem(`portal_theme_cache_${eventId}`, JSON.stringify(d));
+          } catch (e) {}
+        }
       })
       .catch(() => { });
   }, [eventId]);
@@ -256,6 +268,11 @@ export default function LoginPage() {
       localStorage.setItem(`portal_token_${eventId}`, jwtToken);
       localStorage.setItem(`portal_jwt_${eventId}`, jwtToken);
       localStorage.setItem(`portal_participant_${eventId}`, JSON.stringify(participantObj));
+      if (participantObj.regno) {
+        localStorage.setItem(`portal_registered_${eventId}`, "true");
+      } else {
+        localStorage.removeItem(`portal_registered_${eventId}`);
+      }
 
       toast.success("Welcome back! Loading your pass...");
       router.push(`/${eventId}/dashboard`);
@@ -274,11 +291,20 @@ export default function LoginPage() {
   const venue = eventData?.venue_name || eventData?.location || "";
   const dateFormatted = formatDateRange(eventData?.start_date, eventData?.end_date);
 
-  const stats: any[] = Array.isArray(eventData?.stats) ? eventData.stats : [];
+  const fallbackStats = [
+    { label: "1 Day Conference", icon: "calendar" },
+    { label: "0 Rooms / Tracks", icon: "tracks" },
+    { label: "0 Sessions", icon: "sessions" },
+    { label: "0 Speakers", icon: "speakers" },
+  ];
+
+  const stats: any[] = Array.isArray(eventData?.stats) && eventData.stats.length > 0
+    ? eventData.stats
+    : fallbackStats;
   const dataLoading = !eventData;
 
   return (
-    <div className="w-full h-full flex flex-col justify-between px-4 sm:px-8 py-3 sm:py-5 select-none relative z-10">
+    <div suppressHydrationWarning className="w-full h-full flex flex-col justify-between px-4 sm:px-8 py-3 sm:py-5 select-none relative z-10">
       {/* ── Main 2-Column Hero & Login Card Grid ────────────────────────────── */}
       <div className="max-w-7xl mx-auto w-full flex-1 flex flex-col justify-center">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
@@ -363,7 +389,7 @@ export default function LoginPage() {
               </motion.div>
             )}
 
-            {/* Action Buttons: View Program & For Speakers */}
+            {/* Action Buttons: View Program & Download Agenda */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -387,11 +413,21 @@ export default function LoginPage() {
 
               <button
                 type="button"
-                onClick={() => router.push(`/${eventId}/speaker/sessions`)}
+                onClick={() => {
+                  if (eventData?.program_url) {
+                    const link = document.createElement("a");
+                    link.href = eventData.program_url;
+                    link.target = "_blank";
+                    link.download = `${eventName || "Conference"}-Agenda.pdf`;
+                    link.click();
+                  } else {
+                    setProgramModalOpen(true);
+                  }
+                }}
                 className="px-5 py-2.5 rounded-xl bg-[var(--sec)] hover:bg-[var(--sec)]/90 text-white text-xs font-black uppercase tracking-wider shadow-md shadow-[var(--sec)]/25 transition-all cursor-pointer flex items-center gap-2"
               >
-                <Users className="h-4 w-4 text-white" />
-                <span>For Speakers</span>
+                <Download className="h-4 w-4 text-white" />
+                <span>Download Agenda</span>
               </button>
             </motion.div>
           </div>
@@ -428,7 +464,7 @@ export default function LoginPage() {
                 </h3>
                 <p className="text-xs text-[var(--muted)] font-medium">
                   {step === "identifier"
-                    ? "Enter your email or phone to access pass"
+                    ? "Enter your Email to Register & Access Pass."
                     : `6-digit code sent to ${identifier}`}
                 </p>
               </div>
@@ -453,7 +489,7 @@ export default function LoginPage() {
                 <form onSubmit={handleSendOtp} className="space-y-3.5 relative z-10">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-widest text-[var(--muted)] block">
-                      Email or Mobile Number
+                      Email Address
                     </label>
                     <input
                       type="text"
@@ -547,16 +583,14 @@ export default function LoginPage() {
               return (
                 <div
                   key={i}
-                  className={`flex items-center gap-3 p-2.5 sm:p-3 rounded-2xl bg-[var(--card)]/90 border border-[var(--border-default)] ${
-                    isEven ? "hover:border-[var(--pri)]/50" : "hover:border-[var(--sec)]/50"
-                  } transition-all shadow-sm group text-left backdrop-blur-md`}
+                  className={`flex items-center gap-3 p-2.5 sm:p-3 rounded-2xl bg-[var(--card)]/90 border border-[var(--border-default)] ${isEven ? "hover:border-[var(--pri)]/50" : "hover:border-[var(--sec)]/50"
+                    } transition-all shadow-sm group text-left backdrop-blur-md`}
                 >
                   <div
-                    className={`h-9 w-9 sm:h-10 sm:w-10 rounded-xl ${
-                      isEven
+                    className={`h-9 w-9 sm:h-10 sm:w-10 rounded-xl ${isEven
                         ? "bg-[var(--pri)]/10 border border-[var(--pri)]/20 text-[var(--pri)]"
                         : "bg-[var(--sec)]/10 border border-[var(--sec)]/20 text-[var(--sec)]"
-                    } flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform`}
+                      } flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform`}
                   >
                     <IconComp className="h-4 w-4 sm:h-5 sm:w-5" />
                   </div>

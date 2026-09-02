@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import os
 from datetime import datetime, timezone
@@ -77,13 +78,19 @@ class FileService:
         filename: str,
         content_type: str,
         file_data: bytes,
-        tags: List[str] = []
+        tags: Optional[List[str]] = None
     ) -> Asset:
         asset_id = uuid.uuid4()
         storage_path = f"{org_id}/assets/{asset_id}/1_{filename}"
         
         # Save to S3/local storage
-        upload_bytes(settings.S3_BUCKET_ASSETS, storage_path, file_data, content_type)
+        await asyncio.to_thread(
+            upload_bytes,
+            settings.S3_BUCKET_ASSETS,
+            storage_path,
+            file_data,
+            content_type,
+        )
         
         asset = Asset(
             id=asset_id,
@@ -106,7 +113,7 @@ class FileService:
         )
         db.add(version)
         
-        for t in tags:
+        for t in tags or []:
             tag_rec = AssetTag(
                 id=uuid.uuid4(),
                 asset_id=asset_id,
@@ -177,7 +184,11 @@ class FileService:
             
         for ver in asset.versions:
             try:
-                delete_object(settings.S3_BUCKET_ASSETS, ver.file_path)
+                await asyncio.to_thread(
+                    delete_object,
+                    settings.S3_BUCKET_ASSETS,
+                    ver.file_path,
+                )
             except Exception as exc:
                 logger.warning(f"Failed to delete object {ver.file_path}: {exc}")
                 

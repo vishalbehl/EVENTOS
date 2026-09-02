@@ -102,7 +102,8 @@ export function PortalBackground({
   return (
     <div
       aria-hidden="true"
-      className={`pointer-events-none fixed inset-0 z-0 overflow-hidden select-none transition-opacity duration-700 opacity-90 dark:opacity-95 ${className}`}
+      data-portal-bg-pattern="true"
+      className={`portal-bg-pattern pointer-events-none fixed inset-0 z-0 overflow-hidden select-none transition-opacity duration-700 opacity-90 dark:opacity-95 ${className}`}
     >
       {/* ── 1. ORIGINAL: LUMINOUS GLOW WAVE / WAVES ─────────────────────────── */}
       {(p === "glow-wave" || p === "waves") && (

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.platform.departments.models import Department, DepartmentMember
 from app.modules.platform.departments.repository import DepartmentRepository
 from app.modules.platform.departments.schemas import DepartmentCreate, DepartmentUpdate
+from app.core.concurrency import raise_version_conflict
 
 
 class DepartmentService:
@@ -74,9 +75,12 @@ class DepartmentService:
         org_id: uuid.UUID,
         id: uuid.UUID,
         payload: DepartmentUpdate,
-        updater_id: uuid.UUID
+        updater_id: uuid.UUID,
+        expected_version: Optional[int] = None,
     ) -> Department:
         dept = await self.get_department(org_id, id)
+        if expected_version is not None and dept.version != expected_version:
+            raise_version_conflict(dept.version)
 
         if payload.code:
             payload_code = payload.code.upper()
@@ -97,6 +101,7 @@ class DepartmentService:
 
         dept.updated_by = updater_id
         dept.updated_at = datetime.now(timezone.utc)
+        dept.version = int(dept.version or 1) + 1
 
         await self.repository.save(dept)
         await self.db.commit()

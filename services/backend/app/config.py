@@ -39,6 +39,26 @@ class Settings(BaseSettings):
     # Defaults to the sync URL with the driver swapped to asyncpg.
     DATABASE_URL_ASYNC: str = ""
     REQUIRE_RLS_SAFE_RUNTIME_ROLE: bool = False
+    TENANT_FILTER_DIAGNOSTICS: bool = False
+    DB_SLOW_QUERY_MS: int = 250
+    CACHE_DEFAULT_TTL_SECONDS: int = 30
+    CACHE_MAX_VALUE_BYTES: int = 512 * 1024
+    CACHE_PUBLIC_FORM_TTL_SECONDS: int = 30
+    CACHE_PUBLISHED_WEBSITE_TTL_SECONDS: int = 60
+    CACHE_PRICING_TTL_SECONDS: int = 30
+    CACHE_ROLES_TTL_SECONDS: int = 30
+    CACHE_CAPABILITIES_TTL_SECONDS: int = 60
+    CACHE_SEARCH_SUGGESTIONS_TTL_SECONDS: int = 300
+    CACHE_DASHBOARD_TTL_SECONDS: int = 15
+    ANTIVIRUS_REQUIRED: bool = False
+    ANTIVIRUS_COMMAND: str = ""
+    ANTIVIRUS_TIMEOUT_SECONDS: int = 120
+    REQUEST_SLOW_MS: int = 800
+    REQUEST_DB_SLOW_MS: int = 400
+    REQUEST_DB_QUERY_WARN_COUNT: int = 40
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT_SECONDS: int = 30
 
     # ── JWT ───────────────────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-in-production"
@@ -77,7 +97,8 @@ class Settings(BaseSettings):
     # ── Cloud Storage (Cloudflare R2 / AWS S3-compatible) ─
     STORAGE_MODE: str = "local"                      # "local" or "s3"
     STORAGE_LOCAL_PATH: str = "data/storage"
-    S3_ENDPOINT_URL: str = ""                       # R2 endpoint
+    S3_ENDPOINT_URL: str = ""                       # Private/internal S3-compatible endpoint
+    S3_PUBLIC_ENDPOINT_URL: str = ""                # Browser/device endpoint for presigned URLs
     S3_ACCESS_KEY_ID: str = ""
     S3_SECRET_ACCESS_KEY: str = ""
     S3_BUCKET_PRESENTATIONS: str = "presentations"
@@ -88,6 +109,12 @@ class Settings(BaseSettings):
     S3_BUCKET_EXPORTS: str = "exports"
     S3_REGION: str = "auto"
     S3_PRESIGNED_EXPIRY_SECONDS: int = 3600        # 1 hour
+    # Bounded S3-compatible client behavior. These apply equally to MinIO,
+    # AWS S3, and Cloudflare R2 and prevent a worker from hanging indefinitely.
+    STORAGE_CONNECT_TIMEOUT_SECONDS: int = 5
+    STORAGE_READ_TIMEOUT_SECONDS: int = 60
+    STORAGE_MAX_RETRIES: int = 2
+    STORAGE_MAX_CONNECTIONS: int = 32
 
     # ── Email (Resend) ────────────────────────────────────
     RESEND_API_KEY: str = ""
@@ -107,8 +134,20 @@ class Settings(BaseSettings):
 
     # ── Redis / Celery ────────────────────────────────────
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    REDIS_CACHE_URL: str = ""
+    REDIS_LOCK_URL: str = ""
+    REDIS_OPERATION_TIMEOUT_SECONDS: float = 0.25
+    REDIS_LOCK_TTL_SECONDS: int = 30
     CELERY_BROKER_URL: str = "redis://127.0.0.1:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://127.0.0.1:6379/1"
+
+    @property
+    def redis_cache_url(self) -> str:
+        return self.REDIS_CACHE_URL or self.REDIS_URL
+
+    @property
+    def redis_lock_url(self) -> str:
+        return self.REDIS_LOCK_URL or self.redis_cache_url
 
     # ── QR Codes ──────────────────────────────────────────
     QR_CODE_BASE_URL: str = "https://conf-platform.com"  # base for speaker QR links
@@ -119,12 +158,17 @@ class Settings(BaseSettings):
     # ── File Validation ───────────────────────────────────
     VALIDATION_ENGINE_VERSION: str = "1.0.0"
     MAX_FILE_SIZE_MB: int = 500                     # global hard limit
+    # Multipart compatibility uploads stay bounded in API memory. Larger
+    # files use the durable direct-to-object-storage upload session.
+    INLINE_UPLOAD_MAX_MB: int = 10
     ALLOWED_MIME_TYPES: List[str] = [
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # pptx
         "application/vnd.ms-powerpoint",            # ppt
         "application/pdf",
         "video/mp4",
         "application/vnd.apple.keynote",            # key
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # xlsx
+        "application/vnd.ms-excel",                 # xls
     ]
 
     # ── Upload tokens ─────────────────────────────────────
@@ -208,6 +252,29 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def validate_operational_limits(self) -> "Settings":
+        positive = {
+            "DB_POOL_SIZE": self.DB_POOL_SIZE,
+            "DB_POOL_TIMEOUT_SECONDS": self.DB_POOL_TIMEOUT_SECONDS,
+            "REDIS_OPERATION_TIMEOUT_SECONDS": self.REDIS_OPERATION_TIMEOUT_SECONDS,
+            "REDIS_LOCK_TTL_SECONDS": self.REDIS_LOCK_TTL_SECONDS,
+            "REQUEST_SLOW_MS": self.REQUEST_SLOW_MS,
+            "REQUEST_DB_SLOW_MS": self.REQUEST_DB_SLOW_MS,
+            "DB_SLOW_QUERY_MS": self.DB_SLOW_QUERY_MS,
+            "ANTIVIRUS_TIMEOUT_SECONDS": self.ANTIVIRUS_TIMEOUT_SECONDS,
+            "STORAGE_CONNECT_TIMEOUT_SECONDS": self.STORAGE_CONNECT_TIMEOUT_SECONDS,
+            "STORAGE_READ_TIMEOUT_SECONDS": self.STORAGE_READ_TIMEOUT_SECONDS,
+        }
+        invalid = [name for name, value in positive.items() if value <= 0]
+        if self.DB_MAX_OVERFLOW < 0 or self.CACHE_MAX_VALUE_BYTES < 1024:
+            invalid.append("DB_MAX_OVERFLOW/CACHE_MAX_VALUE_BYTES")
+        if self.STORAGE_MAX_RETRIES < 0 or self.STORAGE_MAX_CONNECTIONS < 1:
+            invalid.append("STORAGE_MAX_RETRIES/STORAGE_MAX_CONNECTIONS")
+        if invalid:
+            raise ValueError("Operational limits must be positive: " + ", ".join(invalid))
+        return self
+
+    @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if not self.is_production:
             return self
@@ -243,10 +310,24 @@ class Settings(BaseSettings):
             errors.append("STORAGE_MODE must be s3")
         if not self.REDIS_URL.startswith("rediss://"):
             errors.append("REDIS_URL must use TLS")
+        for name, value in (("REDIS_CACHE_URL", self.REDIS_CACHE_URL), ("REDIS_LOCK_URL", self.REDIS_LOCK_URL)):
+            if not value:
+                errors.append(f"{name} must be explicitly configured")
+            elif not value.startswith("rediss://"):
+                errors.append(f"{name} must use TLS")
         if not self.CELERY_BROKER_URL.startswith("rediss://"):
             errors.append("CELERY_BROKER_URL must use TLS")
         if not self.CELERY_RESULT_BACKEND.startswith("rediss://"):
             errors.append("CELERY_RESULT_BACKEND must use TLS")
+        role_urls = {
+            "cache": self.REDIS_CACHE_URL,
+            "coordination": self.REDIS_LOCK_URL,
+            "broker": self.CELERY_BROKER_URL,
+            "results": self.CELERY_RESULT_BACKEND,
+        }
+        for left, right in (("cache", "broker"), ("cache", "results"), ("coordination", "broker"), ("coordination", "results")):
+            if role_urls[left] and role_urls[left] == role_urls[right]:
+                errors.append(f"Redis {left} and {right} roles must use different URLs")
         if self.S3_ENDPOINT_URL == "" and (self.S3_ACCESS_KEY_ID or self.S3_SECRET_ACCESS_KEY):
             errors.append("AWS S3 must use the ECS task role instead of static access keys")
         if errors:

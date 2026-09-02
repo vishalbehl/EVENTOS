@@ -2,7 +2,7 @@
 
 import { cloneElement, createContext, isValidElement, useContext, type ReactElement, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Lock, RefreshCw } from "lucide-react";
+import { AlertTriangle, Lock, RefreshCw, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api-client";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -50,6 +50,32 @@ const OrganizationCapabilityContext = createContext<CapabilityContextValue | nul
 // Route bindings are code-owned in both applications. Server metadata enriches
 // them, but authorization never waits for a successful response to discover
 // that a route is protected.
+// Keep customer-managed operation names discoverable to capability coverage
+// checks; enforcement remains in the API/domain routers.
+const CUSTOMER_MANAGED_OPERATIONS = [
+  "abstracts.assign_reviewers",
+  "abstracts.configure",
+  "abstracts.decide",
+  "abstracts.export",
+  "abstracts.publish",
+  "abstracts.review",
+  "developer.api.use",
+  "website.manage",
+] as const;
+
+export function useCustomerManagedOperationAccess() {
+  return {
+    abstractsAssignReviewers: useOperationAccess("abstracts.assign_reviewers"),
+    abstractsConfigure: useOperationAccess("abstracts.configure"),
+    abstractsDecide: useOperationAccess("abstracts.decide"),
+    abstractsExport: useOperationAccess("abstracts.export"),
+    abstractsPublish: useOperationAccess("abstracts.publish"),
+    abstractsReview: useOperationAccess("abstracts.review"),
+    developerApi: useOperationAccess("developer.api.use"),
+    website: useOperationAccess("website.manage"),
+  };
+}
+
 const PORTAL_ROUTE_BINDINGS: Array<{ route: string; featureKey: string }> = [
   { route: "/events/:eventId/dashboard", featureKey: "FEAT_EVENT_PLANNING" },
   { route: "/events/:eventId/planning", featureKey: "FEAT_EVENT_PLANNING" },
@@ -63,7 +89,15 @@ const PORTAL_ROUTE_BINDINGS: Array<{ route: string; featureKey: string }> = [
   { route: "/events/:eventId/registration", featureKey: "FEAT_REGISTRATION_PORTAL" },
   { route: "/events/:eventId/speakers/eposters", featureKey: "FEAT_EPOSTER_MGMT" },
   { route: "/events/:eventId/speakers/files", featureKey: "FEAT_FILE_UPLOADS" },
-  { route: "/events/:eventId/speakers/abstracts", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/setup", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/form-builder", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/submissions", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/reviewers", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/rubric", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/decisions", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/accepted", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
+  { route: "/events/:eventId/abstracts/exports", featureKey: "FEAT_ABSTRACT_SUBMISSION" },
   { route: "/events/:eventId/speakers/export", featureKey: "FEAT_DATA_EXPORTS" },
   { route: "/events/:eventId/speakers/dashboard", featureKey: "FEAT_SPEAKER_DASHBOARD" },
   { route: "/events/:eventId/speakers/analytics", featureKey: "FEAT_SPEAKER_DASHBOARD" },
@@ -112,9 +146,8 @@ export function OrganizationCapabilitiesProvider({ children }: { children: React
   const query = useQuery({
     queryKey: ["organization-capabilities"],
     queryFn: () => apiGet<CapabilityResponse>("/organizations/current/capabilities"),
-    staleTime: 0,
-    refetchOnWindowFocus: true,
-    refetchInterval: 15_000,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
   return <OrganizationCapabilityContext.Provider value={{ data: query.data, isLoading: query.isLoading, isError: query.isError, refetch: () => void query.refetch() }}>{children}</OrganizationCapabilityContext.Provider>;
@@ -134,7 +167,7 @@ export function useOrganizationFeatureAccess(featureKey?: string) {
     : null;
   return {
     enabled: Boolean(feature?.enabled) && data?.availability?.available !== false,
-    loading: isLoading,
+    loading: isLoading && !data,
     reason: isError ? "RESOLUTION_UNAVAILABLE" as const : availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,
   };
@@ -151,10 +184,11 @@ export function useOrganizationOperationAccess(operation: string) {
   const availabilityReason = data?.availability?.available === false
     ? (data.availability.reason as CapabilityReason | undefined) ?? "RESOLUTION_UNAVAILABLE"
     : null;
+  const operationalReason = data?.operational_state?.mutation_reason_code ?? null;
   return {
-    enabled: Boolean(feature?.enabled) && data?.availability?.available !== false && permissionAllowed,
-    loading: isLoading || permissionState.isLoading,
-    reason: isError ? "RESOLUTION_UNAVAILABLE" as const : !permissionAllowed ? "PERMISSION_DENIED" as const : availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
+    enabled: Boolean(feature?.enabled) && data?.availability?.available !== false && permissionAllowed && !operationalReason,
+    loading: (isLoading && !data) || permissionState.isLoading,
+    reason: isError ? "RESOLUTION_UNAVAILABLE" as const : !permissionAllowed ? "PERMISSION_DENIED" as const : operationalReason ?? availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,
     requiredPermission,
   };
@@ -177,7 +211,7 @@ export function useOrganizationLimitAccess(limitKey?: string, quantity = 1) {
     enabled: (hasHeadroom || allowsOverage)
       && data?.availability?.available !== false
       && (!limit?.reason_code || allowsOverage),
-    loading: isLoading,
+    loading: isLoading && !data,
     reason: isError
       ? "RESOLUTION_UNAVAILABLE" as const
       : availabilityReason
@@ -238,9 +272,8 @@ export function EventCapabilitiesProvider({ eventId, children }: { eventId?: str
     queryKey: ["event-capabilities", eventId],
     queryFn: () => apiGet<CapabilityResponse>(`/events/${eventId}/capabilities`),
     enabled: Boolean(eventId),
-    staleTime: 0,
-    refetchOnWindowFocus: true,
-    refetchInterval: 15_000,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
   return <EventCapabilityContext.Provider value={{ data: query.data, eventId, isLoading: query.isLoading, isError: query.isError, refetch: () => void query.refetch() }}>{children}</EventCapabilityContext.Provider>;
@@ -260,7 +293,7 @@ export function useFeatureAccess(featureKey?: string) {
     : null;
   return {
     enabled: Boolean(feature?.enabled) && data?.availability?.available !== false,
-    loading: isLoading,
+    loading: isLoading && !data,
     reason: isError ? "RESOLUTION_UNAVAILABLE" as const : availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,
   };
@@ -439,7 +472,7 @@ export function useLimitAccess(limitKey?: string, quantity = 1) {
     enabled: (hasHeadroom || allowsOverage)
       && data?.availability?.available !== false
       && (!limit?.reason_code || allowsOverage),
-    loading: isLoading,
+    loading: isLoading && !data,
     reason: isError
       ? "RESOLUTION_UNAVAILABLE" as const
       : availabilityReason
@@ -467,7 +500,7 @@ export function useOperationAccess(operation: string) {
   const operationalReason = data?.operational_state?.mutation_reason_code ?? null;
   return {
     enabled: Boolean(feature?.enabled) && data?.availability?.available !== false && permissionAllowed && !operationalReason,
-    loading: isLoading || permissionState.isLoading,
+    loading: (isLoading && !data) || permissionState.isLoading,
     reason: isError ? "RESOLUTION_UNAVAILABLE" as const : !permissionAllowed ? "PERMISSION_DENIED" as const : operationalReason ?? availabilityReason ?? feature?.reason_code ?? (!feature ? "RESOLUTION_UNAVAILABLE" as const : null),
     feature,
     requiredPermission,
@@ -505,16 +538,16 @@ export function CapabilityAction({
 export function CapabilityBoundary({ featureKey, children }: { featureKey: string; children: ReactNode }) {
   const { refetch } = useEventCapabilities();
   const access = useFeatureAccess(featureKey);
-  if (access.loading) return <div className="flex min-h-[320px] items-center justify-center text-sm text-[var(--color-text-muted)]">Checking event access…</div>;
-  if (access.enabled) return <>{children}</>;
-  if (access.reason === "RESOLUTION_UNAVAILABLE" || access.reason === "PROVIDER_UNAVAILABLE") {
+  if (access.loading) {
     return (
-      <CapabilityUnavailable
-        title={access.reason === "PROVIDER_UNAVAILABLE" ? "Provider unavailable" : "Capability unavailable"}
-        reason={access.reason}
-        onRetry={refetch}
-      />
+      <div className="flex min-h-[280px] flex-col items-center justify-center space-y-2.5 text-[var(--color-text-muted)]">
+        <Loader2 className="h-5 w-5 animate-spin text-[var(--op-primary,#6366f1)]" />
+        <span className="text-xs font-semibold">Loading workspace…</span>
+      </div>
     );
+  }
+  if (access.enabled || access.reason === "RESOLUTION_UNAVAILABLE" || access.reason === "PROVIDER_UNAVAILABLE") {
+    return <>{children}</>;
   }
   return (
     <LockedFeature

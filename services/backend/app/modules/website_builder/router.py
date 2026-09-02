@@ -31,6 +31,7 @@ from app.modules.presentations.services.upload_service import create_presigned_d
 from app.modules.website_builder.models import WebsiteEditorSession, WebsiteFormSubmission, WebsiteMutationRequest, WebsiteSite, WebsiteSiteAssetRef, WebsiteSiteDeployment, WebsiteSiteDomain, WebsiteSiteDraft, WebsiteSiteLinkIndex, WebsiteSiteRevision
 from app.modules.website_builder.published_runtime import PUBLISHED_RUNTIME_CHECKSUM, PUBLISHED_RUNTIME_CSS, PUBLISHED_RUNTIME_SCRIPT
 from app.config import settings
+from app.modules.platform.application.governed_mutation_commands import commit_transaction
 
 
 platform_website_template_router = APIRouter(
@@ -704,7 +705,7 @@ def _validate_form_payload(payload: WebsiteFormSubmissionRequest) -> None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"code": "FORM_TOO_MANY_FIELDS"})
     encoded = json.dumps(payload.payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(encoded) > 64 * 1024:
-        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail={"code": "FORM_PAYLOAD_TOO_LARGE"})
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"code": "FORM_PAYLOAD_TOO_LARGE"})
     for key, value in payload.payload.items():
         if not isinstance(key, str) or not key or len(key) > 100:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"code": "FORM_FIELD_NAME_INVALID"})
@@ -713,7 +714,7 @@ def _validate_form_payload(payload: WebsiteFormSubmissionRequest) -> None:
         else:
             value_size = len(str(value).encode("utf-8"))
         if value_size > 10 * 1024:
-            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail={"code": "FORM_FIELD_TOO_LARGE", "field": key})
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"code": "FORM_FIELD_TOO_LARGE", "field": key})
 
 
 def _validate_document(document: dict[str, Any], *, publish: bool = False) -> list[dict[str, Any]]:
@@ -1096,7 +1097,7 @@ def _public_asset_url(event_id: uuid.UUID, asset_ref_id: uuid.UUID) -> str:
 def _validate_upload_file(file: UploadFile, file_size: int) -> None:
     if file_size > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={"code": "WEBSITE_ASSET_TOO_LARGE", "message": f"File exceeds {settings.MAX_FILE_SIZE_MB}MB."},
         )
     filename = file.filename or "asset"
@@ -1255,6 +1256,60 @@ async def _get_or_create_draft(db: DB, site: WebsiteSite, event: CurrentEvent) -
     return draft
 
 
+async def _get_readonly_site_and_draft(db: DB, event: CurrentEvent) -> tuple[WebsiteSite, WebsiteSiteDraft]:
+    """Read website state without provisioning records during a GET."""
+    site = await db.scalar(
+        select(WebsiteSite).where(
+            WebsiteSite.event_id == event.id,
+            WebsiteSite.organization_id == event.organization_id,
+        )
+    )
+    now = datetime.now(timezone.utc)
+    if site is None:
+        event_code = (event.short_code or event.name or str(event.id)).lower()
+        site = WebsiteSite(
+            id=uuid.uuid4(),
+            organization_id=event.organization_id,
+            event_id=event.id,
+            name=f"{event.name} Website",
+            slug=f"{event_code.replace(' ', '-')}-website",
+            status="DRAFT",
+            settings={},
+            editor_schema_version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        document = _default_document(event)
+        draft = WebsiteSiteDraft(
+            id=uuid.uuid4(),
+            site_id=site.id,
+            document=document,
+            schema_version=1,
+            checksum=_checksum(document),
+            revision_counter=1,
+            editor_schema_version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        return site, draft
+
+    draft = await db.scalar(select(WebsiteSiteDraft).where(WebsiteSiteDraft.site_id == site.id))
+    if draft is None:
+        document = _default_document(event)
+        draft = WebsiteSiteDraft(
+            id=uuid.uuid4(),
+            site_id=site.id,
+            document=document,
+            schema_version=1,
+            checksum=_checksum(document),
+            revision_counter=1,
+            editor_schema_version=1,
+            created_at=now,
+            updated_at=now,
+        )
+    return site, draft
+
+
 def _response(site: WebsiteSite, draft: WebsiteSiteDraft) -> WebsiteDraftResponse:
     return WebsiteDraftResponse(
         site_id=site.id,
@@ -1319,6 +1374,51 @@ async def _get_or_create_template_draft(db: DB, template: WebsiteTemplate) -> We
     db.add(draft)
     await db.flush()
     return draft
+
+
+async def _get_readonly_master_template_and_draft(
+    db: DB,
+    actor: SuperAdminOnly,
+) -> tuple[WebsiteTemplate, WebsiteTemplateDraft]:
+    """Read the master template without creating defaults during a GET."""
+    template = await db.scalar(
+        select(WebsiteTemplate).where(
+            WebsiteTemplate.template_type == "WEBSITE",
+            WebsiteTemplate.slug == "master-event-website",
+            WebsiteTemplate.is_system.is_(True),
+        )
+    )
+    now = datetime.now(timezone.utc)
+    if template is None:
+        template = WebsiteTemplate(
+            id=uuid.uuid4(),
+            name="Master Event Website Template",
+            slug="master-event-website",
+            description="Global master website template for event websites.",
+            template_type="WEBSITE",
+            status="DRAFT",
+            visibility="PUBLIC",
+            is_system=True,
+            is_marketplace=False,
+            created_by=actor.id,
+            updated_by=actor.id,
+            created_at=now,
+            updated_at=now,
+        )
+    draft = await db.scalar(select(WebsiteTemplateDraft).where(WebsiteTemplateDraft.template_id == template.id))
+    if draft is None:
+        document = _default_platform_template_document()
+        draft = WebsiteTemplateDraft(
+            id=uuid.uuid4(),
+            template_id=template.id,
+            document=document,
+            schema_version=1,
+            checksum=_checksum(document),
+            optimistic_version=1,
+            created_at=now,
+            updated_at=now,
+        )
+    return template, draft
 
 
 def _template_response(template: WebsiteTemplate, draft: WebsiteTemplateDraft) -> WebsiteTemplateDraftResponse:
@@ -1437,10 +1537,7 @@ async def _event_snapshot(db: DB, event: CurrentEvent) -> WebsiteEventSnapshotRe
 
 @platform_website_template_router.get("/master/draft", response_model=WebsiteTemplateDraftResponse)
 async def get_master_website_template_draft(actor: SuperAdminOnly, db: DB):
-    template = await _get_or_create_master_template(db, actor)
-    draft = await _get_or_create_template_draft(db, template)
-    await db.commit()
-    await db.refresh(draft)
+    template, draft = await _get_readonly_master_template_and_draft(db, actor)
     return _template_response(template, draft)
 
 
@@ -1503,7 +1600,7 @@ async def save_master_website_template_draft(
         action="WEBSITE_TEMPLATE_DRAFT_SAVED",
         state={"draftId": str(draft.id), "version": draft.optimistic_version, "checksum": draft.checksum},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -1561,7 +1658,7 @@ async def create_or_update_master_website_template_preview(
             expires_at=expires_at,
         )
         db.add(preview)
-    await db.commit()
+    await commit_transaction(db)
     preview_path = f"{settings.api_v1_prefix}/public/website-template-previews/{preview_id}"
     return WebsitePreviewResponse(
         preview_id=preview_id,
@@ -1639,16 +1736,13 @@ async def publish_master_website_template(
         action="WEBSITE_TEMPLATE_PUBLISHED",
         state={"versionId": str(version.id), "versionNumber": version.version_number, "checksum": version.checksum},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
 @event_website_router.get("", response_model=WebsiteDraftResponse)
 async def get_event_website(event: CurrentEvent, db: DB):
-    site = await _get_or_create_site(db, event)
-    draft = await _get_or_create_draft(db, site, event)
-    await db.commit()
-    await db.refresh(draft)
+    site, draft = await _get_readonly_site_and_draft(db, event)
     return _response(site, draft)
 
 
@@ -1674,7 +1768,7 @@ async def acquire_event_website_editor_session(event: CurrentEvent, db: DB, acto
     if own_session:
         own_session.heartbeat_at = now
         own_session.expires_at = expires_at
-        await db.commit()
+        await commit_transaction(db)
         await db.refresh(own_session)
         return WebsiteEditorSessionResponse(
             session_id=own_session.id,
@@ -1701,7 +1795,7 @@ async def acquire_event_website_editor_session(event: CurrentEvent, db: DB, acto
         session_metadata={"leaseSeconds": 60, "heartbeatSeconds": 20},
     )
     db.add(session)
-    await db.commit()
+    await commit_transaction(db)
     await db.refresh(session)
     return WebsiteEditorSessionResponse(
         session_id=session.id,
@@ -1721,7 +1815,7 @@ async def release_event_website_editor_session(event: CurrentEvent, db: DB, acto
             WebsiteEditorSession.user_id == actor.id,
         )
     )
-    await db.commit()
+    await commit_transaction(db)
     return None
 
 
@@ -1791,7 +1885,7 @@ async def save_event_website_draft(
         action="WEBSITE_DRAFT_SAVED",
         state={"draftId": str(draft.id), "revision": draft.revision_counter, "checksum": draft.checksum},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -1854,7 +1948,7 @@ async def create_or_update_event_website_preview(
             created_by=actor.id,
         )
         db.add(preview)
-    await db.commit()
+    await commit_transaction(db)
     preview_path = f"{settings.api_v1_prefix}/public/events/{event.id}/website/preview/{preview_id}"
     return WebsitePreviewResponse(
         preview_id=preview_id,
@@ -1920,7 +2014,7 @@ async def checkpoint_event_website(
         action="WEBSITE_CHECKPOINT_CREATED",
         state={"revisionId": str(revision.id), "revisionNumber": revision_number, "checksum": revision.checksum},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2041,7 +2135,7 @@ async def publish_event_website(
         action="WEBSITE_PUBLISHED",
         state={"deploymentId": str(deployment.id), "revisionId": str(revision.id), "slug": site.slug, "customDomain": requested_domain},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2154,7 +2248,7 @@ async def rollback_event_website(
         action="WEBSITE_ROLLED_BACK",
         state={"deploymentId": str(deployment.id), "sourceRevisionId": str(source_revision.id), "revisionId": str(rollback_revision.id)},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2251,7 +2345,7 @@ async def save_event_website_asset(
         action="WEBSITE_ASSET_SAVED",
         state={"assetRefId": str(row.id), "kind": row.kind, "source": row.source},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2329,7 +2423,7 @@ async def upload_event_website_asset(
         action="WEBSITE_ASSET_UPLOADED",
         state={"assetRefId": str(row.id), "assetId": str(row.asset_id), "kind": row.kind},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2388,7 +2482,7 @@ async def delete_event_website_asset(
         action="WEBSITE_ASSET_DELETED",
         state=audit_state,
     ))
-    await db.commit()
+    await commit_transaction(db)
     return None
 
 
@@ -2513,7 +2607,7 @@ async def create_event_website_domain(
         action="WEBSITE_DOMAIN_CREATED",
         state={"domainId": str(row.id), "domain": row.domain, "dnsState": row.dns_state, "tlsState": row.tls_state},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2577,7 +2671,7 @@ async def refresh_event_website_domain(
         action="WEBSITE_DOMAIN_REFRESHED",
         state={"domainId": str(row.id), "domain": row.domain, "dnsState": row.dns_state, "tlsState": row.tls_state},
     ))
-    await db.commit()
+    await commit_transaction(db)
     return response
 
 
@@ -2637,7 +2731,7 @@ async def delete_event_website_domain(
         action="WEBSITE_DOMAIN_DELETED",
         state=audit_state,
     ))
-    await db.commit()
+    await commit_transaction(db)
     return None
 
 
@@ -2688,7 +2782,7 @@ async def submit_public_website_form(
         user_agent=(request.headers.get("user-agent") or "")[:1000] or None,
     )
     db.add(submission)
-    await db.commit()
+    await commit_transaction(db)
     return WebsiteFormSubmissionResponse(submission_id=submission.id, status="accepted")
 
 
@@ -2713,7 +2807,7 @@ async def serve_public_website_asset(event_id: uuid.UUID, asset_ref_id: uuid.UUI
         )
         if not asset or asset.processing_status != "READY":
             raise HTTPException(status_code=status.HTTP_423_LOCKED, detail={"code": "WEBSITE_ASSET_NOT_READY"})
-    url = create_presigned_download(
+    url = await run_in_threadpool(create_presigned_download,
         bucket=settings.S3_BUCKET_ASSETS,
         storage_path=asset_ref.storage_path,
         filename=str(asset_ref.asset_metadata.get("title") or "website-asset"),

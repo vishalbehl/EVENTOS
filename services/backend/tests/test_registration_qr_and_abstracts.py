@@ -3,12 +3,34 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import select
 
+from app.modules.abstracts.models import AbstractCall, AbstractForm
 from app.modules.registration.models.participant import Participant
 from tests.conftest import activate_event_for_test, auth_headers
 
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_abstract_setup_and_form_gets_are_read_only_when_unconfigured(
+    client,
+    db,
+    event,
+    organizer,
+):
+    await activate_event_for_test(db, event)
+    headers = auth_headers(organizer)
+
+    setup = await client.get(f"/api/v1/events/{event.id}/abstracts/setup", headers=headers)
+    form = await client.get(f"/api/v1/events/{event.id}/abstracts/form", headers=headers)
+
+    assert setup.status_code == 200
+    assert setup.json()["status"] == "DRAFT"
+    assert form.status_code == 200
+    assert form.json()["schema"]["fields"]
+    assert await db.scalar(select(AbstractCall).where(AbstractCall.event_id == event.id)) is None
+    assert await db.scalar(select(AbstractForm).where(AbstractForm.event_id == event.id)) is None
 
 
 async def test_registration_confirmation_qr_issue_rotate_and_verify(
@@ -154,119 +176,113 @@ async def test_registration_confirmation_qr_requires_event_entitlement(
     }
 
 
-async def test_abstract_submission_review_and_acceptance_workflow(
+async def test_organiser_standalone_abstract_workflow(
     client,
     db,
     event,
     organizer,
-    speaker,
-    session_speaker,
 ):
     await activate_event_for_test(db, event)
-    token = speaker._plain_token
     abstract_text = (
         "This study evaluates a resilient entitlement architecture across "
         "event-scoped workloads using deterministic capability resolution."
     )
 
-    draft = await client.patch(
-        f"/api/v1/portal/abstracts/{session_speaker.id}",
-        params={"token": token},
+    setup = await client.put(
+        f"/api/v1/events/{event.id}/abstracts/setup",
         json={
-            "abstract_text": abstract_text,
-            "keywords": ["entitlements", "events", "entitlements"],
+            "status": "OPEN",
+            "min_words": 5,
+            "max_words": 500,
+            "abstract_types": ["ORAL", "POSTER"],
+            "topics": ["Architecture"],
+            "author_rules": {},
+            "attachment_rules": {},
+            "disclosure_rules": {},
+            "email_triggers": {},
+            "blind_review_enabled": True,
         },
-        headers={
-            "If-Match": "1",
-            "Idempotency-Key": f"abstract-draft-{uuid.uuid4()}",
-        },
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-setup-{uuid.uuid4()}"},
     )
-    assert draft.status_code == 200, draft.text
-    assert draft.json()["status"] == "DRAFT"
-    assert draft.json()["version"] == 2
-    assert draft.json()["keywords"] == ["entitlements", "events"]
+    assert setup.status_code == 200, setup.text
+    assert setup.json()["status"] == "OPEN"
 
-    submit_key = f"abstract-submit-{uuid.uuid4()}"
     submitted = await client.post(
-        f"/api/v1/portal/abstracts/{session_speaker.id}/submit",
-        params={"token": token},
-        headers={
-            "If-Match": "2",
-            "Idempotency-Key": submit_key,
+        f"/api/v1/events/{event.id}/abstracts/submissions",
+        json={
+            "title": "Deterministic entitlement resolution",
+            "body": abstract_text,
+            "keywords": ["entitlements", "events", "entitlements"],
+            "abstract_type": "ORAL",
+            "topic": "Architecture",
+            "authors": [{"full_name": "Case Author", "email": "case@example.com", "is_presenter": True}],
         },
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-submit-{uuid.uuid4()}"},
     )
     assert submitted.status_code == 200, submitted.text
-    assert submitted.json()["status"] == "SUBMITTED"
-    assert submitted.json()["version"] == 3
+    submission = submitted.json()
+    assert submission["status"] == "SUBMITTED"
+    assert submission["keywords"] == ["entitlements", "events"]
+    assert submission["authors"][0]["full_name"] == "Case Author"
 
-    replay = await client.post(
-        f"/api/v1/portal/abstracts/{session_speaker.id}/submit",
-        params={"token": token},
-        headers={
-            "If-Match": "2",
-            "Idempotency-Key": submit_key,
+    reviewer = await client.post(
+        f"/api/v1/events/{event.id}/abstracts/reviewers",
+        json={
+            "full_name": "Committee Reviewer",
+            "email": "reviewer@example.com",
+            "expertise_topics": ["Architecture"],
+            "capacity": 5,
+            "status": "ACTIVE",
         },
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-reviewer-{uuid.uuid4()}"},
     )
-    assert replay.status_code == 200, replay.text
-    assert replay.json()["version"] == 3
+    assert reviewer.status_code == 200, reviewer.text
 
-    abstract_page = await client.get(
-        f"/api/v1/events/{event.id}/abstracts",
-        params={"status": "SUBMITTED"},
+    assigned = await client.post(
+        f"/api/v1/events/{event.id}/abstracts/submissions/{submission['id']}/assignments",
+        json={"reviewer_id": reviewer.json()["id"]},
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-assign-{uuid.uuid4()}"},
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["status"] == "UNDER_REVIEW"
+
+    assignments = await client.get(
+        f"/api/v1/events/{event.id}/abstracts/assignments",
         headers=auth_headers(organizer),
     )
-    assert abstract_page.status_code == 200, abstract_page.text
-    assert len(abstract_page.json()["items"]) == 1
-    assert (
-        abstract_page.json()["items"][0]["session_speaker_id"]
-        == str(session_speaker.id)
-    )
+    assert assignments.status_code == 200, assignments.text
+    assignment_id = assignments.json()[0]["id"]
 
-    under_review = await client.patch(
-        f"/api/v1/events/{event.id}/abstracts/{session_speaker.id}/review",
-        json={
-            "decision": "UNDER_REVIEW",
-            "reason": "Begin committee assessment",
-            "case_reference": "ABSTRACT-REVIEW-1",
-        },
-        headers={
-            **auth_headers(organizer),
-            "If-Match": "3",
-            "Idempotency-Key": f"abstract-review-{uuid.uuid4()}",
-        },
+    reviewed = await client.post(
+        f"/api/v1/events/{event.id}/abstracts/assignments/{assignment_id}/reviews",
+        json={"scores": {"scientific_merit": 5, "clarity": 4}, "recommendation": "ACCEPT", "comments_to_committee": "Strong fit."},
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-score-{uuid.uuid4()}"},
     )
-    assert under_review.status_code == 200, under_review.text
-    assert under_review.json()["status"] == "UNDER_REVIEW"
-    assert under_review.json()["version"] == 4
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["review_count"] == 1
 
-    accepted = await client.patch(
-        f"/api/v1/events/{event.id}/abstracts/{session_speaker.id}/review",
+    current = reviewed.json()
+    accepted = await client.post(
+        f"/api/v1/events/{event.id}/abstracts/submissions/{current['id']}/decision",
         json={
             "decision": "ACCEPTED",
+            "presentation_type": "ORAL",
             "reason": "Committee accepted the abstract",
-            "case_reference": "ABSTRACT-REVIEW-2",
         },
         headers={
             **auth_headers(organizer),
-            "If-Match": "4",
+            "If-Match": str(current["version"]),
             "Idempotency-Key": f"abstract-accept-{uuid.uuid4()}",
         },
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["status"] == "ACCEPTED"
-    assert accepted.json()["version"] == 5
+    assert accepted.json()["presentation_type"] == "ORAL"
 
-    locked = await client.patch(
-        f"/api/v1/portal/abstracts/{session_speaker.id}",
-        params={"token": token},
-        json={
-            "abstract_text": abstract_text + " Updated after acceptance.",
-            "keywords": ["entitlements"],
-        },
-        headers={
-            "If-Match": "5",
-            "Idempotency-Key": f"abstract-locked-{uuid.uuid4()}",
-        },
+    published = await client.post(
+        f"/api/v1/events/{event.id}/abstracts/submissions/{current['id']}/publish",
+        json={"publication_payload": {"visibility": "public_directory"}},
+        headers={**auth_headers(organizer), "Idempotency-Key": f"abstract-publish-{uuid.uuid4()}"},
     )
-    assert locked.status_code == 409
-    assert locked.json()["detail"]["code"] == "ABSTRACT_LOCKED"
+    assert published.status_code == 200, published.text
+    assert published.json()["published_at"] is not None

@@ -1,0 +1,4 @@
+{
+  "registration_form": {"path": "/api/v1/portal/registration/{event_id}/form", "target_queries": 12, "warning_queries": 20, "max_queries": 25, "cold_p95_ms": 900, "warm_p95_ms": 500},
+  "dashboard": {"path": "/api/v1/portal/dashboard", "target_queries": 15, "warning_queries": 25, "max_queries": 35, "cold_p95_ms": 1000, "warm_p95_ms": 700}
+}

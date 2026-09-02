@@ -1,6 +1,8 @@
 "use client";
+// Quota control: max_registrations is enforced by the API before creation.
 
 import { useEffect, useMemo, useState } from "react";
+import { useLimitAccess } from "@/lib/capabilities";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,

@@ -37,7 +37,7 @@ class Badge(Base):
     nfc_uid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     template_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("registration.print_templates.id", ondelete="SET NULL"),
+        ForeignKey("design.print_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
     status: Mapped[str] = mapped_column(

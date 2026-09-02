@@ -1204,3 +1204,88 @@ async def ensure_admin_user():
             await db.rollback()
             if settings.is_production:
                 raise
+
+
+async def ensure_agenda_rooms_schema():
+    """Record that the canonical room schema is migration-owned.
+
+    Schema changes are deliberately not attempted during application startup.
+    Deployments must run Alembic before starting API or worker containers.
+    """
+    logger.debug("Room schema validation is migration-owned; no startup DDL executed.")
+
+
+async def ensure_agenda_types_defaults():
+    """Auto-populate all types tables in agenda schema (room_types, session_types, agenda_roles, track_types)."""
+    async with AsyncSessionLocal() as db:
+        try:
+            # 1. Room Types
+            await db.execute(
+                text("""
+                INSERT INTO agenda.room_types (id, name, code, description, is_system, is_active, created_at, updated_at)
+                VALUES
+                    (gen_random_uuid(), 'Main Hall / Auditorium', 'MAIN_HALL', 'Primary conference hall for keynotes and plenary sessions', true, true, now(), now()),
+                    (gen_random_uuid(), 'Breakout Room', 'BREAKOUT', 'Medium-sized room for parallel tracks and interactive sessions', true, true, now(), now()),
+                    (gen_random_uuid(), 'Workshop / Hands-on Lab', 'WORKSHOP', 'Equipped room for training, workshops, and practical demos', true, true, now(), now()),
+                    (gen_random_uuid(), 'Boardroom / Meeting Room', 'BOARDROOM', 'Executive meeting and committee room', true, true, now(), now()),
+                    (gen_random_uuid(), 'Poster Exhibition Area', 'POSTER', 'Exhibition area for scientific posters and ePosters', true, true, now(), now()),
+                    (gen_random_uuid(), 'Virtual / Streaming Stage', 'VIRTUAL', 'Digital stage for virtual or hybrid live streaming', true, true, now(), now()),
+                    (gen_random_uuid(), 'Other / Miscellaneous', 'OTHER', 'General purpose space or custom setup', true, true, now(), now())
+                ON CONFLICT DO NOTHING;
+                """)
+            )
+
+            # 2. Session Types
+            await db.execute(
+                text("""
+                INSERT INTO agenda.session_types (id, name, code, category, default_duration_minutes, configuration, is_system, is_active, created_at, updated_at)
+                VALUES
+                    (gen_random_uuid(), 'Keynote Address', 'KEYNOTE', 'Scientific', 45, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Plenary Session', 'PLENARY', 'Scientific', 60, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Oral Presentation', 'ORAL', 'Scientific', 15, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Panel Discussion', 'PANEL', 'Discussion', 45, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Workshop / Masterclass', 'WORKSHOP', 'Practical', 90, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Symposium', 'SYMPOSIUM', 'Scientific', 60, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Poster Presentation Session', 'POSTER_SESSION', 'Exhibition', 60, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Break / Networking', 'BREAK', 'Social', 30, '{}'::jsonb, true, true, now(), now()),
+                    (gen_random_uuid(), 'Inauguration / Ceremony', 'INAUGURATION', 'Ceremony', 45, '{}'::jsonb, true, true, now(), now())
+                ON CONFLICT DO NOTHING;
+                """)
+            )
+
+            # 3. Agenda Roles
+            await db.execute(
+                text("""
+                INSERT INTO agenda.agenda_roles (id, code, name, category, description, is_system, is_active, sort_order, created_at, updated_at)
+                VALUES
+                    (gen_random_uuid(), 'SPEAKER', 'Speaker / Presenter', 'Faculty', 'Delivers scientific presentation or lecture', true, true, 1, now(), now()),
+                    (gen_random_uuid(), 'KEYNOTE_SPEAKER', 'Keynote Speaker', 'Faculty', 'Delivers keynote or plenary address', true, true, 2, now(), now()),
+                    (gen_random_uuid(), 'CHAIRPERSON', 'Session Chairperson', 'Moderation', 'Leads and moderates session proceedings', true, true, 3, now(), now()),
+                    (gen_random_uuid(), 'CO_CHAIR', 'Co-Chairperson', 'Moderation', 'Assists session chairperson', true, true, 4, now(), now()),
+                    (gen_random_uuid(), 'MODERATOR', 'Moderator', 'Moderation', 'Facilitates Q&A and interactive discussions', true, true, 5, now(), now()),
+                    (gen_random_uuid(), 'PANELIST', 'Panelist', 'Discussion', 'Participates in panel debate and discussion', true, true, 6, now(), now()),
+                    (gen_random_uuid(), 'DISCUSSANT', 'Discussant', 'Discussion', 'Critiques and discusses presented papers', true, true, 7, now(), now()),
+                    (gen_random_uuid(), 'JUDGE', 'Poster / Presentation Judge', 'Evaluation', 'Evaluates oral or poster presentations', true, true, 8, now(), now())
+                ON CONFLICT (code) DO NOTHING;
+                """)
+            )
+
+            # 4. Track Types
+            await db.execute(
+                text("""
+                INSERT INTO agenda.track_types (id, name, code, description, is_system, is_active, created_at, updated_at)
+                VALUES
+                    (gen_random_uuid(), 'Scientific & Clinical', 'SCIENTIFIC', 'Core scientific, clinical, and medical tracks', true, true, now(), now()),
+                    (gen_random_uuid(), 'Hands-on Workshop', 'WORKSHOP', 'Interactive skills and hands-on laboratory tracks', true, true, now(), now()),
+                    (gen_random_uuid(), 'Industry & Innovation', 'INDUSTRY', 'Industry symposia, tech talks, and sponsor presentations', true, true, now(), now()),
+                    (gen_random_uuid(), 'Poster & Abstracts', 'POSTER', 'Poster presentations and abstract displays', true, true, now(), now()),
+                    (gen_random_uuid(), 'Plenary & Ceremonies', 'PLENARY', 'General assemblies, inaugurations, and keynote tracks', true, true, now(), now())
+                ON CONFLICT DO NOTHING;
+                """)
+            )
+
+            await db.commit()
+            logger.info("Validated & populated default types across agenda catalog tables.")
+        except Exception as e:
+            logger.warning(f"Auto-populating agenda default types encountered: {e}")
+            await db.rollback()

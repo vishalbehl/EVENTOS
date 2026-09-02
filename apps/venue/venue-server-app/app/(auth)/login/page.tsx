@@ -43,7 +43,7 @@ export default function LoginPage() {
   const [setupAdminPassword, setSetupAdminPassword] = useState("");
   const [pgHost, setPgHost] = useState("127.0.0.1");
   const [pgPort, setPgPort] = useState("5432");
-  const [pgDatabase, setPgDatabase] = useState("eventos_venue_server");
+  const [pgDatabase, setPgDatabase] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("eventos_venue_db_name") || "eventos_venue_server" : "eventos_venue_server"));
   const [pgUser, setPgUser] = useState("postgres");
   const [pgPassword, setPgPassword] = useState("");
   const [sharedPostgresIntent, setSharedPostgresIntent] = useState<"connect" | "create">("connect");
@@ -59,6 +59,7 @@ export default function LoginPage() {
         // @ts-ignore
         await window.venueDesktop.resetVenueDatabase();
       }
+      localStorage.removeItem("eventos_venue_db_name");
       setSetupComplete(false);
       setSetupReason("Venue database configuration was reset.");
       setDbModalOpen(false);
@@ -96,27 +97,67 @@ export default function LoginPage() {
       return;
     }
 
-    if (!desktopApi) {
-      apiClient.get<{ setup_required: boolean }>("/setup/status").then((status) => {
-        if (status.setup_required) router.replace("/setup");
-        else setSetupComplete(true);
-      }).catch(() => setSetupReason("Venue API or database is unavailable.")).finally(() => setSetupChecking(false));
-      return;
-    }
+    const checkDbAndSetup = async () => {
+      setSetupChecking(true);
+      try {
+        let dbConfigured = true;
+        if (desktopApi?.getVenueSetupStatus) {
+          try {
+            const status = await desktopApi.getVenueSetupStatus();
+            if (status?.database) {
+              setPgDatabase(status.database);
+              localStorage.setItem("eventos_venue_db_name", status.database);
+            }
+            if (status?.host) setPgHost(status.host);
+            if (status?.port) setPgPort(String(status.port));
+            if (status?.user) setPgUser(status.user);
+            if (status?.configured === false) {
+              dbConfigured = false;
+            }
+          } catch {
+            // ignore
+          }
+        }
 
-    // Check backend health & status
-    apiClient.get("/auth/status").then(() => {
-      setSetupComplete(true);
-      setSetupChecking(false);
-    }).catch((err: any) => {
-      if (err?.status === 401 || err?.status === 403) {
-        setSetupComplete(true);
-      } else {
-        setSetupComplete(false);
-        setSetupReason("Database configuration required.");
+        if (!dbConfigured) {
+          setSetupComplete(false);
+          setSetupReason("Venue database configuration required.");
+          setSetupChecking(false);
+          return;
+        }
+
+        // Check backend database health
+        try {
+          const setupRes = await apiClient.get<any>("/setup/status");
+          if (setupRes?.database_ready && !setupRes?.setup_required) {
+            setSetupComplete(true);
+          } else if (setupRes?.database_ready && setupRes?.setup_required) {
+            setSetupComplete(false);
+            setSetupReason("Administrator setup required.");
+          } else {
+            setSetupComplete(dbConfigured);
+          }
+        } catch (err: any) {
+          try {
+            await apiClient.get("/auth/status");
+            setSetupComplete(true);
+          } catch (authErr: any) {
+            if (authErr?.status === 401 || authErr?.status === 403) {
+              setSetupComplete(true);
+            } else {
+              setSetupComplete(dbConfigured);
+              if (!dbConfigured) {
+                setSetupReason("Venue database is offline or not created.");
+              }
+            }
+          }
+        }
+      } finally {
+        setSetupChecking(false);
       }
-      setSetupChecking(false);
-    });
+    };
+
+    checkDbAndSetup();
   }, []);
 
   const toggleTheme = () => {
@@ -134,7 +175,8 @@ export default function LoginPage() {
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!username || !password) {
+    const cleanIdentifier = username.trim();
+    if (!cleanIdentifier || !password) {
       toast.error("Credentials required.");
       return;
     }
@@ -142,8 +184,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const response = await apiClient.post<any>("/auth/login", {
-        username: username,
-        email: username,
+        username: cleanIdentifier,
+        email: cleanIdentifier,
         password: password,
         mode: "admin",
       });
@@ -213,6 +255,9 @@ export default function LoginPage() {
         password: pgPassword
       });
       toast.success("Venue Master Database configured!");
+      localStorage.setItem("eventos_venue_db_name", pgDatabase);
+      setUsername(setupAdminUsername);
+      setPassword(setupAdminPassword);
       setSetupComplete(true);
       setSetupChecking(false);
 
@@ -224,11 +269,24 @@ export default function LoginPage() {
             password: setupAdminPassword,
             mode: "admin"
           });
+          if (res?.user) {
+            setAuth(
+              {
+                id: res.user.id,
+                username: res.user.username || res.user.email,
+                email: res.user.email,
+                name: res.user.full_name,
+                role: res.user.role,
+                full_name: res.user?.full_name,
+              },
+              "cookie-session"
+            );
+          }
           localStorage.setItem("venue_session_active", "true");
           sessionStorage.setItem("session_active", "true");
           window.location.href = "/dashboard";
         } catch (err) {
-          toast.info("Database configured. Please log in.");
+          toast.info("Database configured. Please log in with your admin credentials.");
         }
       }, 1000);
     } catch (error: any) {
@@ -318,16 +376,6 @@ export default function LoginPage() {
         {/* Right Setup Form Area */}
         <div className="flex-1 h-full flex flex-col justify-between p-6 sm:p-8 xl:p-10 max-w-[860px] w-full mx-auto overflow-hidden">
           <div className="flex justify-end items-center gap-3 shrink-0">
-            {!setupChecking && (
-              <button
-                type="button"
-                onClick={() => setSetupComplete(true)}
-                className="p-2 px-3 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-              >
-                <ArrowRight className="w-4 h-4 rotate-180" />
-                <span>Back to Login</span>
-              </button>
-            )}
             <button
               onClick={toggleTheme}
               className="p-2 rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--raised)] transition-all cursor-pointer flex items-center gap-2 text-xs font-bold"

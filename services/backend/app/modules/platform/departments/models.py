@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import String, Text, DateTime, ForeignKey, Index, UniqueConstraint, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -51,6 +51,7 @@ class Department(Base, SoftDeleteMixin):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc)
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Relationships
     organization: Mapped["Organization"] = relationship("Organization", foreign_keys=[organization_id])

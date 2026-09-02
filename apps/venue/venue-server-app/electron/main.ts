@@ -14,7 +14,7 @@ function repoRoot(): string {
 }
 
 function serviceRuntime(): { serviceRoot: string; pythonExe: string; runtimeAvailable: boolean } {
-  const serviceRoot = path.join(repoRoot(), "services", "venue-server");
+  const serviceRoot = path.join(repoRoot(), "services", "venue", "venue-server");
   const configuredPython = process.env.VENUE_SERVER_PYTHON;
   const candidates = [
     configuredPython,
@@ -145,12 +145,51 @@ ipcMain.handle("app:info", () => {
   };
 });
 
+ipcMain.handle("venue:get-setup-status", async () => {
+  const envDir = path.join(repoRoot(), "services", "venue", "venue-server");
+  const envPath = path.join(envDir, ".env");
+  let dbUrl = "";
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, "utf-8");
+    const match = envContent.match(/^DATABASE_URL=(.+)$/m);
+    if (match) {
+      dbUrl = match[1].trim();
+    }
+  }
+
+  let dbName = "eventos_venue_server";
+  let host = "127.0.0.1";
+  let port = 5432;
+  let user = "postgres";
+
+  if (dbUrl) {
+    try {
+      const parsed = new URL(dbUrl.replace(/^postgresql\+asyncpg:\/\//, "http://"));
+      dbName = parsed.pathname.replace(/^\//, "") || dbName;
+      host = parsed.hostname || host;
+      port = parsed.port ? parseInt(parsed.port, 10) : port;
+      user = parsed.username || user;
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    configured: Boolean(dbUrl && !dbUrl.endsWith("/")),
+    database: dbName,
+    host,
+    port,
+    user,
+    databaseUrl: dbUrl,
+  };
+});
+
 ipcMain.handle("venue:setup-databases", async (_event, setup) => {
   const setupPayloadPath = path.join(app.getPath("userData"), `venue-setup-${Date.now()}.json`);
   fs.writeFileSync(setupPayloadPath, JSON.stringify(setup), "utf-8");
 
   try {
-    const scriptPath = path.join(repoRoot(), "services", "venue-server", "scripts", "node", "setup_venue_databases.py");
+    const scriptPath = path.join(repoRoot(), "services", "venue", "venue-server", "scripts", "node", "setup_venue_databases.py");
     if (fs.existsSync(scriptPath)) {
       await runPythonScript(scriptPath, [setupPayloadPath]);
     } else {
@@ -158,10 +197,11 @@ ipcMain.handle("venue:setup-databases", async (_event, setup) => {
     }
 
     // Save DB credentials directly to the venue server env
-    const envDir = path.join(repoRoot(), "services", "venue-server");
+    const envDir = path.join(repoRoot(), "services", "venue", "venue-server");
     fs.mkdirSync(envDir, { recursive: true });
     const envPath = path.join(envDir, ".env");
-    const dbUrl = `postgresql+asyncpg://${setup.user || "postgres"}:${setup.password || ""}@${setup.host || "127.0.0.1"}:${setup.port || 5432}/${setup.database || "eventos_venue_server"}`;
+    const dbName = String(setup.database || "eventos_venue_server").trim();
+    const dbUrl = `postgresql+asyncpg://${setup.user || "postgres"}:${setup.password || ""}@${setup.host || "127.0.0.1"}:${setup.port || 5432}/${dbName}`;
     let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
 
     if (envContent.includes("DATABASE_URL=")) {
@@ -170,6 +210,21 @@ ipcMain.handle("venue:setup-databases", async (_event, setup) => {
       envContent += `\nDATABASE_URL=${dbUrl}`;
     }
     fs.writeFileSync(envPath, envContent.trim() + "\n", "utf-8");
+
+    try {
+      const mainPy = path.join(envDir, "app", "main.py");
+      if (fs.existsSync(mainPy)) {
+        const now = new Date();
+        fs.utimesSync(mainPy, now, now);
+      }
+      await fetch("http://127.0.0.1:8001/api/v1/venue/admin/reload-database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ database_url: dbUrl }),
+      });
+    } catch {
+      // ignore
+    }
 
     return { success: true };
   } catch (error: any) {
@@ -195,7 +250,7 @@ ipcMain.handle("venue:import-local-database", async () => {
     return { canceled: true };
   }
 
-  const destDir = path.join(repoRoot(), "services", "venue-server", "data");
+  const destDir = path.join(repoRoot(), "services", "venue", "venue-server", "data");
   fs.mkdirSync(destDir, { recursive: true });
   const destPath = path.join(destDir, "venue_imported.sqlite");
   fs.copyFileSync(result.filePaths[0], destPath);
@@ -204,7 +259,7 @@ ipcMain.handle("venue:import-local-database", async () => {
 });
 
 ipcMain.handle("venue:reset-venue-database", async () => {
-  const envDir = path.join(repoRoot(), "services", "venue-server");
+  const envDir = path.join(repoRoot(), "services", "venue", "venue-server");
   const envPath = path.join(envDir, ".env");
   if (fs.existsSync(envPath)) {
     let envContent = fs.readFileSync(envPath, "utf-8");
@@ -212,7 +267,7 @@ ipcMain.handle("venue:reset-venue-database", async () => {
     fs.writeFileSync(envPath, envContent, "utf-8");
   }
 
-  const importedDb = path.join(repoRoot(), "services", "venue-server", "data", "venue_imported.sqlite");
+  const importedDb = path.join(repoRoot(), "services", "venue", "venue-server", "data", "venue_imported.sqlite");
   if (fs.existsSync(importedDb)) {
     fs.rmSync(importedDb, { force: true });
   }

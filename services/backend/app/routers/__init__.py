@@ -13,6 +13,10 @@ from app.modules.platform import support_router
 from app.modules.platform.organization_console_router import router as organization_console_router
 from app.modules.platform.communications_router import router as platform_communications_router
 from app.modules.operations_control.router import router as operations_control_router
+from app.modules.technology_services.router import router as technology_services_router
+from app.modules.operations_planning.router import router as operations_planning_router
+from app.modules.resource_management.router import router as resource_management_router
+from app.modules.deployment_management.router import router as deployment_management_router
 from app.modules.platform.departments.router import router as departments_router
 from app.modules.platform.teams.router import router as teams_router
 from app.modules.platform.roles.router import router as roles_router, assignments_router, admin_router as access_admin_router
@@ -20,13 +24,15 @@ from app.modules.audit.routers.security_governance import router as security_gov
 from app.modules.platform.permissions.router import router as permissions_router, admin_router as permissions_admin_router
 from app.modules.rbac.routers import events, settings, rbac, global_settings, organisations
 from app.modules.speakers.routers import sessions, speakers, portal, speaker_profiles
+from app.modules.abstracts.router import router as abstracts_router
 from app.modules.speakers.routers.session_builder import router as session_builder_router, tracks_router
 from app.modules.presentations.routers import bundles, files, queue, posters, storage
 from app.modules.venue.routers import rooms, rooms_devices, attendance, capacity, srr, sync
 from app.modules.registration.routers import (
     badges, printers, import_jobs, print_templates, 
     registrations, registration_portal, participant_roles, participants,
-    payments, portal_auth, portal_dashboard
+    payments, portal_auth, portal_dashboard, form_categories, form_templates,
+    design_studio_settings
 )
 from app.modules.analytics.routers import analytics
 from app.modules.analytics.routers.dashboard import router as dashboard_router
@@ -65,11 +71,18 @@ api_router = APIRouter()
 from app.modules.commercial.router import router as commercial_router
 from app.modules.commercial.quotes_router import public_router as commercial_public_proposals_router, router as commercial_quotes_router
 from app.modules.pricing.router import router as pricing_router
+from app.modules.inventory.router import router as inventory_router
+from app.modules.technology_services.router import router as technology_services_router
 
 api_router.include_router(commercial_router)
+api_router.include_router(technology_services_router)
+api_router.include_router(operations_planning_router)
+api_router.include_router(resource_management_router)
+api_router.include_router(deployment_management_router)
 api_router.include_router(commercial_quotes_router)
 api_router.include_router(commercial_public_proposals_router)
 api_router.include_router(pricing_router)
+api_router.include_router(inventory_router)
 api_router.include_router(platform_website_template_router)
 api_router.include_router(event_website_router)
 api_router.include_router(public_website_runtime_router)
@@ -97,26 +110,25 @@ api_router.include_router(email_asset_delivery_router)
 api_router.include_router(email_branding_policy_router)
 api_router.include_router(platform_branding_policy_router)
 api_router.include_router(operations_control_router)
-
-api_router.include_router(support_router.router)
 api_router.include_router(departments_router)
 api_router.include_router(teams_router)
 api_router.include_router(roles_router)
-api_router.include_router(security_governance_router)
-api_router.include_router(access_admin_router)
-api_router.include_router(permissions_admin_router)
 api_router.include_router(assignments_router)
+api_router.include_router(access_admin_router)
+api_router.include_router(security_governance_router)
 api_router.include_router(permissions_router)
-api_router.include_router(organisations.router)
-api_router.include_router(bundles.router)
+api_router.include_router(permissions_admin_router)
+api_router.include_router(support_router.router)
 api_router.include_router(events.router)
-api_router.include_router(session_builder_router)
+api_router.include_router(organisations.router)
 api_router.include_router(sessions.router)
+api_router.include_router(session_builder_router)
 api_router.include_router(tracks_router)
-api_router.include_router(rooms.router)
 api_router.include_router(speakers.router)
-api_router.include_router(speakers.abstracts_router)
+api_router.include_router(abstracts_router)
 api_router.include_router(speaker_profiles.router)
+api_router.include_router(bundles.router)
+api_router.include_router(rooms.router)
 api_router.include_router(portal.router)
 api_router.include_router(files.router)
 api_router.include_router(import_jobs.router)
@@ -145,6 +157,9 @@ api_router.include_router(ticket_types_router)
 api_router.include_router(participant_roles.router)
 api_router.include_router(registrations.router)
 api_router.include_router(registration_portal.router)
+api_router.include_router(form_categories.router)
+api_router.include_router(form_templates.router)
+api_router.include_router(design_studio_settings.router)
 api_router.include_router(capacity.router)
 api_router.include_router(badges.router)
 api_router.include_router(printers.router)
@@ -187,12 +202,7 @@ api_router.include_router(provider_webhooks_router)
 api_router.include_router(capabilities_router)
 api_router.include_router(capability_admin_router)
 
-# ── Phase 7: Tech Services & Operations Planning Engine ───────
-
-
 # ── Super Admin Namespace ──────────────────────────────────────
-# Aggregates existing module routers under /api/v1/superadmin/.
-# All routes in this namespace require Super Admin authentication.
 from app.modules.superadmin.router import commercial_staff_router, superadmin_router
 api_router.include_router(superadmin_router)
 api_router.include_router(commercial_staff_router)

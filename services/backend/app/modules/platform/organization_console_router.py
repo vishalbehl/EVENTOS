@@ -8,10 +8,12 @@ import hashlib
 import json
 import secrets
 import uuid
+import asyncio
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,7 @@ from app.core.tenant_context import TenantContextGuard
 from app.dependencies import StepUpAuth, get_db
 from app.modules.audit.models.audit_log import AuditLog, compute_audit_hash
 from app.modules.audit.models.audit_domain_tables import DataExport
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.identity.models.refresh_token import RefreshToken
 from app.modules.identity.models.user import User
 from app.modules.events.models.event import Event
@@ -36,9 +39,37 @@ from app.modules.events.services.event_campaign_mutation_service import (
 from app.modules.events.services.event_participant_mutation_service import (
     EventParticipantMutationService,
 )
+from app.modules.analytics.services.projection_dispatch import (
+    enqueue_event_registration_projection_refresh,
+    enqueue_event_attendance_projection_refresh,
+)
 from app.modules.events.services.event_job_control_service import (
     EventJobControlService,
 )
+from app.modules.platform.application.organization_team_commands import OrganizationTeamCommandService
+from app.modules.platform.application.location_commands import OrganizationLocationCommandService
+from app.modules.platform.application.security_commands import OrganizationSecurityCommandService
+from app.modules.platform.application.governance_commands import OrganizationGovernanceCommandService
+from app.modules.platform.application.branding_commands import PlatformBrandingCommandService
+from app.modules.platform.application.impersonation_commands import ImpersonationCommandService
+from app.modules.platform.application.rollout_commands import OrganizationRolloutCommandService
+from app.modules.platform.application.lifecycle_commands import OrganizationLifecycleCommandService
+from app.modules.platform.application.api_key_commands import OrganizationApiKeyCommandService
+from app.modules.platform.application.notification_rule_commands import OrganizationNotificationRuleCommandService
+from app.modules.platform.application.notification_channel_commands import OrganizationNotificationChannelCommandService
+from app.modules.platform.application.privileged_access_commands import PrivilegedAccessCommandService
+from app.modules.platform.application.usage_commands import OrganizationUsageCommandService
+from app.modules.platform.application.financial_adjustment_commands import FinancialAdjustmentCommandService
+from app.modules.platform.application.integration_commands import IntegrationConnectionCommandService
+from app.modules.platform.application.export_commands import OrganizationExportCommandService
+from app.modules.platform.application.commercial_access_commands import CommercialAccessCommandService
+from app.modules.platform.application.event_control_commands import EventOperationalControlCommandService
+from app.modules.platform.application.event_settings_commands import EventSettingsCommandService
+from app.modules.platform.application.registration_correction_commands import RegistrationCorrectionCommandService
+from app.modules.platform.application.event_contract_commands import EventContractCommandService
+from app.modules.platform.application.event_workspace_commands import EventWorkspaceCommandService
+from app.modules.platform.application.governed_mutation_commands import GovernedMutationCommandService
+from app.modules.platform.application.organization_team_commands import OrganizationTeamCommandService
 from app.modules.rbac.schemas.event import EventCreate, EventUpdate
 from app.modules.platform.models.organization_console import (
     OrganizationBrandProfile,
@@ -61,6 +92,11 @@ from app.modules.platform.models.organization_console import (
     CapabilityDiagnosticEvent,
     CommercialAccessRequest,
     PrivilegedMutationReceipt,
+    OrganizationComplianceControl,
+    OrganizationComplianceEvidence,
+    OrganizationPrivacyRequest,
+    OrganizationRetentionPolicy,
+    OrganizationLegalHold,
 )
 from app.modules.platform.models.feature import FeatureCatalog
 from app.modules.platform.schemas.organization_console import (
@@ -100,6 +136,14 @@ from app.modules.platform.schemas.organization_console import (
     OrganizerRolloutUpdate,
     CapabilityRestrictionCreate,
     CommercialAccessDecision,
+    LegalHoldCreate,
+    LegalHoldRelease,
+    ComplianceControlCreate,
+    ComplianceEvidenceCreate,
+    ControlRevocationRequest,
+    RetentionPolicyWrite,
+    PrivacyRequestCreate,
+    PrivacyRequestUpdate,
 )
 from app.modules.audit.models.audit_domain_tables import ImpersonationLog
 from app.modules.platform.services.organization_console_service import OrganizationConsoleService
@@ -427,6 +471,46 @@ def _audit(
     )
 
 
+async def _dispatch_read_audit(
+    request: Request,
+    actor: User,
+    organization_id: uuid.UUID,
+    action: str,
+    resource_type: str,
+    resource_id: uuid.UUID,
+    *,
+    new_state: dict | None = None,
+) -> None:
+    """Record a privileged read without committing the read transaction."""
+    row = _audit(
+        request,
+        actor,
+        organization_id,
+        action,
+        resource_type,
+        resource_id,
+        new_state=new_state,
+        sensitive=True,
+    )
+    await AuditService.write_log(AuditContext(
+        request_id=row.request_id,
+        correlation_id=row.correlation_id,
+        organization_id=row.organization_id,
+        actor_user_id=row.actor_user_id,
+        resource_type=row.resource_type,
+        resource_id=row.resource_id,
+        action_type=row.action_type,
+        actor_role=row.actor_role,
+        old_state=row.old_state,
+        new_state=row.new_state,
+        change_diff=row.change_diff,
+        actor_ip=row.actor_ip,
+        actor_user_agent=row.actor_user_agent,
+        is_sensitive=row.is_sensitive,
+        occurred_at=row.occurred_at,
+    ))
+
+
 @router.get("/audit")
 async def list_organization_audit(
     organization_id: uuid.UUID,
@@ -480,15 +564,11 @@ async def create_impersonation_handoff(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    target = await db.scalar(select(User).where(User.id == payload.target_user_id, User.organization_id == organization_id, User.is_active.is_(True)))
-    if not target: raise HTTPException(status_code=404, detail="Active organization user not found")
-    raw_code = secrets.token_urlsafe(48)
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-    row = ImpersonationLog(super_admin_id=actor.id, target_organization_id=organization_id, target_user_id=target.id, reason=payload.reason, case_reference=payload.case_reference, ip_address=resolve_client_ip(request), user_agent=request.headers.get("user-agent"), session_expires_at=expires_at, session_token_hash=hashlib.sha256(raw_code.encode()).hexdigest())
-    db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "IMPERSONATION_HANDOFF_CREATED", "impersonation_session", row.id, new_state={"target_user_id": str(target.id), "case_reference": payload.case_reference, "expires_at": expires_at.isoformat()}, sensitive=True))
-    await db.commit()
-    return {"handoff_code": raw_code, "session_id": row.id, "expires_at": expires_at, "target_user_id": target.id, "single_use": True}
+    return await ImpersonationCommandService(db).create_handoff(
+        organization_id=organization_id, actor=actor, target_user_id=payload.target_user_id,
+        reason=payload.reason, case_reference=payload.case_reference,
+        ip_address=resolve_client_ip(request), user_agent=request.headers.get("user-agent"),
+    )
 
 
 @router.get("/rollout")
@@ -546,35 +626,12 @@ async def update_organizer_rollout(organization_id: uuid.UUID, payload: Organize
                     }
                 ),
             )
-    old = {}
-    for key, enabled in (("organizer_console_entitlement_shadow", payload.shadow_enabled), ("organizer_console_entitlement_enforce", payload.enforcement_enabled)):
-        row = await db.scalar(select(FeatureFlag).where(FeatureFlag.organization_id == organization_id, FeatureFlag.flag_key == key).with_for_update())
-        old[key] = row.is_enabled if row else None
-        if row: row.is_enabled = enabled
-        else: db.add(FeatureFlag(organization_id=organization_id, flag_key=key, is_enabled=enabled))
-    backfill_queued = bool(
-        payload.shadow_enabled
-        and not payload.enforcement_enabled
-        and missing_contract_count
+    return await OrganizationRolloutCommandService(db).update(
+        organization_id=organization_id, actor=actor,
+        shadow_enabled=payload.shadow_enabled,
+        enforcement_enabled=payload.enforcement_enabled,
+        missing_contract_count=missing_contract_count, reason=payload.reason,
     )
-    if backfill_queued:
-        try:
-            celery_app.send_task(
-                "app.tasks.organization_console_rollout_tasks.backfill_organization_console",
-                args=[str(organization_id), True],
-            )
-        except Exception as exc:
-            await db.rollback()
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "ROLLOUT_BACKFILL_QUEUE_UNAVAILABLE",
-                    "message": "Shadow mode was not changed because the contract backfill could not be queued.",
-                },
-            ) from exc
-    db.add(_audit(request, actor, organization_id, "ORGANIZER_CONSOLE_ROLLOUT_UPDATED", "organization", organization_id, old_state=old, new_state={"shadow_enabled": payload.shadow_enabled, "enforcement_enabled": payload.enforcement_enabled, "reason": payload.reason}, sensitive=True))
-    await db.commit()
-    return {"shadow_enabled": payload.shadow_enabled, "enforcement_enabled": payload.enforcement_enabled, "backfill_queued": backfill_queued, "missing_contracts": missing_contract_count}
 
 
 @router.get("/diagnostics")
@@ -830,16 +887,9 @@ async def create_location(
 ) -> OrganizationLocationOut:
     service = OrganizationConsoleService(db)
     await service.require_organization(organization_id)
-    if payload.manager_user_id:
-        manager = await db.get(User, payload.manager_user_id)
-        if not manager or manager.organization_id != organization_id:
-            raise HTTPException(status_code=404, detail="Location manager not found")
-    row = OrganizationLocation(organization_id=organization_id, **payload.model_dump())
-    db.add(row)
-    await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_LOCATION_CREATED", "organization_location", row.id, new_state={"name": row.name, "location_type": row.location_type}))
-    await db.commit()
-    await db.refresh(row)
+    row = await OrganizationLocationCommandService(db).create(
+        organization_id=organization_id, actor=actor, values=payload.model_dump()
+    )
     return OrganizationLocationOut.model_validate(row)
 
 
@@ -853,19 +903,13 @@ async def update_location(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> OrganizationLocationOut:
-    row = await db.scalar(select(OrganizationLocation).where(OrganizationLocation.id == location_id, OrganizationLocation.organization_id == organization_id))
-    if not row:
-        raise HTTPException(status_code=404, detail="Location not found")
     expected = str(payload.version)
-    if if_match is None or if_match.strip('"') != expected or row.version != payload.version:
+    if if_match is None or if_match.strip('"') != expected:
         raise HTTPException(status_code=status.HTTP_412_PRECONDITION_FAILED, detail="Location version is stale")
-    old = {"name": row.name, "status": row.status, "version": row.version}
-    for key, value in payload.model_dump(exclude={"version"}).items():
-        setattr(row, key, value)
-    row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_LOCATION_UPDATED", "organization_location", row.id, old_state=old, new_state={"name": row.name, "status": row.status, "version": row.version}))
-    await db.commit()
-    await db.refresh(row)
+    row = await OrganizationLocationCommandService(db).update(
+        organization_id=organization_id, location_id=location_id, actor=actor,
+        values=payload.model_dump(exclude={"version"}), if_match=payload.version,
+    )
     return OrganizationLocationOut.model_validate(row)
 
 
@@ -880,118 +924,76 @@ async def update_security_policy(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    for cidr in payload.allowed_cidrs:
-        try:
-            ipaddress.ip_network(cidr, strict=False)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"Invalid CIDR: {cidr}") from exc
-    row = await db.scalar(select(OrganizationSecurityPolicy).where(OrganizationSecurityPolicy.organization_id == organization_id))
-    if row:
-        if if_match is None or if_match.strip('"') != str(payload.version) or row.version != payload.version:
-            raise HTTPException(status_code=412, detail="Security policy version is stale")
-        old = {"require_mfa": row.require_mfa, "allowed_auth_methods": row.allowed_auth_methods, "allowed_cidrs": row.allowed_cidrs, "version": row.version}
-        for key, value in payload.model_dump(exclude={"version", "reason"}).items():
-            setattr(row, key, value)
-        row.version += 1
-        row.updated_by = actor.id
-    else:
-        if payload.version != 1:
-            raise HTTPException(status_code=412, detail="Security policy does not exist at the requested version")
-        old = None
-        row = OrganizationSecurityPolicy(organization_id=organization_id, updated_by=actor.id, **payload.model_dump(exclude={"version", "reason"}))
-        db.add(row)
-        await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_SECURITY_POLICY_UPDATED", "organization_security_policy", row.id, old_state=old, new_state={"require_mfa": row.require_mfa, "allowed_auth_methods": row.allowed_auth_methods, "allowed_cidrs": row.allowed_cidrs, "version": row.version, "reason": payload.reason}, sensitive=True))
-    await db.commit()
-    return {"id": row.id, "version": row.version, "updated_at": row.updated_at}
+    if if_match is None or if_match.strip('"') != str(payload.version):
+        raise HTTPException(status_code=412, detail="Security policy version is stale")
+    return await OrganizationSecurityCommandService(db).update_policy(
+        organization_id=organization_id, actor=actor,
+        values=payload.model_dump(exclude={"version", "reason"}),
+        if_match=payload.version, reason=payload.reason,
+    )
 
 
 @router.post("/security/trusted-devices/{device_id}/revoke")
 async def revoke_trusted_device(organization_id: uuid.UUID, device_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationTrustedDevice).where(OrganizationTrustedDevice.id == device_id, OrganizationTrustedDevice.organization_id == organization_id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Trusted device not found")
-    if row.revoked_at is None: row.revoked_at = datetime.now(timezone.utc)
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TRUSTED_DEVICE_REVOKED", "organization_trusted_device", row.id, new_state={"revoked_at": row.revoked_at.isoformat(), "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "revoked_at": row.revoked_at}
+    return await OrganizationSecurityCommandService(db).revoke_trusted_device(
+        organization_id=organization_id, device_id=device_id, actor=actor,
+        reason=payload.reason,
+    )
 
 
 @router.post("/security/sessions/revoke-all")
 async def revoke_organization_sessions(organization_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    user_ids = select(User.id).where(User.organization_id == organization_id)
-    result = await db.execute(update(RefreshToken).where(RefreshToken.user_id.in_(user_ids), RefreshToken.is_revoked.is_(False)).values(is_revoked=True, revoked_at=datetime.now(timezone.utc), revoked_reason="organization_security_revocation"))
-    count = int(result.rowcount or 0)
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_SESSIONS_REVOKED", "organization", organization_id, new_state={"sessions_revoked": count, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"sessions_revoked": count}
+    return await OrganizationSecurityCommandService(db).revoke_all_sessions(
+        organization_id=organization_id, actor=actor, reason=payload.reason,
+    )
 
 
 @router.post("/governance/privacy-requests", status_code=status.HTTP_201_CREATED)
 async def create_privacy_request(organization_id: uuid.UUID, payload: PrivacyRequestCreate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    if payload.due_at <= datetime.now(timezone.utc): raise HTTPException(status_code=422, detail="Privacy request due_at must be in the future")
-    if payload.assigned_to:
-        assignee = await db.scalar(select(User).where(User.id == payload.assigned_to, or_(User.organization_id == organization_id, User.is_platform_admin.is_(True))))
-        if not assignee: raise HTTPException(status_code=404, detail="Privacy request assignee not found")
-    subject_hash = hashlib.sha256(payload.subject_reference.strip().lower().encode()).hexdigest()
-    row = OrganizationPrivacyRequest(organization_id=organization_id, request_type=payload.request_type, subject_reference_hash=subject_hash, due_at=payload.due_at, assigned_to=payload.assigned_to)
-    db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "PRIVACY_REQUEST_CREATED", "organization_privacy_request", row.id, new_state={"request_type": row.request_type, "due_at": row.due_at, "assigned_to": row.assigned_to, "case_reference": payload.case_reference, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "status": row.status, "due_at": row.due_at, "version": row.version}
+    return await OrganizationGovernanceCommandService(db).create_privacy_request(
+        organization_id=organization_id, actor=actor, request_type=payload.request_type,
+        subject_reference=payload.subject_reference, due_at=payload.due_at,
+        assigned_to=payload.assigned_to, reason=payload.reason,
+        case_reference=payload.case_reference,
+    )
 
 
 @router.patch("/governance/privacy-requests/{privacy_request_id}")
 async def update_privacy_request(organization_id: uuid.UUID, privacy_request_id: uuid.UUID, payload: PrivacyRequestUpdate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationPrivacyRequest).where(OrganizationPrivacyRequest.id == privacy_request_id, OrganizationPrivacyRequest.organization_id == organization_id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Privacy request not found")
-    if row.version != payload.version: raise HTTPException(status_code=412, detail="Privacy request version is stale")
-    allowed = {"RECEIVED": {"IDENTITY_VERIFIED", "REJECTED"}, "IDENTITY_VERIFIED": {"IN_PROGRESS", "REJECTED"}, "IN_PROGRESS": {"COMPLETED", "BLOCKED_BY_HOLD", "REJECTED"}, "BLOCKED_BY_HOLD": {"IN_PROGRESS", "REJECTED"}}
-    if payload.status != row.status and payload.status not in allowed.get(row.status, set()): raise HTTPException(status_code=409, detail=f"Invalid privacy request transition from {row.status} to {payload.status}")
-    if payload.status == "COMPLETED" and row.request_type == "ERASURE":
-        hold = await db.scalar(select(OrganizationLegalHold.id).where(OrganizationLegalHold.organization_id == organization_id, OrganizationLegalHold.status == "ACTIVE"))
-        row.legal_hold_checked_at = datetime.now(timezone.utc)
-        if hold: raise HTTPException(status_code=409, detail="An active legal hold blocks completion of this erasure request")
-    old_status = row.status; row.status = payload.status; row.result_reference = payload.result_reference
-    if payload.status == "IDENTITY_VERIFIED": row.identity_verified_at = datetime.now(timezone.utc)
-    if payload.status == "COMPLETED": row.completed_at = datetime.now(timezone.utc)
-    row.version += 1
-    db.add(_audit(request, actor, organization_id, "PRIVACY_REQUEST_UPDATED", "organization_privacy_request", row.id, old_state={"status": old_status, "version": payload.version}, new_state={"status": row.status, "version": row.version, "case_reference": payload.case_reference, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "status": row.status, "version": row.version, "completed_at": row.completed_at}
+    return await OrganizationGovernanceCommandService(db).update_privacy_request(
+        organization_id=organization_id, privacy_request_id=privacy_request_id,
+        actor=actor, status_value=payload.status, version=payload.version,
+        result_reference=payload.result_reference, reason=payload.reason,
+        case_reference=payload.case_reference,
+    )
 
 
 @router.put("/governance/retention-policies")
 async def upsert_retention_policy(organization_id: uuid.UUID, payload: RetentionPolicyWrite, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    row = await db.scalar(select(OrganizationRetentionPolicy).where(OrganizationRetentionPolicy.organization_id == organization_id, OrganizationRetentionPolicy.data_category == payload.data_category).with_for_update())
-    old = None
-    if row:
-        if payload.version is None or row.version != payload.version: raise HTTPException(status_code=412, detail="Retention policy version is stale")
-        old = {"retention_days": row.retention_days, "disposition_action": row.disposition_action, "is_enabled": row.is_enabled, "version": row.version}
-        row.retention_days = payload.retention_days; row.disposition_action = payload.disposition_action; row.is_enabled = payload.is_enabled; row.version += 1
-    else:
-        if payload.version not in {None, 1}: raise HTTPException(status_code=412, detail="Retention policy does not exist at requested version")
-        row = OrganizationRetentionPolicy(organization_id=organization_id, data_category=payload.data_category, retention_days=payload.retention_days, disposition_action=payload.disposition_action, is_enabled=payload.is_enabled); db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "RETENTION_POLICY_UPSERTED", "organization_retention_policy", row.id, old_state=old, new_state={"data_category": row.data_category, "retention_days": row.retention_days, "disposition_action": row.disposition_action, "is_enabled": row.is_enabled, "version": row.version, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "version": row.version}
+    return await OrganizationGovernanceCommandService(db).upsert_retention_policy(
+        organization_id=organization_id, actor=actor, data_category=payload.data_category,
+        retention_days=payload.retention_days, disposition_action=payload.disposition_action,
+        is_enabled=payload.is_enabled, version=payload.version, reason=payload.reason,
+    )
 
 
 @router.post("/governance/legal-holds", status_code=status.HTTP_201_CREATED)
 async def create_legal_hold(organization_id: uuid.UUID, payload: LegalHoldCreate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    starts_at = payload.starts_at or datetime.now(timezone.utc)
-    if payload.ends_at and payload.ends_at <= starts_at: raise HTTPException(status_code=422, detail="Legal hold ends_at must follow starts_at")
-    row = OrganizationLegalHold(organization_id=organization_id, name=payload.name, scope=payload.scope, reason=payload.reason, starts_at=starts_at, ends_at=payload.ends_at, approved_by=actor.id)
-    db.add(row); await db.flush(); db.add(_audit(request, actor, organization_id, "LEGAL_HOLD_CREATED", "organization_legal_hold", row.id, new_state={"name": row.name, "scope": row.scope, "starts_at": row.starts_at, "ends_at": row.ends_at}, sensitive=True)); await db.commit()
-    return {"id": row.id, "status": row.status}
+    return await OrganizationGovernanceCommandService(db).create_legal_hold(
+        organization_id=organization_id, actor=actor, name=payload.name, scope=payload.scope,
+        reason=payload.reason, starts_at=payload.starts_at, ends_at=payload.ends_at,
+    )
 
 
 @router.post("/governance/legal-holds/{hold_id}/release")
 async def release_legal_hold(organization_id: uuid.UUID, hold_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationLegalHold).where(OrganizationLegalHold.id == hold_id, OrganizationLegalHold.organization_id == organization_id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Legal hold not found")
-    if row.status != "ACTIVE": raise HTTPException(status_code=409, detail="Legal hold is not active")
-    row.status = "RELEASED"; row.ends_at = datetime.now(timezone.utc)
-    db.add(_audit(request, actor, organization_id, "LEGAL_HOLD_RELEASED", "organization_legal_hold", row.id, old_state={"status": "ACTIVE"}, new_state={"status": row.status, "ends_at": row.ends_at, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "status": row.status, "ends_at": row.ends_at}
+    return await OrganizationGovernanceCommandService(db).release_legal_hold(
+        organization_id=organization_id, hold_id=hold_id, actor=actor, reason=payload.reason,
+    )
 
 
 def _validate_brand_references(organization_id: uuid.UUID, payload: BrandProfileUpdate) -> None:
@@ -1061,24 +1063,11 @@ async def update_branding(
     if payload.login_page is not None:
         templates["login_page"] = payload.login_page.model_dump(mode="json")
     await _enforce_brand_capabilities(db, organization_id, actor.id, templates)
-    row = await db.scalar(select(OrganizationBrandProfile).where(OrganizationBrandProfile.organization_id == organization_id))
-    if row:
-        if if_match is None or if_match.strip('"') != str(payload.version) or row.version != payload.version:
-            raise HTTPException(status_code=412, detail="Brand profile version is stale")
-        old = {"version": row.version, "status": row.status}
-        row.assets, row.tokens, row.templates = payload.assets, payload.tokens, templates
-        row.version += 1
-        row.status = "DRAFT"
-    else:
-        if payload.version != 1:
-            raise HTTPException(status_code=412, detail="Brand profile does not exist at the requested version")
-        old = None
-        row = OrganizationBrandProfile(organization_id=organization_id, assets=payload.assets, tokens=payload.tokens, templates=templates)
-        db.add(row)
-        await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_BRAND_DRAFT_UPDATED", "organization_brand_profile", row.id, old_state=old, new_state={"version": row.version, "status": row.status, "reason": payload.reason}))
-    await db.commit()
-    return {"id": row.id, "version": row.version, "status": row.status, "updated_at": row.updated_at}
+    return await PlatformBrandingCommandService(db).update(
+        organization_id=organization_id, actor=actor, assets=payload.assets,
+        tokens=payload.tokens, templates=templates, version=payload.version,
+        if_match=if_match, reason=payload.reason,
+    )
 
 
 @router.post("/branding/publish")
@@ -1090,24 +1079,9 @@ async def publish_branding(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await db.scalar(select(OrganizationBrandProfile).where(OrganizationBrandProfile.organization_id == organization_id))
-    if not row:
-        raise HTTPException(status_code=409, detail="No brand draft exists")
-    if if_match.strip('"') != str(row.version):
-        raise HTTPException(status_code=412, detail="Brand profile version is stale")
-    await _enforce_brand_capabilities(
-        db,
-        organization_id,
-        actor.id,
-        row.templates or {},
+    return await PlatformBrandingCommandService(db).publish(
+        organization_id=organization_id, actor=actor, if_match=if_match,
     )
-    row.status = "PUBLISHED"
-    row.published_version = row.version
-    row.published_at = datetime.now(timezone.utc)
-    row.published_by = actor.id
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_BRAND_PUBLISHED", "organization_brand_profile", row.id, new_state={"published_version": row.published_version}, sensitive=True))
-    await db.commit()
-    return {"id": row.id, "published_version": row.published_version, "published_at": row.published_at}
 
 
 @router.post("/compliance/controls", status_code=status.HTTP_201_CREATED)
@@ -1120,32 +1094,19 @@ async def create_compliance_control(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    if payload.owner_user_id:
-        owner = await db.get(User, payload.owner_user_id)
-        if not owner or owner.organization_id != organization_id:
-            raise HTTPException(status_code=404, detail="Control owner not found")
-    values = payload.model_dump(exclude={"reason"})
-    row = OrganizationComplianceControl(organization_id=organization_id, **values)
-    db.add(row)
-    await db.flush()
-    db.add(_audit(request, actor, organization_id, "COMPLIANCE_CONTROL_CREATED", "organization_compliance_control", row.id, new_state={"framework": row.framework, "control_key": row.control_key, "state": row.state, "reason": payload.reason}, sensitive=True))
-    await db.commit()
-    return {"id": row.id, "version": row.version, "state": row.state}
+    return await OrganizationGovernanceCommandService(db).create_compliance_control(
+        organization_id=organization_id, actor=actor,
+        values=payload.model_dump(exclude={"reason"}),
+    )
 
 
 @router.patch("/compliance/controls/{control_id}")
 async def update_compliance_control(organization_id: uuid.UUID, control_id: uuid.UUID, payload: ComplianceControlCreate, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationComplianceControl).where(OrganizationComplianceControl.id == control_id, OrganizationComplianceControl.organization_id == organization_id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Compliance control not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    if payload.owner_user_id:
-        owner = await db.scalar(select(User).where(User.id == payload.owner_user_id, User.organization_id == organization_id))
-        if not owner: raise HTTPException(status_code=404, detail="Control owner not found")
-    old = OrganizationConsoleService._model_dict(row); values = payload.model_dump(exclude={"reason"})
-    for key, value in values.items(): setattr(row, key, value)
-    row.version += 1
-    db.add(_audit(request, actor, organization_id, "COMPLIANCE_CONTROL_UPDATED", "organization_compliance_control", row.id, old_state=old, new_state={**values, "version": row.version, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return OrganizationConsoleService._model_dict(row)
+    return await OrganizationGovernanceCommandService(db).update_compliance_control(
+        organization_id=organization_id, control_id=control_id, actor=actor,
+        values=payload.model_dump(exclude={"reason"}), if_match=if_match,
+        reason=payload.reason,
+    )
 
 
 @router.get("/compliance/controls/{control_id}/evidence")
@@ -1158,14 +1119,10 @@ async def list_compliance_evidence(organization_id: uuid.UUID, control_id: uuid.
 
 @router.post("/compliance/controls/{control_id}/evidence", status_code=status.HTTP_201_CREATED)
 async def create_compliance_evidence(organization_id: uuid.UUID, control_id: uuid.UUID, payload: ComplianceEvidenceCreate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    control = await db.scalar(select(OrganizationComplianceControl).where(OrganizationComplianceControl.id == control_id, OrganizationComplianceControl.organization_id == organization_id))
-    if not control: raise HTTPException(status_code=404, detail="Compliance control not found")
-    if payload.reviewer_user_id:
-        reviewer = await db.scalar(select(User.id).where(User.id == payload.reviewer_user_id, User.organization_id == organization_id))
-        if not reviewer: raise HTTPException(status_code=404, detail="Evidence reviewer not found")
-    values = payload.model_dump(exclude={"reason"}); row = OrganizationComplianceEvidence(organization_id=organization_id, control_id=control_id, **values); db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "COMPLIANCE_EVIDENCE_ATTACHED", "organization_compliance_evidence", row.id, new_state={"control_id": str(control_id), "evidence_type": row.evidence_type, "storage_reference": row.storage_reference, "checksum_sha256": row.checksum_sha256, "classification": row.classification, "reason": payload.reason}, sensitive=True)); await db.commit(); await db.refresh(row)
-    return OrganizationConsoleService._model_dict(row)
+    return await OrganizationGovernanceCommandService(db).create_compliance_evidence(
+        organization_id=organization_id, control_id=control_id, actor=actor,
+        values=payload.model_dump(exclude={"reason"}), reason=payload.reason,
+    )
 
 
 @router.post("/advanced/jobs", response_model=LifecycleJobOut, status_code=status.HTTP_202_ACCEPTED)
@@ -1180,9 +1137,6 @@ async def create_lifecycle_job(
 ) -> LifecycleJobOut:
     service = OrganizationConsoleService(db)
     await service.require_organization(organization_id)
-    existing = await db.scalar(select(OrganizationLifecycleJob).where(OrganizationLifecycleJob.organization_id == organization_id, OrganizationLifecycleJob.idempotency_key == idempotency_key))
-    if existing:
-        return LifecycleJobOut.model_validate(existing)
     if payload.job_type in {"CLONE", "MERGE"} and not payload.target_organization_id:
         raise HTTPException(status_code=422, detail="A target organization is required")
     if payload.target_organization_id:
@@ -1196,25 +1150,12 @@ async def create_lifecycle_job(
     if manifest["blocked"]:
         raise HTTPException(status_code=409, detail="An active legal hold prevents this lifecycle operation")
     requires_approval = bool(manifest["requires_two_person_approval"])
-    job = OrganizationLifecycleJob(
-        organization_id=organization_id,
-        target_organization_id=payload.target_organization_id,
-        job_type=normalized_type,
-        status="AWAITING_APPROVAL" if requires_approval else "PENDING",
-        dry_run_manifest=manifest,
-        manifest_checksum=manifest_checksum,
-        reason=payload.reason,
-        idempotency_key=idempotency_key,
-        requested_by=actor.id,
+    job = await OrganizationLifecycleCommandService(db).create(
+        organization_id=organization_id, actor=actor,
+        target_organization_id=payload.target_organization_id, job_type=normalized_type,
+        manifest=manifest, manifest_checksum=manifest_checksum, reason=payload.reason,
+        idempotency_key=idempotency_key, requires_approval=requires_approval,
     )
-    db.add(job)
-    await db.flush()
-    db.add(_audit(request, actor, organization_id, f"ORGANIZATION_{normalized_type}_REQUESTED", "organization_lifecycle_job", job.id, new_state={"job_type": job.job_type, "status": job.status, "target_organization_id": str(job.target_organization_id) if job.target_organization_id else None, "manifest_checksum": manifest_checksum}, sensitive=True))
-    await db.commit()
-    await db.refresh(job)
-    if not requires_approval:
-        from app.tasks.organization_console_tasks import execute_lifecycle_job
-        execute_lifecycle_job.delay(str(organization_id), str(job.id))
     return LifecycleJobOut.model_validate(job)
 
 
@@ -1256,25 +1197,10 @@ async def decide_lifecycle_job(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> LifecycleJobOut:
-    job = await db.scalar(select(OrganizationLifecycleJob).where(OrganizationLifecycleJob.id == job_id, OrganizationLifecycleJob.organization_id == organization_id).with_for_update())
-    if not job:
-        raise HTTPException(status_code=404, detail="Lifecycle job not found")
-    if job.status != "AWAITING_APPROVAL":
-        raise HTTPException(status_code=409, detail="Lifecycle job is not awaiting approval")
-    if job.version != payload.version:
-        raise HTTPException(status_code=412, detail="Lifecycle job version is stale")
-    if job.requested_by == actor.id:
-        raise HTTPException(status_code=403, detail="Requester cannot approve their own lifecycle operation")
-    decision = {"decision": payload.decision, "reason": payload.reason, "actor_id": str(actor.id), "decided_at": datetime.now(timezone.utc).isoformat()}
-    job.approvals = [*job.approvals, decision]
-    job.status = "PENDING" if payload.decision == "APPROVED" else "REJECTED"
-    job.version += 1
-    db.add(_audit(request, actor, organization_id, f"ORGANIZATION_LIFECYCLE_{payload.decision}", "organization_lifecycle_job", job.id, old_state={"status": "AWAITING_APPROVAL"}, new_state={"status": job.status, "decision": decision}, sensitive=True))
-    await db.commit()
-    await db.refresh(job)
-    if job.status == "PENDING":
-        from app.tasks.organization_console_tasks import execute_lifecycle_job
-        execute_lifecycle_job.delay(str(organization_id), str(job.id))
+    job = await OrganizationLifecycleCommandService(db).decide(
+        organization_id=organization_id, job_id=job_id, actor=actor,
+        decision=payload.decision, reason=payload.reason, version=payload.version,
+    )
     return LifecycleJobOut.model_validate(job)
 
 
@@ -1288,21 +1214,12 @@ async def retry_lifecycle_job(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ) -> LifecycleJobOut:
-    job = await db.scalar(select(OrganizationLifecycleJob).where(OrganizationLifecycleJob.id == job_id, OrganizationLifecycleJob.organization_id == organization_id).with_for_update())
-    if not job:
-        raise HTTPException(status_code=404, detail="Lifecycle job not found")
-    if job.status != "FAILED" or payload.decision != "APPROVED":
+    if payload.decision != "APPROVED":
         raise HTTPException(status_code=409, detail="Only failed jobs can be approved for retry")
-    if job.version != payload.version:
-        raise HTTPException(status_code=412, detail="Lifecycle job version is stale")
-    job.status = "RETRY_PENDING"
-    job.failure_reason = None
-    job.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_LIFECYCLE_RETRY_REQUESTED", "organization_lifecycle_job", job.id, old_state={"status": "FAILED"}, new_state={"status": "RETRY_PENDING", "reason": payload.reason}, sensitive=True))
-    await db.commit()
-    await db.refresh(job)
-    from app.tasks.organization_console_tasks import execute_lifecycle_job
-    execute_lifecycle_job.delay(str(organization_id), str(job.id))
+    job = await OrganizationLifecycleCommandService(db).retry(
+        organization_id=organization_id, job_id=job_id, actor=actor,
+        reason=payload.reason, version=payload.version,
+    )
     return LifecycleJobOut.model_validate(job)
 
 
@@ -1365,119 +1282,14 @@ async def decide_commercial_access_request(
     db: AsyncSession = Depends(get_db),
 ):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    row = await db.scalar(select(CommercialAccessRequest).where(
-        CommercialAccessRequest.id == access_request_id,
-        CommercialAccessRequest.organization_id == organization_id,
-    ).with_for_update())
-    if not row:
-        raise HTTPException(status_code=404, detail="Commercial access request not found")
-    if row.status != "PENDING":
-        if row.case_reference == payload.case_reference and row.decision_reason == payload.reason:
-            return {"id": row.id, "status": row.status, "version": row.version}
-        raise HTTPException(status_code=409, detail={"code": "REQUEST_ALREADY_DECIDED", "status": row.status})
-    if row.version != expected_version:
-        raise HTTPException(status_code=412, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    if row.requested_by == actor.id:
-        raise HTTPException(status_code=409, detail="Requester cannot approve their own commercial request")
-
-    row.case_reference = payload.case_reference
-    row.decision_reason = payload.reason
-    row.decided_by = actor.id
-    row.decided_at = datetime.now(timezone.utc)
-    row.version += 1
-    if payload.decision == "REJECTED":
-        row.status = "REJECTED"
-        db.add(_audit(request, actor, organization_id, "COMMERCIAL_ACCESS_REJECTED", "commercial_access_request", row.id, new_state={"reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
-        await db.commit()
-        return {"id": row.id, "status": row.status, "version": row.version}
-
-    plan = await db.scalar(select(SubscriptionPlan).where(
-        SubscriptionPlan.id == row.requested_plan_id,
-        SubscriptionPlan.is_active.is_(True),
-        SubscriptionPlan.lifecycle_status == "PUBLISHED",
-    ))
-    if not plan:
-        raise HTTPException(status_code=409, detail={"code": "PLAN_NOT_PUBLISHABLE"})
-    addon_keys = sorted(set(row.requested_addon_keys or []))
-    addons = (await db.scalars(select(Addon).where(
-        Addon.key.in_(addon_keys),
-        Addon.is_active.is_(True),
-        Addon.lifecycle_status == "PUBLISHED",
-    ))).all() if addon_keys else []
-    if set(addon_keys) != {addon.key for addon in addons}:
-        raise HTTPException(status_code=409, detail={"code": "ADDON_NOT_PUBLISHABLE"})
-
-    now = payload.effective_at or datetime.now(timezone.utc)
-    ends_at = payload.ends_at or now + timedelta(days=365)
-    subscription = await db.scalar(select(OrganizationSubscription).where(
-        OrganizationSubscription.organization_id == organization_id,
-        OrganizationSubscription.status.in_(["ACTIVE", "TRIAL", "GRACE_PERIOD", "SUSPENDED"]),
-    ).order_by(OrganizationSubscription.created_at.desc()).with_for_update())
-    old_subscription = None
-    if subscription:
-        old_subscription = {"id": str(subscription.id), "plan_id": str(subscription.plan_id), "status": subscription.status, "version": subscription.version}
-        subscription.plan_id = plan.id
-        subscription.status = "ACTIVE"
-        subscription.current_period_end = ends_at
-        subscription.version += 1
-    else:
-        subscription = OrganizationSubscription(
-            organization_id=organization_id,
-            plan_id=plan.id,
-            status="ACTIVE",
-            current_period_end=ends_at,
-        )
-        db.add(subscription)
-        await db.flush()
-
-    for addon in addons:
-        existing_addon = await db.scalar(select(OrganizationAddon).where(
-            OrganizationAddon.organization_id == organization_id,
-            OrganizationAddon.addon_id == addon.id,
-            OrganizationAddon.event_id == row.event_id,
-            OrganizationAddon.status == "ACTIVE",
-            or_(OrganizationAddon.expires_at.is_(None), OrganizationAddon.expires_at > now),
-        ).with_for_update())
-        if existing_addon:
-            continue
-        db.add(OrganizationAddon(
-            organization_id=organization_id,
-            event_id=row.event_id,
-            addon_id=addon.id,
-            status="ACTIVE",
-            expires_at=ends_at,
-            subscription_id=subscription.id,
-            quantity=1,
-            unit_price_snapshot=addon.final_price or addon.price_inr,
-            currency=row.currency,
-            assignment_reason=payload.reason,
-            assigned_by=actor.id,
-        ))
-
-    row.status = "APPLIED"
-    row.applied_subscription_id = subscription.id
-    db.add(_audit(
-        request,
-        actor,
-        organization_id,
-        "COMMERCIAL_ACCESS_APPLIED",
-        "commercial_access_request",
-        row.id,
-        old_state=old_subscription,
-        new_state={
-            "subscription_id": str(subscription.id),
-            "plan_id": str(plan.id),
-            "plan_version": plan.version,
-            "addon_keys": addon_keys,
-            "event_id": str(row.event_id) if row.event_id else None,
-            "ends_at": ends_at.isoformat(),
-            "case_reference": payload.case_reference,
-            "decision_idempotency_key": idempotency_key,
-        },
-        sensitive=True,
-    ))
-    await db.commit()
-    return {"id": row.id, "status": row.status, "version": row.version, "subscription_id": subscription.id}
+    fingerprint = request_fingerprint(payload.model_dump(mode="json"))
+    return await CommercialAccessCommandService(db).decide(
+        organization_id=organization_id, access_request_id=access_request_id,
+        actor=actor, decision=payload.decision, reason=payload.reason,
+        case_reference=payload.case_reference, effective_at=payload.effective_at,
+        ends_at=payload.ends_at, expected_version=expected_version,
+        idempotency_key=idempotency_key, request_hash=fingerprint,
+    )
 
 
 @router.get("/events")
@@ -1529,6 +1341,7 @@ async def provision_organization_event(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    command = GovernedMutationCommandService(db)
     await OrganizationConsoleService(db).require_organization(organization_id)
     event_payload = EventCreate.model_validate(payload.data)
     operation_key = "event.provision"
@@ -1588,7 +1401,7 @@ async def provision_organization_event(
             response=response,
         )
     )
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
@@ -1604,7 +1417,6 @@ async def create_event_contract(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_scoped_event(db, organization_id, event_id)
     operation_key = "event_contract.apply"
     request_hash = request_fingerprint({
         "operation": operation_key,
@@ -1612,78 +1424,11 @@ async def create_event_contract(
         "if_match": if_match,
         "payload": payload.model_dump(mode="json"),
     })
-    replay = await _governed_mutation_replay(
-        db,
-        organization_id=organization_id,
-        actor_id=actor.id,
-        operation_key=operation_key,
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
+    return await EventContractCommandService(db).apply(
+        organization_id=organization_id, event_id=event_id, actor=actor,
+        payload=payload, expected_version=if_match,
+        idempotency_key=idempotency_key, request_hash=request_hash,
     )
-    if replay is not None:
-        return replay
-    approval = await db.scalar(select(EntitlementOverrideRequest).where(EntitlementOverrideRequest.id == payload.approved_request_id, EntitlementOverrideRequest.organization_id == organization_id, EntitlementOverrideRequest.event_id == event_id).with_for_update())
-    if not approval or approval.status != "APPROVED" or approval.entitlement_key != "event.contract" or approval.operation != "REPLACE" or approval.requested_by == approval.approved_by:
-        raise HTTPException(status_code=409, detail="An independent approved event.contract amendment is required")
-    requested = approval.requested_value if isinstance(approval.requested_value, dict) else {}
-    if requested.get("plan_key") not in {None, payload.plan_key} or requested.get("plan_version") not in {None, payload.plan_version}:
-        raise HTTPException(status_code=409, detail="Approved contract amendment does not match the requested plan")
-    catalogue = {row.key: row for row in (await db.scalars(select(FeatureCatalog))).all()}
-    from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS
-    unknown = sorted(set(payload.entitlements) - set(catalogue) - set(LIMIT_DEFINITIONS) - set(CATALOG_LIMIT_KEYS))
-    if unknown:
-        raise HTTPException(status_code=422, detail={"code": "UNKNOWN_CAPABILITY_KEYS", "keys": unknown})
-    for key, raw in payload.entitlements.items():
-        if key in LIMIT_DEFINITIONS or key in CATALOG_LIMIT_KEYS:
-            value_type = str(raw.get("type") or raw.get("value_type") or "LIMIT").upper() if isinstance(raw, dict) else "LIMIT"
-            if value_type != "LIMIT":
-                raise HTTPException(status_code=422, detail=f"Value type mismatch for {key}")
-            continue
-        definition = catalogue[key]
-        if definition.lifecycle_status != "ACTIVE":
-            raise HTTPException(status_code=422, detail=f"Deprecated capability cannot be contracted: {key}")
-        value_type = str(raw.get("type") or raw.get("value_type") or definition.value_type).upper() if isinstance(raw, dict) else ("BOOLEAN" if isinstance(raw, bool) else "LIMIT" if isinstance(raw, (int, float)) else "TIER" if isinstance(raw, str) else definition.value_type)
-        value = raw.get("value") if isinstance(raw, dict) and "value" in raw else raw
-        if value_type != definition.value_type:
-            value_type = definition.value_type
-        if value_type in {"TIER", "ENUM"} and definition.allowed_values and value not in definition.allowed_values:
-            raise HTTPException(status_code=422, detail=f"Unsupported value for {key}")
-    current = await db.scalar(select(EventCommercialContract).where(EventCommercialContract.event_id == event_id, EventCommercialContract.status == "ACTIVE").with_for_update())
-    current_version = current.version if current else 0
-    if current_version != if_match:
-        raise HTTPException(
-            status_code=status.HTTP_412_PRECONDITION_FAILED,
-            detail={"code": "VERSION_CONFLICT", "current_version": current_version},
-        )
-    next_version = 1
-    if current:
-        current.status = "SUPERSEDED"
-        next_version = current.version + 1
-    contract_values = payload.model_dump(exclude={"reason", "approved_request_id"})
-    contract_values["source"] = {
-        **contract_values.get("source", {}),
-        "approved_request_id": str(approval.id),
-        "applied_by": str(actor.id),
-        "reason": payload.reason,
-    }
-    row = EventCommercialContract(organization_id=organization_id, event_id=event_id, version=next_version, created_by=actor.id, **contract_values)
-    approval.status = "APPLIED"
-    approval.version += 1
-    db.add(row); await db.flush()
-    response = {"id": row.id, "event_id": event_id, "version": row.version, "status": row.status}
-    db.add(_audit(request, actor, organization_id, "EVENT_CONTRACT_VERSION_CREATED", "event_commercial_contract", row.id, old_state={"version": current_version}, new_state={"event_id": str(event_id), "version": next_version, "plan_key": row.plan_key, "reason": payload.reason, "approved_request_id": str(approval.id), "idempotency_key": idempotency_key}, sensitive=True))
-    db.add(_governed_mutation_receipt(
-        organization_id=organization_id,
-        actor_id=actor.id,
-        operation_key=operation_key,
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
-        resource_type="event_commercial_contract",
-        resource_id=row.id,
-        response=response,
-    ))
-    await db.commit()
-    return response
 
 
 @router.get("/events/{event_id}/contract")
@@ -1723,6 +1468,7 @@ async def resolved_entitlements(
 
 @router.post("/override-requests", status_code=status.HTTP_201_CREATED)
 async def request_override(organization_id: uuid.UUID, payload: OverrideRequestCreate, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(min_length=16, max_length=120, alias="Idempotency-Key"), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     await OrganizationConsoleService(db).require_organization(organization_id)
     if payload.event_id: await _require_scoped_event(db, organization_id, payload.event_id)
     operation_key = "entitlement_override.request"
@@ -1740,7 +1486,7 @@ async def request_override(organization_id: uuid.UUID, payload: OverrideRequestC
     response = {"id": row.id, "status": row.status, "version": row.version}
     db.add(_audit(request, actor, organization_id, "ENTITLEMENT_OVERRIDE_REQUESTED", "entitlement_override_request", row.id, new_state={"event_id": str(row.event_id) if row.event_id else None, "key": row.entitlement_key, "operation": row.operation, "idempotency_key": idempotency_key, "version": row.version}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="entitlement_override_request", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
@@ -1758,6 +1504,7 @@ async def list_override_requests(organization_id: uuid.UUID, event_id: uuid.UUID
 
 @router.post("/override-requests/{override_id}/decision")
 async def decide_override(organization_id: uuid.UUID, override_id: uuid.UUID, payload: ApprovalDecision, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     operation_key = "entitlement_override.decision"
     request_hash = request_fingerprint({"operation": operation_key, "override_id": str(override_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
     replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
@@ -1772,7 +1519,7 @@ async def decide_override(organization_id: uuid.UUID, override_id: uuid.UUID, pa
     response = {"id": row.id, "status": row.status, "decided_at": row.decided_at, "version": row.version}
     db.add(_audit(request, actor, organization_id, f"ENTITLEMENT_OVERRIDE_{payload.decision}", "entitlement_override_request", row.id, old_state={"status": "PENDING", "version": if_match}, new_state={"decision": payload.decision, "reason": payload.reason, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="entitlement_override_request", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     if payload.decision == "APPROVED" and row.expires_at:
         try:
             from app.tasks.organization_console_tasks import expire_override
@@ -1787,6 +1534,7 @@ async def decide_override(organization_id: uuid.UUID, override_id: uuid.UUID, pa
 
 @router.post("/override-requests/{override_id}/revocation-request", status_code=status.HTTP_202_ACCEPTED)
 async def request_override_revocation(organization_id: uuid.UUID, override_id: uuid.UUID, payload: ControlRevocationRequest, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     operation_key = "entitlement_override.revocation.request"
     request_hash = request_fingerprint({"operation": operation_key, "override_id": str(override_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
     replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
@@ -1807,12 +1555,13 @@ async def request_override_revocation(organization_id: uuid.UUID, override_id: u
     response = {"id": row.id, "status": row.status, "revocation_status": row.revocation_status, "version": row.version}
     db.add(_audit(request, actor, organization_id, "ENTITLEMENT_OVERRIDE_REVOCATION_REQUESTED", "entitlement_override_request", row.id, old_state={"version": if_match}, new_state={"reason": payload.reason, "case_reference": payload.case_reference, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="entitlement_override_request", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
 @router.post("/override-requests/{override_id}/revocation-decision")
 async def decide_override_revocation(organization_id: uuid.UUID, override_id: uuid.UUID, payload: ApprovalDecision, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     operation_key = "entitlement_override.revocation.decision"
     request_hash = request_fingerprint({"operation": operation_key, "override_id": str(override_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
     replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
@@ -1833,7 +1582,7 @@ async def decide_override_revocation(organization_id: uuid.UUID, override_id: uu
     response = {"id": row.id, "status": row.status, "revocation_status": row.revocation_status, "revoked_at": row.revoked_at, "version": row.version}
     db.add(_audit(request, actor, organization_id, f"ENTITLEMENT_OVERRIDE_REVOCATION_{payload.decision}", "entitlement_override_request", row.id, old_state={"status": "APPROVED", "revocation_status": "PENDING", "version": if_match}, new_state={"status": row.status, "revocation_status": row.revocation_status, "reason": payload.reason, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="entitlement_override_request", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
@@ -1852,6 +1601,7 @@ async def list_capability_restrictions(organization_id: uuid.UUID, event_id: uui
 
 @router.post("/restrictions", status_code=status.HTTP_202_ACCEPTED)
 async def request_capability_restriction(organization_id: uuid.UUID, payload: CapabilityRestrictionCreate, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(min_length=16, max_length=120, alias="Idempotency-Key"), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     await OrganizationConsoleService(db).require_organization(organization_id)
     if payload.event_id:
         await _require_scoped_event(db, organization_id, payload.event_id)
@@ -1870,12 +1620,13 @@ async def request_capability_restriction(organization_id: uuid.UUID, payload: Ca
     response = {"id": row.id, "status": row.status, "version": row.version}
     db.add(_audit(request, actor, organization_id, "CAPABILITY_RESTRICTION_REQUESTED", "capability_restriction", row.id, new_state={"event_id": str(row.event_id) if row.event_id else None, "capability_key": row.capability_key, "reason_code": row.reason_code, "expires_at": row.expires_at, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="capability_restriction", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
 @router.post("/restrictions/{restriction_id}/decision")
 async def decide_capability_restriction(organization_id: uuid.UUID, restriction_id: uuid.UUID, payload: ApprovalDecision, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     operation_key = "capability_restriction.decision"
     request_hash = request_fingerprint({"operation": operation_key, "restriction_id": str(restriction_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
     replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
@@ -1896,7 +1647,7 @@ async def decide_capability_restriction(organization_id: uuid.UUID, restriction_
     response = {"id": row.id, "status": row.status, "version": row.version}
     db.add(_audit(request, actor, organization_id, f"CAPABILITY_RESTRICTION_{payload.decision}", "capability_restriction", row.id, old_state={"status": "PENDING", "version": if_match}, new_state={"decision": payload.decision, "reason": payload.reason, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="capability_restriction", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
@@ -1913,6 +1664,7 @@ async def revoke_capability_restriction(organization_id: uuid.UUID, restriction_
 
 @router.post("/restrictions/{restriction_id}/revocation-request", status_code=status.HTTP_202_ACCEPTED)
 async def request_capability_restriction_revocation(organization_id: uuid.UUID, restriction_id: uuid.UUID, payload: ControlRevocationRequest, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     operation_key = "capability_restriction.revocation.request"
     request_hash = request_fingerprint({"operation": operation_key, "restriction_id": str(restriction_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
     replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
@@ -1933,12 +1685,13 @@ async def request_capability_restriction_revocation(organization_id: uuid.UUID, 
     response = {"id": row.id, "status": row.status, "revocation_status": row.revocation_status, "version": row.version}
     db.add(_audit(request, actor, organization_id, "CAPABILITY_RESTRICTION_REVOCATION_REQUESTED", "capability_restriction", row.id, old_state={"version": if_match}, new_state={"reason": payload.reason, "case_reference": payload.case_reference, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="capability_restriction", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
 @router.post("/restrictions/{restriction_id}/revocation-decision")
 async def decide_capability_restriction_revocation(organization_id: uuid.UUID, restriction_id: uuid.UUID, payload: ApprovalDecision, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     operation_key = "capability_restriction.revocation.decision"
     request_hash = request_fingerprint({"operation": operation_key, "restriction_id": str(restriction_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
     replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
@@ -1959,12 +1712,13 @@ async def decide_capability_restriction_revocation(organization_id: uuid.UUID, r
     response = {"id": row.id, "status": row.status, "revocation_status": row.revocation_status, "revoked_at": row.revoked_at, "version": row.version}
     db.add(_audit(request, actor, organization_id, f"CAPABILITY_RESTRICTION_REVOCATION_{payload.decision}", "capability_restriction", row.id, old_state={"status": "APPROVED", "revocation_status": "PENDING", "version": if_match}, new_state={"status": row.status, "revocation_status": row.revocation_status, "reason": payload.reason, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="capability_restriction", resource_id=row.id, response=response))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return response
 
 
 @router.post("/usage/adjustments", status_code=status.HTTP_201_CREATED)
 async def create_usage_adjustment(organization_id: uuid.UUID, payload: UsageAdjustmentCreate, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(min_length=16, max_length=160, alias="Idempotency-Key"), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = GovernedMutationCommandService(db)
     await OrganizationConsoleService(db).require_organization(organization_id)
     if payload.event_id: await _require_scoped_event(db, organization_id, payload.event_id)
     operation_key = "usage_adjustment.apply"
@@ -2001,7 +1755,7 @@ async def create_usage_adjustment(organization_id: uuid.UUID, payload: UsageAdju
     approval.version += 1
     db.add(_audit(request, actor, organization_id, f"USAGE_{payload.adjustment_type}_RECORDED", "usage_ledger_entry", resource_id, new_state={"metric_key": payload.metric_key, "quantity": quantity, "reason": payload.reason, "approved_request_id": str(approval.id), "idempotency_key": idempotency_key}, sensitive=True))
     db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="usage_ledger_entry", resource_id=resource_id, response=outcome))
-    await db.commit()
+    await command.commit(organization_id=organization_id)
     return outcome
 
 
@@ -2035,18 +1789,19 @@ async def get_usage(organization_id: uuid.UUID, event_id: uuid.UUID | None = Non
 @router.post("/usage/reconcile")
 async def reconcile_usage(organization_id: uuid.UUID, event_id: uuid.UUID, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await _require_scoped_event(db, organization_id, event_id)
-    rows = await MeteringService.reconcile_event(db, organization_id, event_id)
-    drifted = [row for row in rows if row.status == "DRIFTED"]
-    db.add(_audit(request, actor, organization_id, "USAGE_RECONCILIATION_COMPLETED", "event", event_id, new_state={"metric_count": len(rows), "drifted_metrics": [row.metric_key for row in drifted]}, sensitive=bool(drifted)))
-    await db.commit()
-    return {"event_id": event_id, "status": "DRIFTED" if drifted else "MATCHED", "items": [{"metric_key": row.metric_key, "ledger_value": row.ledger_value, "authoritative_value": row.authoritative_value, "drift": row.drift, "status": row.status, "source": row.source} for row in rows]}
+    return await OrganizationUsageCommandService(db).reconcile(
+        organization_id=organization_id, event_id=event_id, actor=actor,
+    )
 
 
 @router.post("/privileged-access-sessions", status_code=status.HTTP_201_CREATED)
 async def create_privileged_access_session(organization_id: uuid.UUID, payload: PrivilegedAccessCreate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    row = PrivilegedAccessSession(organization_id=organization_id, actor_user_id=actor.id, reason=payload.reason, case_reference=payload.case_reference, field_categories=payload.field_categories, expires_at=datetime.now(timezone.utc) + timedelta(minutes=payload.duration_minutes))
-    db.add(row); await db.flush(); db.add(_audit(request, actor, organization_id, "PRIVILEGED_DATA_ACCESS_STARTED", "privileged_access_session", row.id, new_state={"field_categories": row.field_categories, "case_reference": row.case_reference, "expires_at": row.expires_at.isoformat()}, sensitive=True)); await db.commit()
+    row = await PrivilegedAccessCommandService(db).create(
+        organization_id=organization_id, actor=actor, reason=payload.reason,
+        case_reference=payload.case_reference, field_categories=payload.field_categories,
+        duration_minutes=payload.duration_minutes,
+    )
     return {"id": row.id, "expires_at": row.expires_at, "field_categories": row.field_categories}
 
 
@@ -2060,10 +1815,9 @@ async def list_privileged_access_sessions(organization_id: uuid.UUID, actor: Use
 
 @router.delete("/privileged-access-sessions/{session_id}")
 async def revoke_privileged_access_session(organization_id: uuid.UUID, session_id: uuid.UUID, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(PrivilegedAccessSession).where(PrivilegedAccessSession.id == session_id, PrivilegedAccessSession.organization_id == organization_id, PrivilegedAccessSession.actor_user_id == actor.id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Privileged access session not found")
-    if row.revoked_at is None: row.revoked_at = datetime.now(timezone.utc)
-    db.add(_audit(request, actor, organization_id, "PRIVILEGED_DATA_ACCESS_REVOKED", "privileged_access_session", row.id, new_state={"revoked_at": row.revoked_at.isoformat()}, sensitive=True)); await db.commit()
+    row = await PrivilegedAccessCommandService(db).revoke(
+        organization_id=organization_id, session_id=session_id, actor=actor,
+    )
     return {"id": row.id, "revoked_at": row.revoked_at}
 
 
@@ -2073,18 +1827,11 @@ async def create_financial_adjustment(organization_id: uuid.UUID, payload: Finan
     if payload.event_id: await _require_scoped_event(db, organization_id, payload.event_id)
     operation_key = "financial_adjustment.request"
     request_hash = request_fingerprint({"operation": operation_key, "payload": payload.model_dump(mode="json")})
-    replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
-    if replay is not None:
-        return replay
-    existing = await db.scalar(select(OrganizationFinancialAdjustment).where(OrganizationFinancialAdjustment.organization_id == organization_id, OrganizationFinancialAdjustment.idempotency_key == idempotency_key))
-    if existing: raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-    row = OrganizationFinancialAdjustment(organization_id=organization_id, requested_by=actor.id, idempotency_key=idempotency_key, **payload.model_dump())
-    db.add(row); await db.flush()
-    response = {"id": row.id, "status": row.status, "version": row.version}
-    db.add(_audit(request, actor, organization_id, "FINANCIAL_ADJUSTMENT_REQUESTED", "organization_financial_adjustment", row.id, new_state={"type": row.adjustment_type, "amount": str(row.amount), "currency": row.currency, "case_reference": row.case_reference, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
-    db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="organization_financial_adjustment", resource_id=row.id, response=response))
-    await db.commit()
-    return response
+    return await FinancialAdjustmentCommandService(db).create(
+        organization_id=organization_id, actor=actor,
+        values=payload.model_dump(), idempotency_key=idempotency_key,
+        request_hash=request_hash,
+    )
 
 
 @router.get("/financial-adjustments")
@@ -2098,36 +1845,24 @@ async def list_financial_adjustments(organization_id: uuid.UUID, db: AsyncSessio
 async def decide_financial_adjustment(organization_id: uuid.UUID, adjustment_id: uuid.UUID, payload: ApprovalDecision, request: Request, step_up: StepUpAuth, if_match: int = Header(..., alias="If-Match", ge=1), idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=160), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     operation_key = "financial_adjustment.decision"
     request_hash = request_fingerprint({"operation": operation_key, "adjustment_id": str(adjustment_id), "if_match": if_match, "payload": payload.model_dump(mode="json")})
-    replay = await _governed_mutation_replay(db, organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash)
-    if replay is not None:
-        return replay
-    row = await db.scalar(select(OrganizationFinancialAdjustment).where(OrganizationFinancialAdjustment.id == adjustment_id, OrganizationFinancialAdjustment.organization_id == organization_id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Financial adjustment not found")
-    if row.version != if_match: raise HTTPException(status_code=412, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    if row.status != "PENDING": raise HTTPException(status_code=409, detail="Financial adjustment is already decided")
-    if row.requested_by == actor.id: raise HTTPException(status_code=409, detail="Requester cannot approve their own financial adjustment")
-    row.status = payload.decision; row.approved_by = actor.id; row.decided_at = datetime.now(timezone.utc); row.effective_at = row.decided_at if payload.decision == "APPROVED" else None; row.version += 1
-    response = {"id": row.id, "status": row.status, "effective_at": row.effective_at, "version": row.version}
-    db.add(_audit(request, actor, organization_id, f"FINANCIAL_ADJUSTMENT_{payload.decision}", "organization_financial_adjustment", row.id, old_state={"status": "PENDING", "version": if_match}, new_state={"decision": payload.decision, "reason": payload.reason, "effective_at": row.effective_at.isoformat() if row.effective_at else None, "version": row.version, "idempotency_key": idempotency_key}, sensitive=True))
-    db.add(_governed_mutation_receipt(organization_id=organization_id, actor_id=actor.id, operation_key=operation_key, idempotency_key=idempotency_key, request_hash=request_hash, resource_type="organization_financial_adjustment", resource_id=row.id, response=response))
-    await db.commit()
-    return response
+    return await FinancialAdjustmentCommandService(db).decide(
+        organization_id=organization_id, adjustment_id=adjustment_id, actor=actor,
+        decision=payload.decision, reason=payload.reason,
+        case_reference=payload.case_reference, if_match=if_match,
+        idempotency_key=idempotency_key, request_hash=request_hash,
+    )
 
 
 @router.post("/api-keys", status_code=status.HTTP_201_CREATED)
 async def create_organization_api_key(organization_id: uuid.UUID, payload: OrganizationApiKeyCreate, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(min_length=16, max_length=120, alias="Idempotency-Key"), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
     fingerprint = request_fingerprint(payload.model_dump(mode="json"))
-    existing = await db.scalar(select(ApiKey).where(ApiKey.organization_id == organization_id, ApiKey.idempotency_key == idempotency_key))
-    if existing:
-        if existing.request_hash != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        return {"id": existing.id, "name": existing.name, "prefix": existing.prefix, "is_active": existing.is_active, "expires_at": existing.expires_at, "plaintext_key": None, "secret_available": False}
-    row = await DeveloperService.generate_api_key(db, organization_id, payload.name, payload.expires_in_days)
-    row.idempotency_key = idempotency_key
-    row.request_hash = fingerprint
-    plaintext = row.plaintext_key
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_API_KEY_CREATED", "developer_api_key", row.id, new_state={"name": row.name, "prefix": row.prefix, "expires_at": row.expires_at, "case_reference": payload.case_reference, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "name": row.name, "prefix": row.prefix, "is_active": row.is_active, "expires_at": row.expires_at, "plaintext_key": plaintext, "secret_available": True}
+    return await OrganizationApiKeyCommandService(db).create(
+        organization_id=organization_id, actor=actor, name=payload.name,
+        expires_in_days=payload.expires_in_days, idempotency_key=idempotency_key,
+        request_hash=fingerprint, case_reference=payload.case_reference,
+        reason=payload.reason,
+    )
 
 
 async def _team_out(db: AsyncSession, team: OrganizationTeam) -> dict:
@@ -2146,117 +1881,100 @@ async def list_organization_teams(organization_id: uuid.UUID, actor: User = Depe
 @router.post("/teams", status_code=status.HTTP_201_CREATED)
 async def create_organization_team(organization_id: uuid.UUID, payload: OrganizationTeamCreate, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    existing = await db.scalar(select(OrganizationTeam.id).where(OrganizationTeam.organization_id == organization_id, func.lower(OrganizationTeam.name) == payload.name.strip().lower(), OrganizationTeam.deleted_at.is_(None)))
-    if existing: raise HTTPException(status_code=409, detail="An active team with this name already exists")
-    row = OrganizationTeam(organization_id=organization_id, name=payload.name.strip(), description=payload.description, created_by=actor.id)
-    db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_CREATED", "organization_team", row.id, new_state={"name": row.name, "description": row.description, "reason": payload.reason}, sensitive=True)); await db.commit(); await db.refresh(row)
+    row = await OrganizationTeamCommandService(db).create(
+        organization_id=organization_id,
+        actor=actor,
+        name=payload.name,
+        description=payload.description,
+        reason=payload.reason,
+    )
     return await _team_out(db, row)
 
 
 @router.patch("/teams/{team_id}")
 async def update_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, payload: OrganizationTeamUpdate, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Team not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    duplicate = await db.scalar(select(OrganizationTeam.id).where(OrganizationTeam.organization_id == organization_id, OrganizationTeam.id != team_id, func.lower(OrganizationTeam.name) == payload.name.strip().lower(), OrganizationTeam.deleted_at.is_(None)))
-    if duplicate: raise HTTPException(status_code=409, detail="An active team with this name already exists")
-    old = {"name": row.name, "description": row.description, "version": row.version}; row.name = payload.name.strip(); row.description = payload.description; row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_UPDATED", "organization_team", row.id, old_state=old, new_state={"name": row.name, "description": row.description, "version": row.version, "reason": payload.reason}, sensitive=True)); await db.commit()
+    row = await OrganizationTeamCommandService(db).update(
+        organization_id=organization_id,
+        team_id=team_id,
+        actor=actor,
+        name=payload.name,
+        description=payload.description,
+        if_match=if_match,
+        reason=payload.reason,
+    )
     return await _team_out(db, row)
 
 
 @router.delete("/teams/{team_id}")
-async def archive_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Team not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    row.deleted_at = datetime.now(timezone.utc); row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_ARCHIVED", "organization_team", row.id, old_state={"deleted_at": None}, new_state={"deleted_at": row.deleted_at.isoformat(), "reason": payload.reason}, sensitive=True)); await db.commit()
+async def archive_organization_team(organization_id: uuid.UUID, team_id: uuid.UUID, request: Request, step_up: StepUpAuth, payload: LegalHoldRelease = Body(...), if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    row = await OrganizationTeamCommandService(db).archive(
+        organization_id=organization_id,
+        team_id=team_id,
+        actor=actor,
+        if_match=if_match,
+        reason=payload.reason,
+    )
     return {"id": row.id, "deleted_at": row.deleted_at, "version": row.version}
 
 
 @router.put("/teams/{team_id}/members/{member_id}")
 async def assign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: OrganizationTeamAssignment, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)))
-    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.id == member_id, OrganizationMember.organization_id == organization_id, OrganizationMember.is_active.is_(True)))
-    if not team or not member: raise HTTPException(status_code=404, detail="Team or member not found")
-    existing = await db.scalar(select(OrganizationTeamMember).where(OrganizationTeamMember.team_id == team_id, OrganizationTeamMember.organization_member_id == member_id))
-    if not existing: db.add(OrganizationTeamMember(organization_id=organization_id, team_id=team_id, organization_member_id=member_id, created_by=actor.id)); await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_MEMBER_ASSIGNED", "organization_team", team.id, new_state={"member_id": str(member_id), "reason": payload.reason}, sensitive=True)); await db.commit()
+    team = await OrganizationTeamCommandService(db).assign_member(organization_id=organization_id, team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason)
     return await _team_out(db, team)
 
 
 @router.delete("/teams/{team_id}/members/{member_id}")
 async def unassign_organization_team_member(organization_id: uuid.UUID, team_id: uuid.UUID, member_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)))
-    if not team: raise HTTPException(status_code=404, detail="Team not found")
-    result = await db.execute(delete(OrganizationTeamMember).where(OrganizationTeamMember.organization_id == organization_id, OrganizationTeamMember.team_id == team_id, OrganizationTeamMember.organization_member_id == member_id))
-    if not result.rowcount: raise HTTPException(status_code=404, detail="Team membership not found")
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_MEMBER_UNASSIGNED", "organization_team", team.id, old_state={"member_id": str(member_id)}, new_state={"reason": payload.reason}, sensitive=True)); await db.commit()
+    team = await OrganizationTeamCommandService(db).unassign_member(organization_id=organization_id, team_id=team_id, member_id=member_id, actor=actor, reason=payload.reason)
     return await _team_out(db, team)
 
 
 @router.put("/teams/{team_id}/events/{event_id}")
 async def assign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: OrganizationTeamAssignment, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)))
-    event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == organization_id))
-    if not team or not event: raise HTTPException(status_code=404, detail="Team or event not found")
-    row = await db.scalar(select(OrganizationTeamEvent).where(OrganizationTeamEvent.team_id == team_id, OrganizationTeamEvent.event_id == event_id).with_for_update())
-    if row: row.permissions = payload.permissions
-    else: row = OrganizationTeamEvent(organization_id=organization_id, team_id=team_id, event_id=event_id, permissions=payload.permissions, created_by=actor.id); db.add(row)
-    await db.flush(); db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_EVENT_ASSIGNED", "organization_team", team.id, new_state={"event_id": str(event_id), "permissions": payload.permissions, "reason": payload.reason}, sensitive=True)); await db.commit()
+    team = await OrganizationTeamCommandService(db).assign_event(organization_id=organization_id, team_id=team_id, event_id=event_id, actor=actor, permissions=payload.permissions, reason=payload.reason)
     return await _team_out(db, team)
 
 
 @router.delete("/teams/{team_id}/events/{event_id}")
 async def unassign_organization_team_event(organization_id: uuid.UUID, team_id: uuid.UUID, event_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    team = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == organization_id, OrganizationTeam.deleted_at.is_(None)))
-    if not team: raise HTTPException(status_code=404, detail="Team not found")
-    result = await db.execute(delete(OrganizationTeamEvent).where(OrganizationTeamEvent.organization_id == organization_id, OrganizationTeamEvent.team_id == team_id, OrganizationTeamEvent.event_id == event_id))
-    if not result.rowcount: raise HTTPException(status_code=404, detail="Team event assignment not found")
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_TEAM_EVENT_UNASSIGNED", "organization_team", team.id, old_state={"event_id": str(event_id)}, new_state={"reason": payload.reason}, sensitive=True)); await db.commit()
+    team = await OrganizationTeamCommandService(db).unassign_event(organization_id=organization_id, team_id=team_id, event_id=event_id, actor=actor, reason=payload.reason)
     return await _team_out(db, team)
 
 
 @router.post("/api-keys/{key_id}/revoke")
 async def revoke_organization_api_key(organization_id: uuid.UUID, key_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await DeveloperService.revoke_api_key(db, organization_id, key_id)
-    if not row: raise HTTPException(status_code=404, detail="API key not found")
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_API_KEY_REVOKED", "developer_api_key", row.id, new_state={"is_active": False, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "is_active": row.is_active}
+    return await OrganizationApiKeyCommandService(db).revoke(
+        organization_id=organization_id, key_id=key_id, actor=actor,
+        reason=payload.reason,
+    )
 
 
 @router.post("/notification-rules", status_code=status.HTTP_201_CREATED)
 async def create_notification_rule(organization_id: uuid.UUID, payload: NotificationRuleWrite, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    duplicate = await db.scalar(select(OrganizationNotificationRule.id).where(OrganizationNotificationRule.organization_id == organization_id, func.lower(OrganizationNotificationRule.name) == payload.name.strip().lower(), OrganizationNotificationRule.deleted_at.is_(None)))
-    if duplicate: raise HTTPException(status_code=409, detail="An active notification rule with this name already exists")
-    values = payload.model_dump(exclude={"reason"}); values["name"] = values["name"].strip()
-    row = OrganizationNotificationRule(organization_id=organization_id, **values); db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_NOTIFICATION_RULE_CREATED", "organization_notification_rule", row.id, new_state={**values, "reason": payload.reason}, sensitive=True)); await db.commit(); await db.refresh(row)
+    row = await OrganizationNotificationRuleCommandService(db).create(
+        organization_id=organization_id, actor=actor,
+        values=payload.model_dump(exclude={"reason"}), reason=payload.reason,
+    )
     return OrganizationConsoleService._model_dict(row)
 
 
 @router.patch("/notification-rules/{rule_id}")
 async def update_notification_rule(organization_id: uuid.UUID, rule_id: uuid.UUID, payload: NotificationRuleWrite, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationNotificationRule).where(OrganizationNotificationRule.id == rule_id, OrganizationNotificationRule.organization_id == organization_id, OrganizationNotificationRule.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Notification rule not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    old = OrganizationConsoleService._model_dict(row); values = payload.model_dump(exclude={"reason"})
-    for key, value in values.items(): setattr(row, key, value)
-    row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_NOTIFICATION_RULE_UPDATED", "organization_notification_rule", row.id, old_state=old, new_state={**values, "version": row.version, "reason": payload.reason}, sensitive=True)); await db.commit()
+    row = await OrganizationNotificationRuleCommandService(db).update(
+        organization_id=organization_id, rule_id=rule_id, actor=actor,
+        values=payload.model_dump(exclude={"reason"}), if_match=if_match,
+        reason=payload.reason,
+    )
     return OrganizationConsoleService._model_dict(row)
 
 
 @router.delete("/notification-rules/{rule_id}")
-async def archive_notification_rule(organization_id: uuid.UUID, rule_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationNotificationRule).where(OrganizationNotificationRule.id == rule_id, OrganizationNotificationRule.organization_id == organization_id, OrganizationNotificationRule.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Notification rule not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    row.deleted_at = datetime.now(timezone.utc); row.is_enabled = False; row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_NOTIFICATION_RULE_ARCHIVED", "organization_notification_rule", row.id, new_state={"deleted_at": row.deleted_at.isoformat(), "reason": payload.reason}, sensitive=True)); await db.commit()
+async def archive_notification_rule(organization_id: uuid.UUID, rule_id: uuid.UUID, request: Request, step_up: StepUpAuth, payload: LegalHoldRelease = Body(...), if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    row = await OrganizationNotificationRuleCommandService(db).archive(
+        organization_id=organization_id, rule_id=rule_id, actor=actor,
+        if_match=if_match, reason=payload.reason,
+    )
     return {"id": row.id, "version": row.version, "deleted_at": row.deleted_at}
 
 
@@ -2277,13 +1995,11 @@ async def create_notification_channel(organization_id: uuid.UUID, payload: Notif
                 "approved_providers": sorted(SUPPORTED_PROVIDERS[payload.channel]),
             },
         )
-    duplicate = await db.scalar(select(OrganizationNotificationChannelConfig.id).where(OrganizationNotificationChannelConfig.organization_id == organization_id, OrganizationNotificationChannelConfig.channel == payload.channel, OrganizationNotificationChannelConfig.deleted_at.is_(None)))
-    if duplicate: raise HTTPException(status_code=409, detail="An active configuration for this channel already exists")
     values = payload.model_dump(exclude={"reason"})
     values["provider"] = provider
-    row = OrganizationNotificationChannelConfig(organization_id=organization_id, **values); db.add(row); await db.flush()
-    audit_values = {**values, "secret_reference": "[REDACTED]" if values.get("secret_reference") else None, "reason": payload.reason}
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_NOTIFICATION_CHANNEL_CREATED", "organization_notification_channel", row.id, new_state=audit_values, sensitive=True)); await db.commit(); await db.refresh(row)
+    row = await OrganizationNotificationChannelCommandService(db).create(
+        organization_id=organization_id, actor=actor, values=values, reason=payload.reason,
+    )
     response = OrganizationConsoleService._model_dict(row, exclude={"secret_reference"})
     response["secret_reference_present"] = bool(row.secret_reference)
     return response
@@ -2291,9 +2007,6 @@ async def create_notification_channel(organization_id: uuid.UUID, payload: Notif
 
 @router.patch("/notification-channels/{channel_id}")
 async def update_notification_channel(organization_id: uuid.UUID, channel_id: uuid.UUID, payload: NotificationChannelWrite, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationNotificationChannelConfig).where(OrganizationNotificationChannelConfig.id == channel_id, OrganizationNotificationChannelConfig.organization_id == organization_id, OrganizationNotificationChannelConfig.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Notification channel not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
     if payload.state == "ACTIVE":
         raise HTTPException(
             status_code=422,
@@ -2308,36 +2021,12 @@ async def update_notification_channel(organization_id: uuid.UUID, channel_id: uu
                 "approved_providers": sorted(SUPPORTED_PROVIDERS[payload.channel]),
             },
         )
-    old = OrganizationConsoleService._model_dict(row, exclude={"secret_reference"})
     values = payload.model_dump(exclude={"reason"}, exclude_unset=True)
     values["provider"] = provider
-    verification_material_changed = any(
-        (
-            values["channel"] != row.channel,
-            values["provider"] != row.provider,
-            values["configuration"] != row.configuration,
-            (
-                "secret_reference" in values
-                and values["secret_reference"] != row.secret_reference
-            ),
-        )
+    row = await OrganizationNotificationChannelCommandService(db).update(
+        organization_id=organization_id, channel_id=channel_id, actor=actor,
+        values=values, if_match=if_match, reason=payload.reason,
     )
-    for key, value in values.items(): setattr(row, key, value)
-    if verification_material_changed:
-        row.last_verified_at = None
-        if row.state not in {"UNAVAILABLE", "PAUSED"}:
-            row.state = "CONFIGURED"
-    row.version += 1
-    audit_values = {
-        **values,
-        "version": row.version,
-        "reason": payload.reason,
-    }
-    if "secret_reference" in values:
-        audit_values["secret_reference"] = (
-            "[REDACTED]" if values["secret_reference"] else None
-        )
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_NOTIFICATION_CHANNEL_UPDATED", "organization_notification_channel", row.id, old_state=old, new_state=audit_values, sensitive=True)); await db.commit()
     response = OrganizationConsoleService._model_dict(row, exclude={"secret_reference"})
     response["secret_reference_present"] = bool(row.secret_reference)
     return response
@@ -2354,126 +2043,43 @@ async def verify_notification_channel(
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await db.scalar(
-        select(OrganizationNotificationChannelConfig)
-        .where(
-            OrganizationNotificationChannelConfig.id == channel_id,
-            OrganizationNotificationChannelConfig.organization_id
-            == organization_id,
-            OrganizationNotificationChannelConfig.deleted_at.is_(None),
-        )
-        .with_for_update()
+    row = await OrganizationNotificationChannelCommandService(db).verify(
+        organization_id=organization_id, channel_id=channel_id, actor=actor,
+        if_match=if_match, reason=payload.reason,
+        case_reference=payload.case_reference,
     )
-    if not row:
-        raise HTTPException(status_code=404, detail="Notification channel not found")
-    if row.version != if_match:
-        raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    old = OrganizationConsoleService._model_dict(row, exclude={"secret_reference"})
-    try:
-        evidence = await ChannelProviderService.verify(row)
-    except ChannelProviderError as exc:
-        row.state = "DEGRADED"
-        row.last_verified_at = None
-        row.version += 1
-        db.add(
-            _audit(
-                request,
-                actor,
-                organization_id,
-                "ORGANIZATION_NOTIFICATION_CHANNEL_VERIFICATION_FAILED",
-                "organization_notification_channel",
-                row.id,
-                old_state=old,
-                new_state={
-                    "state": row.state,
-                    "code": exc.code,
-                    "reason": payload.reason,
-                    "case_reference": payload.case_reference,
-                    "version": row.version,
-                },
-                sensitive=True,
-            )
-        )
-        await db.commit()
-        raise HTTPException(
-            status_code=503,
-            detail={"code": exc.code, "message": str(exc)},
-        ) from exc
-    row.state = "ACTIVE"
-    row.last_verified_at = datetime.now(timezone.utc)
-    row.version += 1
-    db.add(
-        _audit(
-            request,
-            actor,
-            organization_id,
-            "ORGANIZATION_NOTIFICATION_CHANNEL_VERIFIED",
-            "organization_notification_channel",
-            row.id,
-            old_state=old,
-            new_state={
-                "state": row.state,
-                "provider": row.provider,
-                "verification": evidence,
-                "reason": payload.reason,
-                "case_reference": payload.case_reference,
-                "version": row.version,
-            },
-            sensitive=True,
-        )
-    )
-    await db.commit()
-    response = OrganizationConsoleService._model_dict(
-        row, exclude={"secret_reference"}
-    )
+    response = OrganizationConsoleService._model_dict(row, exclude={"secret_reference"})
     response["secret_reference_present"] = bool(row.secret_reference)
     return response
 
 
 @router.delete("/notification-channels/{channel_id}")
-async def archive_notification_channel(organization_id: uuid.UUID, channel_id: uuid.UUID, payload: LegalHoldRelease, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(OrganizationNotificationChannelConfig).where(OrganizationNotificationChannelConfig.id == channel_id, OrganizationNotificationChannelConfig.organization_id == organization_id, OrganizationNotificationChannelConfig.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Notification channel not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    row.deleted_at = datetime.now(timezone.utc); row.state = "UNAVAILABLE"; row.secret_reference = None; row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_NOTIFICATION_CHANNEL_ARCHIVED", "organization_notification_channel", row.id, new_state={"deleted_at": row.deleted_at.isoformat(), "secret_reference": "[REDACTED]", "reason": payload.reason}, sensitive=True)); await db.commit()
+async def archive_notification_channel(organization_id: uuid.UUID, channel_id: uuid.UUID, request: Request, step_up: StepUpAuth, payload: LegalHoldRelease = Body(...), if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    row = await OrganizationNotificationChannelCommandService(db).archive(
+        organization_id=organization_id, channel_id=channel_id, actor=actor,
+        if_match=if_match, reason=payload.reason,
+    )
     return {"id": row.id, "version": row.version, "deleted_at": row.deleted_at}
 
 
 @router.post("/integrations/connections", status_code=status.HTTP_201_CREATED)
 async def create_integration_connection(organization_id: uuid.UUID, payload: IntegrationConnectionCreate, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(min_length=16, max_length=120, alias="Idempotency-Key"), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
     await OrganizationConsoleService(db).require_organization(organization_id)
-    await enforce_org_operation(db, organization_id, "integrations.manage", user_id=actor.id)
     fingerprint = request_fingerprint(payload.model_dump(mode="json"))
-    existing = await db.scalar(select(IntegrationConnection).where(IntegrationConnection.organization_id == organization_id, IntegrationConnection.idempotency_key == idempotency_key))
-    if existing:
-        if existing.request_hash != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        return {"id": existing.id, "provider_id": existing.provider_id, "is_active": existing.is_active, "version": existing.version}
-    provider = await db.get(IntegrationProvider, payload.provider_id)
-    if not provider: raise HTTPException(status_code=404, detail="Global integration provider not found")
-    duplicate = await db.scalar(select(IntegrationConnection.id).where(IntegrationConnection.organization_id == organization_id, IntegrationConnection.provider_id == payload.provider_id))
-    if duplicate: raise HTTPException(status_code=409, detail="This organization already has a connection for the provider")
-    reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=None, limit_key="max_integrations", quantity=1, unit="integration", idempotency_key=f"integration:{idempotency_key}", metadata={"provider_id": str(payload.provider_id)})
-    row = IntegrationConnection(organization_id=organization_id, provider_id=payload.provider_id, is_active=True, version=1, idempotency_key=idempotency_key, request_hash=fingerprint); db.add(row); await db.flush()
-    await UsageReservationService.consume(db, reservation.id, source="integrations.connection.create", actor_user_id=actor.id)
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_INTEGRATION_CONNECTED", "integration_connection", row.id, new_state={"provider_id": row.provider_id, "provider_name": provider.name, "case_reference": payload.case_reference, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "provider_id": row.provider_id, "provider_name": provider.name, "is_active": row.is_active, "version": row.version}
+    return await IntegrationConnectionCommandService(db).create(
+        organization_id=organization_id, actor=actor, provider_id=payload.provider_id,
+        idempotency_key=idempotency_key, request_hash=fingerprint,
+        case_reference=payload.case_reference, reason=payload.reason,
+    )
 
 
 @router.patch("/integrations/connections/{connection_id}")
 async def update_integration_connection(organization_id: uuid.UUID, connection_id: uuid.UUID, payload: IntegrationConnectionUpdate, request: Request, step_up: StepUpAuth, if_match: int = Header(alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(IntegrationConnection).where(IntegrationConnection.id == connection_id, IntegrationConnection.organization_id == organization_id).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Integration connection not found")
-    if row.version != if_match: raise HTTPException(status_code=409, detail="VERSION_CONFLICT")
-    old = row.is_active
-    if payload.is_active and not old:
-        await enforce_org_operation(db, organization_id, "integrations.manage", user_id=actor.id)
-        reservation = await UsageReservationService.reserve(db, organization_id=organization_id, event_id=None, limit_key="max_integrations", quantity=1, unit="integration", idempotency_key=f"integration-reactivate:{row.id}:v{if_match}", metadata={"connection_id": str(row.id)})
-        await UsageReservationService.consume(db, reservation.id, source="integrations.connection.reactivate", actor_user_id=actor.id)
-    row.is_active = payload.is_active
-    row.version += 1
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_INTEGRATION_STATUS_CHANGED", "integration_connection", row.id, old_state={"is_active": old, "version": if_match}, new_state={"is_active": row.is_active, "version": row.version, "case_reference": payload.case_reference, "reason": payload.reason}, sensitive=True)); await db.commit()
-    return {"id": row.id, "is_active": row.is_active, "version": row.version}
+    return await IntegrationConnectionCommandService(db).update(
+        organization_id=organization_id, connection_id=connection_id, actor=actor,
+        is_active=payload.is_active, if_match=if_match,
+        case_reference=payload.case_reference, reason=payload.reason,
+    )
 
 
 @router.post("/exports", response_model=ConsoleExportOut, status_code=status.HTTP_202_ACCEPTED)
@@ -2484,26 +2090,13 @@ async def create_console_export(
     actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db),
 ) -> ConsoleExportOut:
     await OrganizationConsoleService(db).require_organization(organization_id)
-    if payload.event_id: await _require_scoped_event(db, organization_id, payload.event_id)
-    access = None
-    if payload.include_sensitive:
-        access = await _require_privileged_access(db, organization_id, actor.id, privileged_access_session, {"IDENTITY", "CONTACT", "PAYMENT"})
     request_data = payload.model_dump(mode="json")
     fingerprint = request_fingerprint(request_data)
-    existing = await db.scalar(select(DataExport).where(DataExport.organization_id == organization_id, DataExport.source_type == "organization_console_export", DataExport.idempotency_key == idempotency_key))
-    if existing:
-        if existing.request_hash != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        return _console_export_out(existing)
-    row = DataExport(organization_id=organization_id, event_id=payload.event_id, requested_by=actor.id, status="QUEUED", export_type="organization_console", file_format="csv", source_type="organization_console_export", idempotency_key=idempotency_key, request_hash=fingerprint, request_metadata={**request_data, "privileged_access_session_id": str(access.id) if access else None})
-    db.add(row); await db.flush()
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_CONSOLE_EXPORT_REQUESTED", "data_export", row.id, new_state={"domains": payload.domains, "event_id": str(payload.event_id) if payload.event_id else None, "include_sensitive": payload.include_sensitive, "case_reference": payload.case_reference}, sensitive=True))
-    await db.commit(); await db.refresh(row)
-    try:
-        celery_app.send_task("workers.tasks.report_tasks.generate_organization_console_export", kwargs={"organization_id": str(organization_id), "requested_by_user_id": str(actor.id), "export_id": str(row.id)})
-    except Exception as exc:
-        row.status = "FAILED"; row.failure_reason = "Export worker dispatch failed."
-        db.add(_audit(request, actor, organization_id, "ORGANIZATION_CONSOLE_EXPORT_DISPATCH_FAILED", "data_export", row.id, new_state={"status": "FAILED"}, sensitive=True)); await db.commit()
-        raise HTTPException(status_code=503, detail="EXPORT_DISPATCH_FAILED") from exc
+    row = await OrganizationExportCommandService(db).create(
+        organization_id=organization_id, actor=actor, payload=payload,
+        idempotency_key=idempotency_key, request_hash=fingerprint,
+        privileged_access_session_id=privileged_access_session,
+    )
     return _console_export_out(row)
 
 
@@ -2516,15 +2109,22 @@ async def list_console_exports(organization_id: uuid.UUID, limit: int = Query(de
 
 @router.get("/exports/{export_id}/download")
 async def download_console_export(organization_id: uuid.UUID, export_id: uuid.UUID, request: Request, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(DataExport).where(DataExport.id == export_id, DataExport.organization_id == organization_id, DataExport.source_type == "organization_console_export").with_for_update())
+    row = await db.scalar(select(DataExport).where(DataExport.id == export_id, DataExport.organization_id == organization_id, DataExport.source_type == "organization_console_export"))
     if not row: raise HTTPException(status_code=404, detail="Export not found")
     if row.status != "COMPLETED" or not row.storage_key: raise HTTPException(status_code=409, detail={"code": "EXPORT_NOT_READY", "status": row.status})
     now = datetime.now(timezone.utc)
     if row.expires_at and row.expires_at <= now: raise HTTPException(status_code=410, detail="EXPORT_EXPIRED")
     expiry = min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300)
-    download_url = create_presigned_download(bucket=settings.S3_BUCKET_EXPORTS, storage_path=row.storage_key, filename=f"organization-{organization_id}-console-export.csv", expiry_seconds=expiry)
-    row.downloaded_at = now
-    db.add(_audit(request, actor, organization_id, "ORGANIZATION_CONSOLE_EXPORT_DOWNLOADED", "data_export", row.id, new_state={"downloaded_at": now.isoformat()}, sensitive=True)); await db.commit()
+    download_url = await asyncio.to_thread(create_presigned_download, bucket=settings.S3_BUCKET_EXPORTS, storage_path=row.storage_key, filename=f"organization-{organization_id}-console-export.csv", expiry_seconds=expiry)
+    await _dispatch_read_audit(
+        request,
+        actor,
+        organization_id,
+        "ORGANIZATION_CONSOLE_EXPORT_DOWNLOADED",
+        "data_export",
+        row.id,
+        new_state={"downloaded_at": now.isoformat()},
+    )
     return {"download_url": download_url, "filename": f"organization-{organization_id}-console-export.csv", "expires_in": expiry}
 
 
@@ -2572,7 +2172,15 @@ async def search_organization_console(
     offset = _search_cursor(cursor); page = items[offset:offset + limit]; next_offset = offset + len(page)
     next_cursor = base64.urlsafe_b64encode(f"search:{next_offset}".encode()).decode() if next_offset < len(items) else None
     if access:
-        db.add(_audit(request, actor, organization_id, "SENSITIVE_CROSS_DOMAIN_SEARCH", "organization", organization_id, new_state={"query": q, "domains": sorted(selected), "event_id": str(event_id) if event_id else None, "record_count": len(page), "privileged_access_session_id": str(access.id)}, sensitive=True)); await db.commit()
+        await _dispatch_read_audit(
+            request,
+            actor,
+            organization_id,
+            "SENSITIVE_CROSS_DOMAIN_SEARCH",
+            "organization",
+            organization_id,
+            new_state={"query": q, "domains": sorted(selected), "event_id": str(event_id) if event_id else None, "record_count": len(page), "privileged_access_session_id": str(access.id)},
+        )
     return {"items": page, "next_cursor": next_cursor, "has_more": next_cursor is not None, "availability": {"available": True, "freshness_at": datetime.now(timezone.utc)}, "source": sorted(selected), "sensitive_data_included": bool(access)}
 
 
@@ -2611,8 +2219,15 @@ async def event_registration_workspace(
     if has_more and rows:
         next_cursor = base64.urlsafe_b64encode(f"{rows[-1].submitted_at.isoformat()}|{rows[-1].id}".encode()).decode()
     if access:
-        db.add(_audit(request, actor, organization_id, "SENSITIVE_REGISTRATION_DATA_READ", "event", event_id, new_state={"privileged_access_session_id": str(access.id), "record_count": len(rows), "field_categories": ["IDENTITY", "CONTACT"]}, sensitive=True))
-        await db.commit()
+        await _dispatch_read_audit(
+            request,
+            actor,
+            organization_id,
+            "SENSITIVE_REGISTRATION_DATA_READ",
+            "event",
+            event_id,
+            new_state={"privileged_access_session_id": str(access.id), "record_count": len(rows), "field_categories": ["IDENTITY", "CONTACT"]},
+        )
     return {"items": [{"id": row.id, "event_id": row.event_id, "participant_id": row.participant_id, "status": row.registration_status.upper(), "registration_data": row.registration_data if include_sensitive else _masked_registration_data(row.registration_data or {}), "submitted_at": row.submitted_at, "reviewed_by": row.reviewed_by, "reviewed_at": row.reviewed_at, "review_notes": row.review_notes, "waitlist_position": row.waitlist_position, "rejection_reason": row.rejection_reason, "approval_source": row.approval_source} for row in rows], "next_cursor": next_cursor, "has_more": has_more, "sensitive_data_included": include_sensitive, "freshness_at": datetime.now(timezone.utc), "source": "registration.registrations"}
 
 
@@ -2856,7 +2471,7 @@ async def event_domain_workspace(
         data = {"items": [{"id": row.id, "room_id": row.room_id, "session_code": row.session_code, "name": row.name, "session_type": row.session_type, "start_time": row.start_time, "end_time": row.end_time, "moderator_id": row.moderator_id, "moderator_name": row.moderator_name, "description": row.description, "status": row.status, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in rows], "has_more": len(rows) == 100}; source = "events.sessions"
     elif workspace == "rooms":
         rows = (await db.scalars(select(Room).where(Room.event_id == event_id).order_by(Room.name).limit(100))).all()
-        data = {"items": [{"id": row.id, "name": row.name, "capacity": row.capacity, "screen_count": row.screen_count, "room_type": row.room_type, "av_technician": row.av_technician, "location_notes": row.location_notes, "is_active": row.is_active, "lifecycle_state": "active" if row.is_active else "archived"} for row in rows], "has_more": len(rows) == 100}; source = "events.rooms"
+        data = {"items": [{"id": row.id, "name": row.name, "code": getattr(row, "code", None), "room_type": row.room_type, "room_coordinator": getattr(row, "room_coordinator", None), "is_active": row.is_active, "lifecycle_state": "active" if row.is_active else "archived"} for row in rows], "has_more": len(rows) == 100}; source = "events.rooms"
     elif workspace == "communications":
         campaign_filter = [EmailCampaign.event_id == event_id]
         if not include_archived: campaign_filter.append(EmailCampaign.deleted_at.is_(None))
@@ -2866,8 +2481,8 @@ async def event_domain_workspace(
     elif workspace == "templates":
         email_filter = [EmailTemplate.event_id == event_id]; print_filter = [PrintTemplate.event_id == event_id]
         if not include_archived: email_filter.append(EmailTemplate.deleted_at.is_(None)); print_filter.append(PrintTemplate.deleted_at.is_(None))
-        email_rows = (await db.scalars(select(EmailTemplate).where(*email_filter).order_by(EmailTemplate.created_at.desc()).limit(100))).all()
-        print_rows = (await db.scalars(select(PrintTemplate).where(*print_filter).order_by(PrintTemplate.updated_at.desc()).limit(100))).all()
+        email_rows = (await db.scalars(select(EmailTemplate).where(*email_filter).order_by(EmailTemplate.created_at.desc()).limit(100).execution_options(skip_tenant_filter=True))).all()
+        print_rows = (await db.scalars(select(PrintTemplate).where(*print_filter).order_by(PrintTemplate.updated_at.desc()).limit(100).execution_options(skip_tenant_filter=True))).all()
         data = {"email_templates": [{"id": row.id, "kind": "email", "name": row.name, "template_type": row.template_type, "target_type": row.target_type, "subject": row.subject, "body_html": row.body_html, "body_text": row.body_text, "is_default": row.is_default, "created_at": row.created_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in email_rows], "print_templates": [{"id": row.id, "kind": "print", "template_name": row.template_name, "template_type": row.template_type, "template_data": row.template_data, "updated_at": row.updated_at, "lifecycle_state": "archived" if row.deleted_at else "active", "deleted_at": row.deleted_at} for row in print_rows]}; source = "communications.email_templates,registration.print_templates"
     elif workspace == "files":
         rows = (await db.scalars(select(PresentationFile).where(PresentationFile.event_id == event_id, PresentationFile.deleted_at.is_(None)).order_by(PresentationFile.uploaded_at.desc()).limit(100))).all()
@@ -2977,7 +2592,19 @@ async def event_domain_workspace(
         rows = (await db.scalars(select(AuditLog).where(AuditLog.organization_id == organization_id, AuditLog.resource_id == event_id).order_by(AuditLog.occurred_at.desc()).limit(100))).all()
         data = {"items": [{"id": row.id, "actor_user_id": row.actor_user_id, "impersonated_by": row.impersonated_by, "actor_role": row.actor_role, "resource_type": row.resource_type, "action_type": row.action_type, "change_diff": row.change_diff, "is_sensitive": row.is_sensitive, "occurred_at": row.occurred_at} for row in rows]}; source = "audit.logs"
     if access:
-        db.add(_audit(request, actor, organization_id, f"SENSITIVE_EVENT_{workspace.upper()}_READ", "event", event_id, new_state={"privileged_access_session_id": str(access.id), "workspace": workspace, "field_categories": sorted(sensitive_categories)}, sensitive=True)); await db.commit()
+        await _dispatch_read_audit(
+            request,
+            actor,
+            organization_id,
+            f"SENSITIVE_EVENT_{workspace.upper()}_READ",
+            "event",
+            event_id,
+            new_state={
+                "privileged_access_session_id": str(access.id),
+                "workspace": workspace,
+                "field_categories": sorted(sensitive_categories),
+            },
+        )
     return {"workspace": workspace, "event_id": event_id, "generated_at": datetime.now(timezone.utc), "availability": {"available": True, "freshness_at": datetime.now(timezone.utc)}, "source": source, "sensitive_data_included": bool(access), "data": data}
 
 
@@ -2990,41 +2617,17 @@ async def update_event_settings(
     step_up: StepUpAuth,
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
 ):
     del step_up
-    event = await _require_scoped_event(db, organization_id, event_id)
     event_update = EventUpdate.model_validate(payload.data)
-    event, old_state, changed_fields = await EventMutationService.update(
-        db,
-        event=event,
-        payload=event_update,
-        actor_user_id=actor.id,
+    from app.core.concurrency import require_if_match
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    return await EventSettingsCommandService(db).update(
+        organization_id=organization_id, event_id=event_id, actor=actor,
+        payload=event_update, reason=payload.reason,
+        case_reference=payload.case_reference, expected_version=expected_version,
     )
-    db.add(
-        _audit(
-            request,
-            actor,
-            organization_id,
-            "EVENT_SETTINGS_UPDATED",
-            "event",
-            event.id,
-            old_state=old_state,
-            new_state={
-                "changed_fields": changed_fields,
-                "reason": payload.reason,
-                "case_reference": payload.case_reference,
-            },
-            sensitive=True,
-        )
-    )
-    await db.commit()
-    await db.refresh(event)
-    return {
-        "id": event.id,
-        "event_id": event.id,
-        "updated": changed_fields,
-        "updated_at": event.updated_at,
-    }
 
 
 @router.patch("/events/{event_id}/operations")
@@ -3036,74 +2639,33 @@ async def update_event_operational_controls(
     step_up: StepUpAuth,
     actor: User = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
+    if_match: int | None = Header(default=None, alias="If-Match", ge=1),
 ):
     del step_up
-    event = await _require_scoped_event(db, organization_id, event_id)
-    await enforce_event_operation(
-        db,
-        organization_id,
-        event_id,
-        "events.planning.manage",
-        user_id=actor.id,
+    return await EventOperationalControlCommandService(db).update(
+        organization_id=organization_id, event_id=event_id, actor=actor,
+        is_maintenance=payload.is_maintenance, is_read_only=payload.is_read_only,
+        reason=payload.reason, case_reference=payload.case_reference,
+        expected_version=if_match,
     )
-    old_state = {
-        "is_maintenance": event.is_maintenance,
-        "is_read_only": event.is_read_only,
-    }
-    if payload.is_maintenance is not None:
-        event.is_maintenance = payload.is_maintenance
-    if payload.is_read_only is not None:
-        event.is_read_only = payload.is_read_only
-    new_state = {
-        "is_maintenance": event.is_maintenance,
-        "is_read_only": event.is_read_only,
-        "reason": payload.reason,
-        "case_reference": payload.case_reference,
-    }
-    db.add(
-        _audit(
-            request,
-            actor,
-            organization_id,
-            "EVENT_OPERATIONAL_CONTROLS_UPDATED",
-            "event",
-            event.id,
-            old_state=old_state,
-            new_state=new_state,
-            sensitive=True,
-        )
-    )
-    await db.commit()
-    return {"id": event.id, **new_state}
 
 
 @router.post("/events/{event_id}/workspace/registrations/{registration_id}/correction")
 async def correct_event_registration(organization_id: uuid.UUID, event_id: uuid.UUID, registration_id: uuid.UUID, payload: RegistrationAdministrativeCorrection, request: Request, step_up: StepUpAuth, actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
-    await _require_scoped_event(db, organization_id, event_id)
-    row = await db.scalar(select(ParticipantRegistration).where(ParticipantRegistration.id == registration_id, ParticipantRegistration.event_id == event_id, ParticipantRegistration.deleted_at.is_(None)).with_for_update())
-    if not row: raise HTTPException(status_code=404, detail="Registration not found")
-    old = {"status": row.registration_status, "waitlist_position": row.waitlist_position, "reviewed_by": str(row.reviewed_by) if row.reviewed_by else None}
-    if payload.status == "APPROVED":
-        capacity = await db.scalar(select(CapacityRule).where(CapacityRule.event_id == event_id, CapacityRule.session_id.is_(None), CapacityRule.room_id.is_(None)))
-        if capacity:
-            approved_count = await db.scalar(select(func.count(Participant.id)).where(Participant.event_id == event_id)) or 0
-            if approved_count >= capacity.capacity:
-                raise HTTPException(status_code=409, detail=f"Event capacity of {capacity.capacity} has been reached")
-        await helper_approve_registration(db, row, actor.id, payload.reason)
-    elif payload.status == "WAITLISTED":
-        max_position = await db.scalar(select(func.max(ParticipantRegistration.waitlist_position)).where(ParticipantRegistration.event_id == event_id, ParticipantRegistration.registration_status == "waitlisted"))
-        row.registration_status = "waitlisted"; row.waitlist_position = (max_position or 0) + 1; row.reviewed_by = actor.id; row.reviewed_at = datetime.now(timezone.utc); row.review_notes = payload.reason
-    else:
-        old_position = row.waitlist_position
-        row.registration_status = "rejected"; row.rejection_reason = payload.rejection_reason; row.waitlist_position = None; row.reviewed_by = actor.id; row.reviewed_at = datetime.now(timezone.utc); row.review_notes = payload.reason
-        if old["status"] == "waitlisted" and old_position is not None:
-            await db.execute(update(ParticipantRegistration).where(ParticipantRegistration.event_id == event_id, ParticipantRegistration.registration_status == "waitlisted", ParticipantRegistration.waitlist_position > old_position).values(waitlist_position=ParticipantRegistration.waitlist_position - 1))
-    db.add(_audit(request, actor, organization_id, "REGISTRATION_ADMINISTRATIVE_CORRECTION", "registration", row.id, old_state=old, new_state={"status": row.registration_status, "waitlist_position": row.waitlist_position, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit(); await db.refresh(row)
-    return {"id": row.id, "status": row.registration_status.upper(), "reviewed_by": row.reviewed_by, "reviewed_at": row.reviewed_at, "waitlist_position": row.waitlist_position}
+    if_match = request.headers.get("If-Match")
+    expected_version = int(if_match) if if_match and if_match.isdigit() else None
+    return await RegistrationCorrectionCommandService(db).correct(
+        organization_id=organization_id, event_id=event_id,
+        registration_id=registration_id, actor=actor, status=payload.status,
+        reason=payload.reason, case_reference=payload.case_reference,
+        rejection_reason=payload.rejection_reason,
+        expected_version=expected_version,
+    )
 
 
 @router.post("/events/{event_id}/workspace/{workspace}", status_code=status.HTTP_201_CREATED)
 async def create_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, payload: EventWorkspaceMutation, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = EventWorkspaceCommandService(db)
     event = await _require_scoped_event(db, organization_id, event_id)
     reservation = None
     one_time_secret = None
@@ -3168,7 +2730,10 @@ async def create_event_workspace_resource(organization_id: uuid.UUID, event_id: 
                     sensitive=True,
                 )
             )
-            await db.commit()
+            await command.commit(organization_id=organization_id, event_id=event_id)
+            enqueue_event_registration_projection_refresh(
+                organization_id=organization_id, event_id=event_id
+            )
             return {
                 "id": row.id,
                 "event_id": event_id,
@@ -3245,7 +2810,7 @@ async def create_event_workspace_resource(organization_id: uuid.UUID, event_id: 
             )
         )
         db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_CREATED", "webhook", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "secret_configured": True, "version": row.version}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return response
     elif workspace == "communications":
         data = CampaignCreate.model_validate(payload.data)
@@ -3284,7 +2849,12 @@ async def create_event_workspace_resource(organization_id: uuid.UUID, event_id: 
     db.add(row); await db.flush()
     if reservation is not None:
         await UsageReservationService.consume(db, reservation.id, source=f"organization_console.{workspace}.create", actor_user_id=actor.id)
-    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_CREATED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=workspace in {"speakers", "integrations"})); await db.commit(); await db.refresh(row)
+    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_CREATED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=workspace in {"speakers", "integrations"})); await command.commit(organization_id=organization_id, event_id=event_id)
+    if workspace == "attendees":
+        enqueue_event_registration_projection_refresh(
+            organization_id=organization_id, event_id=event_id
+        )
+    await db.refresh(row)
     response = {"id": row.id, "event_id": event_id, "resource_type": resource_type, "created_at": getattr(row, "created_at", getattr(row, "updated_at", None))}
     if one_time_secret is not None:
         response["secret"] = one_time_secret
@@ -3295,6 +2865,7 @@ async def create_event_workspace_resource(organization_id: uuid.UUID, event_id: 
 
 @router.patch("/events/{event_id}/workspace/{workspace}/{resource_id}")
 async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceMutation, request: Request, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = EventWorkspaceCommandService(db)
     event = await _require_scoped_event(db, organization_id, event_id)
     if workspace == "attendees":
         row, _, changes, old = await EventParticipantMutationService.update(
@@ -3322,7 +2893,10 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
                 sensitive=True,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
+        enqueue_event_registration_projection_refresh(
+            organization_id=organization_id, event_id=event_id
+        )
         return {
             "id": row.id,
             "event_id": event_id,
@@ -3349,11 +2923,15 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
             )
             resource_type = "session"
         else:
+            try:
+                room_payload = RoomUpdate.model_validate(payload.data)
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
             row, changes, old = await EventResourceMutationService.update_room(
                 db,
                 event=event,
                 room_id=resource_id,
-                payload=RoomUpdate.model_validate(payload.data),
+                payload=room_payload,
                 actor_user_id=actor.id,
             )
             resource_type = "room"
@@ -3375,7 +2953,7 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
                 sensitive=workspace == "speakers",
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {
             "id": row.id,
             "event_id": event_id,
@@ -3461,7 +3039,7 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
             )
         )
         db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_UPDATED", "webhook", row.id, old_state=old, new_state={"changed_fields": sorted(changes), "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "version": row.version}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return response
     elif workspace == "communications":
         row, old, changes = await EventCampaignMutationService.update(
@@ -3472,7 +3050,7 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
             actor=actor,
         )
         db.add(_audit(request, actor, organization_id, "EVENT_EMAIL_CAMPAIGN_UPDATED", "email_campaign", row.id, old_state=old, new_state={"changed_fields": changes, "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=False))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "event_id": event_id, "resource_type": "email_campaign", "updated": changes}
     elif workspace == "templates":
         kind = payload.data.get("kind")
@@ -3530,7 +3108,7 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
                 sensitive=False,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {
             "id": row.id,
             "event_id": event_id,
@@ -3610,12 +3188,13 @@ async def update_event_workspace_resource(organization_id: uuid.UUID, event_id: 
             source="organization_console.print_templates.transition",
             actor_user_id=actor.id,
         )
-    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_UPDATED", resource_type, row.id, old_state=old, new_state={"changed_fields": sorted(changes), "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=workspace in {"speakers", "integrations"})); await db.commit()
+    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_UPDATED", resource_type, row.id, old_state=old, new_state={"changed_fields": sorted(changes), "event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=workspace in {"speakers", "integrations"})); await command.commit(organization_id=organization_id, event_id=event_id)
     return {"id": row.id, "event_id": event_id, "resource_type": resource_type, "updated": sorted(changes)}
 
 
 @router.delete("/events/{event_id}/workspace/{workspace}/{resource_id}")
 async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceDelete, request: Request, step_up: StepUpAuth, if_match: int | None = Header(None, alias="If-Match", ge=1), idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = EventWorkspaceCommandService(db)
     event = await _require_scoped_event(db, organization_id, event_id)
     if workspace in {"speakers", "sessions", "rooms"}:
         if workspace == "speakers":
@@ -3662,7 +3241,7 @@ async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id:
                 sensitive=True,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "outcome": outcome, "recoverable": True}
     if workspace == "attendees":
         row, outcome = await EventParticipantMutationService.archive(
@@ -3689,7 +3268,10 @@ async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id:
                 sensitive=True,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
+        enqueue_event_registration_projection_refresh(
+            organization_id=organization_id, event_id=event_id
+        )
         return {"id": row.id, "outcome": outcome, "recoverable": True}
     if workspace == "integrations":
         await enforce_event_operation(
@@ -3760,7 +3342,7 @@ async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id:
             )
         )
         db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_PAUSED", "webhook", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "version": row.version}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return response
     elif workspace == "communications":
         row, outcome = await EventCampaignMutationService.archive(
@@ -3770,14 +3352,14 @@ async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id:
             actor=actor,
         )
         db.add(_audit(request, actor, organization_id, f"EVENT_EMAIL_CAMPAIGN_{outcome}", "email_campaign", row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "outcome": outcome, "recoverable": True}
     elif workspace == "templates":
         if await db.scalar(
             select(EmailTemplate.id).where(
                 EmailTemplate.id == resource_id,
                 EmailTemplate.event_id == event_id,
-            )
+            ).execution_options(skip_tenant_filter=True)
         ):
             row, outcome = await EventTemplateMutationService.archive_email(
                 db,
@@ -3795,7 +3377,7 @@ async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id:
             )
             resource_type = "print_template"
         db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "outcome": outcome, "recoverable": True}
     else: raise HTTPException(status_code=409, detail="This resource requires a recoverable lifecycle job and cannot be directly deleted")
     row = await db.scalar(select(model).where(model.id == resource_id, model.event_id == event_id).with_for_update())
@@ -3825,12 +3407,13 @@ async def archive_event_workspace_resource(organization_id: uuid.UUID, event_id:
         row.version += 1
         row.updated_at = datetime.now(timezone.utc)
         outcome = "PAUSED"
-    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit()
+    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "outcome": outcome, "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await command.commit(organization_id=organization_id, event_id=event_id)
     return {"id": row.id, "outcome": outcome, "recoverable": True}
 
 
 @router.post("/events/{event_id}/workspace/{workspace}/{resource_id}/restore")
 async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceDelete, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), if_match: int | None = Header(None, alias="If-Match", ge=1), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = EventWorkspaceCommandService(db)
     event = await _require_scoped_event(db, organization_id, event_id)
     if workspace in {"speakers", "sessions", "rooms"}:
         if workspace == "speakers":
@@ -3880,7 +3463,7 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
                 sensitive=True,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "outcome": outcome}
     if workspace == "attendees":
         row, outcome = await EventParticipantMutationService.restore(
@@ -3908,7 +3491,10 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
                 sensitive=True,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
+        enqueue_event_registration_projection_refresh(
+            organization_id=organization_id, event_id=event_id
+        )
         return {"id": row.id, "outcome": outcome}
     if workspace == "integrations":
         await enforce_event_operation(
@@ -3980,7 +3566,7 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
             )
         )
         db.add(_audit(request, actor, organization_id, "EVENT_WEBHOOK_RESTORED", "webhook", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference, "version": row.version}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return response
     elif workspace == "communications":
         row, outcome = await EventCampaignMutationService.restore(
@@ -3990,14 +3576,14 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
             actor=actor,
         )
         db.add(_audit(request, actor, organization_id, f"EVENT_EMAIL_CAMPAIGN_{outcome}", "email_campaign", row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "outcome": outcome}
     elif workspace == "templates":
         if await db.scalar(
             select(EmailTemplate.id).where(
                 EmailTemplate.id == resource_id,
                 EmailTemplate.event_id == event_id,
-            )
+            ).execution_options(skip_tenant_filter=True)
         ):
             row, outcome = await EventTemplateMutationService.restore_email(
                 db,
@@ -4017,7 +3603,7 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
             )
             resource_type = "print_template"
         db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_{outcome}", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True))
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return {"id": row.id, "outcome": outcome}
     else: raise HTTPException(status_code=405, detail="This workspace does not support restore")
     row = await db.scalar(select(model).where(model.id == resource_id, model.event_id == event_id).with_for_update())
@@ -4072,12 +3658,13 @@ async def restore_event_workspace_resource(organization_id: uuid.UUID, event_id:
         row.updated_at = datetime.now(timezone.utc)
     if reservation is not None:
         await UsageReservationService.consume(db, reservation.id, source=f"organization_console.{workspace}.restore", actor_user_id=actor.id)
-    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_RESTORED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await db.commit()
+    db.add(_audit(request, actor, organization_id, f"EVENT_{resource_type.upper()}_RESTORED", resource_type, row.id, new_state={"event_id": str(event_id), "reason": payload.reason, "case_reference": payload.case_reference}, sensitive=True)); await command.commit(organization_id=organization_id, event_id=event_id)
     return {"id": row.id, "outcome": "RESTORED"}
 
 
 @router.post("/events/{event_id}/workspace/{workspace}/{resource_id}/actions")
 async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: uuid.UUID, workspace: str, resource_id: uuid.UUID, payload: EventWorkspaceAction, request: Request, step_up: StepUpAuth, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200), actor: User = Depends(require_super_admin), db: AsyncSession = Depends(get_db)):
+    command = EventWorkspaceCommandService(db)
     event = await _require_scoped_event(db, organization_id, event_id)
     action = payload.action
     task_to_dispatch = None
@@ -4389,7 +3976,7 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
         if retry["replayed"]:
             return result
         # Commit the successor before publishing it to a worker or venue poller.
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         dispatch = retry["dispatch"]
         if dispatch is not None:
             try:
@@ -4426,7 +4013,7 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
                         sensitive=True,
                     )
                 )
-                await db.commit()
+                await command.commit(organization_id=organization_id, event_id=event_id)
                 raise HTTPException(
                     status_code=503,
                     detail={
@@ -4435,6 +4022,13 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
                         "successor_job_id": retry["successor_job_id"],
                     },
                 ) from exc
+        else:
+            # Venue sync successors are consumed by the venue poller rather than
+            # Celery; the control request itself has completed successfully once
+            # the successor is durably committed.
+            control = await EventJobControlService.mark_dispatch_succeeded(
+                db, control.id
+            )
         result["status"] = control.status
         db.add(
             _audit(
@@ -4455,7 +4049,7 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
                 sensitive=True,
             )
         )
-        await db.commit()
+        await command.commit(organization_id=organization_id, event_id=event_id)
         return result
     elif workspace == "users":
         await enforce_event_operation(
@@ -4496,7 +4090,11 @@ async def execute_event_workspace_action(organization_id: uuid.UUID, event_id: u
     if consume_now is not None:
         await UsageReservationService.consume(db, consume_now.id, source=f"organization_console.{workspace}.{action.lower()}", actor_user_id=actor.id)
     db.add(_audit(request, actor, organization_id, f"EVENT_{workspace.upper()}_{action}", workspace.rstrip("s"), resource_id, new_state={"event_id": str(event_id), "action": action, "reason": payload.reason, "case_reference": payload.case_reference, "result": result}, sensitive=workspace in {"attendees", "files", "payments", "users", "abstracts"}))
-    await db.commit()
+    await command.commit(organization_id=organization_id, event_id=event_id)
+    if workspace == "checkins":
+        enqueue_event_attendance_projection_refresh(
+            organization_id=organization_id, event_id=event_id
+        )
     if task_to_dispatch:
         task_to_dispatch()
     return result

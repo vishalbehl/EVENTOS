@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +12,10 @@ from app.modules.events.models.event import Event
 from app.modules.registration.models.promo_code import PromoCode
 from app.modules.registration.models.payment_transaction import PaymentTransaction
 from app.schemas.common import MessageResponse
-from app.services.credential_cipher import cipher
 from app.core.dependencies.feature_gate import require_event_feature, require_event_operation
+from app.modules.registration.application.commands import PaymentCommandService, PromoCodeCommandService
+from app.modules.registration.application.queries import PaymentTransactionQueryService
+from app.schemas.cursor_pagination import CursorPage
 
 logger = logging.getLogger(__name__)
 
@@ -178,73 +180,20 @@ async def get_payment_config(event: CurrentEvent):
 async def update_payment_config(
     payload: PaymentConfigUpdateRequest,
     event: CurrentEvent,
+    current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    settings = dict(event.registration_settings or {})
-
-    if payload.payment_enabled is not None:
-        settings["payment_enabled"] = payload.payment_enabled
-        if event.portal_theme_setting:
-            event.portal_theme_setting.payment_enabled = payload.payment_enabled
-
-    if payload.active_gateway is not None:
-        valid_gateways = ("stripe", "razorpay", "simulated", "phonepe", "offline")
-        if payload.active_gateway not in valid_gateways:
-            raise HTTPException(status_code=400, detail=f"Invalid gateway. Must be one of {valid_gateways}")
-        settings["active_gateway"] = payload.active_gateway
-        if event.portal_theme_setting:
-            event.portal_theme_setting.active_gateway = payload.active_gateway
-
-    if payload.stripe_credentials is not None:
-        existing_stripe = dict(settings.get("stripe_credentials") or {})
-
-        raw_secret = payload.stripe_credentials.secret_key
-        if raw_secret and not raw_secret.startswith("••••••••"):
-            from app.core.encryption import encrypt as new_encrypt
-            existing_stripe["secret_key"] = new_encrypt(raw_secret)
-            logger.info(
-                "payment_credentials_accessed",
-                extra={
-                    "event_id": str(event.id),
-                    "user_id": "system",
-                    "gateway": "stripe",
-                    "action": "encrypt",
-                },
-            )
-
-        if payload.stripe_credentials.publishable_key:
-            existing_stripe["publishable_key"] = payload.stripe_credentials.publishable_key
-
-        settings["stripe_credentials"] = existing_stripe
-        if event.portal_theme_setting:
-            event.portal_theme_setting.stripe_credentials = existing_stripe
-
-    if payload.razorpay_credentials is not None:
-        existing_razorpay = dict(settings.get("razorpay_credentials") or {})
-
-        raw_secret = payload.razorpay_credentials.key_secret
-        if raw_secret and not raw_secret.startswith("••••••••"):
-            existing_razorpay["key_secret"] = cipher.encrypt(raw_secret)
-            logger.info(
-                "payment_credentials_accessed",
-                extra={
-                    "event_id": str(event.id),
-                    "user_id": "system",
-                    "gateway": "razorpay",
-                    "action": "encrypt",
-                },
-            )
-
-        if payload.razorpay_credentials.key_id:
-            existing_razorpay["key_id"] = payload.razorpay_credentials.key_id
-
-        settings["razorpay_credentials"] = existing_razorpay
-
-    if payload.auto_approve_paid is not None:
-        settings["auto_approve_paid"] = payload.auto_approve_paid
-
-    event.registration_settings = settings
-    await db.commit()
+    try:
+        await PaymentCommandService.update_config(
+            db,
+            event=event,
+            payload=payload,
+            actor=current_user,
+            idempotency_key=idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return MessageResponse(message="Payment configuration updated successfully.")
 
 
@@ -272,39 +221,11 @@ async def list_promo_codes(
 async def create_promo_code(
     payload: PromoCodeCreate,
     event: CurrentEvent,
+    current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    code_upper = payload.code.strip().upper()
-    existing_stmt = select(PromoCode).where(
-        PromoCode.event_id == event.id,
-        PromoCode.code == code_upper,
-    )
-    existing_res = await db.execute(existing_stmt)
-    if existing_res.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Promo code '{payload.code}' already exists for this event.",
-        )
-
-    if payload.discount_type not in ("percentage", "fixed"):
-        raise HTTPException(
-            status_code=400,
-            detail="Discount type must be 'percentage' or 'fixed'.",
-        )
-
-    promo = PromoCode(
-        event_id=event.id,
-        code=code_upper,
-        discount_type=payload.discount_type,
-        discount_value=payload.discount_value,
-        max_uses=payload.max_uses,
-        expiry_date=payload.expiry_date,
-        is_active=payload.is_active,
-    )
-    db.add(promo)
-    await db.commit()
-    await db.refresh(promo)
-    return promo
+    return await PromoCodeCommandService.create(db, event=event, payload=payload, actor=current_user, idempotency_key=idempotency_key)
 
 
 @router.patch(
@@ -316,25 +237,11 @@ async def update_promo_code(
     promo_id: uuid.UUID,
     payload: PromoCodeUpdate,
     event: CurrentEvent,
+    current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    stmt = select(PromoCode).where(
-        PromoCode.id == promo_id, PromoCode.event_id == event.id
-    )
-    promo = (await db.execute(stmt)).scalar_one_or_none()
-    if not promo:
-        raise HTTPException(status_code=404, detail="Promo code not found.")
-
-    if payload.is_active is not None:
-        promo.is_active = payload.is_active
-    if payload.max_uses is not None:
-        promo.max_uses = payload.max_uses
-    if payload.expiry_date is not None:
-        promo.expiry_date = payload.expiry_date
-
-    await db.commit()
-    await db.refresh(promo)
-    return promo
+    return await PromoCodeCommandService.update(db, event=event, promo_id=promo_id, payload=payload, actor=current_user, idempotency_key=idempotency_key)
 
 
 @router.delete(
@@ -345,25 +252,26 @@ async def update_promo_code(
 async def delete_promo_code(
     promo_id: uuid.UUID,
     event: CurrentEvent,
+    current_user: AdminOrAbove,
     db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    stmt = select(PromoCode).where(
-        PromoCode.id == promo_id, PromoCode.event_id == event.id
-    )
-    promo = (await db.execute(stmt)).scalar_one_or_none()
-    if not promo:
-        raise HTTPException(status_code=404, detail="Promo code not found.")
-
-    await db.delete(promo)
-    await db.commit()
+    await PromoCodeCommandService.delete(db, event=event, promo_id=promo_id, actor=current_user, idempotency_key=idempotency_key)
     return MessageResponse(message="Promo code deleted successfully.")
 
 
 # ── Transactions ───────────────────────────────────────────────────────────
 
-@router.get("/transactions", response_model=List[TransactionResponse])
+@router.get(
+    "/transactions",
+    response_model=List[TransactionResponse],
+    dependencies=[require_event_operation("registration.payments.manage")],
+)
 async def list_transactions(
     event: CurrentEvent,
+    current_user: AdminOrAbove,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     from app.modules.registration.models.participant_registration import ParticipantRegistration  # noqa: PLC0415
@@ -375,7 +283,9 @@ async def list_transactions(
             PaymentTransaction.registration_id == ParticipantRegistration.id,
         )
         .where(PaymentTransaction.event_id == event.id)
-        .order_by(PaymentTransaction.created_at.desc())
+        .order_by(PaymentTransaction.created_at.desc(), PaymentTransaction.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
 
     result = await db.execute(stmt)
@@ -406,3 +316,45 @@ async def list_transactions(
             )
         )
     return transactions
+
+
+@router.get(
+    "/transactions/page",
+    response_model=CursorPage[TransactionResponse],
+    dependencies=[require_event_operation("registration.payments.manage")],
+)
+async def list_transactions_page(
+    event: CurrentEvent,
+    current_user: AdminOrAbove,
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stable bounded payment history for large event datasets."""
+    page = await PaymentTransactionQueryService(db).list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+    )
+    items = []
+    for tx, registration_data in page.items:
+        registration_data = registration_data or {}
+        items.append(
+            TransactionResponse(
+                id=tx.id,
+                event_id=tx.event_id,
+                registration_id=tx.registration_id,
+                amount=tx.amount,
+                currency=tx.currency,
+                status=tx.status,
+                payment_method=tx.payment_method,
+                gateway_order_id=tx.gateway_order_id,
+                gateway_payment_id=tx.gateway_payment_id,
+                discount_applied=tx.discount_applied,
+                created_at=tx.created_at,
+                registration_name=registration_data.get("name"),
+                registration_email=registration_data.get("email"),
+            )
+        )
+    return CursorPage(items=items, next_cursor=page.next_cursor, has_next=page.has_next)

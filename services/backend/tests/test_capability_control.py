@@ -41,6 +41,7 @@ from app.modules.billing.services.event_entitlement_service import EventEntitlem
 from app.modules.billing.services.platform_flag_service import PlatformFlagService
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.modules.events.models.event import Event
+from app.modules.files.models.file import DurableUpload
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.platform.models.feature import FeatureCatalog
@@ -289,6 +290,19 @@ async def test_public_registration_upload_is_gated_metered_and_replay_safe(
     assert ledger is not None
     assert ledger.metric_key == "storage_bytes"
     assert ledger.quantity == len(contents)
+    durable_upload = await db.scalar(
+        select(DurableUpload).where(
+            DurableUpload.organization_id == event.organization_id,
+            DurableUpload.event_id == event.id,
+            DurableUpload.original_filename == "identity.pdf",
+        )
+    )
+    assert durable_upload is not None
+    assert durable_upload.object_key.startswith(
+        f"tenant/{event.organization_id}/event/{event.id}/"
+    )
+    assert durable_upload.checksum
+    assert durable_upload.status in {"uploaded", "scanning", "ready", "quarantined"}
 
 
 def test_every_registered_feature_has_enforcement_destination():
@@ -734,6 +748,7 @@ def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption(
         "require_org_operation",
         "UsageReservationService",
         "EventMutationService",
+        "EventCommandService",
     }
     mutation_decorators = (".post(", ".put(", ".patch(", ".delete(")
     uncontrolled: set[str] = set()
@@ -746,7 +761,16 @@ def test_customer_domain_mutations_have_canonical_control_or_explicit_exemption(
         # enforcement sites.  Keep this classification local to registration
         # so unrelated notification routes retain their own coverage rules.
         shared_service_markers = (
-            {"EventParticipantMutationService", "EventTemplateMutationService"}
+            {
+                "EventParticipantMutationService",
+                "EventTemplateMutationService",
+                "ParticipantCommandService",
+                "FormCategoryCommandService",
+                "FormTemplateCommandService",
+            "PaymentCommandService",
+            "PromoCodeCommandService",
+            "RegistrationCommandService",
+        }
             if path.parts[-3] == "registration"
             else {
                 # This router delegates its template mutations to these
@@ -991,6 +1015,9 @@ async def test_event_creation_atomically_reserves_and_consumes_max_events(
     event: Event,
     organizer: User,
 ):
+    # Keep scalar identifiers before the route commits through the shared
+    # session; assertions must not trigger an implicit async refresh.
+    organization_id = organization.id
     await CapabilityService.sync_catalogue(db)
     limit_feature = await db.scalar(
         select(FeatureCatalog).where(FeatureCatalog.key == "LIMIT_EVENTS")
@@ -1015,7 +1042,7 @@ async def test_event_creation_atomically_reserves_and_consumes_max_events(
             enforcement_mode="HARD",
         ),
         OrganizationSubscription(
-            organization_id=organization.id,
+            organization_id=organization_id,
             plan_id=plan.id,
             status="ACTIVE",
         ),
@@ -1038,8 +1065,8 @@ async def test_event_creation_atomically_reserves_and_consumes_max_events(
     assert created.status_code == 201, created.text
 
     reservation = await db.scalar(
-        select(UsageReservation).where(
-            UsageReservation.organization_id == organization.id,
+            select(UsageReservation).where(
+                UsageReservation.organization_id == organization_id,
             UsageReservation.idempotency_key == f"event-create:{request_key}",
         )
     )
@@ -1067,7 +1094,7 @@ async def test_event_creation_atomically_reserves_and_consumes_max_events(
     assert exhausted.json()["detail"]["limit_key"] == "max_events"
     assert await db.scalar(
         select(Event.id).where(
-            Event.organization_id == organization.id,
+            Event.organization_id == organization_id,
             Event.name == "Third event must be denied",
         )
     ) is None
@@ -1498,9 +1525,11 @@ async def test_concurrent_reservations_cannot_overshoot_event_allowance(
         )
         setup_session.add(event)
         await setup_session.flush()
+        organization_id = organization.id
+        event_id = event.id
         setup_session.add(EventCommercialContract(
-            organization_id=organization.id,
-            event_id=event.id,
+            organization_id=organization_id,
+            event_id=event_id,
             version=1,
             status="ACTIVE",
             plan_key="CONCURRENCY_TEST",
@@ -1516,14 +1545,12 @@ async def test_concurrent_reservations_cannot_overshoot_event_allowance(
         ))
         setup_session.add(
             FeatureFlag(
-                organization_id=organization.id,
+                organization_id=organization_id,
                 flag_key="organizer_console_entitlement_enforce",
                 is_enabled=True,
             )
         )
         await setup_session.commit()
-        organization_id = organization.id
-        event_id = event.id
 
     async def attempt_reservation(key: str) -> str:
         async with committed_session_factory() as session:
@@ -1760,6 +1787,7 @@ async def test_typed_plan_limit_addon_quantity_and_hard_ceiling_are_canonical(
     db: AsyncSession,
     organization: Organization,
 ):
+    organization_id = organization.id
     feature = FeatureCatalog(
         key="LIMIT_API_CALLS_MONTHLY",
         name="Monthly API calls",
@@ -1806,7 +1834,7 @@ async def test_typed_plan_limit_addon_quantity_and_hard_ceiling_are_canonical(
             max_quantity=2,
         ),
         OrganizationSubscription(
-            organization_id=organization.id,
+            organization_id=organization_id,
             plan_id=plan.id,
             status="ACTIVE",
         ),

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.modules.identity.models.identity_domain_tables import LoginAttempt
-from app.redis import redis_client
+from app.redis import coordination_client as redis_client
 
 
 def _email_key(email: str) -> str:

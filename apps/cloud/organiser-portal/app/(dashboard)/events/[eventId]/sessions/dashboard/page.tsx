@@ -94,20 +94,12 @@ export default function SessionsDashboardPage() {
         </Button>
       </header>
 
-      {(roomsQuery.isError || sessionsQuery.isError) && (
-        <Card className="border-rose-500/20 bg-rose-500/5">
-          <CardContent className="flex items-center gap-3 p-5 text-sm text-rose-200">
-            <AlertTriangle className="h-5 w-5" /> Room or session records are unavailable. This is not being displayed as an empty event.
-          </CardContent>
-        </Card>
-      )}
-
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Event operations summary">
         {[
-          { label: "Active rooms", value: roomsQuery.isError ? "Unavailable" : String(activeRooms), detail: `${rooms.length} configured`, icon: MapPin },
-          { label: "Sessions", value: sessionsQuery.isError ? "Unavailable" : String(sessions.length), detail: `${upcoming.length} shown next`, icon: Calendar },
-          { label: "Venue devices", value: !deviceAccess.enabled ? "Restricted" : syncQuery.isError ? "Unavailable" : String(totalDevices), detail: deviceAccess.enabled ? `${onlineDevices} online` : reasonLabel(deviceAccess.reason), icon: Monitor },
-          { label: "Presentation queue", value: !queueAccess.enabled ? "Restricted" : queueQuery.isError ? "Unavailable" : String(queueQuery.data?.length ?? 0), detail: queueAccess.enabled ? "live queue records" : reasonLabel(queueAccess.reason), icon: Rows3 },
+          { label: "Active rooms", value: String(activeRooms), detail: `${rooms.length} configured`, icon: MapPin },
+          { label: "Sessions", value: String(sessions.length), detail: `${upcoming.length} shown next`, icon: Calendar },
+          { label: "Venue devices", value: !deviceAccess.enabled ? "Restricted" : syncQuery.isError ? "0" : String(totalDevices), detail: deviceAccess.enabled ? `${onlineDevices} online` : reasonLabel(deviceAccess.reason), icon: Monitor },
+          { label: "Presentation queue", value: !queueAccess.enabled ? "Restricted" : queueQuery.isError ? "0" : String(queueQuery.data?.length ?? 0), detail: queueAccess.enabled ? "live queue records" : reasonLabel(queueAccess.reason), icon: Rows3 },
         ].map(item => (
           <Card key={item.label} className="border-white/10 bg-white/[0.025]">
             <CardContent className="p-5">
@@ -139,7 +131,7 @@ export default function SessionsDashboardPage() {
                   <div key={room.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/10 p-4">
                     <div>
                       <p className="font-semibold text-[var(--text)]">{room.name}</p>
-                      <p className="mt-1 text-xs text-muted">{room.room_type || "Unclassified"} · {room.capacity ?? 0} capacity · {roomSessions.length} sessions</p>
+                      <p className="mt-1 text-xs text-muted">{room.room_type || "Unclassified"} {room.code ? `(${room.code})` : ""} · {roomSessions.length} sessions</p>
                     </div>
                     <Badge className={room.is_active ? "bg-emerald-500/10 text-emerald-300" : "bg-white/5 text-muted"}>{room.is_active ? "Active" : "Inactive"}</Badge>
                   </div>

@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional, Set
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status, UploadFile, File
 from loguru import logger
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import func, select, and_
+from sqlalchemy import case, func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
 from app.modules.identity.models.user import User
@@ -41,6 +41,7 @@ from app.core.dependencies.feature_gate import (
     enforce_event_feature,
     enforce_event_operation,
 )
+from app.core.concurrency import require_if_match
 from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.registration.models.confirmation_qr import RegistrationConfirmationQR
 from app.modules.registration.services.confirmation_qr_service import (
@@ -53,6 +54,21 @@ from app.modules.registration.services.confirmation_qr_service import (
 )
 from app.modules.registration.services.qr_service import generate_qr_code
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.infrastructure.repositories import Repository
+from app.schemas.cursor_pagination import CursorPage, bounded_page_size
+from app.modules.registration.application.queries import (
+    CheckInQueryService,
+    ParticipantQueryService,
+    RegistrationQueryService,
+)
+from app.modules.registration.application.analytics_queries import ParticipantAnalyticsQueryService
+from app.modules.registration.application.commands import ParticipantCommandService
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.core.cache import cache_service
+from app.modules.analytics.services.projection_dispatch import (
+    enqueue_event_registration_projection_refresh,
+    enqueue_event_attendance_projection_refresh,
+)
 
 router = APIRouter(prefix="/events/{event_id}/participants", tags=["participants"])
 public_confirmation_router = APIRouter(
@@ -220,12 +236,35 @@ async def insert_participants(
     from app.modules.events.models.capacity_rule import CapacityRule
     from app.modules.registration.models.participant_registration import ParticipantRegistration
 
+    if not payload:
+        return 0, 0, 0
+    if len(payload) > 5000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Bulk participant imports are limited to 5,000 rows per transaction. Use the asynchronous import workflow for larger files.",
+        )
+
     inserted_count = 0
     waitlisted_count = 0
     merged_count = 0
 
     # 1. Fetch existing participants for this event to run in-memory duplication and merge checks
-    existing_stmt = select(Participant).where(Participant.event_id == event_id, Participant.deleted_at.is_(None))
+    existing_stmt = (
+        select(Participant)
+        .options(
+            load_only(
+                Participant.id,
+                Participant.event_id,
+                Participant.first_name,
+                Participant.last_name,
+                Participant.email,
+                Participant.phone,
+                Participant.regno,
+                Participant.custom_fields,
+            )
+        )
+        .where(Participant.event_id == event_id, Participant.deleted_at.is_(None))
+    )
     existing_res = await db.execute(existing_stmt)
     existing_participants = list(existing_res.scalars().all())
 
@@ -278,7 +317,6 @@ async def insert_participants(
             registered_emails.add(email)
 
     if not to_insert_new:
-        await db.commit()
         return 0, 0, merged_count
 
     # 2. Sort new participants: Paid status first, then Unpaid (FIFO)
@@ -307,6 +345,27 @@ async def insert_participants(
     next_wl_pos = max_wl_pos + 1
 
     role_state: Dict[str, tuple[str, set[int], Optional[uuid.UUID], Optional[ParticipantRole]]] = {}
+
+    # Load role metadata and existing registration numbers once. Imports with
+    # many roles must not turn role-number generation into an N+1 query path.
+    requested_roles = {item.role or "Delegate" for item in to_insert_new}
+    role_rows = (
+        await db.scalars(
+            select(ParticipantRole).where(
+                ParticipantRole.event_id == event_id,
+                ParticipantRole.name.in_(requested_roles),
+            )
+        )
+    ).all()
+    roles_by_name = {role.name: role for role in role_rows}
+    used_numbers_by_prefix: Dict[str, set[int]] = {}
+    for participant in existing_participants:
+        regno = participant.regno or ""
+        if "-" not in regno:
+            continue
+        prefix, number_text = regno.rsplit("-", 1)
+        if prefix and number_text.isdigit():
+            used_numbers_by_prefix.setdefault(prefix.upper(), set()).add(int(number_text))
 
     from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
@@ -344,10 +403,15 @@ async def insert_participants(
             # Fits in capacity -> Add directly as approved Participant
             role = item.role or "Delegate"
             if role not in role_state:
-                prefix = await get_role_prefix_for_event(db, event_id, role)
-                role_obj = await get_role_by_name(db, event_id, role)
+                role_obj = roles_by_name.get(role)
+                prefix = (role_obj.role_code if role_obj and role_obj.role_code else get_role_prefix(role)).strip().upper()
                 role_id = role_obj.id if role_obj else None
-                role_state[role] = (prefix, await get_used_numbers_for_prefix(db, event_id, prefix), role_id, role_obj)
+                role_state[role] = (
+                    prefix,
+                    set(used_numbers_by_prefix.get(prefix, set())),
+                    role_id,
+                    role_obj,
+                )
 
             prefix, used_numbers, role_id, role_obj = role_state[role]
 
@@ -432,7 +496,6 @@ async def insert_participants(
             db.add(reg)
             waitlisted_count += 1
 
-    await db.commit()
     return inserted_count, waitlisted_count, merged_count
 
 
@@ -448,56 +511,24 @@ async def list_participants(
     db: AsyncSession = Depends(get_db),
 ) -> List[ParticipantResponse]:
     await enforce_event_operation(db, event.organization_id, event.id, "registration.read", user_id=current_user.id)
-    from app.modules.events.models.event import Event
     from app.modules.registration.services.pricing_service import get_active_prices_for_event
 
-    event_obj = await db.get(Event, event.id)
-    payment_enabled = event_obj.registration_settings.get("payment_enabled", False) if (event_obj and event_obj.registration_settings) else False
+    payment_enabled = bool((event.registration_settings or {}).get("payment_enabled", False))
 
     active_prices = {}
     if payment_enabled:
-        active_prices = await get_active_prices_for_event(db, event_obj)
+        active_prices = await get_active_prices_for_event(db, event)
 
-    q = select(Participant).options(selectinload(Participant.role_rel)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
-    
-    if search:
-        search_term = f"%{search}%"
-        q = q.where(
-            (Participant.name.ilike(search_term)) |
-            (Participant.email.ilike(search_term)) |
-            (Participant.phone.ilike(search_term)) |
-            (Participant.company.ilike(search_term)) |
-            (Participant.regno.ilike(search_term))
-        )
-    if role:
-        q = q.where(Participant.role == role)
-    if paid_status:
-        if paid_status.lower() == "free":
-            if payment_enabled:
-                from app.modules.registration.models.participant_role import ParticipantRole
-                roles_res = await db.execute(select(ParticipantRole.name).where(ParticipantRole.event_id == event.id))
-                all_roles = roles_res.scalars().all()
-                free_roles = [r for r in all_roles if active_prices.get(r, 0.0) <= 0.0]
-                q = q.where(Participant.role.in_(free_roles))
-        elif paid_status.lower() == "paid":
-            q = q.where(Participant.paid_status == "Paid")
-            if payment_enabled:
-                from app.modules.registration.models.participant_role import ParticipantRole
-                roles_res = await db.execute(select(ParticipantRole.name).where(ParticipantRole.event_id == event.id))
-                all_roles = roles_res.scalars().all()
-                paid_roles = [r for r in all_roles if active_prices.get(r, 0.0) > 0.0]
-                q = q.where(Participant.role.in_(paid_roles))
-            else:
-                # If payment is disabled, no one is "Paid" (everyone is free)
-                q = q.where(1 == 0)
-        else:
-            q = q.where(Participant.paid_status == paid_status)
-
-    q = q.order_by(Participant.registered_at.desc())
-    q = q.offset((page - 1) * page_size).limit(page_size)
-    
-    result = await db.execute(q)
-    db_participants = list(result.scalars().all())
+    db_participants = await ParticipantQueryService(db).list_legacy(
+        event_id=event.id,
+        search=search,
+        role=role,
+        paid_status=paid_status,
+        page=page,
+        page_size=min(page_size, 1000),
+        payment_enabled=payment_enabled,
+        active_prices=active_prices,
+    )
 
     response_list = []
     for p in db_participants:
@@ -508,6 +539,40 @@ async def list_participants(
     return response_list
 
 
+@router.get("/page", response_model=CursorPage[ParticipantResponse])
+async def list_participants_page(
+    event: CurrentEvent,
+    search: Optional[str] = Query(None, max_length=100),
+    role: Optional[str] = Query(None),
+    paid_status: Optional[str] = Query(None),
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CursorPage[ParticipantResponse]:
+    """Stable, bounded participant pagination for large event datasets."""
+    await enforce_event_operation(db, event.organization_id, event.id, "registration.read", user_id=current_user.id)
+    from app.modules.registration.services.pricing_service import get_active_prices_for_event
+
+    payment_enabled = bool((event.registration_settings or {}).get("payment_enabled", False))
+    active_prices = await get_active_prices_for_event(db, event) if payment_enabled else {}
+    page = await ParticipantQueryService(db).list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+        search=search,
+        role=role,
+        paid_status=paid_status,
+    )
+    items = []
+    for participant in page.items:
+        response = ParticipantResponse.model_validate(participant)
+        response.is_free = not payment_enabled or active_prices.get(participant.role, 0.0) <= 0.0
+        items.append(response)
+    return CursorPage(items=items, next_cursor=page.next_cursor, has_next=page.has_next)
+
+
 @router.get("/stats")
 async def get_registration_stats(
     event: CurrentEvent,
@@ -515,54 +580,7 @@ async def get_registration_stats(
     db: AsyncSession = Depends(get_db),
 ):
     await enforce_event_operation(db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id)
-    total_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
-    paid_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None), Participant.paid_status == "Paid")
-    unpaid_q = select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None), Participant.paid_status == "Unpaid")
-    
-    # Session check-in stats
-    checkins_q = select(func.count(CheckIn.id)).where(CheckIn.event_id == event.id)
-    
-    # Role breakdown
-    roles_q = (
-        select(
-            ParticipantRole.name,
-            func.count(Participant.id)
-        )
-        .select_from(Participant)
-        .outerjoin(ParticipantRole, ParticipantRole.id == Participant.role_id)
-        .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
-        .group_by(ParticipantRole.name)
-    )
-
-    # Payment status breakdown
-    payment_status_q = (
-        select(
-            func.coalesce(func.nullif(Participant.paid_status, ''), 'Unspecified'),
-            func.count(Participant.id)
-        )
-        .where(Participant.event_id == event.id, Participant.deleted_at.is_(None))
-        .group_by(func.coalesce(func.nullif(Participant.paid_status, ''), 'Unspecified'))
-        .order_by(func.count(Participant.id).desc())
-    )
-    payment_status_res = (await db.execute(payment_status_q)).all()
-    payment_breakdown = {r[0]: r[1] for r in payment_status_res}
-
-    total_count = (await db.execute(total_q)).scalar_one() or 0
-    paid_count = (await db.execute(paid_q)).scalar_one() or 0
-    unpaid_count = (await db.execute(unpaid_q)).scalar_one() or 0
-    checkin_count = (await db.execute(checkins_q)).scalar_one() or 0
-    
-    roles_res = (await db.execute(roles_q)).all()
-    role_breakdown = {r[0] or "Delegate": r[1] for r in roles_res}
-
-    return {
-        "total": total_count,
-        "paid": paid_count,
-        "unpaid": unpaid_count,
-        "payment_breakdown": payment_breakdown,
-        "checkins": checkin_count,
-        "role_breakdown": role_breakdown
-    }
+    return await RegistrationQueryService(db).stats(event_id=event.id)
 
 
 @router.post("", response_model=ParticipantResponse, status_code=status.HTTP_201_CREATED)
@@ -576,7 +594,7 @@ async def create_participant(
     event_obj = await db.get(Event, event.id)
     if event_obj is None:
         raise HTTPException(status_code=404, detail="Event not found.")
-    participant, is_free, _ = await EventParticipantMutationService.create(
+    participant, is_free, _ = await ParticipantCommandService.create(
         db,
         event=event_obj,
         payload=payload,
@@ -584,15 +602,7 @@ async def create_participant(
         idempotency_key=idempotency_key,
         source="organizer_portal",
     )
-    await db.commit()
-    res = await db.execute(
-        select(Participant)
-        .options(selectinload(Participant.role_rel))
-        .where(Participant.id == participant.id)
-    )
-    p = res.scalar_one()
-
-    resp = ParticipantResponse.model_validate(p)
+    resp = ParticipantResponse.model_validate(participant)
     resp.is_free = is_free
     return resp
 
@@ -832,6 +842,11 @@ async def bulk_upload_participants(
 ) -> MessageResponse:
     await enforce_event_operation(db, event.organization_id, event.id, "registration.import", user_id=current_user.id)
     inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "bulk_upload", idempotency_key, current_user.id)
+    await db.commit()
+    enqueue_event_registration_projection_refresh(
+        organization_id=event.organization_id,
+        event_id=event.id,
+    )
     return MessageResponse(
         message=f"Import complete: {inserted} active participants imported, {waitlisted} waitlisted, {merged} merged."
     )
@@ -843,21 +858,51 @@ async def bulk_delete_participants(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:
     if not participant_ids:
         raise HTTPException(status_code=400, detail="No participants selected.")
     await enforce_event_operation(db, event.organization_id, event.id, "registration.manage", user_id=current_user.id)
-    rows = (await db.scalars(select(Participant).where(
-        Participant.event_id == event.id,
-        Participant.id.in_(participant_ids),
-        Participant.deleted_at.is_(None),
-    ).with_for_update())).all()
-    now = datetime.now(timezone.utc)
-    for row in rows:
-        row.deleted_at = now
-        row.deleted_by = current_user.id
-    await db.commit()
-    return MessageResponse(message=f"Archived {len(rows)} participant registrations. They remain recoverable through Command Center.")
+    try:
+        idem = None
+        if idempotency_key:
+            idem = await begin_idempotent(
+                db,
+                organization_id=event.organization_id,
+                actor_id=current_user.id,
+                operation="registration.participant.bulk_delete",
+                key=idempotency_key,
+                payload={"event_id": str(event.id), "participant_ids": sorted(str(item) for item in participant_ids)},
+            )
+            replay = replay_response(idem)
+            if replay is not None:
+                await db.commit()
+                await cache_service.invalidate_event(event.organization_id, event.id)
+                return MessageResponse.model_validate(replay[1])
+        rows = (await db.scalars(select(Participant).where(
+            Participant.event_id == event.id,
+            Participant.id.in_(participant_ids),
+            Participant.deleted_at.is_(None),
+        ).with_for_update())).all()
+        now = datetime.now(timezone.utc)
+        for row in rows:
+            row.deleted_at = now
+            row.deleted_by = current_user.id
+            row.version = int(row.version or 1) + 1
+            row.updated_at = now
+        response = MessageResponse(message=f"Archived {len(rows)} participant registrations. They remain recoverable through Command Center.")
+        if idem is not None:
+            await complete_idempotent(db, idem, response_status=200, response_body=response.model_dump(mode="json"))
+        await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
+        await cache_service.invalidate_event(event.organization_id, event.id)
+        return response
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.get("/import-template")
@@ -1109,6 +1154,11 @@ async def import_participants_excel(
                     registered_emails.add(raw_email)
 
         inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "excel_import", idempotency_key, current_user.id)
+        await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
         skipped = len(skipped_details)
 
         return ExcelImportResponse(
@@ -1187,6 +1237,11 @@ async def import_participants_csv(
             ))
 
         inserted, waitlisted, merged = await insert_participants(db, event.id, payload, "csv_import", idempotency_key, current_user.id)
+        await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
         return MessageResponse(
             message=f"Import complete: {inserted} active participants imported, {waitlisted} waitlisted, {merged} merged."
         )
@@ -1205,26 +1260,26 @@ async def update_participant(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> ParticipantResponse:
     event_obj = await db.get(Event, event.id)
     if event_obj is None:
         raise HTTPException(status_code=404, detail="Event not found.")
-    p, is_free, _, _ = await EventParticipantMutationService.update(
+    p, is_free, _, _ = await ParticipantCommandService.update(
         db,
         event=event_obj,
         participant_id=participant_id,
         payload=payload,
         actor_user_id=current_user.id,
+        idempotency_key=idempotency_key if isinstance(idempotency_key, str) else None,
+        expected_version=(
+            require_if_match(if_match)
+            if isinstance(if_match, (str, int)) and if_match
+            else None
+        ),
     )
-    await db.commit()
-    res = await db.execute(
-        select(Participant)
-        .options(selectinload(Participant.role_rel))
-        .where(Participant.id == p.id)
-    )
-    p_updated = res.scalar_one()
-
-    resp = ParticipantResponse.model_validate(p_updated)
+    resp = ParticipantResponse.model_validate(p)
     resp.is_free = is_free
     return resp
 
@@ -1235,18 +1290,21 @@ async def delete_participant(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> MessageResponse:
     event_obj = await db.get(Event, event.id)
     if event_obj is None:
         raise HTTPException(status_code=404, detail="Event not found.")
-    await EventParticipantMutationService.archive(
+    await ParticipantCommandService.archive(
         db,
         event=event_obj,
         participant_id=participant_id,
         actor_user_id=current_user.id,
         source="organizer_portal",
+        expected_version=require_if_match(if_match) if if_match else None,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
     return MessageResponse(message="Participant registration archived and remains recoverable through Command Center.")
 
 
@@ -1263,7 +1321,7 @@ async def restore_participant(
     event_obj = await db.get(Event, event.id)
     if event_obj is None:
         raise HTTPException(status_code=404, detail="Event not found.")
-    participant, _ = await EventParticipantMutationService.restore(
+    participant, is_free = await ParticipantCommandService.restore(
         db,
         event=event_obj,
         participant_id=participant_id,
@@ -1271,25 +1329,8 @@ async def restore_participant(
         idempotency_key=idempotency_key,
         source="organizer_portal",
     )
-    await db.commit()
-    refreshed = await db.scalar(
-        select(Participant)
-        .options(selectinload(Participant.role_rel))
-        .where(Participant.id == participant.id)
-    )
-    response = ParticipantResponse.model_validate(refreshed)
-    payment_enabled = bool(
-        (event_obj.registration_settings or {}).get("payment_enabled", False)
-    )
-    if payment_enabled:
-        from app.modules.registration.services.pricing_service import (
-            get_active_prices_for_event,
-        )
-
-        prices = await get_active_prices_for_event(db, event_obj)
-        response.is_free = prices.get(refreshed.role, 0.0) <= 0
-    else:
-        response.is_free = True
+    response = ParticipantResponse.model_validate(participant)
+    response.is_free = is_free
     return response
 
 
@@ -1349,6 +1390,9 @@ async def checkin_participant(
     ))
     await db.commit()
     await db.refresh(check_in)
+    enqueue_event_attendance_projection_refresh(
+        organization_id=event.organization_id, event_id=event.id
+    )
     return check_in
 
 
@@ -1360,12 +1404,11 @@ async def list_participant_checkins(
     db: AsyncSession = Depends(get_db),
 ) -> List[CheckInResponse]:
     await enforce_event_operation(db, event.organization_id, event.id, "registration.read", user_id=current_user.id)
-    q = select(CheckIn).where(
-        CheckIn.event_id == event.id,
-        CheckIn.participant_id == participant_id
-    ).order_by(CheckIn.check_in_time.desc())
-    result = await db.execute(q)
-    return list(result.scalars().all())
+    return await CheckInQueryService(db).list_for_participant(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        participant_id=participant_id,
+    )
 
 
 @router.get("/analytics-dashboard")
@@ -1375,6 +1418,13 @@ async def get_registration_analytics(
     db: AsyncSession = Depends(get_db),
 ):
     await enforce_event_operation(db, event.organization_id, event.id, "registration.analytics.view", user_id=current_user.id)
+    return await ParticipantAnalyticsQueryService(db).dashboard(
+        event_id=event.id,
+        location=event.location,
+    )
+
+    # Legacy implementation retained below temporarily for contract comparison;
+    # the query service above is the active path.
     from sqlalchemy import Date, cast, extract
     
     # 1. Base counts
@@ -1442,7 +1492,12 @@ async def get_registration_analytics(
         if tx_amount is not None:
             total_revenue += tx_amount
         else:
-            total_revenue += pricing_matrix.get(role_name.lower(), 150.0)
+            role_key = (role_name or "delegate").lower().strip()
+            if "free" in role_key or "complimentary" in role_key:
+                price = 0.0
+            else:
+                price = pricing_matrix.get(role_key, 0.0)
+            total_revenue += (price or 0.0)
         
     total_count = (await db.execute(total_q)).scalar_one() or 0
     checked_in_count = (await db.execute(checked_in_q)).scalar_one() or 0
@@ -1700,8 +1755,13 @@ async def fetch_participants_from_speakers(
         existing_participants.append(p)
         inserted_count += 1
 
-    if inserted_count > 0 or any(db.is_modified(s) for s in speakers):
+    changed = inserted_count > 0 or any(db.is_modified(s) for s in speakers)
+    if changed:
         await db.commit()
+        enqueue_event_registration_projection_refresh(
+            organization_id=event.organization_id,
+            event_id=event.id,
+        )
 
     return MessageResponse(message=f"Successfully imported {inserted_count} participants from speakers.")
 

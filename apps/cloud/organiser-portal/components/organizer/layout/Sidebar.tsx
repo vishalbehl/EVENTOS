@@ -235,7 +235,7 @@ export function Sidebar() {
           items: [
             { label: "Role Categories", href: `/events/${id}/registration/roles`, icon: ShieldCheck },
             { label: "Pass Categories", href: `/events/${id}/registration/categories`, icon: Tag },
-            { label: "Custom Forms", href: `/events/${id}/registration/form-builder`, icon: FileText },
+            { label: "Registration Forms", href: `/events/${id}/registration/templates`, icon: Layers },
             { label: "Template Designer", href: `/events/${id}/registration/template-designer`, icon: LayoutTemplate },
             { label: "Certificates", href: `/events/${id}/registration/certificates`, icon: Award },
           ],
@@ -295,7 +295,7 @@ export function Sidebar() {
           items: [
             { label: "Presentations & Files", href: `/events/${id}/speakers/files`, icon: FolderOpen },
             { label: "ePosters Showcase", href: `/events/${id}/speakers/eposters`, icon: ImageIcon },
-            { label: "Review Submissions", href: `/events/${id}/speakers/abstracts`, icon: CheckSquare },
+            { label: "Abstract Review", href: `/events/${id}/abstracts/submissions`, icon: CheckSquare },
           ],
         },
         {
@@ -323,16 +323,32 @@ export function Sidebar() {
         {
           title: "WORKSPACE",
           items: [
-            { label: "Abstract Directory", href: `/events/${id}/abstracts`, icon: FileText },
-            { label: "Speaker Submissions", href: `/events/${id}/speakers/abstracts`, icon: Inbox },
+            { label: "Command Center", href: `/events/${id}/abstracts`, icon: LayoutDashboard },
+            { label: "Submission Inbox", href: `/events/${id}/abstracts/submissions`, icon: Inbox },
+            { label: "Reviewer Roster", href: `/events/${id}/abstracts/reviewers`, icon: Users },
+            { label: "Decision Board", href: `/events/${id}/abstracts/decisions`, icon: CheckSquare },
+            { label: "Accepted Directory", href: `/events/${id}/abstracts/accepted`, icon: FileText },
+          ],
+        },
+        {
+          title: "CONFIGURATION",
+          items: [
+            { label: "Call Setup", href: `/events/${id}/abstracts/setup`, icon: SlidersHorizontal },
+            { label: "Form Builder", href: `/events/${id}/abstracts/form-builder`, icon: Layers },
+            { label: "Scoring Rubric", href: `/events/${id}/abstracts/rubric`, icon: ListOrdered },
+          ],
+        },
+        {
+          title: "PUBLICATION",
+          items: [
+            { label: "Exports", href: `/events/${id}/abstracts/exports`, icon: Download },
             { label: "ePosters & Media", href: `/events/${id}/speakers/eposters`, icon: ImageIcon },
-            { label: "Abstract Analytics", href: `/events/${id}/speakers/analytics`, icon: BarChart3 },
           ],
         },
         {
           title: "SETTINGS",
           items: [
-            { label: "Submission Settings", href: `/events/${id}/settings`, icon: SlidersHorizontal },
+            { label: "Abstract Settings", href: `/events/${id}/abstracts/setup`, icon: SlidersHorizontal },
           ],
         },
       ],
@@ -370,28 +386,57 @@ export function Sidebar() {
       key: "design",
       label: "Design",
       icon: Palette,
-      defaultHref: (id) => `/events/${id}/design-studio/portals`,
+      defaultHref: (id) => `/events/${id}/design-studio/portals/designer`,
       sections: (id) => [
         {
-          title: "WORKSPACE",
+          title: "PORTAL STUDIO",
           items: [
-            { label: "Portal Studio", href: `/events/${id}/design-studio/portals`, icon: Layout },
-
+            { label: "Portal Designer", href: `/events/${id}/design-studio/portals/designer`, icon: Layout },
+            { label: "Portal Capabilities", href: `/events/${id}/design-studio/portals/settings`, icon: SlidersHorizontal },
+          ],
+        },
+        {
+          title: "WEBSITE BUILDER",
+          items: [
+            { label: "Website Templates", href: `/events/${id}/design-studio/website/templates`, icon: LayoutTemplate },
+            { label: "Website Designer", href: `/events/${id}/design-studio/website/designer`, icon: Globe },
+            { label: "Website Settings", href: `/events/${id}/design-studio/website/settings`, icon: SlidersHorizontal },
+          ],
+        },
+        {
+          title: "EMAIL STUDIO",
+          items: [
+            { label: "Email Templates", href: `/events/${id}/design-studio/emails/templates`, icon: LayoutTemplate },
+            { label: "Email Designer", href: `/events/${id}/design-studio/emails/designer`, icon: Mail },
+            { label: "Email Settings", href: `/events/${id}/design-studio/emails/settings`, icon: SlidersHorizontal },
+          ],
+        },
+        {
+          title: "BADGE STUDIO",
+          items: [
+            { label: "Badge Templates", href: `/events/${id}/design-studio/badges/templates`, icon: LayoutTemplate },
+            { label: "Badge Designer", href: `/events/${id}/design-studio/badges/designer`, icon: CreditCard },
+            { label: "Badge Settings & Roles", href: `/events/${id}/design-studio/badges/settings`, icon: SlidersHorizontal },
+          ],
+        },
+        {
+          title: "CERTIFICATE STUDIO",
+          items: [
+            { label: "Certificate Templates", href: `/events/${id}/design-studio/certificates/templates`, icon: LayoutTemplate },
+            { label: "Certificate Designer", href: `/events/${id}/design-studio/certificates/designer`, icon: Award },
+            { label: "Certificate Settings & Roles", href: `/events/${id}/design-studio/certificates/settings`, icon: SlidersHorizontal },
+          ],
+        },
+        {
+          title: "FORM STUDIO",
+          items: [
+            { label: "Form Templates & Blueprints", href: `/events/${id}/design-studio/forms`, icon: Layers },
+          ],
+        },
+        {
+          title: "GLOBAL ASSETS & THEMES",
+          items: [
             { label: "Design Asset Library", href: `/events/${id}/design-studio/library`, icon: FolderOpen },
-            { label: "Website Builder", href: `/events/${id}/website/builder`, icon: Globe },
-          ],
-        },
-        {
-          title: "BADGES & CERTIFICATES",
-          items: [
-            { label: "Badge Designer", href: `/events/${id}/design-studio/badges`, icon: CreditCard },
-            { label: "Certificate Designer", href: `/events/${id}/design-studio/certificates`, icon: Award },
-          ],
-        },
-        {
-          title: "EMAIL & BRANDING",
-          items: [
-            { label: "Email Template Studio", href: `/events/${id}/design-studio/emails`, icon: Mail },
             { label: "Theme, Colors & Fonts", href: `/events/${id}/design-studio/theme`, icon: Palette },
             { label: "ePoster Displays", href: `/events/${id}/speakers/eposters`, icon: ImageIcon },
           ],

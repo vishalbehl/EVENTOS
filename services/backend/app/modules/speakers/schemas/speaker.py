@@ -62,6 +62,8 @@ class SpeakerResponse(BaseModel):
     token_expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    # Additive field used by clients that opt into If-Match concurrency.
+    version: int = 1
     profile_completeness: int = 0
     track_id: Optional[uuid.UUID] = None
     track_name: Optional[str] = None

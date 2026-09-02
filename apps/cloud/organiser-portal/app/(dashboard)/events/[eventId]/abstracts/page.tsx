@@ -1,6 +1,5 @@
-import { redirect } from "next/navigation";
+import { AbstractWorkspace } from "@/components/organizer/abstracts/AbstractWorkspace";
 
-export default async function EventAbstractsPage({ params }: { params: Promise<{ eventId: string }> }) {
-  const { eventId } = await params;
-  redirect(`/events/${eventId}/speakers/abstracts`);
+export default function EventAbstractsPage() {
+  return <AbstractWorkspace view="dashboard" />;
 }

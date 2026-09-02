@@ -5,10 +5,10 @@ import hashlib
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -36,16 +36,17 @@ from app.schemas.common import MessageResponse
 from app.services import email_service, qr_service
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
-from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.events.services.event_resource_mutation_service import (
     EventResourceMutationService,
 )
-router = APIRouter(prefix="/events/{event_id}/speakers", tags=["speakers"], dependencies=[require_event_operation("speakers.manage")])
-abstracts_router = APIRouter(
-    prefix="/events/{event_id}/abstracts",
-    tags=["speaker-abstracts"],
-    dependencies=[require_event_operation("abstracts.review")],
+from app.modules.speakers.application.commands import SpeakerCommandService
+from app.modules.speakers.application.queries import SpeakerQueryService
+from app.modules.analytics.services.projection_dispatch import (
+    enqueue_event_speaker_projection_refresh,
 )
+from app.core.concurrency import require_if_match
+from app.schemas.cursor_pagination import CursorPage
+router = APIRouter(prefix="/events/{event_id}/speakers", tags=["speakers"], dependencies=[require_event_operation("speakers.manage")])
 
 
 # ── Inline response schema for speaker's session list ────────────────
@@ -75,218 +76,76 @@ class SpeakerTalkResponse(BaseModel):
     abstract_review_notes: Optional[str] = None
 
 
-class AdminAbstractResponse(BaseModel):
-    session_speaker_id: uuid.UUID
-    event_id: uuid.UUID
-    speaker_id: uuid.UUID
-    speaker_name: str
-    speaker_email: str
-    session_id: uuid.UUID
-    session_name: str
-    presentation_title: Optional[str]
-    abstract_text: Optional[str]
-    keywords: List[str]
-    status: str
-    version: int
-    submitted_at: Optional[datetime]
-    reviewed_at: Optional[datetime]
-    reviewed_by: Optional[uuid.UUID]
-    review_notes: Optional[str]
-
-
-class AdminAbstractPage(BaseModel):
-    items: List[AdminAbstractResponse]
-    next_cursor: Optional[uuid.UUID] = None
-
-
-class AbstractReviewRequest(BaseModel):
-    decision: Literal[
-        "UNDER_REVIEW",
-        "ACCEPTED",
-        "REJECTED",
-        "REVISION_REQUESTED",
-    ]
-    notes: Optional[str] = Field(None, max_length=4000)
-    reason: str = Field(min_length=5, max_length=1000)
-    case_reference: Optional[str] = Field(None, max_length=160)
-
-
-def _admin_abstract_response(
-    slot: SessionSpeaker,
-    speaker: Speaker,
-    session: Session,
-) -> AdminAbstractResponse:
-    return AdminAbstractResponse(
-        session_speaker_id=slot.id,
-        event_id=session.event_id,
-        speaker_id=speaker.id,
-        speaker_name=speaker.full_name,
-        speaker_email=speaker.email,
-        session_id=session.id,
-        session_name=session.name,
-        presentation_title=slot.presentation_title,
-        abstract_text=slot.abstract_text,
-        keywords=slot.abstract_keywords or [],
-        status=slot.abstract_status,
-        version=slot.abstract_version,
-        submitted_at=slot.abstract_submitted_at,
-        reviewed_at=slot.abstract_reviewed_at,
-        reviewed_by=slot.abstract_reviewed_by,
-        review_notes=slot.abstract_review_notes,
-    )
-
-
-@abstracts_router.get("", response_model=AdminAbstractPage)
-async def list_abstracts(
+@router.get("/page", response_model=CursorPage[SpeakerSummary])
+async def list_speakers_page(
     event: CurrentEvent,
-    status_filter: Optional[str] = Query(None, alias="status", max_length=24),
-    search: Optional[str] = Query(None, max_length=120),
-    cursor: Optional[uuid.UUID] = Query(None),
-    limit: int = Query(100, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
-) -> AdminAbstractPage:
-    query = (
-        select(SessionSpeaker, Speaker, Session)
-        .join(Speaker, Speaker.id == SessionSpeaker.speaker_id)
-        .join(Session, Session.id == SessionSpeaker.session_id)
-        .where(
-            Speaker.event_id == event.id,
-            Session.event_id == event.id,
-            Speaker.deleted_at.is_(None),
-            Session.deleted_at.is_(None),
-        )
-        .order_by(SessionSpeaker.id)
-        .limit(limit + 1)
-    )
-    if status_filter:
-        query = query.where(
-            SessionSpeaker.abstract_status == status_filter.upper()
-        )
-    if search:
-        needle = f"%{search.strip()}%"
-        query = query.where(
-            or_(
-                Speaker.first_name.ilike(needle),
-                Speaker.last_name.ilike(needle),
-                Speaker.email.ilike(needle),
-                Session.name.ilike(needle),
-                SessionSpeaker.presentation_title.ilike(needle),
-            )
-        )
-    if cursor:
-        query = query.where(SessionSpeaker.id > cursor)
-    rows = (await db.execute(query)).all()
-    has_more = len(rows) > limit
-    page_rows = rows[:limit]
-    return AdminAbstractPage(
-        items=[
-            _admin_abstract_response(slot, speaker, session)
-            for slot, speaker, session in page_rows
-        ],
-        next_cursor=page_rows[-1][0].id if has_more and page_rows else None,
-    )
-
-
-@abstracts_router.patch(
-    "/{session_speaker_id}/review",
-    response_model=AdminAbstractResponse,
-)
-async def review_abstract(
-    session_speaker_id: uuid.UUID,
-    payload: AbstractReviewRequest,
-    event: CurrentEvent,
-    expected_version: int = Header(..., alias="If-Match", ge=1),
-    idempotency_key: str = Header(
-        ..., alias="Idempotency-Key", min_length=8, max_length=200
-    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> AdminAbstractResponse:
-    """abstract_review_mutations: review one event-scoped abstract."""
-    row = (
-        await db.execute(
-            select(SessionSpeaker, Speaker, Session)
-            .join(Speaker, Speaker.id == SessionSpeaker.speaker_id)
-            .join(Session, Session.id == SessionSpeaker.session_id)
-            .where(
-                SessionSpeaker.id == session_speaker_id,
-                Speaker.event_id == event.id,
-                Session.event_id == event.id,
-                Speaker.deleted_at.is_(None),
-                Session.deleted_at.is_(None),
-            )
-            .with_for_update(of=SessionSpeaker)
-        )
-    ).one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Abstract not found.")
-    slot, speaker, session = row
-    if slot.abstract_idempotency_key == idempotency_key:
-        return _admin_abstract_response(slot, speaker, session)
-    if slot.abstract_version != expected_version:
-        raise HTTPException(
-            status_code=412,
-            detail={
-                "code": "VERSION_CONFLICT",
-                "current_version": slot.abstract_version,
-            },
-        )
-    if payload.decision in {"REJECTED", "REVISION_REQUESTED"} and not (
-        payload.notes or ""
-    ).strip():
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "REVIEW_NOTES_REQUIRED"},
-        )
-    allowed_from = {
-        "UNDER_REVIEW": {"SUBMITTED"},
-        "ACCEPTED": {"SUBMITTED", "UNDER_REVIEW"},
-        "REJECTED": {"SUBMITTED", "UNDER_REVIEW"},
-        "REVISION_REQUESTED": {"SUBMITTED", "UNDER_REVIEW"},
-    }
-    if slot.abstract_status not in allowed_from[payload.decision]:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "INVALID_ABSTRACT_STATE",
-                "status": slot.abstract_status,
-                "decision": payload.decision,
-            },
-        )
-    old_state = {
-        "status": slot.abstract_status,
-        "version": slot.abstract_version,
-    }
-    slot.abstract_status = payload.decision
-    slot.abstract_review_notes = (payload.notes or "").strip() or None
-    slot.abstract_reviewed_at = datetime.now(timezone.utc)
-    slot.abstract_reviewed_by = current_user.id
-    slot.abstract_version += 1
-    slot.abstract_idempotency_key = idempotency_key
-    await AuditService.write_log_sync(
-        AuditContext(
-            action_type=f"SPEAKER_ABSTRACT_{payload.decision}",
-            resource_type="speaker_abstract",
-            resource_id=slot.id,
-            actor_user_id=current_user.id,
-            organization_id=event.organization_id,
-            actor_role=getattr(current_user, "role", None),
-            old_state=old_state,
-            new_state={
-                "event_id": str(event.id),
-                "speaker_id": str(speaker.id),
-                "status": slot.abstract_status,
-                "version": slot.abstract_version,
-                "reason": payload.reason,
-                "case_reference": payload.case_reference,
-                "idempotency_key": idempotency_key,
-            },
-        ),
-        db,
+    upload_status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, max_length=100),
+    room_id: Optional[uuid.UUID] = Query(None),
+    session_id: Optional[uuid.UUID] = Query(None),
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+) -> CursorPage[SpeakerSummary]:
+    """Cursor-paginated speaker summaries for large event workspaces."""
+    assigned_session_ids: set[uuid.UUID] = set()
+    assigned_room_ids: set[uuid.UUID] = set()
+    event_wide_access = current_user.role in {"super_admin", "admin", "organiser", "organizer"}
+
+    if not event_wide_access:
+        from app.modules.rbac.models.rbac import UserAccessNode
+        from app.modules.rbac.models.user_assignment import UserEventAssignment
+
+        nodes = (await db.execute(
+            select(UserAccessNode.node_id, UserAccessNode.node_type).where(UserAccessNode.user_id == current_user.id)
+        )).all()
+        assigned_event_ids = {row.node_id for row in nodes if row.node_type == "EVENT"}
+        assigned_room_ids = {row.node_id for row in nodes if row.node_type == "ROOM"}
+        assigned_session_ids = {row.node_id for row in nodes if row.node_type == "SESSION"}
+        legacy_event_ids = (await db.scalars(
+            select(UserEventAssignment.event_id).where(UserEventAssignment.user_id == current_user.id)
+        )).all()
+        event_wide_access = event.id in assigned_event_ids or event.id in set(legacy_event_ids)
+
+    page = await SpeakerQueryService(db).list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+        search=search,
+        upload_status=upload_status,
+        room_id=room_id,
+        session_id=session_id,
+        assigned_session_ids=assigned_session_ids,
+        assigned_room_ids=assigned_room_ids,
+        event_wide_access=event_wide_access,
     )
-    await db.commit()
-    await db.refresh(slot)
-    return _admin_abstract_response(slot, speaker, session)
+    items: list[SpeakerSummary] = []
+    for speaker in page.items:
+        current_files = [file for file in speaker.presentation_files if file.is_current_version]
+        poster_statuses = [poster.status for poster in speaker.posters]
+        summary = SpeakerSummary.model_validate(speaker)
+        if any(file.upload_status == "approved" for file in current_files) or "approved" in poster_statuses:
+            summary.upload_status = "approved"
+        elif any(file.upload_status == "rejected" for file in current_files) or "rejected" in poster_statuses:
+            summary.upload_status = "rejected"
+        elif current_files or any(status in {"submitted", "under_review"} for status in poster_statuses):
+            summary.upload_status = "uploaded"
+        summary.event_timezone = event.timezone
+        summary.is_checked_in = bool(speaker.checked_in_at)
+        summary.track_id = speaker.track_id
+        summary.track_name = speaker.track.name if speaker.track else None
+        summary.track_color = getattr(speaker.track, "display_color", None) if speaker.track else None
+        summary.participant_id = speaker.participant_id
+        summary.role = speaker.role or "Speaker"
+        summary.roles = speaker.participant.roles if speaker.participant and speaker.participant.roles else [summary.role]
+        summary.talks_count = len(speaker.session_speakers) + len(speaker.posters)
+        summary.files_total = len(current_files)
+        summary.files_uploaded = sum(1 for file in current_files if file.upload_status not in {"pending", ""})
+        summary.files_approved = sum(1 for file in current_files if file.upload_status == "approved")
+        items.append(summary)
+    return CursorPage(items=items, next_cursor=page.next_cursor, has_next=page.has_next)
 
 
 @router.get("", response_model=List[SpeakerSummary])
@@ -309,7 +168,7 @@ async def list_speakers(
     assigned_session_ids = set()
 
     # Apply restricted access filtering for non-admin roles
-    if current_user.role not in ["super_admin", "admin", "organiser"]:
+    if current_user.role not in ["super_admin", "admin", "organiser", "organizer"]:
         from app.modules.rbac.models.rbac import UserAccessNode
         from app.modules.rbac.models.user_assignment import UserEventAssignment
 
@@ -731,6 +590,9 @@ async def manual_register_speaker(
         )
 
     await db.commit()
+    enqueue_event_speaker_projection_refresh(
+        organization_id=event.organization_id, event_id=event.id
+    )
     # Eager load profile, track, participant for response schema
     result = await db.execute(
         select(Speaker)
@@ -765,20 +627,11 @@ async def get_speaker(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> SpeakerResponse:
-    result = await db.execute(
-        select(Speaker)
-        .where(
-            Speaker.id == speaker_id,
-            Speaker.event_id == event.id,
-            Speaker.deleted_at.is_(None),
-        )
-        .options(
-            selectinload(Speaker.profile),
-            selectinload(Speaker.track),
-            selectinload(Speaker.participant),
-        )
+    sp = await SpeakerQueryService(db).get_for_event(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        speaker_id=speaker_id,
     )
-    sp = result.scalar_one_or_none()
     if sp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speaker not found.")
         
@@ -805,41 +658,19 @@ async def update_speaker(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> SpeakerResponse:
-    speaker, _, _ = await EventResourceMutationService.update_speaker(
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    return await SpeakerCommandService.update(
         db,
         event=event,
         speaker_id=speaker_id,
         payload=payload,
         actor_user_id=current_user.id,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
-    
-    result = await db.execute(
-        select(Speaker)
-        .where(Speaker.id == speaker_id)
-        .options(
-            selectinload(Speaker.profile),
-            selectinload(Speaker.track),
-            selectinload(Speaker.participant),
-        )
-    )
-    speaker = result.scalar_one()
-    
-    s = SpeakerResponse.model_validate(speaker)
-    s.track_id = speaker.track_id
-    s.track_name = speaker.track.name if speaker.track else None
-    s.track_color = getattr(speaker.track, "display_color", None) if speaker.track else None
-    s.participant_id = speaker.participant_id
-    s.role = getattr(speaker, "role", "Speaker") or "Speaker"
-    s.roles = speaker.participant.roles if (speaker.participant and speaker.participant.roles) else [s.role]
-
-    if speaker.profile:
-        from app.modules.speakers.schemas.speaker_profile import SpeakerProfileResponse
-        s.profile_completeness = SpeakerProfileResponse.model_validate(speaker.profile).profile_completeness
-    else:
-        s.profile_completeness = 0
-    return s
 
 
 @router.delete("/{speaker_id}", response_model=MessageResponse)
@@ -847,17 +678,19 @@ async def delete_speaker(
     speaker_id: uuid.UUID,
     event: CurrentEvent,
     user: OrganizerOrAbove,
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    await EventResourceMutationService.archive_speaker(
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    return await SpeakerCommandService.archive(
         db,
         event=event,
         speaker_id=speaker_id,
         actor_user_id=user.id,
-        source="organizer_portal",
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
-    return MessageResponse(message="Speaker archived and remains recoverable.")
 
 
 @router.post("/{speaker_id}/send-invite", response_model=MessageResponse)
@@ -1204,6 +1037,9 @@ async def fetch_speakers_from_registration(
             source="organizer_portal.speakers.registration_import",
         )
         await db.commit()
+        enqueue_event_speaker_projection_refresh(
+            organization_id=event.organization_id, event_id=event.id
+        )
 
     return MessageResponse(message=f"Successfully imported {imported_count} speakers from registration.")
 

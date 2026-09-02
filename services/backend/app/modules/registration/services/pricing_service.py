@@ -7,6 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.events.models.event import Event
 from app.modules.registration.models.ticket_type import TicketType
+from app.core.cache import get_json, set_json
+from app.core.cache_keys import TenantCacheKey
+from app.core.cache_policy import CacheTTL, ttl
 
 
 def _parse_utc_dt(val: Optional[str]) -> Optional[datetime]:
@@ -99,12 +102,15 @@ async def get_active_prices_for_event(db: AsyncSession, event: Event) -> Dict[st
     No cross-tier fallback is performed so that tiers (e.g. Free Standard) are respected.
     """
     active_tier = get_active_tier(event)
-    stmt = select(TicketType).where(
+    cache_key = TenantCacheKey.event_prices(event.id, active_tier, event.organization_id)
+    cached = await get_json(cache_key)
+    if isinstance(cached, dict):
+        return {str(name): float(price) for name, price in cached.items()}
+    stmt = select(TicketType.role_name, TicketType.price).where(
         TicketType.event_id == event.id,
         func.lower(TicketType.tier_name) == active_tier.lower()
     )
     result = await db.execute(stmt)
-    tickets = result.scalars().all()
-    
-    pricing_map = {t.role_name: float(t.price) for t in tickets}
+    pricing_map = {row.role_name: float(row.price) for row in result}
+    await set_json(cache_key, pricing_map, ttl(CacheTTL.PRICING))
     return pricing_map

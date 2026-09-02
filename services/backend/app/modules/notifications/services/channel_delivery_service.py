@@ -5,7 +5,7 @@ import hmac
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from fastapi import HTTPException
@@ -33,6 +33,7 @@ from app.services.credential_cipher import cipher
 
 _E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 _EXPO_TOKEN = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[^\]]{8,200}\]$")
+_DELIVERY_CLAIM_LEASE = timedelta(minutes=5)
 
 
 def _now() -> datetime:
@@ -294,6 +295,7 @@ class ChannelDeliveryService:
         *,
         batch_id: uuid.UUID,
         organization_id: uuid.UUID,
+        worker_id: str | None = None,
     ) -> CommunicationDeliveryBatch:
         batch = await db.scalar(
             select(CommunicationDeliveryBatch)
@@ -353,51 +355,102 @@ class ChannelDeliveryService:
             )
         ).all()
         content = json.loads(cipher.decrypt(batch.content_ciphertext))
-        batch.status = "PROCESSING"
-        batch.started_at = batch.started_at or _now()
-        await db.flush()
-
-        accepted = 0
-        failed = 0
-        retryable = 0
+        now = _now()
+        claim_owner = (worker_id or f"inline-{uuid.uuid4()}")[:80]
+        claimed: list[CommunicationDelivery] = []
+        active_claim = False
         for delivery in deliveries:
-            if delivery.status == "ACCEPTED":
-                accepted += 1
+            if delivery.status in {"ACCEPTED", "FAILED"}:
                 continue
-            if delivery.status == "FAILED":
-                failed += 1
-                continue
+            if delivery.status == "PROCESSING":
+                lease_expired = not delivery.processing_started_at or (
+                    delivery.processing_started_at + _DELIVERY_CLAIM_LEASE <= now
+                )
+                same_worker = bool(worker_id and delivery.processing_owner == worker_id)
+                if not lease_expired and not same_worker:
+                    active_claim = True
+                    continue
+            delivery.status = "PROCESSING"
+            delivery.processing_owner = claim_owner
+            delivery.processing_started_at = now
             delivery.attempt_count += 1
-            outcome = await ChannelProviderService.deliver(
-                config,
-                recipient=cipher.decrypt(delivery.recipient_ciphertext),
-                title=content.get("title"),
-                body=content["body"],
-                data=content.get("data") or {},
-            )
+            claimed.append(delivery)
+
+        batch.status = "PROCESSING"
+        batch.started_at = batch.started_at or now
+        # Commit the claim before any provider call. The external request never
+        # runs while a database transaction or row lock is held.
+        await db.commit()
+
+        for delivery in claimed:
+            try:
+                outcome = await ChannelProviderService.deliver(
+                    config,
+                    recipient=cipher.decrypt(delivery.recipient_ciphertext),
+                    title=content.get("title"),
+                    body=content["body"],
+                    data=content.get("data") or {},
+                )
+            except Exception as exc:
+                # Persist a retryable state before allowing the Celery policy to
+                # retry. This also makes an unexpected provider error recoverable
+                # without waiting for the claim lease to expire.
+                delivery.status = "RETRYABLE"
+                delivery.processing_owner = None
+                delivery.processing_started_at = None
+                delivery.error_code = type(exc).__name__[:80]
+                delivery.error_message = "Provider delivery failed before an outcome was recorded."
+                delivery.failed_at = _now()
+                await db.commit()
+                raise
+
             delivery.provider_response = outcome.response_metadata
+            delivery.processing_owner = None
+            delivery.processing_started_at = None
             if outcome.accepted:
                 delivery.status = "ACCEPTED"
                 delivery.provider_message_id = outcome.provider_message_id
                 delivery.error_code = None
                 delivery.error_message = None
                 delivery.accepted_at = _now()
-                accepted += 1
             else:
                 can_retry = outcome.retryable and delivery.attempt_count < 3
                 delivery.status = "RETRYABLE" if can_retry else "FAILED"
                 delivery.error_code = outcome.error_code
                 delivery.error_message = outcome.error_message
                 delivery.failed_at = _now()
-                if can_retry:
-                    retryable += 1
-                else:
-                    failed += 1
+            await db.commit()
+
+        # Re-read after provider calls so counts and reservation accounting are
+        # based on committed durable states, not stale ORM instances.
+        await db.refresh(batch)
+        deliveries = (
+            await db.scalars(
+                select(CommunicationDelivery)
+                .where(
+                    CommunicationDelivery.batch_id == batch.id,
+                    CommunicationDelivery.organization_id == organization_id,
+                )
+                .order_by(CommunicationDelivery.created_at)
+            )
+        ).all()
+        accepted = sum(1 for row in deliveries if row.status == "ACCEPTED")
+        failed = sum(1 for row in deliveries if row.status == "FAILED")
+        retryable = sum(1 for row in deliveries if row.status == "RETRYABLE")
+        processing = sum(1 for row in deliveries if row.status == "PROCESSING")
 
         batch.accepted_count = accepted
         batch.failed_count = failed
-        if retryable:
+        if retryable or processing:
             batch.status = "RETRY_PENDING"
+            batch.completed_at = None
+            await db.flush()
+            return batch
+        if active_claim:
+            # Another worker owns an unexpired claim. Do not turn that healthy
+            # in-flight work into a retryable batch that a duplicate task could
+            # eventually mark failed.
+            batch.status = "PROCESSING"
             batch.completed_at = None
             await db.flush()
             return batch
@@ -483,6 +536,8 @@ class ChannelDeliveryService:
         ).all()
         for row in rows:
             row.status = "FAILED"
+            row.processing_owner = None
+            row.processing_started_at = None
             row.error_code = code
             row.error_message = "Delivery stopped after the worker exhausted retries."
             row.failed_at = _now()

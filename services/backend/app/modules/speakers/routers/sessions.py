@@ -21,13 +21,62 @@ from app.modules.speakers.schemas.session import (
 from app.schemas.common import MessageResponse
 from app.modules.platform.services.metering_service import MeteringService
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
+from app.core.concurrency import require_if_match
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.modules.agenda.application.commands import SessionCommandService
+from app.modules.speakers.application.queries import SessionQueryService
+from app.modules.analytics.services.projection_dispatch import (
+    enqueue_event_speaker_projection_refresh,
+)
+from app.schemas.cursor_pagination import CursorPage
 
 router = APIRouter(
     prefix="/events/{event_id}/sessions",
     tags=["sessions"],
     dependencies=[require_event_operation("sessions.manage")],
 )
+
+
+@router.get("/page", response_model=CursorPage[SessionSummary])
+async def list_sessions_page(
+    event: CurrentEvent,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+    room_id: Optional[uuid.UUID] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page_size: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=512),
+) -> CursorPage[SessionSummary]:
+    """Cursor-paginated schedule read; the offset route remains compatible."""
+    assigned_session_ids: set[uuid.UUID] = set()
+    assigned_room_ids: set[uuid.UUID] = set()
+    event_wide_access = current_user.role in {"super_admin", "admin", "organiser", "organizer"}
+    if not event_wide_access:
+        from app.modules.rbac.models.rbac import UserAccessNode
+        nodes = (await db.execute(
+            select(UserAccessNode.node_id, UserAccessNode.node_type).where(
+                UserAccessNode.user_id == current_user.id
+            )
+        )).all()
+        assigned_session_ids = {row.node_id for row in nodes if row.node_type == "SESSION"}
+        assigned_room_ids = {row.node_id for row in nodes if row.node_type == "ROOM"}
+
+    page = await SessionQueryService(db).list_page(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page_size=page_size,
+        cursor=cursor,
+        room_id=room_id,
+        status_filter=status_filter,
+        assigned_session_ids=assigned_session_ids,
+        assigned_room_ids=assigned_room_ids,
+        event_wide_access=event_wide_access,
+    )
+    return CursorPage(
+        items=[SessionSummary.model_validate(session) for session in page.items],
+        next_cursor=page.next_cursor,
+        has_next=page.has_next,
+    )
 
 
 @router.post("/export")
@@ -277,52 +326,17 @@ async def list_sessions(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=1000),
 ) -> List[SessionSummary]:
-    q = select(Session).options(
-        selectinload(Session.event), 
-        selectinload(Session.room),
-        selectinload(Session.track),
-        selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker),
-    ).where(Session.event_id == event.id)
-
-    # Restricted roles (NOT super_admin or admin) must have specific assignments
-    if current_user.role not in ["super_admin", "admin"]:
-        from app.modules.rbac.models.rbac import UserAccessNode
-        from sqlalchemy import or_, exists
-
-        # Check Event Level Assignment
-        event_assigned = exists().where(
-            UserAccessNode.user_id == current_user.id,
-            UserAccessNode.node_id == event.id,
-            UserAccessNode.node_type == 'EVENT'
-        )
-
-        # Check Room Level Assignment (If session is in an assigned room)
-        room_assignments = select(UserAccessNode.node_id).where(
-            UserAccessNode.user_id == current_user.id,
-            UserAccessNode.node_type == 'ROOM'
-        )
-
-        # Check Session Level Assignment
-        session_assignments = select(UserAccessNode.node_id).where(
-            UserAccessNode.user_id == current_user.id,
-            UserAccessNode.node_type == 'SESSION'
-        )
-
-        q = q.where(
-            or_(
-                event_assigned,
-                Session.room_id.in_(room_assignments),
-                Session.id.in_(session_assignments)
-            )
-        )
-
-    if room_id:
-        q = q.where(Session.room_id == room_id)
-    if status_filter:
-        q = q.where(Session.status == status_filter)
-    q = q.order_by(Session.start_time).offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(q)
-    return [SessionSummary.model_validate(s) for s in result.scalars().all()]
+    sessions = await SessionQueryService(db).list_legacy(
+        organization_id=event.organization_id,
+        event_id=event.id,
+        page=page,
+        page_size=page_size,
+        room_id=room_id,
+        status_filter=status_filter,
+        user_id=current_user.id,
+        user_role=current_user.role,
+    )
+    return [SessionSummary.model_validate(session) for session in sessions]
 
 
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -410,6 +424,10 @@ async def create_session(
         db.add(ss)
 
     await db.commit()
+    if speakers_data:
+        enqueue_event_speaker_projection_refresh(
+            organization_id=event.organization_id, event_id=event.id
+        )
     return SessionResponse.model_validate(
         await _get_session_or_404(db, session.id, event.id)
     )
@@ -434,13 +452,22 @@ async def update_session(
     event: CurrentEvent,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> SessionResponse:
-    session = await _get_session_or_404(db, session_id, event.id, user=current_user)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(session, field, value)
-    await db.commit()
+    await _get_session_or_404(db, session_id, event.id, user=current_user)
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    await SessionCommandService.update(
+        db,
+        event=event,
+        session_id=session_id,
+        payload=payload,
+        actor_user_id=current_user.id,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
+    )
     return SessionResponse.model_validate(
-        await _get_session_or_404(db, session.id, event.id, user=current_user)
+        await _get_session_or_404(db, session_id, event.id, user=current_user)
     )
 
 
@@ -449,17 +476,23 @@ async def delete_session(
     session_id: uuid.UUID,
     event: CurrentEvent,
     user: OrganizerOrAbove,
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     session = await _get_session_or_404(db, session_id, event.id, user=user)
     if session.status == "in_progress":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="Cannot delete a session that is in progress.")
-    if session.deleted_at is None:
-        session.deleted_at = datetime.now(timezone.utc)
-        session.deleted_by = user.id
-        await MeteringService.record(db, organization_id=event.organization_id, event_id=event.id, metric_key="sessions", quantity=-1, unit="count", source="organizer_portal.sessions.archive", idempotency_key=f"session-archive:{session.id}:{session.deleted_at.isoformat()}", actor_user_id=user.id, metadata={"resource_id": str(session.id)})
-    await db.commit()
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    await SessionCommandService.archive(
+        db,
+        event=event,
+        session_id=session_id,
+        actor_user_id=user.id,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
+    )
     return MessageResponse(message="Session archived and remains recoverable.")
 
 
@@ -492,6 +525,9 @@ async def add_speaker_to_session(
     )
     db.add(ss)
     await db.commit()
+    enqueue_event_speaker_projection_refresh(
+        organization_id=event.organization_id, event_id=event.id
+    )
     return MessageResponse(message="Speaker added to session.")
 
 
@@ -514,6 +550,9 @@ async def remove_speaker_from_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session speaker not found.")
     await db.delete(ss)
     await db.commit()
+    enqueue_event_speaker_projection_refresh(
+        organization_id=event.organization_id, event_id=event.id
+    )
     return MessageResponse(message="Speaker removed from session.")
 @router.patch("/{session_id}/speakers/{session_speaker_id}", response_model=MessageResponse)
 async def update_session_speaker(
@@ -587,9 +626,12 @@ async def _get_session_or_404(
             selectinload(Session.room),
             selectinload(Session.track),
             selectinload(Session.session_speakers).selectinload(SessionSpeaker.speaker),
-            selectinload(Session.posters)
         )
-        .where(Session.id == session_id, Session.event_id == event_id)
+        .where(
+            Session.id == session_id,
+            Session.event_id == event_id,
+            Session.deleted_at.is_(None),
+        )
     )
     s = result.scalar_one_or_none()
     if s is None:

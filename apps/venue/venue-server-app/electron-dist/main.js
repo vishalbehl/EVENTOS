@@ -15,7 +15,7 @@ function repoRoot() {
     return path_1.default.resolve(appRoot(), "..", "..", "..");
 }
 function serviceRuntime() {
-    const serviceRoot = path_1.default.join(repoRoot(), "services", "venue-server");
+    const serviceRoot = path_1.default.join(repoRoot(), "services", "venue", "venue-server");
     const configuredPython = process.env.VENUE_SERVER_PYTHON;
     const candidates = [
         configuredPython,
@@ -136,11 +136,47 @@ electron_1.ipcMain.handle("app:info", () => {
         isPackaged: electron_1.app.isPackaged,
     };
 });
+electron_1.ipcMain.handle("venue:get-setup-status", async () => {
+    const envDir = path_1.default.join(repoRoot(), "services", "venue", "venue-server");
+    const envPath = path_1.default.join(envDir, ".env");
+    let dbUrl = "";
+    if (fs_1.default.existsSync(envPath)) {
+        const envContent = fs_1.default.readFileSync(envPath, "utf-8");
+        const match = envContent.match(/^DATABASE_URL=(.+)$/m);
+        if (match) {
+            dbUrl = match[1].trim();
+        }
+    }
+    let dbName = "eventos_venue_server";
+    let host = "127.0.0.1";
+    let port = 5432;
+    let user = "postgres";
+    if (dbUrl) {
+        try {
+            const parsed = new URL(dbUrl.replace(/^postgresql\+asyncpg:\/\//, "http://"));
+            dbName = parsed.pathname.replace(/^\//, "") || dbName;
+            host = parsed.hostname || host;
+            port = parsed.port ? parseInt(parsed.port, 10) : port;
+            user = parsed.username || user;
+        }
+        catch {
+            // ignore
+        }
+    }
+    return {
+        configured: Boolean(dbUrl && !dbUrl.endsWith("/")),
+        database: dbName,
+        host,
+        port,
+        user,
+        databaseUrl: dbUrl,
+    };
+});
 electron_1.ipcMain.handle("venue:setup-databases", async (_event, setup) => {
     const setupPayloadPath = path_1.default.join(electron_1.app.getPath("userData"), `venue-setup-${Date.now()}.json`);
     fs_1.default.writeFileSync(setupPayloadPath, JSON.stringify(setup), "utf-8");
     try {
-        const scriptPath = path_1.default.join(repoRoot(), "services", "venue-server", "scripts", "node", "setup_venue_databases.py");
+        const scriptPath = path_1.default.join(repoRoot(), "services", "venue", "venue-server", "scripts", "node", "setup_venue_databases.py");
         if (fs_1.default.existsSync(scriptPath)) {
             await runPythonScript(scriptPath, [setupPayloadPath]);
         }
@@ -148,10 +184,11 @@ electron_1.ipcMain.handle("venue:setup-databases", async (_event, setup) => {
             console.warn("setup_venue_databases.py not found at: " + scriptPath);
         }
         // Save DB credentials directly to the venue server env
-        const envDir = path_1.default.join(repoRoot(), "services", "venue-server");
+        const envDir = path_1.default.join(repoRoot(), "services", "venue", "venue-server");
         fs_1.default.mkdirSync(envDir, { recursive: true });
         const envPath = path_1.default.join(envDir, ".env");
-        const dbUrl = `postgresql+asyncpg://${setup.user || "postgres"}:${setup.password || ""}@${setup.host || "127.0.0.1"}:${setup.port || 5432}/${setup.database || "eventos_venue_server"}`;
+        const dbName = String(setup.database || "eventos_venue_server").trim();
+        const dbUrl = `postgresql+asyncpg://${setup.user || "postgres"}:${setup.password || ""}@${setup.host || "127.0.0.1"}:${setup.port || 5432}/${dbName}`;
         let envContent = fs_1.default.existsSync(envPath) ? fs_1.default.readFileSync(envPath, "utf-8") : "";
         if (envContent.includes("DATABASE_URL=")) {
             envContent = envContent.replace(/DATABASE_URL=.*/, `DATABASE_URL=${dbUrl}`);
@@ -160,6 +197,21 @@ electron_1.ipcMain.handle("venue:setup-databases", async (_event, setup) => {
             envContent += `\nDATABASE_URL=${dbUrl}`;
         }
         fs_1.default.writeFileSync(envPath, envContent.trim() + "\n", "utf-8");
+        try {
+            const mainPy = path_1.default.join(envDir, "app", "main.py");
+            if (fs_1.default.existsSync(mainPy)) {
+                const now = new Date();
+                fs_1.default.utimesSync(mainPy, now, now);
+            }
+            await fetch("http://127.0.0.1:8001/api/v1/venue/admin/reload-database", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ database_url: dbUrl }),
+            });
+        }
+        catch {
+            // ignore
+        }
         return { success: true };
     }
     catch (error) {
@@ -184,21 +236,21 @@ electron_1.ipcMain.handle("venue:import-local-database", async () => {
     if (result.canceled || !result.filePaths[0]) {
         return { canceled: true };
     }
-    const destDir = path_1.default.join(repoRoot(), "services", "venue-server", "data");
+    const destDir = path_1.default.join(repoRoot(), "services", "venue", "venue-server", "data");
     fs_1.default.mkdirSync(destDir, { recursive: true });
     const destPath = path_1.default.join(destDir, "venue_imported.sqlite");
     fs_1.default.copyFileSync(result.filePaths[0], destPath);
     return { canceled: false, importedFrom: result.filePaths[0], path: destPath };
 });
 electron_1.ipcMain.handle("venue:reset-venue-database", async () => {
-    const envDir = path_1.default.join(repoRoot(), "services", "venue-server");
+    const envDir = path_1.default.join(repoRoot(), "services", "venue", "venue-server");
     const envPath = path_1.default.join(envDir, ".env");
     if (fs_1.default.existsSync(envPath)) {
         let envContent = fs_1.default.readFileSync(envPath, "utf-8");
         envContent = envContent.replace(/^DATABASE_URL=.*$/m, "DATABASE_URL=");
         fs_1.default.writeFileSync(envPath, envContent, "utf-8");
     }
-    const importedDb = path_1.default.join(repoRoot(), "services", "venue-server", "data", "venue_imported.sqlite");
+    const importedDb = path_1.default.join(repoRoot(), "services", "venue", "venue-server", "data", "venue_imported.sqlite");
     if (fs_1.default.existsSync(importedDb)) {
         fs_1.default.rmSync(importedDb, { force: true });
     }

@@ -162,6 +162,7 @@ class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    version: int = 1
     organization_id: uuid.UUID
     name: str
     short_code: str
@@ -231,4 +232,3 @@ class EventSummary(BaseModel):
     is_read_only: bool = False
     created_at: datetime
     updated_at: datetime
-

@@ -43,7 +43,53 @@ from app.modules.platform.models.organization_console import (
 )
 from app.modules.files.models.file import Asset
 from app.modules.files.services.file_service import FileService
+from app.modules.organiser.application.member_commands import OrganizationMemberCommandService
+from app.modules.organiser.application.organization_commands import OrganizerOrganizationCommandService
+from app.modules.organiser.application.billing_commands import OrganizerBillingCommandService
+from app.modules.organiser.application.approval_commands import OrganizerApprovalRuleCommandService
+from app.modules.organiser.application.notification_commands import OrganizerNotificationCommandService
+from app.modules.organiser.application.custom_field_commands import OrganizerCustomFieldCommandService
+from app.modules.organiser.application.security_commands import OrganizerSecurityCommandService
+from app.modules.organiser.application.branding_commands import OrganizerBrandingCommandService
+from app.modules.organiser.application.attention_commands import OrganizerAttentionCommandService
+from app.modules.organiser.application.location_commands import OrganizerLocationCommandService
+from app.modules.organiser.application.document_commands import OrganizerDocumentCommandService
+from app.modules.organiser.application.event_commands import OrganizerEventCommandService
+from app.modules.organiser.application.report_commands import OrganizerReportCommandService
+from app.modules.organiser.application.import_commands import OrganizerImportCommandService
+from app.modules.organiser.application.queries import (
+    OrganiserCustomFieldQueryService,
+    OrganiserEventQueryService,
+    OrganiserIntegrationQueryService,
+    OrganiserDeveloperSettingsQueryService,
+    OrganiserLocationQueryService,
+    OrganiserNotificationSettingsQueryService,
+    OrganiserSecurityBrandingQueryService,
+    OrganiserTeamQueryService,
+    OrganiserMemberQueryService,
+    OrganiserEntitlementQueryService,
+    OrganiserReportQueryService,
+    OrganiserAttentionQueryService,
+    OrganiserAddonQueryService,
+)
+from app.modules.platform.application.organization_team_commands import OrganizationTeamCommandService
+
+
+# Capability audit index: domain routers enforce these operations, while the
+# organiser portal remains the customer-facing entry point for their workflows.
+CUSTOMER_MANAGED_OPERATION_GATES = {
+    "abstracts.assign_reviewers",
+    "abstracts.configure",
+    "abstracts.decide",
+    "abstracts.export",
+    "abstracts.publish",
+    "abstracts.review",
+    "developer.api.use",
+    "website.manage",
+}
 from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.application.queries import AuditQueryService
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.developer.models.developer_registry import ApiKey
 from app.modules.integrations.models.integrations_domain_tables import IntegrationConnection, IntegrationProvider
 from app.modules.integrations.models.integrations_domain_tables import IntegrationWebhookDelivery
@@ -262,14 +308,10 @@ async def get_organiser_profile(current_user: User = Depends(get_current_user), 
 @router.put("/organisation/profile")
 async def update_organiser_profile(payload: OrganizationProfileWrite, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    if org.profile_version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": org.profile_version})
-    old = _organization_profile(org)
-    for key, value in payload.model_dump().items(): setattr(org, key, value)
-    org.profile_version += 1; org.profile_updated_by = current_user.id
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_profile", resource_id=org.id, action_type="ORGANIZATION_PROFILE_UPDATED", old_state=old, new_state={**payload.model_dump(), "version": org.profile_version}, is_sensitive=True))
-    await db.commit(); await db.refresh(org)
-    return _organization_profile(org)
+    updated = await OrganizerOrganizationCommandService(db).update_profile(
+        organization_id=org.id, actor=current_user, values=payload.model_dump(), if_match=if_match,
+    )
+    return _organization_profile(updated)
 
 
 def _custom_field_out(row: OrganizationCustomField) -> dict[str, Any]:
@@ -285,56 +327,9 @@ async def organiser_teams(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    filters = [OrganizationTeam.organization_id == org.id, OrganizationTeam.deleted_at.is_(None)]
-    if search and search.strip():
-        filters.append(OrganizationTeam.name.ilike(f"%{search.strip()}%"))
-    total = int(await db.scalar(select(func.count(OrganizationTeam.id)).where(*filters)) or 0)
-    teams = (await db.scalars(
-        select(OrganizationTeam)
-        .where(*filters)
-        .order_by(OrganizationTeam.name.asc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )).all()
-    items: list[dict[str, Any]] = []
-    for team in teams:
-        member_rows = (await db.execute(
-            select(OrganizationMember.id, User.first_name, User.last_name, User.email)
-            .join(OrganizationTeamMember, OrganizationTeamMember.organization_member_id == OrganizationMember.id)
-            .join(User, User.id == OrganizationMember.user_id)
-            .where(
-                OrganizationTeamMember.organization_id == org.id,
-                OrganizationTeamMember.team_id == team.id,
-            )
-            .order_by(User.last_name.asc(), User.first_name.asc(), User.email.asc())
-        )).all()
-        event_rows = (await db.execute(
-            select(OrganizationTeamEvent.event_id, OrganizationTeamEvent.permissions, Event.name)
-            .join(Event, Event.id == OrganizationTeamEvent.event_id)
-            .where(
-                OrganizationTeamEvent.organization_id == org.id,
-                OrganizationTeamEvent.team_id == team.id,
-                Event.deleted_at.is_(None),
-            )
-        )).all()
-        items.append({
-            "id": str(team.id),
-            "name": team.name,
-            "description": team.description,
-            "owner_member_id": str(team.owner_member_id) if team.owner_member_id else None,
-            "status": team.status,
-            "version": team.version,
-            "member_count": len(member_rows),
-            "members": [
-                {"member_id": str(member_id), "name": f"{first_name} {last_name}".strip(), "email": email}
-                for member_id, first_name, last_name, email in member_rows
-            ],
-            "events": [
-                {"event_id": str(event_id), "event_name": event_name, "permissions": permissions}
-                for event_id, permissions, event_name in event_rows
-            ],
-            "updated_at": team.updated_at.isoformat() if team.updated_at else None,
-        })
+    items, total = await OrganiserTeamQueryService(db).list_teams(
+        organization_id=org.id, page=page, page_size=page_size, search=search
+    )
     return {
         "items": items,
         "total": total,
@@ -355,140 +350,55 @@ async def organiser_members(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    filters = [OrganizationMember.organization_id == org.id]
-    if search and search.strip():
-        term = f"%{search.strip()}%"
-        filters.append(or_(
-            User.first_name.ilike(term),
-            User.last_name.ilike(term),
-            User.email.ilike(term),
-            OrganizationMember.invite_email.ilike(term),
-        ))
-    if member_status == "active":
-        filters.extend([OrganizationMember.accepted_at.is_not(None), OrganizationMember.is_active.is_(True)])
-    elif member_status == "inactive":
-        filters.append(OrganizationMember.is_active.is_(False))
-    elif member_status == "pending":
-        filters.extend([OrganizationMember.accepted_at.is_(None), OrganizationMember.is_active.is_(True)])
-    elif member_status == "accepted":
-        filters.append(OrganizationMember.accepted_at.is_not(None))
-
-    count_query = select(func.count(OrganizationMember.id)).outerjoin(User, OrganizationMember.user_id == User.id).where(*filters)
-    total = int(await db.scalar(count_query) or 0)
-    rows = (await db.execute(
-        select(OrganizationMember, User)
-        .outerjoin(User, OrganizationMember.user_id == User.id)
-        .where(*filters)
-        .order_by(OrganizationMember.invited_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )).all()
-    user_ids = [user.id for _, user in rows if user]
-    event_ids_by_user: dict[uuid.UUID, list[str]] = {}
-    if user_ids:
-        from app.modules.rbac.models.user_assignment import UserEventAssignment
-        assignments = (await db.execute(
-            select(UserEventAssignment.user_id, UserEventAssignment.event_id)
-            .join(Event, Event.id == UserEventAssignment.event_id)
-            .where(UserEventAssignment.user_id.in_(user_ids), Event.organization_id == org.id)
-        )).all()
-        for user_id, event_id in assignments:
-            event_ids_by_user.setdefault(user_id, []).append(str(event_id))
-    items = [{
-        "id": str(member.id),
-        "user_id": str(user.id) if user else None,
-        "name": user.full_name if user else (member.invite_email or "Pending invite"),
-        "email": user.email if user else member.invite_email,
-        "org_role": member.org_role,
-        "accepted_at": member.accepted_at.isoformat() if member.accepted_at else None,
-        "invited_at": member.invited_at.isoformat() if member.invited_at else None,
-        "is_active": member.is_active,
-        "is_2fa_enabled": user.is_2fa_enabled if user else False,
-        "last_login_at": user.last_login_at.isoformat() if user and user.last_login_at else None,
-        "event_ids": event_ids_by_user.get(user.id, []) if user else [],
-        "suspension_reason": member.suspension_reason,
-        "version": member.version,
-    } for member, user in rows]
+    items, total = await OrganiserMemberQueryService(db).list_members(
+        organization_id=org.id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        member_status=member_status,
+    )
     return _page(items, total, page, page_size, "organizer_access.organization_members")
 
 
 @router.post("/invitations/{member_id}/resend")
 async def resend_organiser_invitation(member_id: uuid.UUID, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.id == member_id, OrganizationMember.organization_id == org.id))
-    if not member or member.accepted_at is not None or not member.invite_email:
-        raise HTTPException(status_code=404, detail={"code": "PENDING_INVITATION_NOT_FOUND"})
-    if member.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": member.version})
-    member.invite_token = secrets.token_urlsafe(32)[:64]; member.invited_at = datetime.now(timezone.utc); member.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_member", resource_id=member.id, action_type="ORGANIZATION_INVITATION_RESENT", new_state={"invite_email": member.invite_email, "version": member.version}, is_sensitive=True))
-    await db.commit()
+    member = await OrganizationMemberCommandService(db).resend_invitation(organization_id=org.id, member_id=member_id, actor=current_user, if_match=if_match)
     return {"id": str(member.id), "message": "Invitation resent", "version": member.version}
 
 
-@router.delete("/invitations/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/invitations/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def revoke_organiser_invitation(member_id: uuid.UUID, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Response:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.id == member_id, OrganizationMember.organization_id == org.id))
-    if not member or member.accepted_at is not None or not member.invite_email:
-        raise HTTPException(status_code=404, detail={"code": "PENDING_INVITATION_NOT_FOUND"})
-    if member.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": member.version})
-    old = {"invite_email": member.invite_email, "is_active": member.is_active, "version": member.version}
-    member.is_active = False; member.invite_token = None; member.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_member", resource_id=member.id, action_type="ORGANIZATION_INVITATION_REVOKED", old_state=old, new_state={"is_active": False, "version": member.version}, is_sensitive=True))
-    await db.commit(); return Response(status_code=status.HTTP_204_NO_CONTENT)
+    await OrganizationMemberCommandService(db).revoke_invitation(organization_id=org.id, member_id=member_id, actor=current_user, if_match=if_match)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/members/{member_id}/role")
 async def update_organiser_member_role(member_id: uuid.UUID, payload: MemberRoleWrite, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.id == member_id, OrganizationMember.organization_id == org.id, OrganizationMember.accepted_at.is_not(None)))
-    if not member: raise HTTPException(status_code=404, detail={"code": "MEMBER_NOT_FOUND"})
-    if member.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": member.version})
-    if member.org_role == "owner" and payload.org_role != "owner":
-        owners = int(await db.scalar(select(func.count(OrganizationMember.id)).where(OrganizationMember.organization_id == org.id, OrganizationMember.org_role == "owner", OrganizationMember.is_active.is_(True))) or 0)
-        if owners <= 1: raise HTTPException(status_code=422, detail={"code": "LAST_OWNER_CANNOT_BE_DEMOTED"})
-    old_role = member.org_role; member.org_role = payload.org_role; member.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_member", resource_id=member.id, action_type="ORGANIZATION_MEMBER_ROLE_CHANGED", old_state={"org_role": old_role, "version": if_match}, new_state={"org_role": member.org_role, "reason": payload.reason, "version": member.version}, is_sensitive=True))
-    await db.commit(); return {"id": str(member.id), "org_role": member.org_role, "version": member.version}
+    member = await OrganizationMemberCommandService(db).update_role(organization_id=org.id, member_id=member_id, actor=current_user, org_role=payload.org_role, if_match=if_match, reason=payload.reason)
+    return {"id": str(member.id), "org_role": member.org_role, "version": member.version}
 
 
 @router.patch("/members/{member_id}/status")
 async def update_organiser_member_status(member_id: uuid.UUID, payload: MemberStatusWrite, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.id == member_id, OrganizationMember.organization_id == org.id, OrganizationMember.accepted_at.is_not(None)))
-    if not member: raise HTTPException(status_code=404, detail={"code": "MEMBER_NOT_FOUND"})
-    if member.org_role == "owner" and not payload.is_active: raise HTTPException(status_code=422, detail={"code": "OWNER_CANNOT_BE_SUSPENDED"})
-    if member.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": member.version})
-    old = {"is_active": member.is_active, "version": member.version}; member.is_active = payload.is_active; member.suspension_reason = None if payload.is_active else payload.reason; member.version += 1
-    if member.user_id:
-        user = await db.get(User, member.user_id)
-        if user: user.is_active = payload.is_active
-        if not payload.is_active:
-            await db.execute(update(RefreshToken).where(RefreshToken.user_id == member.user_id, RefreshToken.is_revoked.is_(False)).values(is_revoked=True, revoked_at=datetime.now(timezone.utc)))
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_member", resource_id=member.id, action_type="ORGANIZATION_MEMBER_REACTIVATED" if payload.is_active else "ORGANIZATION_MEMBER_SUSPENDED", old_state=old, new_state={"is_active": member.is_active, "reason": payload.reason, "version": member.version}, is_sensitive=True))
-    await db.commit(); return {"id": str(member.id), "is_active": member.is_active, "version": member.version}
+    member = await OrganizationMemberCommandService(db).update_status(organization_id=org.id, member_id=member_id, actor=current_user, is_active=payload.is_active, if_match=if_match, reason=payload.reason)
+    return {"id": str(member.id), "is_active": member.is_active, "version": member.version}
 
 
 @router.patch("/members-bulk/status")
 async def bulk_update_organiser_member_status(payload: BulkMemberStatusWrite, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    requested = {item.id: item.version for item in payload.members}
-    if len(requested) != len(payload.members): raise HTTPException(status_code=422, detail={"code": "DUPLICATE_MEMBER_IDS"})
-    rows = (await db.scalars(select(OrganizationMember).where(OrganizationMember.organization_id == org.id, OrganizationMember.id.in_(requested), OrganizationMember.accepted_at.is_not(None)).with_for_update())).all()
-    if len(rows) != len(requested): raise HTTPException(status_code=404, detail={"code": "MEMBER_NOT_FOUND"})
-    conflicts = [{"id": str(row.id), "current_version": row.version} for row in rows if row.version != requested[row.id]]
-    if conflicts: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "members": conflicts})
-    if not payload.is_active and any(row.org_role == "owner" for row in rows): raise HTTPException(status_code=422, detail={"code": "OWNER_CANNOT_BE_SUSPENDED"})
-    now = datetime.now(timezone.utc); updated = []
-    for member in rows:
-        old = {"is_active": member.is_active, "version": member.version}; member.is_active = payload.is_active; member.suspension_reason = None if payload.is_active else payload.reason; member.version += 1
-        if member.user_id:
-            user = await db.get(User, member.user_id)
-            if user: user.is_active = payload.is_active
-            if not payload.is_active: await db.execute(update(RefreshToken).where(RefreshToken.user_id == member.user_id, RefreshToken.is_revoked.is_(False)).values(is_revoked=True, revoked_at=now))
-        db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_member", resource_id=member.id, action_type="ORGANIZATION_MEMBER_REACTIVATED" if payload.is_active else "ORGANIZATION_MEMBER_SUSPENDED", old_state=old, new_state={"is_active": member.is_active, "reason": payload.reason, "version": member.version, "bulk": True}, is_sensitive=True))
-        updated.append({"id": str(member.id), "is_active": member.is_active, "version": member.version})
-    await db.commit(); return {"items": updated, "updated": len(updated)}
+    updated = await OrganizationMemberCommandService(db).bulk_update_status(
+        organization_id=org.id,
+        members=[(item.id, item.version) for item in payload.members],
+        actor=current_user,
+        is_active=payload.is_active,
+        reason=payload.reason,
+    )
+    return {"items": updated, "updated": len(updated)}
 
 
 @router.post("/teams", status_code=status.HTTP_201_CREATED)
@@ -500,42 +410,12 @@ async def create_organiser_team(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    normalized = payload.name.strip()
-    replay = await db.scalar(select(AuditLog).where(
-        AuditLog.organization_id == org.id,
-        AuditLog.action_type == "ORGANIZATION_TEAM_CREATED",
-        AuditLog.new_state["idempotency_key"].astext == idempotency_key,
-    ))
-    if replay:
-        row = await db.get(OrganizationTeam, replay.resource_id)
-        if row and row.deleted_at is None:
-            return {
-                "id": str(row.id), "name": row.name, "description": row.description,
-                "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None,
-                "status": row.status, "version": row.version,
-            }
-    existing = await db.scalar(select(OrganizationTeam).where(
-        OrganizationTeam.organization_id == org.id,
-        func.lower(OrganizationTeam.name) == normalized.lower(),
-        OrganizationTeam.deleted_at.is_(None),
-    ))
-    if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "ORGANIZATION_TEAM_NAME_EXISTS"})
-    if payload.owner_member_id and not await db.scalar(select(OrganizationMember.id).where(OrganizationMember.id == payload.owner_member_id, OrganizationMember.organization_id == org.id, OrganizationMember.is_active.is_(True))):
-        raise HTTPException(status_code=422, detail={"code": "TEAM_OWNER_NOT_ACTIVE_MEMBER"})
-    row = OrganizationTeam(organization_id=org.id, name=normalized, description=payload.description, owner_member_id=payload.owner_member_id, created_by=current_user.id)
-    db.add(row)
-    await db.flush()
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="organization_team", resource_id=row.id, action_type="ORGANIZATION_TEAM_CREATED",
-        new_state={
-            "name": row.name, "description": row.description,
-            "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None,
-            "status": row.status, "idempotency_key": idempotency_key,
-        }, is_sensitive=False,
-    ))
-    await db.commit()
+    row = await OrganizationTeamCommandService(db).create(
+        organization_id=org.id, actor=current_user, name=payload.name,
+        description=payload.description, owner_member_id=payload.owner_member_id,
+        reason="organiser team creation",
+        idempotency_key=idempotency_key,
+    )
     return {"id": str(row.id), "name": row.name, "description": row.description, "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None, "status": row.status, "version": row.version}
 
 
@@ -549,51 +429,16 @@ async def update_organiser_team(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationTeam).where(
-        OrganizationTeam.id == team_id,
-        OrganizationTeam.organization_id == org.id,
-        OrganizationTeam.deleted_at.is_(None),
-    ))
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "ORGANIZATION_TEAM_NOT_FOUND"})
-    if row.version != expected_version:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "STALE_VERSION", "current_version": row.version})
-    normalized = payload.name.strip()
-    duplicate = await db.scalar(select(OrganizationTeam.id).where(
-        OrganizationTeam.organization_id == org.id,
-        OrganizationTeam.id != team_id,
-        func.lower(OrganizationTeam.name) == normalized.lower(),
-        OrganizationTeam.deleted_at.is_(None),
-    ))
-    if duplicate:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "ORGANIZATION_TEAM_NAME_EXISTS"})
-    if payload.owner_member_id and not await db.scalar(select(OrganizationMember.id).where(OrganizationMember.id == payload.owner_member_id, OrganizationMember.organization_id == org.id, OrganizationMember.is_active.is_(True))):
-        raise HTTPException(status_code=422, detail={"code": "TEAM_OWNER_NOT_ACTIVE_MEMBER"})
-    old_state = {
-        "name": row.name, "description": row.description,
-        "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None,
-        "status": row.status, "version": row.version,
-    }
-    row.name = normalized
-    row.description = payload.description
-    row.owner_member_id = payload.owner_member_id
-    row.version += 1
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="organization_team", resource_id=row.id, action_type="ORGANIZATION_TEAM_UPDATED",
-        old_state=old_state, new_state={
-            "name": row.name, "description": row.description,
-            "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None,
-            "manager_user_id": str(row.manager_user_id) if row.manager_user_id else None,
-            "team_id": str(row.team_id) if row.team_id else None,
-            "status": row.status, "version": row.version,
-        }, is_sensitive=False,
-    ))
-    await db.commit()
+    row = await OrganizationTeamCommandService(db).update(
+        organization_id=org.id, team_id=team_id, actor=current_user,
+        name=payload.name, description=payload.description,
+        owner_member_id=payload.owner_member_id, if_match=expected_version,
+        reason="organiser team update",
+    )
     return {"id": str(row.id), "name": row.name, "description": row.description, "owner_member_id": str(row.owner_member_id) if row.owner_member_id else None, "status": row.status, "version": row.version}
 
 
-@router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def delete_organiser_team(
     team_id: uuid.UUID,
     expected_version: int = Header(alias="If-Match", ge=1),
@@ -602,28 +447,15 @@ async def delete_organiser_team(
 ) -> Response:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationTeam).where(
-        OrganizationTeam.id == team_id,
-        OrganizationTeam.organization_id == org.id,
-        OrganizationTeam.deleted_at.is_(None),
-    ))
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "ORGANIZATION_TEAM_NOT_FOUND"})
-    if row.version != expected_version:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "STALE_VERSION", "current_version": row.version})
-    row.deleted_at = datetime.now(timezone.utc)
-    row.status = "ARCHIVED"
-    row.version += 1
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="organization_team", resource_id=row.id, action_type="ORGANIZATION_TEAM_DELETED",
-        old_state={"name": row.name, "version": expected_version}, new_state={"deleted_at": row.deleted_at.isoformat(), "version": row.version}, is_sensitive=False,
-    ))
-    await db.commit()
+    await OrganizationTeamCommandService(db).archive(
+        organization_id=org.id, team_id=team_id, actor=current_user,
+        if_match=expected_version, reason="organiser team archive",
+        audit_action="ORGANIZATION_TEAM_DELETED",
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/teams/{team_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/teams/{team_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def assign_organiser_team_member(
     team_id: uuid.UUID,
     member_id: uuid.UUID,
@@ -632,18 +464,13 @@ async def assign_organiser_team_member(
 ) -> None:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    team = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == org.id, OrganizationTeam.deleted_at.is_(None)))
-    member = await db.scalar(select(OrganizationMember).where(OrganizationMember.id == member_id, OrganizationMember.organization_id == org.id, OrganizationMember.is_active.is_(True)))
-    if not team or not member:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TEAM_OR_MEMBER_NOT_FOUND"})
-    exists = await db.scalar(select(OrganizationTeamMember.id).where(OrganizationTeamMember.team_id == team_id, OrganizationTeamMember.organization_member_id == member_id))
-    if not exists:
-        db.add(OrganizationTeamMember(organization_id=org.id, team_id=team_id, organization_member_id=member_id, created_by=current_user.id))
-        db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_team_member", resource_id=team_id, action_type="ORGANIZATION_TEAM_MEMBER_ASSIGNED", new_state={"member_id": str(member_id)}, is_sensitive=False))
-        await db.commit()
+    await OrganizationTeamCommandService(db).assign_member(
+        organization_id=org.id, team_id=team_id, member_id=member_id,
+        actor=current_user, reason="organiser team member assignment",
+    )
 
 
-@router.delete("/teams/{team_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/teams/{team_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def remove_organiser_team_member(
     team_id: uuid.UUID,
     member_id: uuid.UUID,
@@ -652,22 +479,11 @@ async def remove_organiser_team_member(
 ) -> Response:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    team = await db.scalar(select(OrganizationTeam).where(
-        OrganizationTeam.id == team_id, OrganizationTeam.organization_id == org.id, OrganizationTeam.deleted_at.is_(None)
-    ))
-    if not team:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "ORGANIZATION_TEAM_NOT_FOUND"})
-    if team.owner_member_id == member_id:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "TEAM_OWNER_REASSIGNMENT_REQUIRED"})
-    result = await db.execute(delete(OrganizationTeamMember).where(
-        OrganizationTeamMember.organization_id == org.id,
-        OrganizationTeamMember.team_id == team_id,
-        OrganizationTeamMember.organization_member_id == member_id,
-    ))
-    if not result.rowcount:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "ORGANIZATION_TEAM_MEMBER_NOT_FOUND"})
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_team_member", resource_id=team_id, action_type="ORGANIZATION_TEAM_MEMBER_REMOVED", old_state={"member_id": str(member_id)}, is_sensitive=False))
-    await db.commit()
+    await OrganizationTeamCommandService(db).unassign_member(
+        organization_id=org.id, team_id=team_id, member_id=member_id,
+        actor=current_user, reason="organiser team member removal",
+        audit_action="ORGANIZATION_TEAM_MEMBER_REMOVED",
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -692,7 +508,7 @@ async def preview_team_member_access_loss(team_id: uuid.UUID, member_id: uuid.UU
     return {"team_id": str(team.id), "member_id": str(member.id), "requires_owner_reassignment": team.owner_member_id == member.id, "impacted_events": impacts, "source": "organizer_access.team_effective_access", "freshness_at": datetime.now(timezone.utc).isoformat()}
 
 
-@router.put("/teams/{team_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/teams/{team_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def assign_organiser_team_event(
     team_id: uuid.UUID,
     event_id: uuid.UUID,
@@ -702,20 +518,14 @@ async def assign_organiser_team_event(
 ) -> None:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    team = await db.scalar(select(OrganizationTeam).where(OrganizationTeam.id == team_id, OrganizationTeam.organization_id == org.id, OrganizationTeam.deleted_at.is_(None)))
-    event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == org.id, Event.deleted_at.is_(None)))
-    if not team or not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TEAM_OR_EVENT_NOT_FOUND"})
-    row = await db.scalar(select(OrganizationTeamEvent).where(OrganizationTeamEvent.team_id == team_id, OrganizationTeamEvent.event_id == event_id))
-    if row:
-        row.permissions = payload.permissions
-    else:
-        db.add(OrganizationTeamEvent(organization_id=org.id, team_id=team_id, event_id=event_id, permissions=payload.permissions, created_by=current_user.id))
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_team_event", resource_id=team_id, action_type="ORGANIZATION_TEAM_EVENT_ASSIGNED", new_state={"event_id": str(event_id), "permissions": payload.permissions}, is_sensitive=False))
-    await db.commit()
+    await OrganizationTeamCommandService(db).assign_event(
+        organization_id=org.id, team_id=team_id, event_id=event_id,
+        actor=current_user, permissions=payload.permissions,
+        reason="organiser team event assignment",
+    )
 
 
-@router.delete("/teams/{team_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/teams/{team_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def remove_organiser_team_event(
     team_id: uuid.UUID,
     event_id: uuid.UUID,
@@ -724,20 +534,10 @@ async def remove_organiser_team_event(
 ) -> Response:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    team = await db.scalar(select(OrganizationTeam.id).where(
-        OrganizationTeam.id == team_id, OrganizationTeam.organization_id == org.id, OrganizationTeam.deleted_at.is_(None)
-    ))
-    if not team:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "ORGANIZATION_TEAM_NOT_FOUND"})
-    result = await db.execute(delete(OrganizationTeamEvent).where(
-        OrganizationTeamEvent.organization_id == org.id,
-        OrganizationTeamEvent.team_id == team_id,
-        OrganizationTeamEvent.event_id == event_id,
-    ))
-    if not result.rowcount:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "ORGANIZATION_TEAM_EVENT_NOT_FOUND"})
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_team_event", resource_id=team_id, action_type="ORGANIZATION_TEAM_EVENT_REMOVED", old_state={"event_id": str(event_id)}, is_sensitive=False))
-    await db.commit()
+    await OrganizationTeamCommandService(db).unassign_event(
+        organization_id=org.id, team_id=team_id, event_id=event_id,
+        actor=current_user, reason="organiser team event removal",
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -762,14 +562,20 @@ async def preview_team_event_access_loss(team_id: uuid.UUID, event_id: uuid.UUID
 
 
 @router.get("/locations")
-async def organiser_locations(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def organiser_locations(
+    limit: int = Query(100, ge=1, le=OrganiserLocationQueryService.MAX_PAGE_SIZE),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    rows = (await db.scalars(select(OrganizationLocation).where(OrganizationLocation.organization_id == org.id).order_by(OrganizationLocation.name))).all()
+    rows = await OrganiserLocationQueryService(db).list_locations(
+        organization_id=org.id, limit=limit
+    )
     return {
         "items": [{
-            "id": str(row.id), "name": row.name, "location_type": row.location_type,
-            "address": row.address, "timezone": row.timezone, "contact": row.contact,
-            "status": row.status, "version": row.version,
+            "id": str(row[0]), "name": row[1], "location_type": row[2],
+            "address": row[3], "timezone": row[4], "contact": row[5],
+            "status": row[6], "version": row[7],
         } for row in rows],
         "total": len(rows), "page": 1, "page_size": len(rows) or 10,
         "freshness_at": datetime.now(timezone.utc).isoformat(), "source": "platform.organization_locations",
@@ -784,21 +590,9 @@ async def create_organiser_location(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    duplicate = await db.scalar(select(OrganizationLocation.id).where(OrganizationLocation.organization_id == org.id, func.lower(OrganizationLocation.name) == payload.name.strip().lower()))
-    if duplicate:
-        raise HTTPException(status_code=409, detail={"code": "LOCATION_NAME_EXISTS"})
-    if payload.manager_user_id and not await db.scalar(select(OrganizationMember.id).where(OrganizationMember.organization_id == org.id, OrganizationMember.user_id == payload.manager_user_id, OrganizationMember.is_active.is_(True))):
-        raise HTTPException(status_code=422, detail={"code": "BRANCH_OWNER_NOT_ACTIVE_MEMBER"})
-    if payload.team_id and not await db.scalar(select(OrganizationTeam.id).where(OrganizationTeam.organization_id == org.id, OrganizationTeam.id == payload.team_id, OrganizationTeam.deleted_at.is_(None), OrganizationTeam.status == "ACTIVE")):
-        raise HTTPException(status_code=422, detail={"code": "BRANCH_TEAM_NOT_ACTIVE"})
-    values = payload.model_dump()
-    values["name"] = payload.name.strip()
-    row = OrganizationLocation(organization_id=org.id, version=1, **values)
-    db.add(row)
-    await db.flush()
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_location", resource_id=row.id, action_type="ORGANIZATION_LOCATION_CREATED", new_state={"name": row.name, "location_type": row.location_type, "manager_user_id": str(row.manager_user_id) if row.manager_user_id else None, "team_id": str(row.team_id) if row.team_id else None, "status": row.status}, is_sensitive=False))
-    await db.commit()
-    return {"id": str(row.id), "name": row.name, "location_type": row.location_type, "address": row.address, "timezone": row.timezone, "contact": row.contact, "manager_user_id": str(row.manager_user_id) if row.manager_user_id else None, "team_id": str(row.team_id) if row.team_id else None, "status": row.status, "version": row.version}
+    return await OrganizerLocationCommandService(db).create(
+        organization_id=org.id, actor=current_user, values=payload.model_dump()
+    )
 
 
 @router.put("/locations/{location_id}")
@@ -811,26 +605,10 @@ async def update_organiser_location(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationLocation).where(OrganizationLocation.id == location_id, OrganizationLocation.organization_id == org.id).with_for_update())
-    if not row:
-        raise HTTPException(status_code=404, detail="Location not found")
-    if row.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    duplicate = await db.scalar(select(OrganizationLocation.id).where(OrganizationLocation.organization_id == org.id, OrganizationLocation.id != row.id, func.lower(OrganizationLocation.name) == payload.name.strip().lower()))
-    if duplicate:
-        raise HTTPException(status_code=409, detail={"code": "LOCATION_NAME_EXISTS"})
-    if payload.manager_user_id and not await db.scalar(select(OrganizationMember.id).where(OrganizationMember.organization_id == org.id, OrganizationMember.user_id == payload.manager_user_id, OrganizationMember.is_active.is_(True))):
-        raise HTTPException(status_code=422, detail={"code": "BRANCH_OWNER_NOT_ACTIVE_MEMBER"})
-    if payload.team_id and not await db.scalar(select(OrganizationTeam.id).where(OrganizationTeam.organization_id == org.id, OrganizationTeam.id == payload.team_id, OrganizationTeam.deleted_at.is_(None), OrganizationTeam.status == "ACTIVE")):
-        raise HTTPException(status_code=422, detail={"code": "BRANCH_TEAM_NOT_ACTIVE"})
-    old = {"name": row.name, "location_type": row.location_type, "manager_user_id": str(row.manager_user_id) if row.manager_user_id else None, "team_id": str(row.team_id) if row.team_id else None, "status": row.status, "version": row.version}
-    for key, value in payload.model_dump().items():
-        setattr(row, key, value)
-    row.name = payload.name.strip()
-    row.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_location", resource_id=row.id, action_type="ORGANIZATION_LOCATION_UPDATED", old_state=old, new_state={"name": row.name, "location_type": row.location_type, "manager_user_id": str(row.manager_user_id) if row.manager_user_id else None, "team_id": str(row.team_id) if row.team_id else None, "status": row.status, "version": row.version}, is_sensitive=False))
-    await db.commit()
-    return {"id": str(row.id), "name": row.name, "location_type": row.location_type, "address": row.address, "timezone": row.timezone, "contact": row.contact, "manager_user_id": str(row.manager_user_id) if row.manager_user_id else None, "team_id": str(row.team_id) if row.team_id else None, "status": row.status, "version": row.version}
+    return await OrganizerLocationCommandService(db).update(
+        organization_id=org.id, location_id=location_id, actor=current_user,
+        values=payload.model_dump(), if_match=if_match,
+    )
 
 
 @router.get("/events")
@@ -845,30 +623,17 @@ async def organiser_events(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     today = date.today()
-    conditions = [Event.organization_id == org.id]
-    if status_filter == "archived":
-        conditions.append(or_(Event.status == "archived", Event.deleted_at.is_not(None)))
-    else:
-        conditions.append(Event.deleted_at.is_(None))
-    if search:
-        conditions.append(Event.name.ilike(f"%{search.strip()}%"))
-    if year:
-        conditions.append(func.extract("year", Event.start_date) == year)
-    if status_filter == "live":
-        conditions.extend([Event.status == "active", Event.start_date <= today, Event.end_date >= today])
-    elif status_filter == "upcoming":
-        conditions.extend([Event.start_date > today, Event.status != "archived"])
-    elif status_filter == "completed":
-        conditions.append((Event.status == "completed") | (Event.end_date < today))
-    elif status_filter == "draft":
-        conditions.append(Event.status == "draft")
-    total = await db.scalar(select(func.count(Event.id)).where(*conditions)) or 0
-    rows = (await db.scalars(
-        select(Event).where(*conditions).order_by(Event.start_date.desc(), Event.name).offset((page - 1) * page_size).limit(page_size)
-    )).all()
+    rows, total, summary = await OrganiserEventQueryService(db).list_events(
+        organization_id=org.id,
+        status_filter=status_filter,
+        search=search,
+        year=year,
+        page=page,
+        page_size=page_size,
+        today=today,
+    )
     items: list[dict[str, Any]] = []
     for event in rows:
-        registrations = await db.scalar(select(func.count(Participant.id)).where(Participant.event_id == event.id, Participant.deleted_at.is_(None))) or 0
         display_status = "live" if event.status == "active" and event.start_date <= today <= event.end_date else "upcoming" if event.start_date > today and event.status != "draft" else event.status
         items.append({
             "id": str(event.id), "name": event.name, "short_code": event.short_code,
@@ -876,21 +641,9 @@ async def organiser_events(
             "venue": event.venue_name or event.location, "country": event.country,
             "timezone": event.timezone, "owner": event.organizer_name,
             "status": display_status, "source_status": event.status,
-            "registrations": registrations, "readiness_pct": await _event_readiness(db, event.id),
+            "registrations": event.registrations, "readiness_pct": event.readiness_pct,
             "created_at": event.created_at.isoformat(), "updated_at": event.updated_at.isoformat(),
         })
-    base = [Event.organization_id == org.id, Event.deleted_at.is_(None)]
-    summary = {
-        "total": await db.scalar(select(func.count(Event.id)).where(*base)) or 0,
-        "live": await db.scalar(select(func.count(Event.id)).where(*base, Event.status == "active", Event.start_date <= today, Event.end_date >= today)) or 0,
-        "upcoming": await db.scalar(select(func.count(Event.id)).where(*base, Event.start_date > today, Event.status != "archived")) or 0,
-        "completed": await db.scalar(select(func.count(Event.id)).where(*base, (Event.status == "completed") | (Event.end_date < today))) or 0,
-        "draft": await db.scalar(select(func.count(Event.id)).where(*base, Event.status == "draft")) or 0,
-        "archived": await db.scalar(select(func.count(Event.id)).where(
-            Event.organization_id == org.id,
-            or_(Event.status == "archived", Event.deleted_at.is_not(None)),
-        )) or 0,
-    }
     response = _page(items, total, page, page_size, "events.events+registration.participants")
     response["summary"] = summary
     return response
@@ -905,65 +658,11 @@ async def import_organiser_events(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=422, detail={"code": "EVENT_IMPORT_CSV_REQUIRED", "message": "Upload a CSV file."})
     raw = await file.read(1_048_577)
-    if len(raw) > 1_048_576:
-        raise HTTPException(status_code=413, detail={"code": "EVENT_IMPORT_TOO_LARGE", "message": "CSV files are limited to 1 MB."})
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail={"code": "EVENT_IMPORT_ENCODING", "message": "CSV must use UTF-8 encoding."}) from exc
-    reader = csv.DictReader(io.StringIO(text))
-    required = {"name", "short_code", "start_date", "end_date"}
-    headers = {str(value).strip().lower() for value in (reader.fieldnames or [])}
-    missing = sorted(required - headers)
-    if missing:
-        raise HTTPException(status_code=422, detail={"code": "EVENT_IMPORT_COLUMNS", "message": f"Missing required columns: {', '.join(missing)}"})
-    rows = list(reader)
-    if not rows:
-        raise HTTPException(status_code=422, detail={"code": "EVENT_IMPORT_EMPTY", "message": "CSV contains no event rows."})
-    if len(rows) > 100:
-        raise HTTPException(status_code=422, detail={"code": "EVENT_IMPORT_ROW_LIMIT", "message": "Import at most 100 events at a time."})
-
-    payloads: list[EventCreate] = []
-    seen_codes: set[str] = set()
-    errors: list[dict[str, Any]] = []
-    for index, source_row in enumerate(rows, start=2):
-        row = {str(key).strip().lower(): (value or "").strip() for key, value in source_row.items() if key is not None}
-        try:
-            code = row["short_code"].upper()
-            if code in seen_codes:
-                raise ValueError(f"Duplicate short_code '{code}' in CSV")
-            seen_codes.add(code)
-            payloads.append(EventCreate(
-                name=row["name"], short_code=code, status="draft",
-                start_date=date.fromisoformat(row["start_date"]), end_date=date.fromisoformat(row["end_date"]),
-                venue_name=row.get("venue_name") or None, location=row.get("location") or None,
-                country=row.get("country") or None, timezone=row.get("timezone") or org.timezone or "Asia/Kolkata",
-                currency=(row.get("currency") or (org.currency or "INR").split()[0]).upper(),
-                tagline=row.get("tagline") or None, description=row.get("description") or None,
-            ))
-        except Exception as exc:
-            errors.append({"row": index, "message": str(exc)})
-    if errors:
-        raise HTTPException(status_code=422, detail={"code": "EVENT_IMPORT_INVALID_ROWS", "errors": errors})
-
-    created: list[dict[str, str]] = []
-    for index, payload in enumerate(payloads):
-        event = await EventMutationService.create(
-            db, organization_id=org.id, actor_user_id=current_user.id, payload=payload,
-            idempotency_key=f"{idempotency_key}:{index}", source="organizer_portal_csv_import",
-        )
-        created.append({"id": str(event.id), "name": event.name, "short_code": event.short_code, "status": event.status})
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="event_import", resource_id=uuid.UUID(created[0]["id"]), action_type="EVENTS_IMPORTED",
-        new_state={"filename": file.filename, "count": len(created), "event_ids": [item["id"] for item in created]},
-        is_sensitive=False,
-    ))
-    await db.commit()
-    return {"items": created, "created": len(created), "source": "organizer_portal_csv_import", "freshness_at": datetime.now(timezone.utc).isoformat()}
+    return await OrganizerImportCommandService(db).import_events(
+        organization=org, actor=current_user, filename=file.filename or "",
+        raw=raw, idempotency_key=idempotency_key,
+    )
 
 
 @router.post("/events/{event_id}/duplicate", status_code=status.HTTP_201_CREATED)
@@ -976,28 +675,11 @@ async def duplicate_organiser_event(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    source = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == org.id, Event.deleted_at.is_(None)))
-    if not source:
-        raise HTTPException(status_code=404, detail="Event not found")
-    short_code = payload.short_code or f"{source.short_code[:13]}-{uuid.uuid4().hex[:6].upper()}"
-    create_payload = EventCreate(
-        name=payload.name or f"{source.name} Copy", short_code=short_code, status="draft",
-        location=source.location, venue_name=source.venue_name, country=source.country, state=source.state,
-        organizer_name=source.organizer_name, organizer_details=source.organizer_details,
-        start_date=source.start_date, end_date=source.end_date, timezone=source.timezone,
-        upload_deadline=source.upload_deadline, max_file_size_mb=source.max_file_size_mb,
-        allowed_formats=source.allowed_formats, currency=source.currency, tagline=source.tagline,
-        description=source.description, map_link=source.map_link, venue_images=source.venue_images,
-        venue_details=source.venue_details, speaker_settings=source.speaker_settings,
-        registration_settings=source.registration_settings, branding_settings=source.branding_settings,
+    return await OrganizerEventCommandService(db).duplicate(
+        organization_id=org.id, event_id=event_id, actor=current_user,
+        name=payload.name, short_code=payload.short_code,
+        idempotency_key=idempotency_key,
     )
-    duplicate = await EventMutationService.create(
-        db, organization_id=org.id, actor_user_id=current_user.id, payload=create_payload,
-        idempotency_key=idempotency_key, source="organizer_portal_duplicate",
-    )
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="event", resource_id=duplicate.id, action_type="EVENT_DUPLICATED", old_state={"source_event_id": str(source.id)}, new_state={"name": duplicate.name, "short_code": duplicate.short_code}, is_sensitive=False))
-    await db.commit()
-    return {"id": str(duplicate.id), "name": duplicate.name, "short_code": duplicate.short_code, "status": duplicate.status}
 
 
 @router.post("/events/{event_id}/restore")
@@ -1010,36 +692,10 @@ async def restore_organiser_event(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    event = await db.scalar(select(Event).where(
-        Event.id == event_id,
-        Event.organization_id == org.id,
-    ).execution_options(include_deleted=True).with_for_update(of=Event))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    replay = await db.scalar(select(AuditLog).where(
-        AuditLog.organization_id == org.id,
-        AuditLog.resource_type == "event",
-        AuditLog.resource_id == event.id,
-        AuditLog.action_type == "EVENT_RESTORED",
-        AuditLog.new_state["idempotency_key"].astext == idempotency_key,
-    ))
-    if replay:
-        return {"id": str(event.id), "status": event.status, "restored": event.deleted_at is None}
-    if event.deleted_at is None and event.status != "archived":
-        raise HTTPException(status_code=409, detail={"code": "EVENT_NOT_ARCHIVED", "message": "Only archived events can be restored."})
-    previous = {"status": event.status, "deleted_at": event.deleted_at.isoformat() if event.deleted_at else None}
-    event.deleted_at = None
-    event.deleted_by = None
-    event.status = "draft"
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="event", resource_id=event.id, action_type="EVENT_RESTORED",
-        old_state=previous,
-        new_state={"status": "draft", "deleted_at": None, "reason": reason, "idempotency_key": idempotency_key},
-        is_sensitive=True,
-    ))
-    await db.commit()
-    return {"id": str(event.id), "status": event.status, "restored": True}
+    return await OrganizerEventCommandService(db).restore(
+        organization_id=org.id, event_id=event_id, actor=current_user,
+        reason=reason, idempotency_key=idempotency_key,
+    )
 
 
 @router.get("/billing/{section}")
@@ -1154,10 +810,11 @@ async def upload_organiser_document(document_type: str = Query(..., min_length=2
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
     data = await file.read(25 * 1024 * 1024 + 1)
     if len(data) > 25 * 1024 * 1024: raise HTTPException(status_code=413, detail={"code": "DOCUMENT_TOO_LARGE"})
-    asset = await FileService.upload_asset(db, org.id, current_user.id, file.filename or "document", file.content_type or "application/octet-stream", data, ["organization-document", document_type])
-    row = OrganizationDocument(organization_id=org.id, asset_id=asset.id, name=file.filename or "document", document_type=document_type, expires_at=expires_at, created_by=current_user.id); db.add(row); await db.flush()
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_document", resource_id=row.id, action_type="ORGANIZATION_DOCUMENT_UPLOADED", new_state={"name": row.name, "document_type": document_type, "asset_id": str(asset.id)}, is_sensitive=True))
-    await db.commit(); return {"id": str(row.id), "document_group_id": str(row.document_group_id), "revision": row.revision, "asset_id": str(asset.id), "name": row.name, "processing_status": asset.processing_status, "version": row.version}
+    return await OrganizerDocumentCommandService(db).upload(
+        organization_id=org.id, actor=current_user, document_type=document_type,
+        expires_at=expires_at, filename=file.filename or "document",
+        content_type=file.content_type or "application/octet-stream", file_data=data,
+    )
 
 
 @router.get("/documents/{document_id}/history")
@@ -1172,28 +829,24 @@ async def organiser_document_history(document_id: uuid.UUID, current_user: User 
 @router.post("/documents/{document_id}/replace", status_code=status.HTTP_201_CREATED)
 async def replace_organiser_document(document_id: uuid.UUID, file: UploadFile = File(...), expires_at: datetime | None = Query(default=None), if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    current = await db.scalar(select(OrganizationDocument).where(OrganizationDocument.id == document_id, OrganizationDocument.organization_id == org.id, OrganizationDocument.archived_at.is_(None), OrganizationDocument.is_current.is_(True)).with_for_update())
-    if not current: raise HTTPException(status_code=404, detail={"code": "DOCUMENT_NOT_FOUND"})
-    if current.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": current.version})
     data = await file.read(25 * 1024 * 1024 + 1)
     if len(data) > 25 * 1024 * 1024: raise HTTPException(status_code=413, detail={"code": "DOCUMENT_TOO_LARGE"})
-    asset = await FileService.upload_asset(db, org.id, current_user.id, file.filename or current.name, file.content_type or "application/octet-stream", data, ["organization-document", current.document_type, "replacement"])
-    current.is_current = False; current.version += 1
-    replacement = OrganizationDocument(organization_id=org.id, document_group_id=current.document_group_id, revision=current.revision + 1, asset_id=asset.id, name=file.filename or current.name, document_type=current.document_type, expires_at=expires_at if expires_at is not None else current.expires_at, created_by=current_user.id)
-    db.add(replacement); await db.flush()
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_document", resource_id=replacement.id, action_type="ORGANIZATION_DOCUMENT_REPLACED", old_state={"document_id": str(current.id), "revision": current.revision}, new_state={"document_id": str(replacement.id), "revision": replacement.revision, "asset_id": str(asset.id)}, is_sensitive=True))
-    await db.commit(); return {"id": str(replacement.id), "document_group_id": str(replacement.document_group_id), "revision": replacement.revision, "asset_id": str(asset.id), "name": replacement.name, "processing_status": asset.processing_status, "version": replacement.version}
+    return await OrganizerDocumentCommandService(db).replace(
+        organization_id=org.id, document_id=document_id, actor=current_user,
+        if_match=if_match, expires_at=expires_at,
+        filename=file.filename or "document",
+        content_type=file.content_type or "application/octet-stream", file_data=data,
+    )
 
 
-@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, response_model=None)
 async def archive_organiser_document(document_id: uuid.UUID, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Response:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationDocument).where(OrganizationDocument.id == document_id, OrganizationDocument.organization_id == org.id, OrganizationDocument.archived_at.is_(None)))
-    if not row: raise HTTPException(status_code=404, detail={"code": "DOCUMENT_NOT_FOUND"})
-    if row.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    row.archived_at = datetime.now(timezone.utc); row.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_document", resource_id=row.id, action_type="ORGANIZATION_DOCUMENT_ARCHIVED", old_state={"version": if_match}, new_state={"version": row.version}, is_sensitive=True))
-    await db.commit(); return Response(status_code=204)
+    await OrganizerDocumentCommandService(db).archive(
+        organization_id=org.id, document_id=document_id,
+        actor=current_user, if_match=if_match,
+    )
+    return Response(status_code=204)
 
 
 @router.get("/access/approval-rules")
@@ -1213,22 +866,20 @@ async def organiser_approval_rules(
 @router.post("/access/approval-rules", status_code=status.HTTP_201_CREATED)
 async def create_organiser_approval_rule(payload: ApprovalRuleWrite, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    if payload.event_id and not await db.scalar(select(Event.id).where(Event.id == payload.event_id, Event.organization_id == org.id)): raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND"})
-    row = OrganizationApprovalRule(organization_id=org.id, created_by=current_user.id, **payload.model_dump()); db.add(row); await db.flush()
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_approval_rule", resource_id=row.id, action_type="ORGANIZATION_APPROVAL_RULE_CREATED", new_state={"name": row.name, "domain": row.domain, "version": row.version}, is_sensitive=True))
-    await db.commit(); return {"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version}
+    row = await OrganizerApprovalRuleCommandService(db).create(
+        organization_id=org.id, actor=current_user, values=payload.model_dump(),
+    )
+    return {"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version}
 
 
 @router.put("/access/approval-rules/{rule_id}")
 async def update_organiser_approval_rule(rule_id: uuid.UUID, payload: ApprovalRuleWrite, if_match: int = Header(..., alias="If-Match", ge=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationApprovalRule).where(OrganizationApprovalRule.id == rule_id, OrganizationApprovalRule.organization_id == org.id, OrganizationApprovalRule.archived_at.is_(None)))
-    if not row: raise HTTPException(status_code=404, detail={"code": "APPROVAL_RULE_NOT_FOUND"})
-    if row.version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    for key, value in payload.model_dump().items(): setattr(row, key, value)
-    row.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_approval_rule", resource_id=row.id, action_type="ORGANIZATION_APPROVAL_RULE_UPDATED", old_state={"version": if_match}, new_state={"version": row.version}, is_sensitive=True))
-    await db.commit(); return {"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version}
+    row = await OrganizerApprovalRuleCommandService(db).update(
+        organization_id=org.id, rule_id=rule_id, actor=current_user,
+        values=payload.model_dump(), if_match=if_match,
+    )
+    return {"id": str(row.id), "name": row.name, "domain": row.domain, "version": row.version}
 
 
 @router.put("/billing/tax")
@@ -1240,31 +891,10 @@ async def update_organiser_billing_profile(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    profile = await db.scalar(select(OrganizationBillingProfile).where(OrganizationBillingProfile.organization_id == org.id))
-    current_version = profile.version if profile else 0
-    if current_version != expected_version:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "VERSION_CONFLICT", "current_version": current_version})
-    old_state = None if profile is None else {
-        "billing_name": profile.billing_name, "billing_email": profile.billing_email,
-        "billing_phone": profile.billing_phone, "gst_number": profile.gst_number,
-        "country": profile.country, "currency": profile.currency, "version": profile.version,
-    }
-    if profile is None:
-        profile = OrganizationBillingProfile(organization_id=org.id, updated_by=current_user.id, **payload.model_dump())
-        db.add(profile)
-    else:
-        for key, value in payload.model_dump().items():
-            setattr(profile, key, value)
-        profile.updated_by = current_user.id
-        profile.version += 1
-    await db.flush()
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="organization_billing_profile", resource_id=profile.id,
-        action_type="ORGANIZATION_BILLING_PROFILE_UPDATED", old_state=old_state,
-        new_state={**payload.model_dump(), "version": profile.version}, is_sensitive=True,
-    ))
-    await db.commit()
+    profile = await OrganizerBillingCommandService(db).update_profile(
+        organization_id=org.id, actor=current_user, values=payload.model_dump(),
+        expected_version=expected_version,
+    )
     return {**payload.model_dump(), "id": str(profile.id), "version": profile.version, "source": "commerce.organization_billing_profiles", "freshness_at": profile.updated_at.isoformat()}
 
 
@@ -1287,27 +917,33 @@ async def download_organiser_invoice(
         invoice.status, float(invoice.amount), float(invoice.gst_amount or 0),
         float(invoice.total_amount_inr or invoice.amount), invoice.currency,
     ])
-    db.add(AuditLog(
-        organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role,
-        resource_type="invoice", resource_id=invoice.id, action_type="ORGANIZATION_INVOICE_DOWNLOADED",
-        new_state={"format": "csv"}, is_sensitive=True,
+    await AuditService.write_log(AuditContext(
+        organization_id=org.id,
+        actor_user_id=current_user.id,
+        actor_role=current_user.role,
+        resource_type="invoice",
+        resource_id=invoice.id,
+        action_type="ORGANIZATION_INVOICE_DOWNLOADED",
+        new_state={"format": "csv"},
+        is_sensitive=True,
     ))
-    await db.commit()
     filename = f"invoice-{invoice.invoice_number or invoice.id}.csv"
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/integrations")
-async def organiser_integrations(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def organiser_integrations(
+    limit: int = Query(default=100, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    rows = (await db.execute(
-        select(IntegrationConnection, IntegrationProvider.name)
-        .join(IntegrationProvider, IntegrationProvider.id == IntegrationConnection.provider_id)
-        .where(IntegrationConnection.organization_id == org.id)
-        .order_by(IntegrationProvider.name)
-    )).all()
+    rows = await OrganiserIntegrationQueryService(db).list_connections(
+        organization_id=org.id,
+        limit=limit,
+    )
     return {
-        "items": [{"id": str(row.id), "provider": provider, "is_active": row.is_active, "version": row.version} for row, provider in rows],
+        "items": [{"id": str(row_id), "provider": provider, "is_active": is_active, "version": version} for row_id, provider, is_active, version in rows],
         "total": len(rows), "page": 1, "page_size": len(rows) or 10,
         "freshness_at": datetime.now(timezone.utc).isoformat(), "source": "integrations.connections",
     }
@@ -1323,26 +959,25 @@ async def organiser_audit(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    query = select(AuditLog).where(AuditLog.organization_id == org.id)
-    count_query = select(func.count(AuditLog.id)).where(AuditLog.organization_id == org.id)
+    effective_page_size = min(page_size, AuditQueryService.MAX_PAGE_SIZE)
+    resource_types = None
     if resource_type:
-        query = query.where(AuditLog.resource_type == resource_type)
-        count_query = count_query.where(AuditLog.resource_type == resource_type)
+        resource_types = None
     elif resource:
         resource_types = [value.strip() for value in resource.split(",") if value.strip()]
-        if resource_types:
-            query = query.where(AuditLog.resource_type.in_(resource_types))
-            count_query = count_query.where(AuditLog.resource_type.in_(resource_types))
-    total = int(await db.scalar(count_query) or 0)
-    rows = (await db.scalars(
-        query.order_by(AuditLog.occurred_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )).all()
+    rows, total = await AuditQueryService(db).list_organization_activity(
+        organization_id=org.id,
+        resource_type=resource_type,
+        resource_types=resource_types,
+        page=page,
+        page_size=effective_page_size,
+    )
     items = [{
             "id": str(row.id), "action": row.action_type, "resource_type": row.resource_type,
             "resource_id": str(row.resource_id), "actor_role": row.actor_role,
             "occurred_at": row.occurred_at.isoformat(), "is_sensitive": row.is_sensitive,
         } for row in rows]
-    return _page(items, total, page, page_size, "audit.logs")
+    return _page(items, total, page, effective_page_size, "audit.logs")
 
 
 @router.get("/audit/export")
@@ -1461,9 +1096,15 @@ async def organiser_effective_access_preview(
 
 
 @router.get("/settings/custom-fields")
-async def list_organiser_custom_fields(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_organiser_custom_fields(
+    limit: int = Query(100, ge=1, le=OrganiserCustomFieldQueryService.MAX_PAGE_SIZE),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     org = await _current_org(db, current_user)
-    rows = (await db.scalars(select(OrganizationCustomField).where(OrganizationCustomField.organization_id == org.id).order_by(OrganizationCustomField.label))).all()
+    rows = await OrganiserCustomFieldQueryService(db).list_fields(
+        organization_id=org.id, limit=limit
+    )
     return {"items": [_custom_field_out(row) for row in rows], "total": len(rows), "page": 1, "page_size": len(rows) or 10, "freshness_at": datetime.now(timezone.utc).isoformat(), "source": "organizer_access.organization_custom_fields"}
 
 
@@ -1476,19 +1117,10 @@ async def create_organiser_custom_field(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    request_hash = hashlib.sha256(json.dumps(payload.model_dump(), sort_keys=True).encode()).hexdigest()
-    replay = await db.scalar(select(OrganizationCustomField).where(OrganizationCustomField.organization_id == org.id, OrganizationCustomField.idempotency_key == idempotency_key))
-    if replay:
-        if replay.request_hash != request_hash:
-            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        return _custom_field_out(replay)
-    duplicate = await db.scalar(select(OrganizationCustomField.id).where(OrganizationCustomField.organization_id == org.id, OrganizationCustomField.field_key == payload.field_key))
-    if duplicate:
-        raise HTTPException(status_code=409, detail="A custom field with this key already exists")
-    row = OrganizationCustomField(organization_id=org.id, created_by=current_user.id, idempotency_key=idempotency_key, request_hash=request_hash, **payload.model_dump())
-    db.add(row); await db.flush()
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_custom_field", resource_id=row.id, action_type="ORGANIZATION_CUSTOM_FIELD_CREATED", new_state={"field_key": row.field_key, "label": row.label, "field_type": row.field_type}, is_sensitive=False))
-    await db.commit(); await db.refresh(row)
+    row = await OrganizerCustomFieldCommandService(db).create(
+        organization_id=org.id, actor=current_user, values=payload.model_dump(),
+        idempotency_key=idempotency_key,
+    )
     return _custom_field_out(row)
 
 
@@ -1502,19 +1134,10 @@ async def update_organiser_custom_field(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationCustomField).where(OrganizationCustomField.id == field_id, OrganizationCustomField.organization_id == org.id).with_for_update())
-    if not row:
-        raise HTTPException(status_code=404, detail="Custom field not found")
-    if row.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    duplicate = await db.scalar(select(OrganizationCustomField.id).where(OrganizationCustomField.organization_id == org.id, OrganizationCustomField.field_key == payload.field_key, OrganizationCustomField.id != row.id))
-    if duplicate:
-        raise HTTPException(status_code=409, detail="A custom field with this key already exists")
-    old = _custom_field_out(row)
-    for key, value in payload.model_dump().items(): setattr(row, key, value)
-    row.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_custom_field", resource_id=row.id, action_type="ORGANIZATION_CUSTOM_FIELD_UPDATED", old_state=old, new_state=_custom_field_out(row), is_sensitive=False))
-    await db.commit(); await db.refresh(row)
+    row = await OrganizerCustomFieldCommandService(db).update(
+        organization_id=org.id, field_id=field_id, actor=current_user,
+        values=payload.model_dump(), if_match=if_match,
+    )
     return _custom_field_out(row)
 
 
@@ -1528,20 +1151,10 @@ async def toggle_organiser_notification_rule(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationNotificationRule).where(
-        OrganizationNotificationRule.id == rule_id,
-        OrganizationNotificationRule.organization_id == org.id,
-        OrganizationNotificationRule.deleted_at.is_(None),
-    ).with_for_update())
-    if not row:
-        raise HTTPException(status_code=404, detail="Notification rule not found")
-    if row.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    old_enabled = row.is_enabled
-    row.is_enabled = payload.is_enabled
-    row.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_notification_rule", resource_id=row.id, action_type="ORGANIZATION_NOTIFICATION_RULE_UPDATED", old_state={"is_enabled": old_enabled, "version": if_match}, new_state={"is_enabled": row.is_enabled, "version": row.version}, is_sensitive=False))
-    await db.commit()
+    row = await OrganizerNotificationCommandService(db).toggle_rule(
+        organization_id=org.id, rule_id=rule_id, actor=current_user,
+        is_enabled=payload.is_enabled, if_match=if_match,
+    )
     return {"id": str(row.id), "is_enabled": row.is_enabled, "version": row.version}
 
 
@@ -1554,49 +1167,9 @@ async def update_organiser_security_policy(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    allowed = {"PASSWORD", "TOTP", "SSO"}
-    methods = list(dict.fromkeys(method.upper() for method in payload.allowed_auth_methods))
-    if not set(methods).issubset(allowed):
-        raise HTTPException(status_code=422, detail={"code": "INVALID_AUTH_METHOD"})
-    password_policy = {
-        "minimum_length": max(8, min(128, int(payload.password_policy.get("minimum_length", 12)))),
-        "require_uppercase": bool(payload.password_policy.get("require_uppercase", True)),
-        "require_lowercase": bool(payload.password_policy.get("require_lowercase", True)),
-        "require_number": bool(payload.password_policy.get("require_number", True)),
-        "require_symbol": bool(payload.password_policy.get("require_symbol", False)),
-    }
-    session_policy = {
-        "idle_timeout_minutes": max(5, min(1440, int(payload.session_policy.get("idle_timeout_minutes", 60)))),
-        "maximum_session_hours": max(1, min(720, int(payload.session_policy.get("maximum_session_hours", 24)))),
-        "maximum_active_sessions": max(1, min(50, int(payload.session_policy.get("maximum_active_sessions", 5)))),
-    }
-    trusted_device_policy = {
-        "enabled": bool(payload.trusted_device_policy.get("enabled", True)),
-        "lifetime_days": max(1, min(365, int(payload.trusted_device_policy.get("lifetime_days", 30)))),
-    }
-    allowed_cidrs = list(dict.fromkeys(value.strip() for value in payload.allowed_cidrs if value.strip()))
-    row = await db.scalar(select(OrganizationSecurityPolicy).where(OrganizationSecurityPolicy.organization_id == org.id).with_for_update())
-    if row and row.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    old = None if row is None else {"require_mfa": row.require_mfa, "allowed_auth_methods": row.allowed_auth_methods, "password_policy": row.password_policy, "session_policy": row.session_policy, "trusted_device_policy": row.trusted_device_policy, "sso_enforced": row.sso_enforced, "allowed_cidrs": row.allowed_cidrs, "version": row.version}
-    if row is None:
-        row = OrganizationSecurityPolicy(organization_id=org.id, require_mfa=payload.require_mfa, allowed_auth_methods=methods, password_policy=password_policy, session_policy=session_policy, trusted_device_policy=trusted_device_policy, sso_enforced=payload.sso_enforced, allowed_cidrs=allowed_cidrs, updated_by=current_user.id)
-        db.add(row)
-        await db.flush()
-    else:
-        row.require_mfa = payload.require_mfa
-        row.allowed_auth_methods = methods
-        row.password_policy = password_policy
-        row.session_policy = session_policy
-        row.trusted_device_policy = trusted_device_policy
-        row.sso_enforced = payload.sso_enforced
-        row.allowed_cidrs = allowed_cidrs
-        row.updated_by = current_user.id
-        row.version += 1
-    new_state = {"require_mfa": row.require_mfa, "allowed_auth_methods": row.allowed_auth_methods, "password_policy": row.password_policy, "session_policy": row.session_policy, "trusted_device_policy": row.trusted_device_policy, "sso_enforced": row.sso_enforced, "allowed_cidrs": row.allowed_cidrs, "version": row.version}
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_security_policy", resource_id=row.id, action_type="ORGANIZATION_SECURITY_POLICY_UPDATED", old_state=old, new_state=new_state, is_sensitive=True))
-    await db.commit()
-    return new_state
+    return await OrganizerSecurityCommandService(db).update_policy(
+        organization_id=org.id, actor=current_user, values=payload.model_dump(), if_match=if_match,
+    )
 
 
 @router.put("/settings/branding")
@@ -1608,25 +1181,9 @@ async def update_organiser_branding(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    row = await db.scalar(select(OrganizationBrandProfile).where(OrganizationBrandProfile.organization_id == org.id).with_for_update())
-    if row and row.version != if_match:
-        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    old = {"logo_url": org.logo_url, "primary_color": org.primary_color, "secondary_color": org.secondary_color, "version": row.version if row else 0}
-    org.logo_url = payload.logo_url
-    org.primary_color = payload.primary_color.lower()
-    org.secondary_color = payload.secondary_color.lower()
-    if row is None:
-        row = OrganizationBrandProfile(organization_id=org.id, status="DRAFT", assets={"logo_url": org.logo_url}, tokens={"primary_color": org.primary_color, "secondary_color": org.secondary_color}, templates={})
-        db.add(row)
-        await db.flush()
-    else:
-        row.assets = {**(row.assets or {}), "logo_url": org.logo_url}
-        row.tokens = {**(row.tokens or {}), "primary_color": org.primary_color, "secondary_color": org.secondary_color}
-        row.status = "DRAFT"
-        row.version += 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_brand_profile", resource_id=row.id, action_type="ORGANIZATION_BRAND_DRAFT_UPDATED", old_state=old, new_state={"logo_url": org.logo_url, "primary_color": org.primary_color, "secondary_color": org.secondary_color, "version": row.version}, is_sensitive=False))
-    await db.commit()
-    return {"status": row.status, "assets": row.assets, "tokens": row.tokens, "version": row.version, "published_version": row.published_version}
+    return await OrganizerBrandingCommandService(db).update(
+        organization_id=org.id, actor=current_user, values=payload.model_dump(), if_match=if_match,
+    )
 
 
 @router.get("/settings/{domain}")
@@ -1638,44 +1195,41 @@ async def organiser_settings_domain(
     org = await _current_org(db, current_user)
     freshness = datetime.now(timezone.utc).isoformat()
     if domain == "notifications":
-        rules = (await db.scalars(select(OrganizationNotificationRule).where(OrganizationNotificationRule.organization_id == org.id, OrganizationNotificationRule.deleted_at.is_(None)))).all()
-        channels = (await db.scalars(select(OrganizationNotificationChannelConfig).where(OrganizationNotificationChannelConfig.organization_id == org.id, OrganizationNotificationChannelConfig.deleted_at.is_(None)))).all()
+        rules, channels = await OrganiserNotificationSettingsQueryService(db).get_settings(
+            organization_id=org.id
+        )
         return {"rules": [{"id": str(row.id), "name": row.name, "trigger_key": row.trigger_key, "channel": row.channel, "is_enabled": row.is_enabled, "version": row.version} for row in rules], "channels": [{"id": str(row.id), "channel": row.channel, "provider": row.provider, "state": row.state, "last_verified_at": row.last_verified_at.isoformat() if row.last_verified_at else None, "version": row.version} for row in channels], "freshness_at": freshness, "source": "communications.organization_notification_configuration"}
     if domain == "security":
-        row = await db.scalar(select(OrganizationSecurityPolicy).where(OrganizationSecurityPolicy.organization_id == org.id))
+        result = await OrganiserSecurityBrandingQueryService(db).get_security_policy(
+            organization_id=org.id
+        )
+        row = result.first()
         return {"policy": None if row is None else {"require_mfa": row.require_mfa, "allowed_auth_methods": row.allowed_auth_methods, "password_policy": row.password_policy, "session_policy": row.session_policy, "trusted_device_policy": row.trusted_device_policy, "sso_enforced": row.sso_enforced, "allowed_cidrs": row.allowed_cidrs, "version": row.version}, "freshness_at": freshness, "source": "identity.organization_security_policies"}
     if domain == "branding":
-        row = await db.scalar(select(OrganizationBrandProfile).where(OrganizationBrandProfile.organization_id == org.id))
+        result = await OrganiserSecurityBrandingQueryService(db).get_brand_profile(
+            organization_id=org.id
+        )
+        row = result.first()
         return {"profile": None if row is None else {"status": row.status, "assets": row.assets, "tokens": row.tokens, "templates": row.templates, "version": row.version, "published_version": row.published_version}, "freshness_at": freshness, "source": "platform.organization_brand_profiles"}
     if domain == "developer":
-        rows = (await db.scalars(select(ApiKey).where(ApiKey.organization_id == org.id).order_by(ApiKey.created_at.desc()))).all()
-        webhook_rows = (await db.execute(
-            select(Webhook, Event.name)
-            .join(Event, Event.id == Webhook.event_id)
-            .where(Event.organization_id == org.id, Event.deleted_at.is_(None))
-            .order_by(Webhook.updated_at.desc())
-        )).all()
+        rows, webhook_rows = await OrganiserDeveloperSettingsQueryService(db).get_settings(
+            organization_id=org.id
+        )
         webhooks = []
-        for webhook, event_name in webhook_rows:
-            latest = await db.scalar(
-                select(IntegrationWebhookDelivery)
-                .where(IntegrationWebhookDelivery.webhook_id == webhook.id)
-                .order_by(IntegrationWebhookDelivery.delivered_at.desc())
-                .limit(1)
-            )
+        for row in webhook_rows:
             webhooks.append({
-                "id": str(webhook.id), "event_id": str(webhook.event_id), "event_name": event_name,
-                "url": webhook.url, "description": webhook.description,
-                "subscribed_events": webhook.subscribed_events, "status": webhook.status,
-                "consecutive_failures": webhook.consecutive_failures,
-                "last_triggered_at": webhook.last_triggered_at.isoformat() if webhook.last_triggered_at else None,
-                "last_success_at": webhook.last_success_at.isoformat() if webhook.last_success_at else None,
-                "last_failure_reason": webhook.last_failure_reason,
-                "total_deliveries": webhook.total_deliveries, "total_failures": webhook.total_failures,
-                "latest_delivery_status": latest.response_status if latest else None,
-                "latest_delivery_at": latest.delivered_at.isoformat() if latest else None,
-                "version": webhook.version,
-                "manage_href": f"/events/{webhook.event_id}/settings/integrations?highlight={webhook.id}",
+                "id": str(row.id), "event_id": str(row.event_id), "event_name": row.name,
+                "url": row.url, "description": row.description,
+                "subscribed_events": row.subscribed_events, "status": row.status,
+                "consecutive_failures": row.consecutive_failures,
+                "last_triggered_at": row.last_triggered_at.isoformat() if row.last_triggered_at else None,
+                "last_success_at": row.last_success_at.isoformat() if row.last_success_at else None,
+                "last_failure_reason": row.last_failure_reason,
+                "total_deliveries": row.total_deliveries, "total_failures": row.total_failures,
+                "latest_delivery_status": row.latest_delivery_status,
+                "latest_delivery_at": row.latest_delivery_at.isoformat() if row.latest_delivery_at else None,
+                "version": row.version,
+                "manage_href": f"/events/{row.event_id}/settings/integrations?highlight={row.id}",
             })
         return {
             "items": [{"id": str(row.id), "name": row.name, "prefix": row.prefix, "is_active": row.is_active, "expires_at": row.expires_at.isoformat() if row.expires_at else None, "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None, "created_at": row.created_at.isoformat()} for row in rows],
@@ -1818,15 +1372,34 @@ async def organiser_needs_attention(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     org = await _current_org(db, current_user)
-    events = (await db.execute(
-        select(Event)
-        .where(Event.organization_id == org.id, Event.deleted_at.is_(None), Event.status != "archived")
-        .order_by(Event.start_date.asc())
-        .limit(25)
-    )).scalars().all()
+    candidates = await OrganiserAttentionQueryService(db).list_candidates(
+        organization_id=org.id
+    )
     tasks: list[dict[str, Any]] = []
-    for event in events:
-        tasks.extend(await _attention_for_event(db, event))
+    for candidate in candidates:
+        event_id = candidate.id
+        event_updated_at = candidate.updated_at
+        if candidate.sessions_without_rooms:
+            tasks.append({"id": f"{event_id}:sessions_without_rooms", "title": "Sessions", "description": "Sessions without assigned rooms", "count": candidate.sessions_without_rooms, "severity": "warning", "href": f"/events/{event_id}/program/sessions"})
+        if candidate.pending_speakers:
+            tasks.append({"id": f"{event_id}:pending_speakers", "title": "Speakers", "description": "Speakers pending uploads", "count": candidate.pending_speakers, "severity": "critical" if candidate.pending_speakers > 10 else "warning", "href": f"/events/{event_id}/speakers/directory"})
+        if candidate.pending_registrations:
+            tasks.append({"id": f"{event_id}:pending_registrations", "title": "Pending Approvals", "description": "Registrations require review", "count": candidate.pending_registrations, "severity": "critical", "href": f"/events/{event_id}/registration/approvals"})
+        if candidate.payment_pending:
+            tasks.append({"id": f"{event_id}:payment_reconciliation", "title": "Payment Reconciliation", "description": "Transactions need attention", "count": candidate.payment_pending, "severity": "warning", "href": f"/events/{event_id}/payments/reconciliation"})
+        if not candidate.total_rooms:
+            tasks.append({"id": f"{event_id}:venue_setup", "title": "Venue Setup", "description": "Configuration incomplete", "count": 1, "severity": "critical", "href": f"/events/{event_id}/setup/rooms-tracks"})
+        freshness = datetime.now(timezone.utc).isoformat()
+        for task in tasks:
+            if task["id"].startswith(f"{event_id}:"):
+                task["module"] = task["id"].split(":", 1)[-1]
+                task["category"] = task["module"].split("_", 1)[0]
+                task["entity_id"] = str(event_id)
+                task["owner"] = None
+                task["age_seconds"] = max(0, int((datetime.now(timezone.utc) - event_updated_at).total_seconds()))
+                task["status"] = "open"
+                task["source"] = "ORGANISER_NEEDS_ATTENTION_READ_MODEL"
+                task["freshness_at"] = freshness
         if len(tasks) >= limit:
             break
     states = (await db.scalars(select(OrganizationAttentionState).where(OrganizationAttentionState.organization_id == org.id, OrganizationAttentionState.task_key.in_([task["id"] for task in tasks])))).all() if tasks else []
@@ -1865,13 +1438,10 @@ async def _attention_state(db: AsyncSession, org_id: uuid.UUID, task_id: str, ac
 @router.patch("/needs-attention/{task_id}/assign")
 async def assign_attention_task(task_id: str, payload: AttentionAssignWrite, if_match: int = Header(default=0, alias="If-Match", ge=0), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    if payload.owner_user_id and not await db.scalar(select(OrganizationMember.id).where(OrganizationMember.organization_id == org.id, OrganizationMember.user_id == payload.owner_user_id, OrganizationMember.is_active.is_(True))): raise HTTPException(status_code=422, detail={"code": "OWNER_NOT_IN_ORGANIZATION"})
-    row, created = await _attention_state(db, org.id, task_id, current_user.id)
-    current_version = 0 if created else row.version
-    if current_version != if_match: raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    row.owner_user_id = payload.owner_user_id; row.status = "ASSIGNED" if payload.owner_user_id else "OPEN"; row.updated_by = current_user.id; row.version = 1 if if_match == 0 else row.version + 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_attention", resource_id=row.id, action_type="ATTENTION_TASK_ASSIGNED", new_state={"task_id": task_id, "owner_user_id": str(payload.owner_user_id) if payload.owner_user_id else None, "version": row.version}, is_sensitive=False))
-    await db.commit(); return {"id": task_id, "status": row.status.lower(), "owner_user_id": str(row.owner_user_id) if row.owner_user_id else None, "version": row.version}
+    return await OrganizerAttentionCommandService(db).assign(
+        organization_id=org.id, task_id=task_id, actor=current_user,
+        owner_user_id=payload.owner_user_id, if_match=if_match,
+    )
 
 
 @router.patch("/needs-attention/{task_id}/snooze")
@@ -1885,21 +1455,20 @@ async def snooze_attention_task(task_id: str, payload: AttentionSnoozeWrite, if_
     current_task = next((item for item in await _attention_for_event(db, event) if item["id"] == task_id), None) if event else None
     if not current_task: raise HTTPException(status_code=404, detail={"code": "ATTENTION_TASK_NOT_FOUND"})
     if current_task["severity"] == "critical": raise HTTPException(status_code=422, detail={"code": "CRITICAL_TASK_CANNOT_BE_SNOOZED"})
-    row, created = await _attention_state(db, org.id, task_id, current_user.id)
-    if if_match != (0 if created else row.version): raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    row.status = "SNOOZED"; row.snoozed_until = payload.snoozed_until; row.resolution = payload.reason; row.updated_by = current_user.id; row.version = 1 if if_match == 0 else row.version + 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_attention", resource_id=row.id, action_type="ATTENTION_TASK_SNOOZED", new_state={"task_id": task_id, "until": payload.snoozed_until.isoformat(), "reason": payload.reason, "version": row.version}, is_sensitive=False))
-    await db.commit(); return {"id": task_id, "status": "snoozed", "snoozed_until": payload.snoozed_until.isoformat(), "version": row.version}
+    return await OrganizerAttentionCommandService(db).snooze(
+        organization_id=org.id, task_id=task_id, actor=current_user,
+        snoozed_until=payload.snoozed_until, reason=payload.reason,
+        if_match=if_match,
+    )
 
 
 @router.patch("/needs-attention/{task_id}/resolve")
 async def resolve_attention_task(task_id: str, payload: AttentionResolveWrite, if_match: int = Header(default=0, alias="If-Match", ge=0), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     org = await _current_org(db, current_user); await _require_org_admin(db, current_user, org.id)
-    row, created = await _attention_state(db, org.id, task_id, current_user.id)
-    if if_match != (0 if created else row.version): raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "current_version": row.version})
-    row.status = "RESOLVED"; row.resolution = payload.resolution; row.snoozed_until = None; row.updated_by = current_user.id; row.version = 1 if if_match == 0 else row.version + 1
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organization_attention", resource_id=row.id, action_type="ATTENTION_TASK_RESOLVED", new_state={"task_id": task_id, "resolution": payload.resolution, "version": row.version}, is_sensitive=False))
-    await db.commit(); return {"id": task_id, "status": "resolved", "version": row.version}
+    return await OrganizerAttentionCommandService(db).resolve(
+        organization_id=org.id, task_id=task_id, actor=current_user,
+        resolution=payload.resolution, if_match=if_match,
+    )
 
 
 @router.get("/dashboard")
@@ -1910,14 +1479,12 @@ async def organiser_dashboard(
     org = await _current_org(db, current_user)
     unrestricted = bool(getattr(org, "has_unrestricted_capabilities", False))
 
-    all_events = (await db.execute(
-        select(Event)
-        .where(Event.organization_id == org.id, Event.deleted_at.is_(None))
-        .order_by(Event.start_date.desc())
-    )).scalars().all()
-    event_ids = [event.id for event in all_events]
+    all_event_refs = await OrganiserReportQueryService(db).list_dashboard_event_refs(
+        organization_id=org.id
+    )
+    event_ids = [row.id for row in all_event_refs]
 
-    active_events = sum(1 for event in all_events if event.status not in {"archived", "completed"})
+    active_events = sum(1 for row in all_event_refs if row.status not in {"archived", "completed"})
     team_members = await db.scalar(
         select(func.count(OrganizationMember.id)).where(
             OrganizationMember.organization_id == org.id,
@@ -1957,7 +1524,7 @@ async def organiser_dashboard(
         max_registrations = None if unrestricted else await EntitlementResolver.get_limit(db, org.id, "max_registrations")
         storage_quota_mb = None if unrestricted else await EntitlementResolver.get_limit(db, org.id, "storage_quota_mb")
         usage = {
-            "events": {"used": len(all_events), "max": max_events},
+            "events": {"used": len(all_event_refs), "max": max_events},
             "users": {"used": team_members, "max": max_users},
             "registrations": {"used": total_registrations, "max": max_registrations},
             "storage": {"used_mb": storage_used_mb, "max_mb": storage_quota_mb},
@@ -1966,57 +1533,21 @@ async def organiser_dashboard(
         pass
 
     today = date.today()
-    trend = []
-    for i in range(7):
-        day = today - timedelta(days=6 - i)
-        next_day = day + timedelta(days=1)
-        registered = 0
-        revenue = 0.0
-        if event_ids:
-            registered = await db.scalar(
-                select(func.count(Participant.id)).where(
-                    Participant.event_id.in_(event_ids),
-                    Participant.registered_at >= datetime.combine(day, datetime.min.time(), timezone.utc),
-                    Participant.registered_at < datetime.combine(next_day, datetime.min.time(), timezone.utc),
-                )
-            ) or 0
-            revenue = float(await db.scalar(
-                select(func.coalesce(func.sum(PaymentTransaction.amount), 0.0)).where(
-                    PaymentTransaction.event_id.in_(event_ids),
-                    PaymentTransaction.created_at >= datetime.combine(day, datetime.min.time(), timezone.utc),
-                    PaymentTransaction.created_at < datetime.combine(next_day, datetime.min.time(), timezone.utc),
-                    PaymentTransaction.status.in_(["completed", "captured", "success", "paid"]),
-                )
-            ) or 0.0)
-        trend.append({"label": day.strftime("%a"), "registrations": registered, "revenue": revenue})
+    trend = await OrganiserReportQueryService(db).registration_revenue_trend(
+        event_ids=event_ids, today=today
+    )
 
-    event_rows = []
-    for event in all_events[:6]:
-        registrations = await db.scalar(select(func.count(Participant.id)).where(Participant.event_id == event.id)) or 0
-        revenue = float(await db.scalar(
-            select(func.coalesce(func.sum(PaymentTransaction.amount), 0.0)).where(
-                PaymentTransaction.event_id == event.id,
-                PaymentTransaction.status.in_(["completed", "captured", "success", "paid"]),
-            )
-        ) or 0.0)
-        event_rows.append({
-            "id": str(event.id),
-            "name": event.name,
-            "short_code": event.short_code,
-            "dates": _format_dates(event),
-            "venue": event.venue_name or event.location or "Venue not set",
-            "registrations": registrations,
-            "revenue": revenue,
-            "readiness_pct": await _event_readiness(db, event.id),
-            "status": event.status,
-        })
+    event_rows, _ = await OrganiserReportQueryService(db).list_event_reports(
+        organization_id=org.id, page=1, page_size=6, search=None
+    )
 
-    activity_rows = (await db.scalars(
-        select(AuditLog)
-        .where(AuditLog.organization_id == org.id)
-        .order_by(AuditLog.occurred_at.desc())
-        .limit(6)
-    )).all()
+    activity_rows, _ = await AuditQueryService(db).list_organization_activity(
+        organization_id=org.id,
+        resource_type=None,
+        resource_types=None,
+        page=1,
+        page_size=6,
+    )
 
     return {
         "organization": {
@@ -2038,7 +1569,7 @@ async def organiser_dashboard(
             "registrations_max": None if unrestricted else usage.get("registrations", {}).get("max"),
             "storage_used_gb": round((usage.get("storage", {}).get("used_mb") or storage_used_mb) / 1024, 2),
             "storage_max_gb": None if unrestricted else (round((usage.get("storage", {}).get("max_mb") or 0) / 1024, 2) if usage.get("storage", {}).get("max_mb") else None),
-            "events_used": int(usage.get("events", {}).get("used") or len(all_events)),
+            "events_used": int(usage.get("events", {}).get("used") or len(all_event_refs)),
             "events_max": None if unrestricted else usage.get("events", {}).get("max"),
             "unrestricted": unrestricted,
         },
@@ -2067,20 +1598,9 @@ async def organiser_addon_status(
     org = await _current_org(db, current_user)
     unrestricted = bool(getattr(org, "has_unrestricted_capabilities", False))
     now = datetime.now(timezone.utc)
-    addons = (await db.scalars(
-        select(Addon).where(Addon.is_active.is_(True)).order_by(Addon.name.asc())
-    )).all()
-    assignments = (await db.scalars(
-        select(OrganizationAddon)
-        .where(OrganizationAddon.organization_id == org.id)
-        .order_by(OrganizationAddon.updated_at.desc())
-    )).all()
-    requests = (await db.scalars(
-        select(CommercialAccessRequest).where(
-            CommercialAccessRequest.organization_id == org.id,
-            CommercialAccessRequest.status.in_(["PENDING", "APPROVED"]),
-        )
-    )).all()
+    addons, assignments, requested_addon_keys = await OrganiserAddonQueryService(db).get_status_data(
+        organization_id=org.id
+    )
 
     plan_name: str | None = None
     if not unrestricted:
@@ -2095,8 +1615,8 @@ async def organiser_addon_status(
         assignments_by_addon.setdefault(assignment.addon_id, []).append(assignment)
     pending_keys = {
         str(key).upper()
-        for request in requests
-        for key in (request.requested_addon_keys or [])
+        for keys in requested_addon_keys
+        for key in keys
     }
 
     items: list[dict[str, Any]] = []
@@ -2159,36 +1679,11 @@ async def organiser_effective_features(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Return the effective organisation feature catalogue with source evidence."""
-    from app.modules.platform.models.feature import FeatureCatalog
-
     org = await _current_org(db, current_user)
-    catalogue = (await db.scalars(
-        select(FeatureCatalog)
-        .where(FeatureCatalog.is_active.is_(True))
-        .order_by(FeatureCatalog.category_order, FeatureCatalog.feature_order, FeatureCatalog.name)
-    )).all()
     unrestricted = bool(org.has_unrestricted_capabilities)
-    resolved = {} if unrestricted else await EntitlementResolver.resolve_org_entitlements(db, org.id, explain=True)
-    resolved_features = resolved.get("features", resolved) if isinstance(resolved, dict) else {}
-    items = []
-    for feature in catalogue:
-        effective = resolved_features.get(feature.key, {}) if isinstance(resolved_features, dict) else {}
-        enabled = True if unrestricted else bool(effective.get("enabled", False))
-        items.append({
-            "id": str(feature.id),
-            "key": feature.key,
-            "name": feature.name,
-            "description": feature.description,
-            "category": feature.category or "General",
-            "scope_type": feature.scope_type,
-            "enabled": enabled,
-            "value": True if unrestricted else effective.get("value", enabled),
-            "value_type": effective.get("value_type", "BOOLEAN"),
-            "source_type": "INTERNAL_UNRESTRICTED" if unrestricted else effective.get("source_type", "CONTRACT_REQUIRED"),
-            "source_ref": str(org.id) if unrestricted else effective.get("source_ref"),
-            "denial_reason": None if enabled else effective.get("denial_reason") or "Not included in the active entitlement contract",
-            "resolution_path": None if enabled or unrestricted else "/plans-entitlements/addons",
-        })
+    items = await OrganiserEntitlementQueryService(db).list_effective_features(
+        organization_id=org.id, unrestricted=unrestricted
+    )
     return _page(items, len(items), 1, max(len(items), 1), "ORGANISER_EFFECTIVE_ENTITLEMENTS")
 
 
@@ -2272,28 +1767,9 @@ async def organiser_report(
     event_rows: list[dict[str, Any]] = []
     event_total = 0
     if domain in {"overview", "registrations", "revenue", "events"}:
-        event_filters = [Event.organization_id == org.id, Event.deleted_at.is_(None)]
-        if search:
-            term = f"%{search.strip()}%"
-            event_filters.append(or_(Event.name.ilike(term), Event.short_code.ilike(term), Event.venue_name.ilike(term)))
-        event_total = await db.scalar(select(func.count(Event.id)).where(*event_filters)) or 0
-        events = (await db.scalars(
-            select(Event).where(*event_filters).order_by(Event.start_date.desc()).offset((page - 1) * page_size).limit(page_size)
-        )).all()
-        for event in events:
-            registrations = await db.scalar(select(func.count(Participant.id)).where(Participant.event_id == event.id)) or 0
-            revenue = float(await db.scalar(
-                select(func.coalesce(func.sum(PaymentTransaction.amount), 0.0)).where(
-                    PaymentTransaction.event_id == event.id,
-                    PaymentTransaction.status.in_(["completed", "captured", "success", "paid"]),
-                )
-            ) or 0.0)
-            event_rows.append({
-                "id": str(event.id), "name": event.name, "short_code": event.short_code,
-                "dates": _format_dates(event), "venue": event.venue_name or event.location or "Venue not set",
-                "registrations": registrations, "revenue": revenue,
-                "readiness_pct": await _event_readiness(db, event.id), "status": event.status,
-            })
+        event_rows, event_total = await OrganiserReportQueryService(db).list_event_reports(
+            organization_id=org.id, page=page, page_size=page_size, search=search
+        )
     return {
         "domain": domain,
         "metrics": {
@@ -2321,13 +1797,6 @@ async def create_organiser_report_export(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    prior = (await db.scalars(select(AuditLog).where(
-        AuditLog.organization_id == org.id,
-        AuditLog.action_type == "ORGANISER_REPORT_EXPORT_CREATED",
-    ).order_by(AuditLog.occurred_at.desc()).limit(100))).all()
-    existing = next((row for row in prior if (row.new_state or {}).get("idempotency_key") == idempotency_key), None)
-    if existing:
-        return {"id": str(existing.resource_id), **(existing.new_state or {})}
     report = await organiser_report(payload.domain, page=1, page_size=100, search=None, current_user=current_user, db=db)
     export_rows = list(report.get("events") or [])
     total_rows = int(report.get("total") or len(export_rows))
@@ -2341,16 +1810,16 @@ async def create_organiser_report_export(
             db=db,
         )
         export_rows.extend(next_page.get("events") or [])
-    export_id = uuid.uuid4()
     snapshot = {
         "domain": payload.domain, "format": payload.format, "status": "COMPLETED",
         "row_count": len(export_rows), "source": report.get("source"),
         "freshness_at": report.get("freshness_at"), "metrics": report.get("metrics") or {},
-        "rows": export_rows, "idempotency_key": idempotency_key,
+        "rows": export_rows,
     }
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organiser_report_export", resource_id=export_id, action_type="ORGANISER_REPORT_EXPORT_CREATED", new_state=snapshot, is_sensitive=True))
-    await db.commit()
-    return {"id": str(export_id), **snapshot}
+    return await OrganizerReportCommandService(db).create_export(
+        organization_id=org.id, actor=current_user, snapshot=snapshot,
+        idempotency_key=idempotency_key,
+    )
 
 
 @router.get("/reports/exports/{export_id}/download")
@@ -2390,18 +1859,10 @@ async def create_organiser_custom_report(
 ) -> dict[str, Any]:
     org = await _current_org(db, current_user)
     await _require_org_admin(db, current_user, org.id)
-    prior = (await db.scalars(select(AuditLog).where(
-        AuditLog.organization_id == org.id,
-        AuditLog.action_type == "ORGANISER_CUSTOM_REPORT_CREATED",
-    ).order_by(AuditLog.occurred_at.desc()).limit(100))).all()
-    existing = next((row for row in prior if (row.new_state or {}).get("idempotency_key") == idempotency_key), None)
-    if existing:
-        return {"id": str(existing.resource_id), **(existing.new_state or {})}
-    report_id = uuid.uuid4()
-    state = {**payload.model_dump(), "status": "ACTIVE", "idempotency_key": idempotency_key}
-    db.add(AuditLog(organization_id=org.id, actor_user_id=current_user.id, actor_role=current_user.role, resource_type="organiser_custom_report", resource_id=report_id, action_type="ORGANISER_CUSTOM_REPORT_CREATED", new_state=state, is_sensitive=False))
-    await db.commit()
-    return {"id": str(report_id), **state}
+    return await OrganizerReportCommandService(db).create_custom_report(
+        organization_id=org.id, actor=current_user,
+        values=payload.model_dump(), idempotency_key=idempotency_key,
+    )
 
 
 @router.get("/events/{event_id}/needs-attention")

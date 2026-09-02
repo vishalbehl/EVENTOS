@@ -46,7 +46,19 @@ axiosInstance.interceptors.response.use(
         window.dispatchEvent(new CustomEvent("venue-auth-expired"));
       }
     }
-    const message = error.response?.data?.detail || error.response?.data?.message || error.message || "Unknown error";
+    let message = "Unknown error";
+    const data = error.response?.data as any;
+    if (typeof data?.detail === "string") {
+      message = data.detail;
+    } else if (Array.isArray(data?.detail)) {
+      message = data.detail.map((d: any) => d?.msg || d?.message || JSON.stringify(d)).join(", ");
+    } else if (typeof data?.detail === "object" && data?.detail !== null) {
+      message = data.detail.msg || data.detail.message || JSON.stringify(data.detail);
+    } else if (data?.message && typeof data.message === "string") {
+      message = data.message;
+    } else if (error.message) {
+      message = error.message;
+    }
     return Promise.reject(new Error(message));
   }
 );

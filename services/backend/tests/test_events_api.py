@@ -32,6 +32,27 @@ def auth_headers(user: User) -> dict[str, str]:
 
 class TestEventsAPICreation:
     @pytest.mark.asyncio
+    async def test_create_event_replays_idempotently(
+        self, client: AsyncClient, super_admin: User
+    ):
+        payload = {
+            "name": "Idempotent Event",
+            "short_code": "IDEMPOTENT",
+            "start_date": str(date(2026, 10, 1)),
+            "end_date": str(date(2026, 10, 3)),
+            "timezone": "UTC",
+        }
+        key = f"event-replay-{uuid.uuid4()}"
+        headers = {**_auth_headers(super_admin), "Idempotency-Key": key}
+
+        first = await client.post(BASE_URL, json=payload, headers=headers)
+        second = await client.post(BASE_URL, json=payload, headers=headers)
+
+        assert first.status_code in {200, 201}, first.text
+        assert second.status_code == first.status_code, second.text
+        assert second.json()["id"] == first.json()["id"]
+
+    @pytest.mark.asyncio
     async def test_create_event_both_modes_disabled_fails(
         self, client: AsyncClient, super_admin: User
     ):
@@ -77,6 +98,33 @@ class TestEventsAPICreation:
 
 
 class TestEventsAPIUpdates:
+    @pytest.mark.asyncio
+    async def test_patch_event_uses_optimistic_concurrency(
+        self, client: AsyncClient, event: Event, super_admin: User
+    ):
+        current = await client.get(
+            DETAIL_URL.format(event_id=event.id),
+            headers=auth_headers(super_admin),
+        )
+        assert current.status_code == 200
+        version = current.json()["version"]
+
+        updated = await client.patch(
+            DETAIL_URL.format(event_id=event.id),
+            json={"name": "Versioned Event Update"},
+            headers={**auth_headers(super_admin), "If-Match": f'"{version}"'},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["version"] == version + 1
+
+        stale = await client.patch(
+            DETAIL_URL.format(event_id=event.id),
+            json={"name": "Stale Event Update"},
+            headers={**auth_headers(super_admin), "If-Match": f'"{version}"'},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "RESOURCE_VERSION_CONFLICT"
+
     @pytest.mark.asyncio
     async def test_patch_event_one_mode_disabled_succeeds(
         self, client: AsyncClient, event: Event, super_admin: User

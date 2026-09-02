@@ -1,11 +1,11 @@
 import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app.core.tenant_context import TenantContextGuard
 from app.dependencies import DB, StepUpAuth
-from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.crm.models.core import Account, Contact, Lead
 from app.modules.crm.models.crm_domain_tables import Activity, Note, Opportunity, PipelineStage, Task
 from app.modules.crm.schemas.crm_schemas import (
@@ -37,6 +37,7 @@ from app.modules.crm.schemas.crm_schemas import (
     TaskUpdate,
 )
 from app.modules.crm.services.lifecycle_service import CrmLifecycleService
+from app.modules.crm.application.queries import CrmAccountWorkspaceQueryService, CrmCatalogQueryService
 from app.modules.platform.support_access import (
     PlatformSupportScopeDependency,
     execute_platform_support_cursor_read,
@@ -51,7 +52,7 @@ IdempotencyKey = Header(..., alias="Idempotency-Key", min_length=8, max_length=1
 
 @router.get("/pipeline-stages", response_model=list[PipelineStageResponse])
 async def list_pipeline_stages(db: DB):
-    return (await db.execute(select(PipelineStage).order_by(PipelineStage.order, PipelineStage.id))).scalars().all()
+    return await CrmCatalogQueryService(db).list_pipeline_stages()
 
 @router.get("/accounts", response_model=CursorPage[AccountResponse])
 async def list_accounts(
@@ -179,75 +180,25 @@ async def get_account_workspace(
 ) -> AccountWorkspaceResponse:
     """Return one bounded, tenant-scoped CRM account workspace read model."""
     async with TenantContextGuard.scoped(db, support_scope.organization_id):
-        account = await db.scalar(
-            select(Account).where(
-                Account.id == record_id,
-                Account.organization_id == support_scope.organization_id,
-            )
+        workspace = await CrmAccountWorkspaceQueryService(db).get(
+            organization_id=support_scope.organization_id,
+            account_id=record_id,
         )
-        if account is None:
+        if workspace is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CRM account not found.")
-
-        contacts = list((await db.scalars(
-            select(Contact).where(
-                Contact.organization_id == support_scope.organization_id,
-                Contact.account_id == record_id,
-            ).order_by(Contact.created_at.desc(), Contact.id.desc()).limit(100)
-        )).all())
-        opportunities = list((await db.scalars(
-            select(Opportunity).where(
-                Opportunity.organization_id == support_scope.organization_id,
-                Opportunity.account_id == record_id,
-            ).order_by(Opportunity.created_at.desc(), Opportunity.id.desc()).limit(100)
-        )).all())
-
-        contact_ids = [item.id for item in contacts]
-        opportunity_ids = [item.id for item in opportunities]
-
-        async def related_rows(model):
-            clauses = [(model.entity_type == "account") & (model.entity_id == record_id)]
-            if contact_ids:
-                clauses.append((model.entity_type == "contact") & model.entity_id.in_(contact_ids))
-            if opportunity_ids:
-                clauses.append((model.entity_type == "opportunity") & model.entity_id.in_(opportunity_ids))
-            return list((await db.scalars(
-                select(model).where(
-                    model.organization_id == support_scope.organization_id,
-                    or_(*clauses),
-                ).order_by(model.created_at.desc(), model.id.desc()).limit(100)
-            )).all())
-
-        activities = await related_rows(Activity)
-        tasks = await related_rows(Task)
-        notes = await related_rows(Note)
+        account = workspace.account
+        contacts = workspace.contacts
+        opportunities = workspace.opportunities
+        activities = workspace.activities
+        tasks = workspace.tasks
+        notes = workspace.notes
         active_opportunities = [item for item in opportunities if item.archived_at is None]
         open_tasks = [
             item for item in tasks
             if item.archived_at is None and item.status not in {"COMPLETED", "CANCELLED"}
         ]
 
-        db.add(AuditLog(
-            request_id=support_scope.request_id,
-            correlation_id=support_scope.correlation_id,
-            organization_id=support_scope.organization_id,
-            actor_user_id=support_scope.actor.id,
-            resource_type="crm_account_workspace",
-            resource_id=account.id,
-            action_type="PLATFORM_SUPPORT_DATA_READ",
-            actor_role=support_scope.actor.platform_role or support_scope.actor.role,
-            new_state={
-                "reason": support_scope.reason,
-                "access_mode": "READ_ONLY",
-                "contact_count": len(contacts),
-                "opportunity_count": len(opportunities),
-            },
-            actor_ip=support_scope.actor_ip,
-            actor_user_agent=support_scope.actor_user_agent,
-            is_sensitive=True,
-        ))
-        await db.commit()
-
-    return AccountWorkspaceResponse(
+    response = AccountWorkspaceResponse(
         account=account,
         contacts=contacts,
         opportunities=opportunities,
@@ -261,6 +212,26 @@ async def get_account_workspace(
             open_task_count=len(open_tasks),
         ),
     )
+    await AuditService.write_log(AuditContext(
+        request_id=support_scope.request_id,
+        correlation_id=support_scope.correlation_id,
+        organization_id=support_scope.organization_id,
+        actor_user_id=support_scope.actor.id,
+        resource_type="crm_account_workspace",
+        resource_id=account.id,
+        action_type="PLATFORM_SUPPORT_DATA_READ",
+        actor_role=support_scope.actor.platform_role or support_scope.actor.role,
+        new_state={
+            "reason": support_scope.reason,
+            "access_mode": "READ_ONLY",
+            "contact_count": len(contacts),
+            "opportunity_count": len(opportunities),
+            },
+        actor_ip=support_scope.actor_ip,
+        actor_user_agent=support_scope.actor_user_agent,
+        is_sensitive=True,
+    ))
+    return response
 
 
 @router.post("/accounts", response_model=AccountResponse, status_code=201)

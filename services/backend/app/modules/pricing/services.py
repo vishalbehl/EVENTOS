@@ -95,15 +95,33 @@ class PricingService:
     ) -> Dict[str, Any]:
         """Evaluate rules conditions and modify price."""
         stmt = select(PricingRule).where(PricingRule.status == "ACTIVE").order_by(desc(PricingRule.priority))
-        rules = (await db.execute(stmt)).scalars().all()
+        rules = list((await db.execute(stmt)).scalars().all())
+
+        if not rules:
+            return {"price": base_price, "applied": []}
+
+        # Load the rule graph in two bounded queries instead of querying
+        # conditions and actions once per active rule.
+        rule_ids = [rule.id for rule in rules]
+        condition_rows = (await db.execute(
+            select(PricingRuleCondition).where(PricingRuleCondition.rule_id.in_(rule_ids))
+        )).scalars().all()
+        action_rows = (await db.execute(
+            select(PricingRuleAction).where(PricingRuleAction.rule_id.in_(rule_ids))
+        )).scalars().all()
+        conditions_by_rule: dict[uuid.UUID, list[PricingRuleCondition]] = {}
+        actions_by_rule: dict[uuid.UUID, list[PricingRuleAction]] = {}
+        for condition in condition_rows:
+            conditions_by_rule.setdefault(condition.rule_id, []).append(condition)
+        for action in action_rows:
+            actions_by_rule.setdefault(action.rule_id, []).append(action)
 
         current_price = base_price
         applied = []
 
         for rule in rules:
             # Check conditions
-            cond_stmt = select(PricingRuleCondition).where(PricingRuleCondition.rule_id == rule.id)
-            conditions = (await db.execute(cond_stmt)).scalars().all()
+            conditions = conditions_by_rule.get(rule.id, [])
 
             match = True
             for cond in conditions:
@@ -130,8 +148,7 @@ class PricingService:
 
             if match and conditions:
                 # Apply action
-                act_stmt = select(PricingRuleAction).where(PricingRuleAction.rule_id == rule.id)
-                actions = (await db.execute(act_stmt)).scalars().all()
+                actions = actions_by_rule.get(rule.id, [])
                 for act in actions:
                     if act.action_type == "PERCENTAGE_DISCOUNT":
                         current_price -= current_price * (float(act.value) / 100.0)

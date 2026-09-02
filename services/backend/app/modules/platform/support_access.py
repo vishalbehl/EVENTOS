@@ -9,7 +9,7 @@ from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant_context import TenantContextGuard
-from app.modules.audit.models.audit_log import AuditLog
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.identity.models.user import User
 from app.modules.platform.models.organization import Organization
 from app.modules.superadmin.dependencies import require_platform_staff
@@ -79,7 +79,7 @@ async def execute_platform_support_read(
     resource_type: str,
     audit_result_limit: int | None = None,
 ) -> list[Any]:
-    """Execute an organization-scoped read and audit it in the same transaction."""
+    """Execute an organization-scoped read and dispatch its audit separately."""
     async with TenantContextGuard.scoped(db, scope.organization_id):
         organization_exists = await db.scalar(
             select(Organization.id).where(Organization.id == scope.organization_id)
@@ -88,8 +88,8 @@ async def execute_platform_support_read(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
 
         rows = (await db.execute(statement)).scalars().all()
-        db.add(
-            AuditLog(
+        await AuditService.write_log(
+            AuditContext(
                 request_id=scope.request_id,
                 correlation_id=scope.correlation_id,
                 organization_id=scope.organization_id,
@@ -108,7 +108,6 @@ async def execute_platform_support_read(
                 is_sensitive=True,
             )
         )
-        await db.commit()
     return list(rows)
 
 

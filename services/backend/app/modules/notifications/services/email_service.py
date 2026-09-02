@@ -8,12 +8,13 @@ from __future__ import annotations
 import re
 import uuid
 import bleach
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
 import resend
 from loguru import logger
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -432,6 +433,64 @@ def build_participant_variables(participant, event: Union[str, object]):
 
 # ── Core send function ────────────────────────────────────────
 
+_EMAIL_CLAIM_LEASE = timedelta(minutes=10)
+
+
+async def claim_campaign_recipient(
+    db: AsyncSession,
+    *,
+    campaign_id: uuid.UUID,
+    event_id: uuid.UUID,
+    to_email: str,
+    subject: str,
+    speaker_id: Optional[uuid.UUID] = None,
+    participant_id: Optional[uuid.UUID] = None,
+) -> Optional[uuid.UUID]:
+    """Claim one campaign recipient before external email delivery.
+
+    The unique index closes concurrent insert races. A recent ``sending`` row
+    belongs to another active worker; an old one is reclaimed after a crash.
+    """
+    now = datetime.now(timezone.utc)
+    existing = await db.scalar(
+        select(EmailLog)
+        .where(EmailLog.campaign_id == campaign_id, EmailLog.to_email == to_email)
+        .with_for_update()
+    )
+    if existing:
+        if existing.status == "sent":
+            return None
+        if existing.status == "sending" and existing.sent_at + _EMAIL_CLAIM_LEASE > now:
+            return None
+        existing.status = "sending"
+        existing.subject = subject
+        existing.speaker_id = speaker_id
+        existing.participant_id = participant_id
+        existing.error_message = None
+        existing.sent_at = now
+        await db.commit()
+        return existing.id
+
+    claim = EmailLog(
+        campaign_id=campaign_id,
+        event_id=event_id,
+        speaker_id=speaker_id,
+        participant_id=participant_id,
+        to_email=to_email,
+        subject=subject,
+        status="sending",
+        sent_at=now,
+        css_inlined=True,
+    )
+    db.add(claim)
+    try:
+        await db.flush()
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return None
+    return claim.id
+
 async def send_email(
     *,
     to_email: str,
@@ -442,6 +501,7 @@ async def send_email(
     participant_id: Optional[uuid.UUID] = None,
     campaign_id: Optional[uuid.UUID] = None,
     event_id: Optional[uuid.UUID] = None,
+    log_id: Optional[uuid.UUID] = None,
     db: Optional[AsyncSession] = None,
 ) -> Optional[str]:
     """
@@ -452,6 +512,13 @@ async def send_email(
     """
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not configured — email send skipped.")
+        if db is not None and log_id is not None:
+            claimed_log = await db.get(EmailLog, log_id)
+            if claimed_log is not None:
+                claimed_log.status = "failed"
+                claimed_log.error_message = "Email provider is not configured."
+                claimed_log.sent_at = datetime.now(timezone.utc)
+                await db.flush()
         return None
 
     event = None
@@ -461,7 +528,7 @@ async def send_email(
         event = await db.scalar(select(Event).where(Event.id == event_id))
 
     # Generate log ID early if we want to track opens
-    log_id = uuid.uuid4()
+    log_id = log_id or uuid.uuid4()
     
     # 2. Append tracking pixel
     if event_id and db:
@@ -545,27 +612,31 @@ async def send_email(
             logger.info(f"Email sent via SMTP to {to_email} | msg_id={provider_message_id}")
     except Exception as exc:
         status = "failed"
-        error_message = str(exc)
-        logger.error(f"Failed to send email via SMTP to {to_email}: {exc}")
+        error_message = f"{type(exc).__name__}: email provider delivery failed"
+        logger.error("Email provider delivery failed: error_type={}", type(exc).__name__)
 
     # Every event email is logged, including system/campaign messages without a
     # speaker or participant foreign key.
     if db is not None and event_id is not None:
-        log = EmailLog(
-            id=log_id,
-            campaign_id=campaign_id,
-            event_id=event_id,
-            speaker_id=speaker_id,
-            participant_id=participant_id,
-            to_email=to_email,
-            subject=subject,
-            status=status,
-            provider_message_id=provider_message_id,
-            error_message=error_message,
-            sent_at=datetime.now(timezone.utc),
-            css_inlined=True,  # Log that this email went through the CSS inlining pipeline
-        )
-        db.add(log)
+        log = await db.get(EmailLog, log_id)
+        if log is None:
+            log = EmailLog(
+                id=log_id,
+                campaign_id=campaign_id,
+                event_id=event_id,
+                speaker_id=speaker_id,
+                participant_id=participant_id,
+                to_email=to_email,
+                subject=subject,
+                sent_at=datetime.now(timezone.utc),
+                css_inlined=True,
+            )
+            db.add(log)
+        log.status = status
+        log.provider_message_id = provider_message_id
+        log.error_message = error_message
+        log.subject = subject
+        log.sent_at = datetime.now(timezone.utc)
         await db.flush()
         if event is not None:
             from app.modules.platform.services.metering_service import MeteringService

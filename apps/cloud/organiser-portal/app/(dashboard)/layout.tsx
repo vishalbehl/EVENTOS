@@ -88,10 +88,7 @@ export default function DashboardLayout({
         }
       } catch (error) {
         if (!controller.signal.aborted) {
-          console.warn(
-            "Global timezone settings are unavailable; using the local default.",
-            error,
-          );
+          // Graceful fallback to default browser timezone when offline or during backend startup
         }
       }
     };

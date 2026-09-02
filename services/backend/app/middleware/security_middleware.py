@@ -5,6 +5,7 @@ from typing import Any, Optional, Tuple
 
 from jose import JWTError, jwt
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.types import ASGIApp
 
@@ -41,6 +42,44 @@ async def record_security_event(
         occurred_at=datetime.now(timezone.utc)
     )
     db.add(event)
+
+
+async def _persist_security_event(
+    *,
+    db,
+    user_id: Optional[uuid.UUID],
+    event_type: str,
+    severity: str,
+    ip_address: Optional[str],
+    user_agent: Optional[str],
+    evidence: dict,
+) -> None:
+    """Persist best-effort telemetry without allowing identity drift to break it."""
+    try:
+        await record_security_event(
+            db=db,
+            user_id=user_id,
+            event_type=event_type,
+            severity=severity,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            evidence=evidence,
+        )
+        await db.commit()
+    except IntegrityError:
+        # JWT identities can outlive a deleted/test user. Keep the anomaly,
+        # but do not violate the FK or make security telemetry noisy.
+        await db.rollback()
+        await record_security_event(
+            db=db,
+            user_id=None,
+            event_type=event_type,
+            severity=severity,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            evidence={**evidence, "unresolved_user_id": str(user_id) if user_id else None},
+        )
+        await db.commit()
 
 # Simple regexes to detect SQL injection patterns in query string/path
 SQLI_PATTERN = re.compile(
@@ -109,7 +148,7 @@ class SecurityMiddleware:
             # Write SQLi Alert
             async with AsyncSessionLocal() as db:
                 try:
-                    await record_security_event(
+                    await _persist_security_event(
                         db=db,
                         user_id=user_id,
                         event_type="SQL_INJECTION_ATTEMPT",
@@ -144,15 +183,15 @@ class SecurityMiddleware:
                         user_agent=request.headers.get("User-Agent"),
                         evidence={"path": path}
                     )
-                    await db.commit()
                 except Exception as e:
+                    await db.rollback()
                     logger.error(f"[SecurityMiddleware] Failed to log failed login: {e}")
 
         # Permission Anomaly (403 Forbidden)
         elif status_code[0] == 403:
             async with AsyncSessionLocal() as db:
                 try:
-                    await record_security_event(
+                    await _persist_security_event(
                         db=db,
                         user_id=user_id,
                         event_type="PERMISSION_VIOLATION",
@@ -161,6 +200,6 @@ class SecurityMiddleware:
                         user_agent=request.headers.get("User-Agent"),
                         evidence={"path": path, "method": method}
                     )
-                    await db.commit()
                 except Exception as e:
+                    await db.rollback()
                     logger.error(f"[SecurityMiddleware] Failed to log 403 anomaly: {e}")

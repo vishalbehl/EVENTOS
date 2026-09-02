@@ -470,7 +470,7 @@ export default function AdminDevicesPage() {
           <Button
             onClick={handleSaveNetworkBinding}
             disabled={isSavingAdapter || !selectedAdapterName}
-            className="h-10 text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-sm"
+            className="h-10 text-xs font-extrabold bg-[var(--pri)] text-[var(--primary-contrast)] hover:opacity-90 gap-1.5 shadow-sm"
             title="Save selected network adapter and bind operational subnet to PostgreSQL database"
           >
             <CheckCircle2 className={cn("w-4 h-4", isSavingAdapter && "animate-spin")} />

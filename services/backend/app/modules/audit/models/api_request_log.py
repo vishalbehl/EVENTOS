@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, Integer, Float, Index
+from sqlalchemy import DateTime, String, Text, Integer, Float, Index
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,10 +13,15 @@ class APIRequestLog(Base):
     High-volume request/response telemetry with distributed tracing.
     """
     __tablename__ = "api_logs"
+    # The audit tables were moved to the command-center schema by the
+    # revised domain-layout migration. Keep the ORM target aligned with the
+    # deployed database so telemetry tasks do not retry indefinitely.
+    __table_args__ = {"schema": "command_center_audit"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     correlation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
     
     # ── Path & Performance ───────────────────────────────
     method: Mapped[str] = mapped_column(String(10), index=True)

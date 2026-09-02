@@ -1,17 +1,182 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
+from pathlib import Path
 from typing import Optional, List
-from fastapi import APIRouter, Query, HTTPException, status, File, UploadFile, Depends
+from fastapi import APIRouter, Query, HTTPException, status, File, UploadFile, Depends, Header
+from pydantic import BaseModel, Field
 from fastapi.responses import RedirectResponse
 
 from app.dependencies import DB, ActiveUser
 from app.modules.files.services.file_service import FileService
 from app.modules.files.schemas.file_schemas import AssetOut, AddTagsRequest, AssetVersionOut
 from app.modules.presentations.services.upload_service import create_presigned_download
+from app.modules.presentations.services.upload_service import create_presigned_upload
+from app.core.upload_service import UploadService
+from app.modules.files.models.file import DurableUpload
+from app.modules.events.models.event import Event
+from sqlalchemy import select
 from app.config import settings
+from app.core.job_status import JobStatus
+from app.core.job_status_service import JobStatusService
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+class UploadSessionRequest(BaseModel):
+    event_id: uuid.UUID | None = None
+    filename: str = Field(min_length=1, max_length=500)
+    mime_type: str = Field(min_length=1, max_length=150)
+    size_bytes: int = Field(gt=0)
+    checksum: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+async def _read_bounded_upload(file: UploadFile, *, maximum_bytes: int) -> bytes:
+    """Read compatibility uploads without allowing unbounded API memory use."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(min(1024 * 1024, maximum_bytes - total + 1))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > maximum_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={
+                    "code": "INLINE_UPLOAD_TOO_LARGE",
+                    "message": "Use a direct upload session for larger files.",
+                    "max_bytes": maximum_bytes,
+                },
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@router.post("/uploads/session", status_code=status.HTTP_201_CREATED)
+async def create_upload_session(
+    payload: UploadSessionRequest,
+    current_user: ActiveUser,
+    db: DB,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    """Create a tenant-bound direct-to-storage upload session."""
+    organization_id = current_user.organization_id
+    if not organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
+    try:
+        idem = None
+        if idempotency_key:
+            idem = await begin_idempotent(
+                db,
+                organization_id=organization_id,
+                actor_id=current_user.id,
+                operation="file_upload.session",
+                key=idempotency_key,
+                payload=payload.model_dump(mode="json"),
+            )
+            replay = replay_response(idem)
+            if replay is not None:
+                await db.commit()
+                return replay[1]
+        if payload.event_id is not None:
+            event = await db.scalar(
+                select(Event).where(
+                    Event.id == payload.event_id,
+                    Event.organization_id == organization_id,
+                )
+            )
+            if event is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+        filename = Path(payload.filename).name
+        if filename != payload.filename:
+            raise HTTPException(status_code=400, detail={"code": "INVALID_FILENAME", "message": "Filename must be a simple file name."})
+        scope = f"event/{payload.event_id}" if payload.event_id else "organization"
+        object_key = f"tenant/{organization_id}/{scope}/uploads/{uuid.uuid4()}/{filename}"
+        row = await UploadService.create(
+            db, organization_id=organization_id, created_by=current_user.id,
+            object_key=object_key, original_filename=filename,
+            mime_type=payload.mime_type, size_bytes=payload.size_bytes,
+            checksum=payload.checksum, event_id=payload.event_id,
+        )
+        upload = await asyncio.to_thread(
+            create_presigned_upload,
+            bucket=settings.S3_BUCKET_ASSETS,
+            storage_path=object_key,
+            content_type=payload.mime_type,
+            max_size_bytes=payload.size_bytes,
+        )
+        await UploadService.transition(db, row.id, "uploading", organization_id=organization_id)
+        response = {"upload_id": str(row.id), **upload}
+        if idem is not None:
+            await complete_idempotent(db, idem, response_status=201, response_body=response, resource_id=row.id)
+        await db.commit()
+        return response
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.get("/uploads/{upload_id}/status", response_model=JobStatus)
+async def upload_status(upload_id: uuid.UUID, current_user: ActiveUser, db: DB) -> JobStatus:
+    """Durable, tenant-scoped status for storage-backed upload processing."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
+    return await JobStatusService.upload(db, upload_id, current_user.organization_id)
+
+
+@router.post("/uploads/{upload_id}/complete", response_model=JobStatus)
+async def complete_upload(
+    upload_id: uuid.UUID,
+    current_user: ActiveUser,
+    db: DB,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> JobStatus:
+    """Confirm storage upload and enqueue one tenant-bound verification task."""
+    organization_id = current_user.organization_id
+    if not organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
+    idem = None
+    if idempotency_key:
+        idem = await begin_idempotent(
+            db,
+            organization_id=organization_id,
+            actor_id=current_user.id,
+            operation="file_upload.complete",
+            key=idempotency_key,
+            payload={"upload_id": str(upload_id)},
+        )
+        replay = replay_response(idem)
+        if replay is not None:
+            return JobStatus.model_validate(replay[1])
+    row = await db.scalar(
+        select(DurableUpload).where(
+            DurableUpload.id == upload_id,
+            DurableUpload.organization_id == organization_id,
+        ).with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
+    if row.status == "uploading":
+        await UploadService.transition(db, upload_id, "uploaded", organization_id=organization_id)
+    elif row.status not in {"uploaded", "verifying", "scanning", "processing", "ready"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "UPLOAD_NOT_COMPLETABLE", "status": row.status})
+    result = await JobStatusService.upload(db, upload_id, organization_id)
+    if idem is not None:
+        await complete_idempotent(
+            db,
+            idem,
+            response_status=200,
+            response_body=result.model_dump(mode="json"),
+            resource_id=upload_id,
+        )
+    await db.commit()
+    if row.status == "uploaded":
+        from app.tasks.upload_jobs import process_durable_upload
+        process_durable_upload.delay(str(upload_id), str(organization_id))
+    return result
 
 @router.post(
     "/upload",
@@ -34,12 +199,11 @@ async def upload_file(
         
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
     
-    file_bytes = await file.read()
-    if len(file_bytes) > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds maximum size limit of {settings.MAX_FILE_SIZE_MB}MB"
-        )
+    inline_limit = min(
+        settings.MAX_FILE_SIZE_MB,
+        settings.INLINE_UPLOAD_MAX_MB,
+    ) * 1024 * 1024
+    file_bytes = await _read_bounded_upload(file, maximum_bytes=inline_limit)
         
     # Standardize restricted file types
     restricted = {
@@ -156,10 +320,11 @@ async def download_file(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found.")
         target_path = found_version.file_path
         
-    presigned_url = create_presigned_download(
+    presigned_url = await asyncio.to_thread(
+        create_presigned_download,
         bucket=settings.S3_BUCKET_ASSETS,
         storage_path=target_path,
-        filename=asset.name
+        filename=asset.name,
     )
     
     # Redirect directly to S3 / local file download endpoint

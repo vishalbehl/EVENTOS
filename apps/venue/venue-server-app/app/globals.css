@@ -90,6 +90,26 @@
 }
 
 @layer components {
+  .btn-pri {
+    background-color: var(--pri);
+    color: var(--primary-contrast);
+    font-weight: 700;
+    transition: opacity 150ms ease;
+  }
+  .btn-pri:hover {
+    opacity: 0.92;
+  }
+  .tab-active {
+    background-color: var(--pri) !important;
+    color: var(--primary-contrast) !important;
+    font-weight: 800 !important;
+  }
+  .sidebar-link-active {
+    background-color: var(--pri) !important;
+    color: var(--primary-contrast) !important;
+    font-weight: 800 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
   .venue-page { @apply mx-auto flex w-full max-w-[1680px] flex-col gap-4 pb-8; }
   .venue-page-header { @apply flex min-h-20 items-end justify-between gap-6 border-b border-[var(--border)] pb-4; }
   .venue-page-header h1 { @apply text-3xl font-black leading-tight text-[var(--text)]; letter-spacing: 0; }

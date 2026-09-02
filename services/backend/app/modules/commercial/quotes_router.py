@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import uuid
@@ -15,6 +16,7 @@ from app.core.tenant_context import TenantContextGuard
 from app.dependencies import OrganizerOrAbove, StepUpAuth, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.audit.models.audit_domain_tables import DataExport
+from app.modules.audit.services.audit_service import AuditContext, AuditService
 from app.modules.commercial.models import (
     CommercialQuote,
     CommercialQuoteRevision,
@@ -45,6 +47,7 @@ from app.modules.commercial.quote_schemas import (
     QuoteTotalsOut,
     QuoteUpdate,
 )
+from app.modules.commercial.application.queries import QuoteQueryService
 from app.modules.commercial.quote_service import (
     add_revision,
     apply_quote_payload,
@@ -55,6 +58,7 @@ from app.modules.commercial.quote_service import (
     quote_snapshot,
     validity_deadline,
 )
+from app.modules.platform.application.governed_mutation_commands import commit_transaction
 from app.modules.events.models.event import Event
 from app.modules.platform.models.organization import Organization
 from app.modules.identity.models.user import User
@@ -312,20 +316,13 @@ async def list_quotes(
 ) -> list[CommercialQuote]:
     target_org = _target_org(current_user, organization_id)
     async with TenantContextGuard.scoped(db, target_org):
-        query = (
-            select(CommercialQuote)
-            .options(selectinload(CommercialQuote.line_items))
-            .where(CommercialQuote.organization_id == target_org)
-            .order_by(CommercialQuote.created_at.desc())
-            .limit(limit)
+        return await QuoteQueryService(db).list_page(
+            organization_id=target_org,
+            event_id=event_id,
+            request_id=request_id,
+            quote_status=quote_status,
+            limit=limit,
         )
-        if event_id:
-            query = query.where(CommercialQuote.event_id == event_id)
-        if request_id:
-            query = query.where(CommercialQuote.service_request_id == request_id)
-        if quote_status:
-            query = query.where(CommercialQuote.status == quote_status.upper())
-        return list((await db.scalars(query)).unique().all())
 
 
 @router.post("/quotes", response_model=QuoteOut, status_code=status.HTTP_201_CREATED)
@@ -374,7 +371,7 @@ async def create_quote(
         await db.flush()
         add_revision(db, quote, current_user.id, "Initial quote creation")
         db.add(_audit(quote, current_user, "QUOTE_CREATED"))
-        await db.commit()
+        await commit_transaction(db)
         return await load_quote(db, quote.id, target_org)
 
 
@@ -423,7 +420,7 @@ async def update_quote(
         await db.flush()
         add_revision(db, quote, current_user.id, payload.reason)
         db.add(_audit(quote, current_user, "QUOTE_UPDATED", old_state, payload.reason))
-        await db.commit()
+        await commit_transaction(db)
         return await load_quote(db, quote.id, target_org)
 
 
@@ -531,7 +528,7 @@ async def submit_quote_for_approval(
         db.add(workflow)
         await db.flush()
         db.add(_approval_audit(quote, workflow, current_user, "QUOTE_APPROVAL_SUBMITTED", payload.reason))
-        await db.commit()
+        await commit_transaction(db)
         return await _load_approval(db, quote_id, target_org)
 
 
@@ -608,7 +605,7 @@ async def decide_quote_approval_step(
             "QUOTE_APPROVED" if payload.action == "APPROVE" else "QUOTE_REJECTED",
             payload.reason,
         ))
-        await db.commit()
+        await commit_transaction(db)
         return await _load_approval(db, quote_id, target_org)
 
 
@@ -688,7 +685,7 @@ async def convert_quote_to_proposal(
             },
             change_diff={"reason": payload.reason},
         ))
-        await db.commit()
+        await commit_transaction(db)
         return await _load_proposal(db, proposal.id, target_org)
 
 
@@ -790,7 +787,7 @@ async def request_proposal_document(
             new_state={"proposal_id": str(proposal.id), "proposal_version": version.version, "status": "QUEUED"},
             change_diff={"reason": payload.reason},
         ))
-        await db.commit()
+        await commit_transaction(db)
         try:
             celery_app.send_task(
                 "workers.tasks.report_tasks.generate_quote_proposal_pdf",
@@ -815,7 +812,7 @@ async def request_proposal_document(
                 new_state={"proposal_id": str(proposal.id), "status": "FAILED"},
                 is_sensitive=True,
             ))
-            await db.commit()
+            await commit_transaction(db)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "DOCUMENT_DISPATCH_FAILED", "export_id": str(export.id)},
@@ -911,14 +908,14 @@ async def download_proposal_document(
         if export.expires_at and export.expires_at <= now:
             raise HTTPException(status_code=410, detail={"code": "EXPORT_EXPIRED"})
         filename = f"{proposal.proposal_number or proposal.id}_v{export.source_version}.pdf"
-        url = create_presigned_download(
+        expiry = min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300)
+        url = await asyncio.to_thread(create_presigned_download,
             bucket=settings.S3_BUCKET_EXPORTS,
             storage_path=export.storage_key,
             filename=filename,
-            expiry_seconds=min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300),
+            expiry_seconds=expiry,
         )
-        export.downloaded_at = now
-        db.add(AuditLog(
+        await AuditService.write_log(AuditContext(
             organization_id=target_org,
             actor_user_id=current_user.id,
             resource_type="data_export",
@@ -926,9 +923,9 @@ async def download_proposal_document(
             action_type="PROPOSAL_PDF_DOWNLOADED",
             actor_role=getattr(current_user, "platform_role", None) or current_user.role,
             new_state={"proposal_id": str(proposal.id), "downloaded_at": now.isoformat()},
+            is_sensitive=True,
         ))
-        await db.commit()
-        return {"download_url": url, "expires_in": min(settings.S3_PRESIGNED_EXPIRY_SECONDS, 300), "filename": filename}
+        return {"download_url": url, "expires_in": expiry, "filename": filename}
 
 
 @router.post("/proposals/{proposal_id}/shares", response_model=ProposalShareCreated, status_code=status.HTTP_201_CREATED)
@@ -992,7 +989,7 @@ async def create_proposal_share(
             change_diff={"reason": payload.reason},
             is_sensitive=True,
         ))
-        await db.commit()
+        await commit_transaction(db)
         return {**_share_payload(share), "token": token}
 
 
@@ -1083,7 +1080,7 @@ async def revoke_proposal_share(
             change_diff={"reason": payload.reason},
             is_sensitive=True,
         ))
-        await db.commit()
+        await commit_transaction(db)
         return _share_payload(share)
 
 
@@ -1123,7 +1120,7 @@ async def view_public_proposal(
             user_agent=user_agent,
             occurred_at=now,
         ))
-        await db.commit()
+        await commit_transaction(db)
         return {
             "proposal_id": proposal.id,
             "proposal_number": proposal.proposal_number,
@@ -1212,5 +1209,5 @@ async def decide_public_proposal(
             change_diff={"reason": payload.reason},
             is_sensitive=True,
         ))
-        await db.commit()
+        await commit_transaction(db)
         return {"proposal_id": proposal.id, "proposal_version": proposal_version, "decision": share.decision, "signer_name": share.signer_name, "decided_at": share.decided_at}

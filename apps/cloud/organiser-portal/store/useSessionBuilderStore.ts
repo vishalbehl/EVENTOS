@@ -61,14 +61,11 @@ export interface BuilderRoom {
   id: string;
   event_id: string;
   name: string;
-  capacity?: number;
-  screen_count: number;
+  code?: string;
   room_type: string;
+  room_type_id?: string;
   room_coordinator?: string;
-  av_technician?: string;
-  location_notes?: string;
   is_active: boolean;
-  sort_order?: number;
   sessions_count?: number;
 }
 
@@ -533,20 +530,6 @@ export const useSessionBuilderStore = create<SessionBuilderState>((set, get) => 
              description: `Total talk time (${totalTalkMins}m) exceeds session duration (${sessionMins}m)`,
              severity: 'warning'
           });
-       }
-
-       // Capacity mismatch
-       if (s.room_id) {
-          const room = rooms.find(r => r.id === s.room_id);
-          if (room && room.capacity && s.registered_attendees && s.registered_attendees > room.capacity) {
-             conflicts.push({
-                type: 'capacity_mismatch',
-                session_ids: [s.id],
-                room_id: s.room_id,
-                description: `Registered attendees (${s.registered_attendees}) exceeds room capacity (${room.capacity})`,
-                severity: 'warning'
-             });
-          }
        }
 
        // Unassigned moderator

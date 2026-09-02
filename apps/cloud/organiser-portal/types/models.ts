@@ -137,11 +137,10 @@ export interface Room {
   id: string;
   event_id: string;
   name: string;
-  capacity: number | null;
-  screen_count: number;
-  room_type: RoomType;
-  av_technician: string | null;
-  location_notes: string | null;
+  code?: string | null;
+  room_type: string;
+  room_type_id?: string | null;
+  room_coordinator?: string | null;
   is_active: boolean;
   created_at: string;
 }

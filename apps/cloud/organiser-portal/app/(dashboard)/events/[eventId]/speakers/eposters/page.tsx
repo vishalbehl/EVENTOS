@@ -85,7 +85,7 @@ export default function EPostersPage() {
     [rooms]
   );
   const totalScreens = useMemo(
-    () => eposterRooms.reduce((sum, r) => sum + (r.screen_count || 1), 0),
+    () => eposterRooms.length,
     [eposterRooms]
   );
 

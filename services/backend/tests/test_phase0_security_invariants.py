@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import uuid
 from datetime import date
 
@@ -22,10 +23,13 @@ BACKEND_APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 
 
 def test_runtime_code_contains_no_schema_ddl() -> None:
+    # Match executable SQL DDL, not ordinary words such as permission labels
+    # (for example, "CREATE" in "EVENTS:CREATE").
+    ddl_pattern = re.compile(r"(?im)\b(?:ALTER|CREATE|DROP)\s+TABLE\b")
     violations = []
     for path in BACKEND_APP.rglob("*.py"):
         source = path.read_text(encoding="utf-8")
-        if any(statement in source.upper() for statement in ("ALTER TABLE", "CREATE TABLE", "DROP TABLE")):
+        if ddl_pattern.search(source):
             violations.append(str(path.relative_to(BACKEND_APP)))
     assert violations == []
 

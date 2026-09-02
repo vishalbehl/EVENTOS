@@ -15,6 +15,8 @@ _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class TenantCacheKey:
+    PREFIX = "cache:v1:tenant"
+
     @staticmethod
     def build(*segments: object, organization_id: uuid.UUID | None = None) -> str:
         org_id = organization_id or tenant_org_id.get()
@@ -23,7 +25,7 @@ class TenantCacheKey:
         normalized = [_normalize_segment(segment) for segment in segments]
         if not normalized:
             raise TenantCacheKeyError("At least one cache-key segment is required.")
-        return ":".join(("tenant", str(org_id), *normalized))
+        return ":".join((TenantCacheKey.PREFIX, str(org_id), *normalized))
 
     @staticmethod
     def event(
@@ -60,6 +62,64 @@ class TenantCacheKey:
     def api_usage_metadata(organization_id: uuid.UUID, fingerprint: str) -> str:
         return TenantCacheKey.build(
             "api-usage", "metadata", fingerprint, organization_id=organization_id
+        )
+
+    @staticmethod
+    def event_roles(event_id: uuid.UUID, organization_id: uuid.UUID) -> str:
+        return TenantCacheKey.event(event_id, "registration-roles-v1", organization_id=organization_id)
+
+    @staticmethod
+    def event_prices(event_id: uuid.UUID, tier: str, organization_id: uuid.UUID) -> str:
+        tier_segment = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(tier).strip()).strip("-") or "default"
+        return TenantCacheKey.event(event_id, "registration-prices-v1", tier_segment, organization_id=organization_id)
+
+    @staticmethod
+    def dashboard(event_id: uuid.UUID, revision: str, organization_id: uuid.UUID) -> str:
+        return TenantCacheKey.event(
+            event_id,
+            "dashboard-v1",
+            revision,
+            organization_id=organization_id,
+        )
+
+    @staticmethod
+    def capabilities(event_id: uuid.UUID, revision: str, organization_id: uuid.UUID) -> str:
+        return TenantCacheKey.event(
+            event_id,
+            "capabilities-v1",
+            revision,
+            organization_id=organization_id,
+        )
+
+    @staticmethod
+    def search(query_hash: str, organization_id: uuid.UUID) -> str:
+        return TenantCacheKey.build(
+            "search-v1",
+            query_hash,
+            organization_id=organization_id,
+        )
+
+    @staticmethod
+    def identity(
+        *segments: object,
+        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
+        role: str,
+        capability_revision: str,
+        locale: str = "en",
+    ) -> str:
+        """Build a cache key for data whose result depends on the viewer."""
+        if not isinstance(user_id, uuid.UUID):
+            raise TenantCacheKeyError("Identity cache keys require a user UUID.")
+        if not role.strip() or not capability_revision.strip() or not locale.strip():
+            raise TenantCacheKeyError("Identity cache dimensions must be non-empty.")
+        return TenantCacheKey.build(
+            *segments,
+            "user", user_id,
+            "role", role,
+            "capabilities", capability_revision,
+            "locale", locale,
+            organization_id=organization_id,
         )
 
 

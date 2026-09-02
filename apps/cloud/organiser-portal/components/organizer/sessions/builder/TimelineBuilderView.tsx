@@ -98,7 +98,7 @@ export function TimelineBuilderView() {
                   </div>
                   <div className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1.5 mt-0.5">
                     <span>{room.room_type}</span>
-                    {room.capacity && <span>• {room.capacity} seats</span>}
+                    {room.code && <span className="font-mono font-bold">• {room.code}</span>}
                   </div>
                 </div>
 

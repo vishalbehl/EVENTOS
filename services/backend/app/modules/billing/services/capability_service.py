@@ -5,12 +5,14 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+import asyncio
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing.capability_registry import CATALOG_LIMIT_KEYS, FEATURE_DEFINITIONS, LIMIT_DEFINITIONS, OPERATION_PERMISSIONS
 from app.modules.billing.services.capability_cache_service import CapabilityCacheService
+from app.core.cache import cache_service
 from app.modules.billing.services.entitlement_resolver import EntitlementResolver
 from app.modules.billing.services.event_entitlement_service import EventEntitlementService
 from app.modules.billing.services.platform_flag_service import PlatformFlagService
@@ -142,17 +144,40 @@ class CapabilityService:
         organization_id: uuid.UUID,
         event_id: uuid.UUID,
         *,
+        event: Event | None = None,
+        revision_token: str | None = None,
         user_id: uuid.UUID | None = None,
         environment: str = "ALL",
+        include_usage: bool = True,
     ) -> dict[str, Any]:
+        cache_variant = "full" if include_usage else "features"
         cache_revision, cached = await CapabilityCacheService.get(
-            db, organization_id, event_id, environment, user_id
+            db, organization_id, event_id, environment, user_id, cache_variant,
+            revision=revision_token,
         )
         if cached is not None:
             return cached
+        lock_name = f"lock:capabilities:{cache_variant}:{organization_id}:{event_id or 'organization'}:{environment}:{user_id or 'global'}:{cache_revision}"
+        lock_token, lock_backend_available = await cache_service.acquire_lock_status(
+            lock_name,
+            ttl_seconds=max(15, CapabilityCacheService.ttl_seconds()),
+        )
+        if lock_backend_available and lock_token is None:
+            # Capability resolution is a relatively expensive read fan-out.
+            # Let one request populate the revision-keyed value while peers
+            # wait briefly and recheck, avoiding a cold-cache query storm.
+            for _ in range(30):
+                await asyncio.sleep(0.2)
+                _, cached = await CapabilityCacheService.get(
+                    db, organization_id, event_id, environment, user_id, cache_variant,
+                    revision=revision_token,
+                )
+                if cached is not None:
+                    return cached
         now = datetime.now(timezone.utc)
         organization = await db.get(Organization, organization_id)
-        event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == organization_id))
+        if event is None:
+            event = await db.scalar(select(Event).where(Event.id == event_id, Event.organization_id == organization_id))
         if not organization or not event:
             raise LookupError("Event does not belong to the selected organization")
         internal_unrestricted = organization.has_unrestricted_capabilities
@@ -338,26 +363,30 @@ class CapabilityService:
             limit_row = resolved.get("limits", {}).get(key, {})
             allowed = limit_row.get("limit_value")
             metric = definition.get("metric_key", key)
-            if key in UsageService.METRIC_STRATEGIES:
-                used = await UsageService.get_effective_event_metric(db, event_id, key)
-            else:
-                usage_filters = [UsageLedgerEntry.organization_id == organization_id, UsageLedgerEntry.metric_key == metric]
-                if definition.get("scope") != "ORGANIZATION":
-                    usage_filters.append(UsageLedgerEntry.event_id == event_id)
+            if include_usage:
+                if key in UsageService.METRIC_STRATEGIES:
+                    used = await UsageService.get_effective_event_metric(db, event_id, key)
                 else:
-                    usage_filters.append(UsageLedgerEntry.event_id.is_(None))
-                if definition.get("period") == "BILLING_PERIOD":
-                    usage_filters.extend((UsageLedgerEntry.period_start <= now, UsageLedgerEntry.period_end > now))
-                used = int(await db.scalar(select(func.coalesce(func.sum(UsageLedgerEntry.quantity), 0)).where(*usage_filters)) or 0)
-            reservation_filters = [
-                UsageReservation.organization_id == organization_id,
-                UsageReservation.metric_key == key,
-                UsageReservation.status == "RESERVED",
-                UsageReservation.expires_at > now,
-            ]
-            if definition.get("scope") != "ORGANIZATION":
-                reservation_filters.append(UsageReservation.event_id == event_id)
-            reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
+                    usage_filters = [UsageLedgerEntry.organization_id == organization_id, UsageLedgerEntry.metric_key == metric]
+                    if definition.get("scope") != "ORGANIZATION":
+                        usage_filters.append(UsageLedgerEntry.event_id == event_id)
+                    else:
+                        usage_filters.append(UsageLedgerEntry.event_id.is_(None))
+                    if definition.get("period") == "BILLING_PERIOD":
+                        usage_filters.extend((UsageLedgerEntry.period_start <= now, UsageLedgerEntry.period_end > now))
+                    used = int(await db.scalar(select(func.coalesce(func.sum(UsageLedgerEntry.quantity), 0)).where(*usage_filters)) or 0)
+                reservation_filters = [
+                    UsageReservation.organization_id == organization_id,
+                    UsageReservation.metric_key == key,
+                    UsageReservation.status == "RESERVED",
+                    UsageReservation.expires_at > now,
+                ]
+                if definition.get("scope") != "ORGANIZATION":
+                    reservation_filters.append(UsageReservation.event_id == event_id)
+                reserved = int(await db.scalar(select(func.coalesce(func.sum(UsageReservation.quantity), 0)).where(*reservation_filters)) or 0)
+            else:
+                used = 0
+                reserved = 0
             remaining = None if allowed is None else max(int(allowed) - used - reserved, 0)
             enforcement_mode = str(limit_row.get("enforcement_mode") or "HARD").upper()
             limits[key] = {
@@ -423,8 +452,10 @@ class CapabilityService:
         }
         if not CapabilityCacheService.has_pending_changes(db):
             await CapabilityCacheService.put(
-                organization_id, event_id, cache_revision, environment, user_id, result
+                organization_id, event_id, cache_revision, environment, user_id, result, cache_variant
             )
+        if lock_token is not None:
+            await cache_service.release_lock(lock_name, lock_token)
         return result
 
     @staticmethod

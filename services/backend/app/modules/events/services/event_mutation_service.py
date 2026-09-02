@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies.feature_gate import enforce_event_operation
+from app.core.concurrency import raise_version_conflict
 from app.modules.billing.services.usage_reservation_service import (
     UsageReservationService,
 )
@@ -55,6 +56,12 @@ class EventMutationService:
             created_by=actor_user_id,
             **payload.model_dump_for_db(),
         )
+        # The unified portal relationship may be initialized by Event.__init__;
+        # reapply nested command settings explicitly so requested mode flags win
+        # over relationship defaults.
+        event.speaker_settings = payload.speaker_settings.model_dump()
+        event.registration_settings = payload.registration_settings.model_dump()
+        event.branding_settings = payload.branding_settings.model_dump()
         from app.modules.registration.models.portal_theme_setting import (
             PortalThemeSetting,
         )
@@ -96,6 +103,7 @@ class EventMutationService:
         event: Event,
         payload: EventUpdate,
         actor_user_id: uuid.UUID,
+        expected_version: int | None = None,
     ) -> tuple[Event, dict[str, Any], list[str]]:
         await enforce_event_operation(
             db,
@@ -104,6 +112,24 @@ class EventMutationService:
             "events.planning.manage",
             user_id=actor_user_id,
         )
+
+        if expected_version is not None:
+            # Serialize only protected concurrent edits. The route's event
+            # dependency may have loaded a stale snapshot before this command.
+            event = await db.scalar(
+                select(Event)
+                .where(
+                    Event.id == event.id,
+                    Event.organization_id == event.organization_id,
+                )
+                # The event has an optional eagerly-loaded theme relationship;
+                # lock only the authoritative event row, not the outer-joined
+                # nullable side of that relationship.
+                .with_for_update(of=Event)
+            ) or event
+        current_version = int(event.version or 1)
+        if expected_version is not None and current_version != expected_version:
+            raise_version_conflict(current_version)
 
         if payload.short_code and payload.short_code != event.short_code:
             existing = await db.scalar(
@@ -186,6 +212,8 @@ class EventMutationService:
         }
         for field, value in update_data.items():
             setattr(event, field, value)
+
+        event.version = current_version + 1
 
         if not event.speaker_mode_enabled and not event.registration_mode_enabled:
             raise HTTPException(

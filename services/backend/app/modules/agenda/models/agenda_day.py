@@ -37,6 +37,7 @@ class AgendaDay(Base):
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="DRAFT")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

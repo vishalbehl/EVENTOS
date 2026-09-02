@@ -264,7 +264,7 @@ async def test_developer_rate_limiting(client: AsyncClient, organizer: User, eve
     from app.core.cache_keys import TenantCacheKey
 
     # Clear Redis rate limit keys to start clean
-    min_key_pattern = f"tenant:{organizer.organization_id}:rate-limit:developer:minute:*"
+    min_key_pattern = f"cache:v1:tenant:{organizer.organization_id}:rate-limit:developer:minute:*"
     keys = await redis_client.keys(min_key_pattern)
     for k in keys:
         await redis_client.delete(k)
@@ -292,3 +292,14 @@ async def test_developer_rate_limiting(client: AsyncClient, organizer: User, eve
     resp3 = await client.get("/developer/service-identity", headers={"X-API-Key": plaintext_key})
     assert resp3.status_code == 429
     assert resp3.json()["detail"] == "Rate limit exceeded. Too many requests."
+def test_standard_service_facades_expose_idempotency_and_concurrency_contracts():
+    from app.core.concurrency import ConcurrencyService
+    from app.core.idempotency_service import IdempotencyService
+
+    assert callable(IdempotencyService.begin)
+    assert callable(IdempotencyService.complete)
+    assert callable(IdempotencyService.replay)
+    assert callable(IdempotencyService.purge_expired)
+    assert callable(ConcurrencyService.require_if_match)
+    assert callable(ConcurrencyService.raise_conflict)
+    assert callable(ConcurrencyService.update)

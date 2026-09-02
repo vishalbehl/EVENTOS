@@ -32,6 +32,9 @@
       ],
       "@eventos/email-builder-studio": [
         "../../../packages/email-builder-studio/src/index.ts"
+      ],
+      "@eventos/form-builder-studio": [
+        "../../../packages/form-builder-studio/src/index.ts"
       ]
     }
   },

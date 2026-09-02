@@ -1,0 +1,14 @@
+{
+    admin off
+    auto_https disable_redirects
+}
+
+https://localhost {
+    tls internal
+    encode gzip
+    reverse_proxy backend:8000
+}
+
+http://localhost {
+    redir https://localhost:8443{uri} 308
+}

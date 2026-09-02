@@ -42,3 +42,4 @@ class ParticipantRegistrationResponse(BaseModel):
     waitlist_position: Optional[int] = None
     rejection_reason: Optional[str] = None
     approval_source: str
+    version: int = 1

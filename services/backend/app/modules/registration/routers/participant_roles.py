@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, get_current_user, CurrentEvent
@@ -16,14 +16,28 @@ from app.modules.registration.models.participant_role import ParticipantRole
 from app.schemas.common import MessageResponse
 from app.core.dependencies.feature_gate import enforce_event_operation, require_event_operation
 from app.modules.billing.services.usage_reservation_service import UsageReservationService
+from app.core.cache import delete, delete_pattern
+from app.core.cache_keys import TenantCacheKey
+from app.core.idempotency_service import begin_idempotent, complete_idempotent, replay_response
+from app.modules.registration.application.role_commands import ParticipantRoleCommandService
+from app.modules.registration.application.queries import ParticipantRoleQueryService
 
 router = APIRouter(prefix="/events/{event_id}/registration/roles", tags=["participant-roles"])
+
+
+async def _invalidate_role_cache(event: CurrentEvent) -> None:
+    await delete(TenantCacheKey.event_roles(event.id, event.organization_id))
+    # All event caches share the canonical versioned namespace. This also
+    # invalidates form/pricing/dashboard projections after a role mutation.
+    await delete_pattern(f"cache:v1:tenant:{event.organization_id}:event:{event.id}:*")
 
 
 # ── All roles with their categories ──────────────────────────────────────────
 
 ALL_ROLES: list[dict] = [
     # General Attendees
+    {"category": "General Attendees", "name": "Free Pass",              "is_default": True,  "sort_order": 1},
+    {"category": "General Attendees", "name": "Complimentary Pass",     "is_default": True,  "sort_order": 2},
     {"category": "General Attendees", "name": "Delegate",               "is_default": True,  "sort_order": 3},
     {"category": "General Attendees", "name": "Student Delegate",       "is_default": True,  "sort_order": 4},
     {"category": "General Attendees", "name": "Faculty Delegate",       "is_default": False, "sort_order": 5},
@@ -81,6 +95,8 @@ ALL_ROLES: list[dict] = [
 ]
 
 ROLE_CODE_OVERRIDES = {
+    "Free Pass": "FRE",
+    "Complimentary Pass": "COM",
     "Delegate": "DEL",
     "Student Delegate": "STU",
     "Faculty Delegate": "FAC",
@@ -114,7 +130,7 @@ async def seed_default_roles(
     *,
     commit: bool = True,
 ) -> None:
-    """Seed only default platform roles for a newly created event."""
+    """Seed default roles for explicit event setup, never for a read request."""
     for r in ALL_ROLES:
         if r["is_default"]:
             db.add(ParticipantRole(
@@ -181,24 +197,7 @@ async def list_roles(
         "registration.ticket_types.read",
         user_id=current_user.id,
     )
-    result = await db.execute(
-        select(ParticipantRole)
-        .where(ParticipantRole.event_id == event.id)
-        .order_by(ParticipantRole.sort_order, ParticipantRole.name)
-    )
-    roles = result.scalars().all()
-
-    # Auto-seed default platform roles if an event has no roles configured yet
-    if not roles:
-        await seed_default_roles(event.id, db, commit=True)
-        result = await db.execute(
-            select(ParticipantRole)
-            .where(ParticipantRole.event_id == event.id)
-            .order_by(ParticipantRole.sort_order, ParticipantRole.name)
-        )
-        roles = result.scalars().all()
-
-    return roles
+    return await ParticipantRoleQueryService(db).list_for_event(event_id=event.id)
 
 
 
@@ -217,62 +216,41 @@ async def add_role(
         "registration.ticket_types.manage",
         user_id=actor.id,
     )
-    reservation = await UsageReservationService.reserve(
+    role = await ParticipantRoleCommandService.create(
         db,
         organization_id=event.organization_id,
         event_id=event.id,
-        limit_key="max_ticket_categories",
-        quantity=1,
-        unit="ticket_category",
-        idempotency_key=f"participant-role-create:{idempotency_key}",
-        metadata={"name": payload.name, "category": payload.category},
-    )
-
-    role = ParticipantRole(
-        event_id=event.id,
+        actor_id=actor.id,
         category=payload.category,
         name=payload.name,
-        role_code=(payload.role_code or make_role_code(payload.name)).strip().upper()[:10],
+        role_code=payload.role_code or make_role_code(payload.name),
         is_active=payload.is_active,
-        is_default=False,
         sort_order=payload.sort_order,
+        idempotency_key=idempotency_key,
     )
-    db.add(role)
-    await db.flush()
-    await UsageReservationService.consume(
-        db,
-        reservation.id,
-        source="organizer_portal.registration.participant_roles.create",
-        actor_user_id=actor.id,
-    )
-    await db.commit()
-    await db.refresh(role)
-    return role
+    return ParticipantRoleOut.model_validate(role)
 
 
 @router.patch("/bulk-toggle", response_model=MessageResponse, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def bulk_toggle_roles(
     payload: BulkRoleToggle,
     event: CurrentEvent,
+    actor: Optional[User] = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Enable or disable multiple roles at once."""
-    for update in payload.updates:
-        role_id = uuid.UUID(update["id"])
-        is_active = bool(update.get("is_active", True))
-        result = await db.execute(
-            select(ParticipantRole).where(
-                ParticipantRole.id == role_id,
-                ParticipantRole.event_id == event.id,
-            )
-        )
-        role = result.scalar_one_or_none()
-        if role:
-            role.is_active = is_active
-            if "role_code" in update and update["role_code"]:
-                role.role_code = str(update["role_code"]).strip().upper()[:10]
-    await db.commit()
-    return MessageResponse(message="Roles updated successfully.")
+    if actor is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+    response = await ParticipantRoleCommandService.bulk_toggle(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        actor_id=actor.id,
+        updates=payload.updates,
+        idempotency_key=idempotency_key,
+    )
+    return MessageResponse(**response)
 
 
 @router.patch("/{role_id}", response_model=ParticipantRoleOut, dependencies=[require_event_operation("registration.ticket_types.manage")])
@@ -280,47 +258,41 @@ async def update_role(
     role_id: uuid.UUID,
     payload: UpdateRolePayload,
     event: CurrentEvent,
+    actor: Optional[User] = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> ParticipantRoleOut:
-    result = await db.execute(
-        select(ParticipantRole).where(
-            ParticipantRole.id == role_id,
-            ParticipantRole.event_id == event.id,
-        )
+    if actor is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+    return await ParticipantRoleCommandService.update(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        role_id=role_id,
+        actor_id=actor.id,
+        role_code=payload.role_code,
+        is_active=payload.is_active,
+        idempotency_key=idempotency_key,
     )
-    role = result.scalar_one_or_none()
-    if not role:
-        raise HTTPException(status_code=404, detail="Role not found.")
-
-    if payload.role_code is not None:
-        code = payload.role_code.strip().upper()
-        if len(code) < 2:
-            raise HTTPException(status_code=400, detail="Role code must be at least 2 characters.")
-        role.role_code = code[:10]
-    if payload.is_active is not None:
-        role.is_active = payload.is_active
-
-    await db.commit()
-    await db.refresh(role)
-    return role
 
 
 @router.delete("/{role_id}", response_model=MessageResponse, dependencies=[require_event_operation("registration.ticket_types.manage")])
 async def delete_role(
     role_id: uuid.UUID,
     event: CurrentEvent,
+    actor: Optional[User] = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Delete a custom participant role (platform defaults cannot be deleted)."""
-    result = await db.execute(
-        select(ParticipantRole).where(
-            ParticipantRole.id == role_id,
-            ParticipantRole.event_id == event.id
-        )
+    if actor is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+    result = await ParticipantRoleCommandService.delete(
+        db,
+        organization_id=event.organization_id,
+        event_id=event.id,
+        role_id=role_id,
+        actor_id=actor.id,
+        idempotency_key=idempotency_key,
     )
-    role = result.scalar_one_or_none()
-    if not role:
-        raise HTTPException(status_code=404, detail="Role not found.")
-    await db.delete(role)
-    await db.commit()
-    return MessageResponse(message="Role deleted.")
+    return MessageResponse(**result)

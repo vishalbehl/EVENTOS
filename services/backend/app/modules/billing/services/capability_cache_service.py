@@ -10,7 +10,6 @@ database revision vector.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import uuid
@@ -24,6 +23,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import event as sqlalchemy_event
 
 from app.core.cache_keys import TenantCacheKey
+from app.core.cache import cache_service
+from app.core.cache_policy import CacheTTL, ttl
 from app.modules.platform.models.organization_console import CapabilityRevision
 
 
@@ -134,7 +135,37 @@ def register_capability_revision_listeners() -> None:
 
 
 class CapabilityCacheService:
-    TTL_SECONDS = 300
+    # Compatibility default; callers should use ttl_seconds() so operators
+    # can tune the named capability policy without rebuilding the image.
+    TTL_SECONDS = 60
+
+    @staticmethod
+    def ttl_seconds() -> int:
+        return ttl(CacheTTL.CAPABILITIES)
+
+    @staticmethod
+    def revision_token_from_values(
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        *,
+        global_revision: int = 0,
+        organization_revision: int = 0,
+        event_revision: int = 0,
+    ) -> str:
+        """Build the same revision token from values already loaded by a query."""
+        requested = [("GLOBAL", GLOBAL_SCOPE_ID), ("ORGANIZATION", organization_id)]
+        if event_id:
+            requested.append(("EVENT", event_id))
+        revisions = {
+            ("GLOBAL", GLOBAL_SCOPE_ID): global_revision,
+            ("ORGANIZATION", organization_id): organization_revision,
+            ("EVENT", event_id): event_revision,
+        }
+        material = [
+            (scope_type, str(scope_id), int(revisions.get((scope_type, scope_id), 0)))
+            for scope_type, scope_id in requested
+        ]
+        return hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()[:24]
 
     @staticmethod
     def has_pending_changes(db: AsyncSession) -> bool:
@@ -155,29 +186,37 @@ class CapabilityCacheService:
         return hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()[:24]
 
     @staticmethod
-    def _key(organization_id: uuid.UUID, event_id: uuid.UUID | None, revision: str, environment: str, user_id: uuid.UUID | None) -> str:
+    def _key(
+        organization_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        revision: str,
+        environment: str,
+        user_id: uuid.UUID | None,
+        variant: str = "full",
+    ) -> str:
         subject = str(user_id or GLOBAL_SCOPE_ID)
         if event_id:
-            return TenantCacheKey.event(event_id, "capabilities", environment.lower(), subject, revision, organization_id=organization_id)
-        return TenantCacheKey.build("capabilities", "organization", environment.lower(), subject, revision, organization_id=organization_id)
+            return TenantCacheKey.event(event_id, "capabilities", variant, environment.lower(), subject, revision, organization_id=organization_id)
+        return TenantCacheKey.build("capabilities", "organization", variant, environment.lower(), subject, revision, organization_id=organization_id)
 
     @staticmethod
-    async def get(db: AsyncSession, organization_id: uuid.UUID, event_id: uuid.UUID | None, environment: str, user_id: uuid.UUID | None) -> tuple[str, dict[str, Any] | None]:
-        revision = await CapabilityCacheService.revision_token(db, organization_id, event_id)
+    async def get(db: AsyncSession, organization_id: uuid.UUID, event_id: uuid.UUID | None, environment: str, user_id: uuid.UUID | None, variant: str = "full", revision: str | None = None) -> tuple[str, dict[str, Any] | None]:
+        revision = revision or await CapabilityCacheService.revision_token(db, organization_id, event_id)
         if CapabilityCacheService.has_pending_changes(db):
             return revision, None
-        try:
-            from app.redis import redis_client
-            raw = await asyncio.wait_for(redis_client.get(CapabilityCacheService._key(organization_id, event_id, revision, environment, user_id)), timeout=0.5)
-            return revision, json.loads(raw) if raw else None
-        except Exception:
-            return revision, None
+        value = await cache_service.get_json(
+            CapabilityCacheService._key(
+                organization_id, event_id, revision, environment, user_id, variant
+            )
+        )
+        return revision, value if isinstance(value, dict) else None
 
     @staticmethod
-    async def put(organization_id: uuid.UUID, event_id: uuid.UUID | None, revision: str, environment: str, user_id: uuid.UUID | None, value: dict[str, Any]) -> None:
-        try:
-            from app.redis import redis_client
-            payload = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
-            await asyncio.wait_for(redis_client.set(CapabilityCacheService._key(organization_id, event_id, revision, environment, user_id), payload, ex=CapabilityCacheService.TTL_SECONDS), timeout=0.5)
-        except Exception:
-            return
+    async def put(organization_id: uuid.UUID, event_id: uuid.UUID | None, revision: str, environment: str, user_id: uuid.UUID | None, value: dict[str, Any], variant: str = "full") -> None:
+        await cache_service.set_json(
+            CapabilityCacheService._key(
+                organization_id, event_id, revision, environment, user_id, variant
+            ),
+            value,
+            CapabilityCacheService.ttl_seconds(),
+        )

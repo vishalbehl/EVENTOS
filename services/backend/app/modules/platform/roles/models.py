@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, String, Text, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import Boolean, String, Text, DateTime, ForeignKey, Index, UniqueConstraint, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -59,6 +59,7 @@ class DepartmentRole(Base, SoftDeleteMixin):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc)
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Relationships
     department: Mapped[Optional["Department"]] = relationship("Department", back_populates="roles")

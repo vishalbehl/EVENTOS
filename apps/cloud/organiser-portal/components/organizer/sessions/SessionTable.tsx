@@ -50,7 +50,6 @@ export function SessionTable({ sessions = [], onSelectSession }: SessionTablePro
             id: rId,
             event_id: firstSess?.event_id || "",
             name: firstSess?.room_name || "Room Space",
-            screen_count: 1,
             room_type: "ROOM",
             is_active: true,
           },
@@ -173,9 +172,9 @@ export function SessionTable({ sessions = [], onSelectSession }: SessionTablePro
                     <Badge variant="outline" className="text-[9px] font-extrabold uppercase px-1.5 py-0">
                       {room.room_type || "ROOM"}
                     </Badge>
-                    {room.capacity && (
-                      <span className="flex items-center gap-1">
-                        <Users className="h-3 w-3" /> {room.capacity} seats
+                    {room.code && (
+                      <span className="font-mono font-bold text-[10px]">
+                        {room.code}
                       </span>
                     )}
                   </div>

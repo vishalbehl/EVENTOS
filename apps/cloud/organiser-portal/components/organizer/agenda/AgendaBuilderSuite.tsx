@@ -417,11 +417,9 @@ export function AgendaBuilderSuite({
       const isNew = room.id === "new" || room.id.startsWith("room-");
       const payload = {
         name: room.name,
-        capacity: room.capacity || 100,
-        screen_count: room.screen_count || 1,
-        room_type: room.room_type || "presentation",
+        code: room.code || undefined,
+        room_type: room.room_type || "MAIN_HALL",
         room_coordinator: room.room_coordinator || "",
-        location_notes: room.location_notes || "",
         is_active: room.is_active !== false,
       };
 

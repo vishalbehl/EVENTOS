@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,9 @@ from app.modules.agenda.schemas.agenda_schemas import (
     AgendaSnapshotResponse
 )
 from app.modules.agenda.services.agenda_service import AgendaService
+from app.modules.agenda.application.queries import AgendaQueryService
+from app.modules.agenda.application.commands import AgendaCommandService
+from app.core.concurrency import require_if_match
 
 router = APIRouter(prefix="/events/{event_id}", tags=["agenda"])
 
@@ -26,9 +29,10 @@ async def get_agenda_snapshot(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AgendaSnapshotResponse:
-    # Ensure default agenda exists for the event
-    await AgendaService.get_or_create_default_agenda(db, event)
-    return await AgendaService.get_full_snapshot(db, event.id)
+    # Reads must not create or commit agenda state.
+    return await AgendaQueryService(db).full_snapshot(
+        organization_id=event.organization_id, event_id=event.id
+    )
 
 
 # ── MASTER AGENDAS CRUD ──────────────────────────────────────────────────────
@@ -38,10 +42,10 @@ async def list_agendas(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> List[AgendaResponse]:
-    # Ensure at least default agenda exists
-    await AgendaService.get_or_create_default_agenda(db, event)
-    res = await db.execute(select(Agenda).where(Agenda.event_id == event.id).order_by(Agenda.created_at))
-    return [AgendaResponse.model_validate(a) for a in res.scalars().all()]
+    agendas = await AgendaQueryService(db).list_for_event(
+        organization_id=event.organization_id, event_id=event.id
+    )
+    return [AgendaResponse.model_validate(a) for a in agendas]
 
 
 @router.post("/agendas", response_model=AgendaResponse, status_code=status.HTTP_201_CREATED)
@@ -50,20 +54,12 @@ async def create_agenda(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> AgendaResponse:
-    agenda = Agenda(
-        id=uuid.uuid4(),
-        event_id=event.id,
-        name=payload.name,
-        code=payload.code or f"AGENDA-{str(event.id)[:4].upper()}",
-        description=payload.description,
-        timezone=payload.timezone or event.timezone or "UTC",
-        status=payload.status,
+    return await AgendaCommandService.create_agenda(
+        db, event=event, payload=payload, actor_user_id=current_user.id,
+        idempotency_key=idempotency_key or f"agenda-create:{uuid.uuid4()}",
     )
-    db.add(agenda)
-    await db.commit()
-    await db.refresh(agenda)
-    return AgendaResponse.model_validate(agenda)
 
 
 # ── AGENDA DAYS CRUD ─────────────────────────────────────────────────────────
@@ -73,13 +69,13 @@ async def list_agenda_days(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> List[AgendaDayResponse]:
-    agenda = await AgendaService.get_or_create_default_agenda(db, event)
-    res = await db.execute(
-        select(AgendaDay)
-        .where(AgendaDay.agenda_id == agenda.id)
-        .order_by(AgendaDay.sort_order, AgendaDay.date)
+    agenda = await AgendaService.get_default_agenda(db, event)
+    if agenda is None:
+        return []
+    days = await AgendaQueryService(db).list_days_for_agenda(
+        organization_id=event.organization_id, event_id=event.id, agenda_id=agenda.id
     )
-    return [AgendaDayResponse.model_validate(d) for d in res.scalars().all()]
+    return [AgendaDayResponse.model_validate(d) for d in days]
 
 
 @router.post("/agenda-days", response_model=AgendaDayResponse, status_code=status.HTTP_201_CREATED)
@@ -88,24 +84,12 @@ async def create_agenda_day(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> AgendaDayResponse:
-    agenda = await AgendaService.get_or_create_default_agenda(db, event)
-    day = AgendaDay(
-        id=uuid.uuid4(),
-        agenda_id=payload.agenda_id or agenda.id,
-        day_number=payload.day_number,
-        name=payload.name,
-        date=payload.date,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
-        timezone=payload.timezone,
-        status=payload.status,
-        sort_order=payload.sort_order,
+    return await AgendaCommandService.create_day(
+        db, event=event, payload=payload, actor_user_id=current_user.id,
+        idempotency_key=idempotency_key or f"agenda-day-create:{uuid.uuid4()}",
     )
-    db.add(day)
-    await db.commit()
-    await db.refresh(day)
-    return AgendaDayResponse.model_validate(day)
 
 
 @router.patch("/agenda-days/{day_id}", response_model=AgendaDayResponse)
@@ -115,19 +99,15 @@ async def update_agenda_day(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> AgendaDayResponse:
-    res = await db.execute(select(AgendaDay).where(AgendaDay.id == day_id))
-    day = res.scalar_one_or_none()
-    if not day:
-        raise HTTPException(status_code=404, detail="Agenda day not found.")
-
-    update_data = payload.model_dump(exclude_unset=True)
-    for k, v in update_data.items():
-        setattr(day, k, v)
-
-    await db.commit()
-    await db.refresh(day)
-    return AgendaDayResponse.model_validate(day)
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    return await AgendaCommandService.update_day(
+        db, event=event, day_id=day_id, payload=payload,
+        actor_user_id=current_user.id, expected_version=expected_version,
+        idempotency_key=idempotency_key,
+    )
 
 
 @router.delete("/agenda-days/{day_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -136,12 +116,12 @@ async def delete_agenda_day(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    if_match: str | None = Header(None, alias="If-Match"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    res = await db.execute(select(AgendaDay).where(AgendaDay.id == day_id))
-    day = res.scalar_one_or_none()
-    if not day:
-        raise HTTPException(status_code=404, detail="Agenda day not found.")
-
-    await db.delete(day)
-    await db.commit()
+    expected_version = require_if_match(if_match) if if_match is not None else None
+    await AgendaCommandService.delete_day(
+        db, event=event, day_id=day_id, actor_user_id=current_user.id,
+        expected_version=expected_version, idempotency_key=idempotency_key,
+    )
     return None

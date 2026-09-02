@@ -15,7 +15,7 @@ RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN grep -v '^python-magic-bin' requirements.txt > /tmp/requirements-linux.txt && pip install --no-cache-dir -r /tmp/requirements-linux.txt
 
 COPY . .
 RUN chown -R app:app /app

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -16,10 +17,20 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
+from app.database import async_engine, get_slow_query_samples
+from app.core.cache import cache_service
 from app.modules.superadmin.dependencies import require_super_admin
 from app.modules.identity.models.user import User
+from app.modules.platform_health.application.queries import PlatformHealthQueryService
 
 router = APIRouter(prefix="/platform/health", tags=["platform-health"])
+
+
+def _sanitize_query(query: str | None) -> str:
+    """Keep SQL fingerprints useful without returning literal values."""
+    sanitized = re.sub(r"'(?:''|[^'])*'", "'?'", query or "")
+    sanitized = re.sub(r"\b\d+(?:\.\d+)?\b", "?", sanitized)
+    return sanitized[:200]
 
 
 async def _check_db(db: AsyncSession) -> dict:
@@ -217,6 +228,20 @@ async def superadmin_database_stats(
     top table sizes from pg_stat_user_tables and pg_database.
     """
     try:
+        stats = await PlatformHealthQueryService(db).database_stats()
+        pool = async_engine.pool
+        pool_stats = {
+            "size": int(pool.size()) if hasattr(pool, "size") else None,
+            "checked_out": int(pool.checkedout()) if hasattr(pool, "checkedout") else None,
+            "overflow": int(pool.overflow()) if hasattr(pool, "overflow") else None,
+            "checked_in": int(pool.checkedin()) if hasattr(pool, "checkedin") else None,
+        }
+        return {
+            **stats,
+            "application_cache": cache_service.metrics(),
+            "slow_queries": [],
+            "pool": pool_stats,
+        }
         # Active connections
         conn_res = await db.execute(text("""
             SELECT state, count(*) as cnt
@@ -256,6 +281,13 @@ async def superadmin_database_stats(
         """))
         dead_tuples = int(dead_res.scalar() or 0)
 
+        # This is a capability signal, not a health assumption: managed
+        # PostgreSQL instances may restrict extension installation.
+        pgss_res = await db.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')"
+        ))
+        pg_stat_statements_available = bool(pgss_res.scalar())
+
         # Table sizes (top 10)
         table_res = await db.execute(text("""
             SELECT schemaname || '.' || tablename AS name,
@@ -269,6 +301,14 @@ async def superadmin_database_stats(
         table_sizes = [{"name": r[0], "size": r[1], "size_bytes": r[2]}
                        for r in table_res.all()]
 
+        pool = async_engine.pool
+        pool_stats = {
+            "size": int(pool.size()) if hasattr(pool, "size") else None,
+            "checked_out": int(pool.checkedout()) if hasattr(pool, "checkedout") else None,
+            "overflow": int(pool.overflow()) if hasattr(pool, "overflow") else None,
+            "checked_in": int(pool.checkedin()) if hasattr(pool, "checkedin") else None,
+        }
+
         return {
             "connections": {
                 "active": active,
@@ -278,16 +318,22 @@ async def superadmin_database_stats(
                 "max": max_conn,
             },
             "cache_hit_ratio": round(cache_hit_ratio, 2),
+            "application_cache": cache_service.metrics(),
             "database_size_bytes": db_size_bytes,
             "dead_tuples": dead_tuples,
+            "pg_stat_statements_available": pg_stat_statements_available,
             "table_sizes": table_sizes,
             "slow_queries": [],  # populated by slow-queries endpoint
+            "pool": pool_stats,
         }
     except Exception as e:
         return {"error": str(e), "connections": {"active": 0, "idle": 0,
                 "waiting": 0, "total": 0, "max": 100},
                 "cache_hit_ratio": 0.0, "database_size_bytes": 0,
-                "dead_tuples": 0, "table_sizes": [], "slow_queries": []}
+                "application_cache": cache_service.metrics(),
+                "dead_tuples": 0, "pg_stat_statements_available": False,
+                "table_sizes": [], "slow_queries": [],
+                "pool": {"size": None, "checked_out": None, "overflow": None, "checked_in": None}}
 
 
 @router.get("/superadmin/operations/database/slow-queries", tags=["superadmin-operations"])
@@ -300,21 +346,11 @@ async def superadmin_slow_queries(
     Top slow queries from pg_stat_statements (if extension is enabled),
     falling back to pg_stat_activity long-running queries.
     """
+    limit = max(1, min(int(limit), 100))
     try:
-        # Try pg_stat_statements first
-        result = await db.execute(text(f"""
-            SELECT query,
-                   round(mean_exec_time::numeric, 2) AS avg_ms,
-                   calls,
-                   round(total_exec_time::numeric, 2) AS total_ms
-            FROM pg_stat_statements
-            WHERE query NOT LIKE '%pg_stat%'
-            ORDER BY mean_exec_time DESC
-            LIMIT {limit}
-        """))
-        rows = result.all()
-        return [{"query": r[0][:200], "avg_ms": float(r[1]),
-                 "calls": int(r[2]), "total_ms": float(r[3])} for r in rows]
+        rows = await PlatformHealthQueryService(db).slow_queries(limit=limit)
+        if rows:
+            return rows
     except Exception:
         pass
 
@@ -332,7 +368,19 @@ async def superadmin_slow_queries(
             LIMIT 10
         """))
         rows = result.all()
-        return [{"query": r[0][:200], "avg_ms": round(float(r[1] or 0), 2),
+        if rows:
+            return [{"query": _sanitize_query(r[0]), "avg_ms": round(float(r[1] or 0), 2),
                  "calls": 1, "total_ms": round(float(r[1] or 0), 2)} for r in rows]
+        return [
+            {"query": _sanitize_query(str(sample.get("operation", ""))),
+             "avg_ms": float(sample.get("duration_ms", 0)), "calls": 1,
+             "total_ms": float(sample.get("duration_ms", 0))}
+            for sample in get_slow_query_samples()[-limit:]
+        ]
     except Exception as e:
-        return []
+        return [
+            {"query": _sanitize_query(str(sample.get("operation", ""))),
+             "avg_ms": float(sample.get("duration_ms", 0)), "calls": 1,
+             "total_ms": float(sample.get("duration_ms", 0))}
+            for sample in get_slow_query_samples()[-limit:]
+        ]

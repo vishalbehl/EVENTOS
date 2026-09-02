@@ -7,16 +7,32 @@ from datetime import datetime
 from typing import Generic, TypeVar
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 
 T = TypeVar("T")
+MAX_CURSOR_LENGTH = 512
 
 
 class CursorPage(BaseModel, Generic[T]):
     items: list[T]
     next_cursor: str | None = None
     has_next: bool = False
+
+    @computed_field
+    @property
+    def has_more(self) -> bool:
+        """Plan terminology without breaking existing ``has_next`` clients."""
+        return self.has_next
+
+
+def bounded_page_size(value: int | None, *, default: int = 20, maximum: int = 100) -> int:
+    """Normalize API page sizes so one request cannot create an unbounded read."""
+    if value is None:
+        return default
+    if value < 1 or value > maximum:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_PAGE_SIZE", "message": f"Page size must be between 1 and {maximum}."})
+    return value
 
 
 class CursorPosition(BaseModel):
@@ -35,7 +51,11 @@ def encode_cursor(occurred_at: datetime, record_id: uuid.UUID) -> str:
 
 def decode_cursor(value: str) -> CursorPosition:
     try:
+        if not isinstance(value, str) or not value or len(value) > MAX_CURSOR_LENGTH:
+            raise ValueError("cursor length is invalid")
         padded = value + "=" * (-len(value) % 4)
+        if len(padded) > MAX_CURSOR_LENGTH + 3:
+            raise ValueError("cursor payload is invalid")
         payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
         return CursorPosition.model_validate(payload)
     except Exception as exc:

@@ -118,12 +118,21 @@ class ApiClient {
         }
 
         if (error.response) {
-          apiError.status = error.response.status
-          apiError.message =
-            (error.response.data as any)?.detail ||
-            (error.response.data as any)?.message ||
-            error.message
+          const data = error.response.data as any;
+          let errMsg = "Something went wrong";
+          if (typeof data?.detail === "string") {
+            errMsg = data.detail;
+          } else if (Array.isArray(data?.detail)) {
+            errMsg = data.detail.map((d: any) => d?.msg || d?.message || JSON.stringify(d)).join(", ");
+          } else if (typeof data?.detail === "object" && data?.detail !== null) {
+            errMsg = data.detail.msg || data.detail.message || JSON.stringify(data.detail);
+          } else if (data?.message && typeof data.message === "string") {
+            errMsg = data.message;
+          } else if (error.message) {
+            errMsg = error.message;
+          }
 
+          apiError.message = errMsg;
           apiError.details = error.response.data
           if (error.response.status === 401 && typeof window !== "undefined") {
             apiError.authExpired = true

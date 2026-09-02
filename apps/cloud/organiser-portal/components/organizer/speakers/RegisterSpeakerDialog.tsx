@@ -1,6 +1,8 @@
 "use client";
+// Quota control: max_speakers is enforced by the API before creation.
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import { useLimitAccess } from "@/lib/capabilities";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -93,6 +95,7 @@ export function RegisterSpeakerDialog({
   onClose,
   eventId: explicitEventId,
 }: RegisterSpeakerDialogProps) {
+  const speakerQuota = useLimitAccess("max_speakers");
   const params = useParams();
   const eventIdStr = explicitEventId ?? String(params.eventId ?? "");
   const queryClient = useQueryClient();

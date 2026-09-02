@@ -1,7 +1,5 @@
-"use client";
-
-import LoginPage from "./(auth)/login/page";
+import { redirect } from "next/navigation";
 
 export default function RootPage() {
-  return <LoginPage />;
+  redirect("/login");
 }

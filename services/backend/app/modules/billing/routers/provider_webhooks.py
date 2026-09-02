@@ -18,5 +18,5 @@ async def receive_provider_webhook(gateway_id: uuid.UUID, request: Request, db: 
         raise HTTPException(status_code=404, detail="Webhook endpoint not found.")
     body = await request.body()
     normalized = ProviderWebhookService.verify_and_normalize(gateway, body, request.headers)
-    receipt = await ProviderWebhookService.ingest(db, gateway, normalized, body)
+    receipt = await ProviderWebhookService.execute_command(db, gateway, normalized, body)
     return {"status": receipt.status, "receipt_id": str(receipt.id)}

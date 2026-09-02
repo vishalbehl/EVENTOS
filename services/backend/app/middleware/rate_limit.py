@@ -216,7 +216,7 @@ class RateLimitMiddleware:
         org_id = getattr(request.state, "org_id", None)
 
         if user_role == "developer" and org_id:
-            from app.redis import redis_client
+            from app.redis import coordination_client as redis_client
             import json
             import uuid
             from app.core.cache_keys import TenantCacheKey
@@ -240,10 +240,10 @@ class RateLimitMiddleware:
                     req_per_day = config["day"]
                 else:
                     req_per_min, req_per_day = await self._fetch_db_rate_limits(org_uuid)
-                    await redis_client.setex(
+                    await redis_client.set(
                         limit_config_key,
-                        300,  # cache for 5 minutes
-                        json.dumps({"minute": req_per_min, "day": req_per_day})
+                        json.dumps({"minute": req_per_min, "day": req_per_day}),
+                        ex=300,
                     )
             except Exception as e:
                 logger.error(f"Failed to fetch developer rate limits from Redis/DB: {e}")

@@ -17,7 +17,29 @@ from app.modules.billing.services.capability_diagnostics_service import Capabili
 from app.modules.platform.models.platform_domain_tables import FeatureFlag
 from app.modules.platform.services.metering_service import MeteringService
 from app.tasks.tenant_job_scope import parse_required_organization_id, tenant_job_session
+from app.core.task_policy import is_retryable, policy_for
 from app.worker import celery_app
+
+
+_RECONCILIATION_POLICY = policy_for("reconciliation")
+
+
+def _run_rollout_task(task, operation):
+    """Run rollout work with bounded retries and no retry for bad input."""
+    from app.tasks.platform_tasks import _run_async
+
+    try:
+        return _run_async(operation)
+    except Exception as exc:
+        policy = policy_for("reconciliation")
+        attempt = int(getattr(task.request, "retries", 0) or 0)
+        if is_retryable(exc) and attempt < policy.max_retries:
+            raise task.retry(
+                exc=exc,
+                countdown=min(300, policy.retry_delay(attempt, apply_jitter=True)),
+                max_retries=policy.max_retries,
+            )
+        raise
 
 
 def shadow_access_projection(resolved: dict) -> dict:
@@ -161,16 +183,30 @@ async def shadow_compare_organization(organization_id_str: str) -> dict:
     return {"organization_id": str(organization_id), "matched": matched, "diverged": diverged}
 
 
-@celery_app.task(name="app.tasks.organization_console_rollout_tasks.backfill_organization_console")
-def backfill_organization_console_task(organization_id_str: str, apply: bool = False) -> dict:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(backfill_organization_console(organization_id_str, apply))
+@celery_app.task(
+    name="app.tasks.organization_console_rollout_tasks.backfill_organization_console",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def backfill_organization_console_task(self, organization_id_str: str, apply: bool = False) -> dict:
+    return _run_rollout_task(self, backfill_organization_console(organization_id_str, apply))
 
 
-@celery_app.task(name="app.tasks.organization_console_rollout_tasks.shadow_compare_organization")
-def shadow_compare_organization_task(organization_id_str: str) -> dict:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(shadow_compare_organization(organization_id_str))
+@celery_app.task(
+    name="app.tasks.organization_console_rollout_tasks.shadow_compare_organization",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def shadow_compare_organization_task(self, organization_id_str: str) -> dict:
+    return _run_rollout_task(self, shadow_compare_organization(organization_id_str))
 
 
 async def fanout_shadow_comparisons() -> int:
@@ -191,7 +227,14 @@ async def fanout_shadow_comparisons() -> int:
     return len(organization_ids)
 
 
-@celery_app.task(name="app.tasks.organization_console_rollout_tasks.fanout_shadow_comparisons")
-def fanout_shadow_comparisons_task() -> int:
-    from app.tasks.platform_tasks import _run_async
-    return _run_async(fanout_shadow_comparisons())
+@celery_app.task(
+    name="app.tasks.organization_console_rollout_tasks.fanout_shadow_comparisons",
+    bind=True,
+    max_retries=_RECONCILIATION_POLICY.max_retries,
+    soft_time_limit=_RECONCILIATION_POLICY.soft_timeout_seconds,
+    time_limit=_RECONCILIATION_POLICY.hard_timeout_seconds,
+    acks_late=True,
+    queue=_RECONCILIATION_POLICY.queue,
+)
+def fanout_shadow_comparisons_task(self) -> int:
+    return _run_rollout_task(self, fanout_shadow_comparisons())

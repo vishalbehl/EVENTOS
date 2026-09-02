@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,14 @@ class Participant(Base, SoftDeleteMixin):
     Conference delegates / participants registered for on-site execution.
     """
     __tablename__ = "participants"
-    __table_args__ = {"schema": "registration"}
+    __table_args__ = (
+        Index(
+            "ix_registration_participants_event_regno",
+            "event_id",
+            "regno",
+        ),
+        {"schema": "registration"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -80,6 +87,7 @@ class Participant(Base, SoftDeleteMixin):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Relationships
     event: Mapped["Event"] = relationship("Event")
@@ -133,10 +141,14 @@ class Participant(Base, SoftDeleteMixin):
     @classmethod
     async def find_by_email(cls, db: AsyncSession, event_id: uuid.UUID, email: str) -> Optional["Participant"]:
         from sqlalchemy import select, or_, func
+        from sqlalchemy.orm import joinedload
         if not email:
             return None
         lower_email = email.strip().lower()
-        stmt = select(cls).where(
+        # The dashboard reads ``participant.role`` while serializing. Load the
+        # many-to-one role in the same query so serialization cannot trigger a
+        # hidden lazy statement under load.
+        stmt = select(cls).options(joinedload(cls.role_rel)).where(
             cls.event_id == event_id,
             or_(
                 func.lower(cls.email) == lower_email,

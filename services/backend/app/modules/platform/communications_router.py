@@ -11,6 +11,8 @@ from app.dependencies import StepUpAuth, SuperAdminOnly, get_db
 from app.modules.audit.models.audit_log import AuditLog
 from app.modules.platform.models.maintenance_window import MaintenanceWindow
 from app.modules.platform.models.platform_domain_tables import GlobalAnnouncement
+from app.modules.platform.application.communications_commands import PlatformCommunicationsCommandService
+from app.modules.platform.application.queries import PlatformCommunicationsQueryService
 from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/platform/communications", tags=["Platform Communications"])
@@ -105,11 +107,7 @@ async def list_global_announcements(
     is_active: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(GlobalAnnouncement).order_by(GlobalAnnouncement.created_at.desc())
-    if is_active is not None:
-        stmt = stmt.where(GlobalAnnouncement.is_active == is_active)
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    return await PlatformCommunicationsQueryService(db).list_announcements(is_active=is_active)
 
 
 @router.post("/announcements", response_model=GlobalAnnouncementResponse, status_code=status.HTTP_201_CREATED)
@@ -120,22 +118,10 @@ async def create_global_announcement(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    announcement = GlobalAnnouncement(
-        title=payload.title,
-        content=payload.content,
-        is_active=payload.is_active,
+    announcement = await PlatformCommunicationsCommandService(db).create_announcement(
+        user=current_user, title=payload.title, content=payload.content,
+        is_active=payload.is_active, reason=payload.reason
     )
-    db.add(announcement)
-    await db.flush()
-    db.add(AuditLog(
-        organization_id=current_user.organization_id, actor_user_id=current_user.id,
-        resource_type="global_announcement", resource_id=announcement.id,
-        action_type="GLOBAL_ANNOUNCEMENT_CREATED", actor_role=current_user.platform_role or current_user.role,
-        new_state={"title": announcement.title, "is_active": announcement.is_active},
-        change_diff={"reason": payload.reason}, is_sensitive=True,
-    ))
-    await db.commit()
-    await db.refresh(announcement)
     return announcement
 
 
@@ -145,7 +131,9 @@ async def get_global_announcement(
     current_user: SuperAdminOnly,
     db: AsyncSession = Depends(get_db),
 ):
-    announcement = await db.get(GlobalAnnouncement, announcement_id)
+    announcement = await PlatformCommunicationsQueryService(db).get_announcement(
+        announcement_id=announcement_id
+    )
     if not announcement:
         raise HTTPException(status_code=404, detail="Announcement not found")
     return announcement
@@ -160,26 +148,10 @@ async def update_global_announcement(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    announcement = await db.get(GlobalAnnouncement, announcement_id)
-    if not announcement:
-        raise HTTPException(status_code=404, detail="Announcement not found")
-
-    old_state = {"title": announcement.title, "content": announcement.content, "is_active": announcement.is_active}
     updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
-    for key, value in updates.items():
-        setattr(announcement, key, value)
-
-    db.add(AuditLog(
-        organization_id=current_user.organization_id, actor_user_id=current_user.id,
-        resource_type="global_announcement", resource_id=announcement.id,
-        action_type="GLOBAL_ANNOUNCEMENT_UPDATED", actor_role=current_user.platform_role or current_user.role,
-        old_state=old_state,
-        new_state={"title": announcement.title, "content": announcement.content, "is_active": announcement.is_active},
-        change_diff={"reason": payload.reason}, is_sensitive=True,
-    ))
-
-    await db.commit()
-    await db.refresh(announcement)
+    announcement = await PlatformCommunicationsCommandService(db).update_announcement(
+        user=current_user, announcement_id=announcement_id, updates=updates, reason=payload.reason
+    )
     return announcement
 
 
@@ -192,26 +164,9 @@ async def delete_global_announcement(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    announcement = await db.get(GlobalAnnouncement, announcement_id)
-    if not announcement:
-        raise HTTPException(status_code=404, detail="Announcement not found")
-    db.add(AuditLog(
-        organization_id=current_user.organization_id,
-        actor_user_id=current_user.id,
-        resource_type="global_announcement",
-        resource_id=announcement.id,
-        action_type="GLOBAL_ANNOUNCEMENT_DELETED",
-        actor_role=current_user.platform_role or current_user.role,
-        old_state={
-            "title": announcement.title,
-            "is_active": announcement.is_active,
-            "created_at": announcement.created_at.isoformat() if announcement.created_at else None,
-        },
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-    ))
-    await db.delete(announcement)
-    await db.commit()
+    await PlatformCommunicationsCommandService(db).delete_announcement(
+        user=current_user, announcement_id=announcement_id, reason=payload.reason
+    )
     return MessageResponse(message="Global announcement deleted.")
 
 
@@ -221,12 +176,8 @@ async def list_maintenance_windows(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(MaintenanceWindow).order_by(MaintenanceWindow.starts_at.desc())
     normalized = _validate_status(status_filter)
-    if normalized:
-        stmt = stmt.where(MaintenanceWindow.status == normalized)
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    return await PlatformCommunicationsQueryService(db).list_maintenance_windows(status=normalized)
 
 
 @router.post("/maintenance-windows", response_model=MaintenanceWindowResponse, status_code=status.HTTP_201_CREATED)
@@ -237,26 +188,9 @@ async def create_maintenance_window(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    maintenance = MaintenanceWindow(
-        title=payload.title,
-        description=payload.description,
-        starts_at=payload.starts_at,
-        ends_at=payload.ends_at,
-        affected_services=payload.affected_services,
-        status=_validate_status(payload.status) or "SCHEDULED",
-        created_by=current_user.id,
+    maintenance = await PlatformCommunicationsCommandService(db).create_maintenance(
+        user=current_user, values=payload.model_dump(exclude={"reason"}), reason=payload.reason
     )
-    db.add(maintenance)
-    await db.flush()
-    db.add(AuditLog(
-        organization_id=current_user.organization_id, actor_user_id=current_user.id,
-        resource_type="maintenance_window", resource_id=maintenance.id,
-        action_type="MAINTENANCE_WINDOW_CREATED", actor_role=current_user.platform_role or current_user.role,
-        new_state={"title": maintenance.title, "status": maintenance.status, "starts_at": maintenance.starts_at.isoformat(), "ends_at": maintenance.ends_at.isoformat()},
-        change_diff={"reason": payload.reason}, is_sensitive=True,
-    ))
-    await db.commit()
-    await db.refresh(maintenance)
     return maintenance
 
 
@@ -269,34 +203,10 @@ async def update_maintenance_window(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    maintenance = await db.get(MaintenanceWindow, window_id)
-    if not maintenance:
-        raise HTTPException(status_code=404, detail="Maintenance window not found")
-
-    old_state = {"title": maintenance.title, "status": maintenance.status, "starts_at": maintenance.starts_at.isoformat(), "ends_at": maintenance.ends_at.isoformat()}
     updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
-    if "status" in updates:
-        updates["status"] = _validate_status(updates["status"])
-    starts_at = updates.get("starts_at", maintenance.starts_at)
-    ends_at = updates.get("ends_at", maintenance.ends_at)
-    if starts_at and ends_at and ends_at <= starts_at:
-        raise HTTPException(status_code=422, detail="ends_at must be after starts_at")
-
-    for key, value in updates.items():
-        setattr(maintenance, key, value)
-    maintenance.updated_at = datetime.now(timezone.utc)
-
-    db.add(AuditLog(
-        organization_id=current_user.organization_id, actor_user_id=current_user.id,
-        resource_type="maintenance_window", resource_id=maintenance.id,
-        action_type="MAINTENANCE_WINDOW_UPDATED", actor_role=current_user.platform_role or current_user.role,
-        old_state=old_state,
-        new_state={"title": maintenance.title, "status": maintenance.status, "starts_at": maintenance.starts_at.isoformat(), "ends_at": maintenance.ends_at.isoformat()},
-        change_diff={"reason": payload.reason}, is_sensitive=True,
-    ))
-
-    await db.commit()
-    await db.refresh(maintenance)
+    maintenance = await PlatformCommunicationsCommandService(db).update_maintenance(
+        user=current_user, window_id=window_id, updates=updates, reason=payload.reason
+    )
     return maintenance
 
 
@@ -309,26 +219,7 @@ async def delete_maintenance_window(
     db: AsyncSession = Depends(get_db),
 ):
     del step_up
-    maintenance = await db.get(MaintenanceWindow, window_id)
-    if not maintenance:
-        raise HTTPException(status_code=404, detail="Maintenance window not found")
-    db.add(AuditLog(
-        organization_id=current_user.organization_id,
-        actor_user_id=current_user.id,
-        resource_type="maintenance_window",
-        resource_id=maintenance.id,
-        action_type="MAINTENANCE_WINDOW_DELETED",
-        actor_role=current_user.platform_role or current_user.role,
-        old_state={
-            "title": maintenance.title,
-            "status": maintenance.status,
-            "starts_at": maintenance.starts_at.isoformat() if maintenance.starts_at else None,
-            "ends_at": maintenance.ends_at.isoformat() if maintenance.ends_at else None,
-            "affected_services": maintenance.affected_services,
-        },
-        change_diff={"reason": payload.reason},
-        is_sensitive=True,
-    ))
-    await db.delete(maintenance)
-    await db.commit()
+    await PlatformCommunicationsCommandService(db).delete_maintenance(
+        user=current_user, window_id=window_id, reason=payload.reason
+    )
     return MessageResponse(message="Maintenance window deleted.")

@@ -13,6 +13,72 @@ class StrictWriteModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LegalHoldCreate(StrictWriteModel):
+    name: str = Field(min_length=1, max_length=200)
+    scope: dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field(min_length=1, max_length=2000)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+
+
+class LegalHoldRelease(StrictWriteModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class ComplianceControlCreate(StrictWriteModel):
+    framework: str = Field(min_length=1, max_length=30)
+    control_key: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=255)
+    owner_user_id: Optional[uuid.UUID] = None
+    applicability: str = Field(default="APPLICABLE", max_length=24)
+    state: str = Field(default="NOT_ASSESSED", max_length=24)
+    readiness_score: Optional[int] = Field(default=None, ge=0, le=100)
+    review_due_at: Optional[datetime] = None
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class ComplianceEvidenceCreate(StrictWriteModel):
+    evidence_type: str = Field(min_length=1, max_length=50)
+    storage_reference: str = Field(min_length=1, max_length=500)
+    checksum_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    classification: str = Field(default="CONFIDENTIAL", max_length=30)
+    collected_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    reviewer_user_id: Optional[uuid.UUID] = None
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class ControlRevocationRequest(StrictWriteModel):
+    reason: str = Field(min_length=1, max_length=2000)
+    case_reference: Optional[str] = Field(default=None, max_length=160)
+
+
+class RetentionPolicyWrite(StrictWriteModel):
+    data_category: str = Field(min_length=1, max_length=100)
+    retention_days: int = Field(ge=1, le=36500)
+    disposition_action: str = Field(min_length=1, max_length=30)
+    is_enabled: bool = True
+    version: Optional[int] = Field(default=None, ge=1)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class PrivacyRequestCreate(StrictWriteModel):
+    request_type: str = Field(min_length=1, max_length=30)
+    subject_reference: str = Field(min_length=1, max_length=500)
+    due_at: datetime
+    assigned_to: Optional[uuid.UUID] = None
+    reason: str = Field(min_length=1, max_length=2000)
+    case_reference: Optional[str] = Field(default=None, max_length=160)
+
+
+class PrivacyRequestUpdate(StrictWriteModel):
+    status: str = Field(min_length=1, max_length=30)
+    version: int = Field(ge=1)
+    result_reference: Optional[str] = Field(default=None, max_length=500)
+    reason: str = Field(min_length=1, max_length=2000)
+    case_reference: Optional[str] = Field(default=None, max_length=160)
+
+
 class DomainAvailability(BaseModel):
     available: bool
     reason: Optional[str] = None

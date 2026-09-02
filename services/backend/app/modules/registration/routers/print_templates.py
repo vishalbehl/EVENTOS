@@ -5,13 +5,11 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_current_event, CurrentEvent, get_current_user
 from app.modules.identity.models.user import User
 from datetime import datetime, timezone
-from app.modules.registration.models.print_template import PrintTemplate
 from app.modules.registration.schemas.print_template import (
     PrintTemplateCreate, PrintTemplateUpdate, PrintTemplateResponse
 )
@@ -22,6 +20,7 @@ from app.modules.billing.services.usage_reservation_service import UsageReservat
 from app.modules.events.services.event_template_mutation_service import (
     EventTemplateMutationService,
 )
+from app.modules.registration.application.queries import PrintTemplateQueryService
 
 router = APIRouter(prefix="/events/{event_id}/print-templates", tags=["print-templates"])
 
@@ -140,10 +139,10 @@ async def list_print_templates(
             status_code=403,
             detail={"code": "NOT_ENTITLED", "feature": "print_templates"},
         )
-    q = select(PrintTemplate).where(PrintTemplate.event_id == event.id, PrintTemplate.deleted_at.is_(None))
-    q = q.where(PrintTemplate.template_type.in_(allowed_types))
-    result = await db.execute(q)
-    return list(result.scalars().all())
+    return await PrintTemplateQueryService(db).list_for_event(
+        event_id=event.id,
+        template_types=allowed_types,
+    )
 
 
 @router.post("/certificate-generation-authorizations", status_code=status.HTTP_201_CREATED)
@@ -231,10 +230,11 @@ async def get_print_template(
     event: CurrentEvent,
     db: AsyncSession = Depends(get_db),
 ) -> PrintTemplateResponse:
-    q = select(PrintTemplate).where(PrintTemplate.id == template_id, PrintTemplate.event_id == event.id, PrintTemplate.deleted_at.is_(None))
-    result = await db.execute(q)
-    template = result.scalar_one_or_none()
-    if not template:
+    template = await PrintTemplateQueryService(db).get_for_event(
+        event_id=event.id,
+        template_id=template_id,
+    )
+    if template is None:
         raise HTTPException(status_code=404, detail="Print template not found.")
     return template
 

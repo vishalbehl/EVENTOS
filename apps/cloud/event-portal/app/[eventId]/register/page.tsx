@@ -54,27 +54,26 @@ interface FormField {
   is_active?: boolean;
   options?: string[];
   placeholder?: string;
+  step_index?: number;
+  grid_width?: "full" | "half" | "third";
+}
+
+interface ConfiguredStep {
+  id: string;
+  title: string;
+  description?: string;
 }
 
 const TITLE_OPTIONS = ["Dr.", "Prof.", "Mr.", "Ms.", "Mrs."];
 
-const PERSONAL_FIELD_KEYS = new Set([
-  "title",
-  "name",
-  "first_name",
-  "last_name",
-  "email",
-  "phone",
-  "gender",
-  "dob",
-  "country",
-  "country_state",
-  "state",
-  "company",
-  "organization",
-  "designation",
-  "role",
-]);
+const FORM_STEP_ILLUSTRATIONS: IllustrationName[] = [
+  "forms",
+  "upload",
+  "id-card",
+  "conference-amico",
+  "conference-speaker",
+  "forms",
+];
 
 export default function DynamicRegistrationPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -128,25 +127,25 @@ export default function DynamicRegistrationPage() {
       return;
     }
 
-    // Check if participant is already registered
-    const isRegisteredFlag = localStorage.getItem(`portal_registered_${eventId}`);
-    if (isRegisteredFlag === "true") {
-      toast.info("You are already registered! Redirecting to your dashboard...");
-      router.replace(`/${eventId}/dashboard`);
-      return;
-    }
-
     // Verify against dashboard API
     fetch(`${API_BASE}/api/v1/portal/dashboard/${eventId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((dash) => {
-        if (dash?.registration || dash?.participant?.regno) {
+        const isRegistered =
+          Boolean(dash?.participant?.regno) ||
+          (dash?.registration?.status &&
+            dash?.registration?.status !== "not_registered" &&
+            dash?.registration?.status !== "closed" &&
+            Boolean(dash?.registration?.registration_id));
+
+        if (isRegistered) {
           localStorage.setItem(`portal_registered_${eventId}`, "true");
           toast.info("You are already registered! Redirecting to your dashboard...");
           router.replace(`/${eventId}/dashboard`);
-          return;
+        } else {
+          localStorage.removeItem(`portal_registered_${eventId}`);
         }
       })
       .catch(() => {});
@@ -205,21 +204,30 @@ export default function DynamicRegistrationPage() {
       .finally(() => setLoading(false));
   }, [eventId]);
 
+  // All active non-role fields, sorted by step_index then sort_order
   const activeFields: FormField[] = useMemo(() => {
     if (!config?.fields || !Array.isArray(config.fields)) return [];
-    return config.fields.filter(
-      (f: FormField) => f.is_active !== false && f.id !== "role" && f.name !== "role"
-    );
+    return [...config.fields]
+      .filter((f: FormField) => f.is_active !== false && f.id !== "role" && f.name !== "role")
+      .sort((a: FormField, b: FormField) => {
+        const si = (a.step_index ?? 0) - (b.step_index ?? 0);
+        return si !== 0 ? si : 0;
+      });
   }, [config]);
 
-  // Split active fields into Personal vs Additional/Custom
-  const personalFields = useMemo(() => {
-    return activeFields.filter((f) => PERSONAL_FIELD_KEYS.has(f.name || f.id));
-  }, [activeFields]);
+  // Configured form steps from the form builder (settings.steps)
+  const configuredSteps: ConfiguredStep[] = useMemo(() => {
+    const saved = config?.settings?.steps as ConfiguredStep[] | undefined;
+    if (saved && Array.isArray(saved) && saved.length > 0) return saved;
+    return [{ id: "step_0", title: "Registration Details" }];
+  }, [config]);
 
-  const additionalFields = useMemo(() => {
-    return activeFields.filter((f) => !PERSONAL_FIELD_KEYS.has(f.name || f.id));
-  }, [activeFields]);
+  // Fields per step index
+  const fieldsByStep: FormField[][] = useMemo(() => {
+    return configuredSteps.map((_, idx) =>
+      activeFields.filter((f) => (f.step_index ?? 0) === idx)
+    );
+  }, [activeFields, configuredSteps]);
 
   const activePrices: Record<string, number> = config?.active_prices || {};
   const roleOptions: string[] = useMemo(() => {
@@ -227,10 +235,13 @@ export default function DynamicRegistrationPage() {
     if (roleField?.options && Array.isArray(roleField.options) && roleField.options.length > 0) {
       return roleField.options;
     }
+    if (config?.roles && Array.isArray(config.roles) && config.roles.length > 0) {
+      return config.roles.map((r: any) => typeof r === "string" ? r : r.name);
+    }
     if (Object.keys(activePrices).length > 0) {
       return Object.keys(activePrices);
     }
-    return ["Delegate"];
+    return ["Free Pass", "Complimentary Pass", "Delegate", "Student Delegate", "VIP Guest"];
   }, [config, activePrices]);
 
   const isPaymentEnabled = Boolean(config?.payment_enabled);
@@ -249,32 +260,24 @@ export default function DynamicRegistrationPage() {
     return base;
   };
 
-  // Dynamic Steps Definition
+  // ── Build the full step list: N form steps + Category + (Payment) + Confirmation ──
   interface StepDef {
-    key: "personal" | "additional" | "category" | "payment" | "confirmation";
+    key: string; // "form_step_0", "form_step_1", ..., "category", "payment", "confirmation"
     label: string;
     description: string;
     illustration: IllustrationName;
+    stepIndex?: number; // index into configuredSteps / fieldsByStep
   }
 
-  const stepsList: StepDef[] = useMemo(() => {
-    const steps: StepDef[] = [
-      {
-        key: "personal",
-        label: "Personal Details",
-        description: "Your official contact & professional profile",
-        illustration: "forms",
-      },
-    ];
 
-    if (additionalFields.length > 0) {
-      steps.push({
-        key: "additional",
-        label: "Additional Info",
-        description: "Special preferences, dietary & participation details",
-        illustration: "upload",
-      });
-    }
+  const stepsList: StepDef[] = useMemo(() => {
+    const steps: StepDef[] = configuredSteps.map((cs, idx) => ({
+      key: `form_step_${idx}`,
+      label: cs.title || `Step ${idx + 1}`,
+      description: cs.description || "Complete the fields below to proceed",
+      illustration: FORM_STEP_ILLUSTRATIONS[idx] || "forms",
+      stepIndex: idx,
+    }));
 
     if (roleOptions.length > 0) {
       steps.push({
@@ -302,7 +305,7 @@ export default function DynamicRegistrationPage() {
     });
 
     return steps;
-  }, [additionalFields, roleOptions, isPaymentEnabled, config, formData.role, appliedPromo]);
+  }, [configuredSteps, roleOptions, isPaymentEnabled, formData.role, appliedPromo]);
 
   const currentStep = stepsList[currentStepIndex] || stepsList[0];
   const totalSteps = stepsList.length;
@@ -332,26 +335,23 @@ export default function DynamicRegistrationPage() {
     }
   };
 
-  const validatePersonalStep = () => {
+  // Validate the required fields of any form step by step index
+  const validateFormStep = (fields: FormField[]) => {
     const errs: Record<string, string> = {};
 
-    // Validate Title & Names
-    const hasFirstNameField = personalFields.some((f) => (f.name || f.id) === "first_name");
-    const hasNameField = personalFields.some((f) => (f.name || f.id) === "name");
-
-    if (hasFirstNameField) {
-      if (!formData.first_name?.trim()) errs.first_name = "First name is required";
+    // Special name validation: first_name is pulled from the combined name row
+    const hasFirstName = fields.some((f) => (f.name || f.id) === "first_name");
+    const hasName = fields.some((f) => (f.name || f.id) === "name");
+    if (hasFirstName && !formData.first_name?.trim()) {
+      errs.first_name = "First name is required";
     }
-    if (hasNameField && !hasFirstNameField) {
-      if (!formData.name?.trim()) errs.name = "Full name is required";
+    if (hasName && !hasFirstName && !formData.name?.trim()) {
+      errs.name = "Full name is required";
     }
 
-    // Validate other personal fields
-    for (const field of personalFields) {
+    for (const field of fields) {
       const key = field.name || field.id;
-      if (key === "first_name" || key === "last_name" || key === "name" || key === "title") {
-        continue;
-      }
+      if (["first_name", "last_name", "name", "title"].includes(key)) continue;
       const val = formData[key];
       if (field.is_required && (!val || (typeof val === "string" && !val.trim()))) {
         errs[key] = `${field.label || key} is required`;
@@ -365,28 +365,12 @@ export default function DynamicRegistrationPage() {
     return Object.keys(errs).length === 0;
   };
 
-  const validateAdditionalStep = () => {
-    const errs: Record<string, string> = {};
-    for (const field of additionalFields) {
-      const key = field.name || field.id;
-      const val = formData[key];
-      if (field.is_required && (!val || (typeof val === "string" && !val.trim()))) {
-        errs[key] = `${field.label || key} is required`;
-      }
-    }
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
-  };
-
   const handleNext = () => {
-    if (currentStep.key === "personal") {
-      if (!validatePersonalStep()) {
-        toast.error("Please fill in all required personal details.");
-        return;
-      }
-    } else if (currentStep.key === "additional") {
-      if (!validateAdditionalStep()) {
-        toast.error("Please answer the required additional questions.");
+    if (currentStep.key.startsWith("form_step_")) {
+      const stepIdx = currentStep.stepIndex ?? 0;
+      const fields = fieldsByStep[stepIdx] || [];
+      if (!validateFormStep(fields)) {
+        toast.error("Please fill in all required fields before continuing.");
         return;
       }
     } else if (currentStep.key === "category") {
@@ -405,15 +389,15 @@ export default function DynamicRegistrationPage() {
   };
 
   const handleSubmitRegistration = async () => {
-    if (!validatePersonalStep()) {
-      setCurrentStepIndex(0);
-      toast.error("Please resolve personal information errors.");
-      return;
-    }
-    if (additionalFields.length > 0 && !validateAdditionalStep()) {
-      setCurrentStepIndex(stepsList.findIndex((s) => s.key === "additional"));
-      toast.error("Please resolve additional questions errors.");
-      return;
+    // Validate each form step before submission
+    for (let i = 0; i < configuredSteps.length; i++) {
+      const fields = fieldsByStep[i] || [];
+      if (!validateFormStep(fields)) {
+        const stepIdx = stepsList.findIndex((s) => s.key === `form_step_${i}`);
+        if (stepIdx >= 0) setCurrentStepIndex(stepIdx);
+        toast.error("Please resolve errors in your form before submitting.");
+        return;
+      }
     }
     if (!formData.role && roleOptions.length > 0) {
       const catIdx = stepsList.findIndex((s) => s.key === "category");
@@ -588,7 +572,7 @@ export default function DynamicRegistrationPage() {
       const availableStates = getStatesForCountry(countryStates, currentCountry);
 
       return (
-        <div key={key} className="space-y-5 text-left">
+        <div key={key} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
           {/* Country Selector */}
           <div className="space-y-2">
             <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] flex items-center justify-between">
@@ -669,7 +653,7 @@ export default function DynamicRegistrationPage() {
 
     // Skip separate state/country_state field if country is already rendered in personal list
     if (key === "country_state" || key === "state") {
-      const hasCountryField = personalFields.some((f) => (f.name || f.id) === "country");
+      const hasCountryField = activeFields.some((f: FormField) => (f.name || f.id) === "country");
       if (hasCountryField) {
         return null;
       }
@@ -901,162 +885,143 @@ export default function DynamicRegistrationPage() {
           <div className="lg:col-span-7 space-y-6">
             <div className="p-6 md:p-8 rounded-[28px] border-2 border-[var(--border-default)] bg-[var(--card)] shadow-lg space-y-6 text-left">
 
-              {/* ── STEP 1: PERSONAL DETAILS ─────────────────────────────────── */}
-              {currentStep.key === "personal" && (
-                <motion.div
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="space-y-6"
-                >
-                  <div>
-                    <h2 className="text-lg font-black text-[var(--text)]">Personal Information</h2>
-                    <p className="text-xs text-[var(--muted)] mt-0.5">
-                      Enter your verified identity and professional credentials
-                    </p>
-                  </div>
+              {/* ── DYNAMIC FORM STEPS (from Form Builder) ───────────────────── */}
+              {currentStep.key.startsWith("form_step_") && (() => {
+                const stepIdx = currentStep.stepIndex ?? 0;
+                const stepFields = fieldsByStep[stepIdx] || [];
+                const isFirstStep = currentStepIndex === 0;
+                const isLastFormStep = !stepsList[currentStepIndex + 1]?.key.startsWith("form_step_");
 
-                  <div className="space-y-5">
-                    {/* Unified Single Row: Title Prefix + First Name + Last Name */}
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] block">
-                        Full Name & Title <span className="text-rose-500">*</span>
-                      </label>
-                      <div className="flex gap-2.5">
-                        {/* Title Prefix Dropdown */}
-                        <div className="w-28 sm:w-32 shrink-0">
-                          <select
-                            value={formData.title || "Dr."}
-                            onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                            className="w-full h-12 px-3 rounded-xl text-sm font-bold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
-                          >
-                            {TITLE_OPTIONS.map((t) => (
-                              <option key={t} value={t}>
-                                {t}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                // Check if this step contains first_name / last_name fields
+                const hasFirstNameRow = stepFields.some((f) =>
+                  ["first_name", "last_name", "name"].includes(f.name || f.id)
+                );
 
-                        {/* First Name / Name input */}
-                        <div className="flex-1">
-                          <input
-                            type="text"
-                            placeholder="First Name"
-                            value={formData.first_name ?? formData.name ?? ""}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                first_name: e.target.value,
-                                name: `${e.target.value} ${formData.last_name || ""}`.trim(),
-                              })
-                            }
-                            className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all ${
-                              errors.first_name || errors.name
-                                ? "border-rose-500 ring-2 ring-rose-500/20"
-                                : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
-                            }`}
-                          />
-                        </div>
+                return (
+                  <motion.div
+                    key={currentStep.key}
+                    initial={{ opacity: 0, x: isFirstStep ? -10 : 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="space-y-6"
+                  >
+                    <div>
+                      <h2 className="text-lg font-black text-[var(--text)]">{currentStep.label}</h2>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">{currentStep.description}</p>
+                    </div>
 
-                        {/* Last Name input */}
-                        <div className="flex-1">
-                          <input
-                            type="text"
-                            placeholder="Last Name"
-                            value={formData.last_name ?? ""}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                last_name: e.target.value,
-                                name: `${formData.first_name || ""} ${e.target.value}`.trim(),
-                              })
-                            }
-                            className="w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)] transition-all"
-                          />
+                    <div className="space-y-5">
+                      {/* Name row: rendered once if first_name/last_name/name fields exist in this step */}
+                      {hasFirstNameRow && (
+                        <div className="space-y-2">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-[var(--muted)] block">
+                            Full Name & Title <span className="text-rose-500">*</span>
+                          </label>
+                          <div className="flex gap-2.5">
+                            <div className="w-28 sm:w-32 shrink-0">
+                              <select
+                                value={formData.title || "Dr."}
+                                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                                className="w-full h-12 px-3 rounded-xl text-sm font-bold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
+                              >
+                                {TITLE_OPTIONS.map((t) => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                placeholder="First Name"
+                                value={formData.first_name ?? formData.name ?? ""}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    first_name: e.target.value,
+                                    name: `${e.target.value} ${formData.last_name || ""}`.trim(),
+                                  })
+                                }
+                                className={`w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 text-[var(--text)] transition-all ${
+                                  errors.first_name || errors.name
+                                    ? "border-rose-500 ring-2 ring-rose-500/20"
+                                    : "border-[var(--border-default)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)]"
+                                }`}
+                              />
+                            </div>
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                placeholder="Last Name"
+                                value={formData.last_name ?? ""}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    last_name: e.target.value,
+                                    name: `${formData.first_name || ""} ${e.target.value}`.trim(),
+                                  })
+                                }
+                                className="w-full h-12 px-4 rounded-xl text-sm font-semibold bg-[var(--bg-surface-2)] border-2 border-[var(--border-default)] text-[var(--text)] focus:border-[var(--pri)] focus:ring-4 focus:ring-[var(--pri)]/15 focus:bg-[var(--card)] transition-all"
+                              />
+                            </div>
+                          </div>
+                          {(errors.first_name || errors.name) && (
+                            <span className="text-xs text-rose-500 font-bold block">
+                              {errors.first_name || errors.name}
+                            </span>
+                          )}
                         </div>
-                      </div>
-                      {(errors.first_name || errors.name) && (
-                        <span className="text-xs text-rose-500 font-bold block">
-                          {errors.first_name || errors.name}
-                        </span>
+                      )}
+
+                      {/* Render all other fields for this step (skip the name fields already handled above) */}
+                      {stepFields
+                        .filter((f) => !hasFirstNameRow || !["title", "name", "first_name", "last_name"].includes(f.name || f.id))
+                        .map((field) => renderSingleColumnField(field))}
+
+                      {stepFields.length === 0 && (
+                        <p className="text-sm text-[var(--muted)] text-center py-6 italic">
+                          No fields configured for this step.
+                        </p>
                       )}
                     </div>
 
-                    {/* Single Column Vertical Stack for All Other Personal Fields */}
-                    {personalFields
-                      .filter(
-                        (f) =>
-                          !["title", "name", "first_name", "last_name"].includes(f.name || f.id)
-                      )
-                      .map((field) => renderSingleColumnField(field))}
-                  </div>
+                    {/* Step Actions */}
+                    <div className="flex items-center justify-between pt-6 border-t-2 border-[var(--border-default)]">
+                      {!isFirstStep ? (
+                        <button
+                          type="button"
+                          onClick={handleBack}
+                          className="h-12 px-6 rounded-xl border-2 border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] flex items-center gap-2 transition-all cursor-pointer"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                          <span>Back</span>
+                        </button>
+                      ) : <div />}
 
-                  {/* Step 1 Actions */}
-                  <div className="flex items-center justify-end gap-3 pt-6 border-t-2 border-[var(--border-default)]">
-                    {totalSteps > 2 ? (
-                      <button
-                        type="button"
-                        onClick={handleNext}
-                        className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
-                      >
-                        <span>Continue</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleSubmitRegistration}
-                        disabled={submitting}
-                        className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
-                      >
-                        {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                        <span>Confirm & Complete Registration</span>
-                      </button>
-                    )}
-                  </div>
-                </motion.div>
-              )}
+                      {isLastFormStep && roleOptions.length === 0 && !isPaymentEnabled ? (
+                        <button
+                          type="button"
+                          onClick={handleSubmitRegistration}
+                          disabled={submitting}
+                          className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
+                        >
+                          {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                          <span>Confirm & Complete Registration</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleNext}
+                          className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
+                        >
+                          <span>Continue</span>
+                          <ArrowRight className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })()}
 
-              {/* ── STEP 2: ADDITIONAL INFORMATION (ORGANISER CUSTOM FIELDS) ─── */}
-              {currentStep.key === "additional" && (
-                <motion.div
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="space-y-6"
-                >
-                  <div>
-                    <h2 className="text-lg font-black text-[var(--text)]">Additional Information</h2>
-                    <p className="text-xs text-[var(--muted)] mt-0.5">
-                      Please answer the following event-specific questions
-                    </p>
-                  </div>
 
-                  <div className="space-y-5">
-                    {additionalFields.map((field) => renderSingleColumnField(field))}
-                  </div>
-
-                  {/* Step 2 Actions */}
-                  <div className="flex items-center justify-between pt-6 border-t-2 border-[var(--border-default)]">
-                    <button
-                      type="button"
-                      onClick={handleBack}
-                      className="h-12 px-6 rounded-xl border-2 border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] flex items-center gap-2 transition-all cursor-pointer"
-                    >
-                      <ArrowLeft className="h-4 w-4" />
-                      <span>Back</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleNext}
-                      className="h-12 px-8 rounded-xl bg-[var(--pri)] hover:bg-[var(--pri)]/90 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-[var(--pri)]/20"
-                    >
-                      <span>Continue</span>
-                      <ArrowRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                </motion.div>
-              )}
 
               {/* ── STEP 3: PASS CATEGORY & TIER SELECTION ───────────────────── */}
               {currentStep.key === "category" && (
@@ -1109,6 +1074,8 @@ export default function DynamicRegistrationPage() {
                             <span className="text-2xl font-black text-[var(--text)] font-mono">
                               {isPaymentEnabled && price > 0
                                 ? `${currency} ${Number(price).toLocaleString()}`
+                                : role.toLowerCase().includes("free")
+                                ? "FREE"
                                 : "Complimentary"}
                             </span>
                             {isPaymentEnabled && price > 0 && (
