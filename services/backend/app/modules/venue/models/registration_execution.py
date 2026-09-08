@@ -141,8 +141,8 @@ class VenueExecutionBadgePrintJob(Base):
     __table_args__ = {"schema": "venue"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    badge_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("venue.badges.id", ondelete="CASCADE"), nullable=False, index=True)
-    printer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("venue.printers.id", ondelete="SET NULL"), nullable=True, index=True)
+    badge_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    printer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued")
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     printed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
